@@ -1,0 +1,13 @@
+{
+  "backend": {
+    "host": "doctor-voice-pro-backend.fly.dev",
+    "port": 443,
+    "protocol": "https"
+  },
+  "connection": {
+    "health_check_interval": 5,
+    "reconnect_interval": 3,
+    "max_reconnect_attempts": 100,
+    "timeout": 5
+  }
+}
