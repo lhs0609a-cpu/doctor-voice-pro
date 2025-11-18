@@ -46,7 +46,9 @@ export default function CreatePostPage() {
   const [generatedPost, setGeneratedPost] = useState<Post | null>(null)
   const [generatedPosts, setGeneratedPosts] = useState<Post[]>([])
   const [claudeApiStatus, setClaudeApiStatus] = useState<any>(null)
+  const [gptApiStatus, setGptApiStatus] = useState<any>(null)
   const [checkingApi, setCheckingApi] = useState(true)
+  const [checkingGptApi, setCheckingGptApi] = useState(true)
   const [config, setConfig] = useState({
     persuasion_level: 4,
     framework: '관심유도형',
@@ -109,6 +111,25 @@ export default function CreatePostPage() {
     }
 
     checkClaudeApiStatus()
+  }, [])
+
+  // Check GPT API status
+  useEffect(() => {
+    const checkGptApiStatus = async () => {
+      setCheckingGptApi(true)
+      try {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/system/gpt-api-status`)
+        const data = await response.json()
+        setGptApiStatus(data)
+      } catch (error) {
+        console.error('Failed to check GPT API status:', error)
+        setGptApiStatus({ connected: false, error: '연결 확인 실패' })
+      } finally {
+        setCheckingGptApi(false)
+      }
+    }
+
+    checkGptApiStatus()
   }, [])
 
   // Load saved draft on mount
@@ -499,6 +520,43 @@ export default function CreatePostPage() {
               <p className="font-medium text-red-900">Claude AI 연결 실패</p>
               <p className="text-sm text-red-700">
                 {claudeApiStatus?.error || 'API 키를 확인해주세요'}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* GPT API Status */}
+      {checkingGptApi ? (
+        <Card className="bg-blue-50 border-blue-200">
+          <CardContent className="flex items-center gap-3 py-4">
+            <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
+            <div>
+              <p className="font-medium text-blue-900">GPT API 연결 확인 중...</p>
+              <p className="text-sm text-blue-700">잠시만 기다려주세요</p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : gptApiStatus?.connected ? (
+        <Card className="bg-green-50 border-green-200">
+          <CardContent className="flex items-center gap-3 py-4">
+            <CheckCircle2 className="h-5 w-5 text-green-600" />
+            <div className="flex-1">
+              <p className="font-medium text-green-900">GPT API 연결됨</p>
+              <p className="text-sm text-green-700">
+                API 키: {gptApiStatus.api_key_prefix} | 모델: {gptApiStatus.model}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card className="bg-red-50 border-red-200">
+          <CardContent className="flex items-center gap-3 py-4">
+            <AlertCircle className="h-5 w-5 text-red-600" />
+            <div className="flex-1">
+              <p className="font-medium text-red-900">GPT API 연결 실패</p>
+              <p className="text-sm text-red-700">
+                {gptApiStatus?.error || 'API 키를 확인해주세요'}
               </p>
             </div>
           </CardContent>
