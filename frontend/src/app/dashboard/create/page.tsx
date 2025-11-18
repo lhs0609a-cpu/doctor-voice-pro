@@ -50,9 +50,11 @@ export default function CreatePostPage() {
   const [config, setConfig] = useState({
     persuasion_level: 4,
     framework: '관심유도형',
-    target_length: 1500,
+    target_length: 1800,
     writing_perspective: '1인칭',
     count: 1, // 생성할 원고 개수
+    ai_provider: 'claude', // AI 제공자: 'claude' or 'gpt'
+    ai_model: 'claude-sonnet-4-5-20250929', // AI 모델
   })
   const [writingStyle, setWritingStyle] = useState<WritingStyle>({
     formality: 5,
@@ -169,7 +171,12 @@ export default function CreatePostPage() {
           const globalIndex = batchStart + i
           return postsAPI.create({
             original_content: processedContent,
-            ...config,
+            persuasion_level: config.persuasion_level,
+            framework: config.framework,
+            target_length: config.target_length,
+            writing_perspective: config.writing_perspective,
+            ai_provider: config.ai_provider,
+            ai_model: config.ai_model,
             writing_style: writingStyle,
             requirements: requirements,
           })
@@ -498,6 +505,107 @@ export default function CreatePostPage() {
         </Card>
       )}
 
+      {/* AI 제공자 선택 */}
+      <Card>
+        <CardHeader>
+          <CardTitle>AI 제공자 선택</CardTitle>
+          <CardDescription>사용할 AI를 선택하고 모델을 선택하세요</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label>AI 제공자</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                variant={config.ai_provider === 'claude' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  setConfig({
+                    ...config,
+                    ai_provider: 'claude',
+                    ai_model: 'claude-sonnet-4-5-20250929'
+                  })
+                }}
+              >
+                Claude AI
+              </Button>
+              <Button
+                variant={config.ai_provider === 'gpt' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  setConfig({
+                    ...config,
+                    ai_provider: 'gpt',
+                    ai_model: 'gpt-4o'
+                  })
+                }}
+              >
+                GPT
+              </Button>
+            </div>
+          </div>
+
+          {/* Claude 모델 선택 */}
+          {config.ai_provider === 'claude' && (
+            <div className="space-y-2">
+              <Label>Claude 모델</Label>
+              <div className="grid grid-cols-1 gap-2">
+                <Button
+                  variant={config.ai_model === 'claude-sonnet-4-5-20250929' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setConfig({ ...config, ai_model: 'claude-sonnet-4-5-20250929' })}
+                >
+                  Claude Sonnet 4.5 (최신, 고성능)
+                </Button>
+                <Button
+                  variant={config.ai_model === 'claude-3-5-sonnet-20241022' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setConfig({ ...config, ai_model: 'claude-3-5-sonnet-20241022' })}
+                >
+                  Claude 3.5 Sonnet (안정적)
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* GPT 모델 선택 */}
+          {config.ai_provider === 'gpt' && (
+            <div className="space-y-2">
+              <Label>GPT 모델</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  variant={config.ai_model === 'gpt-4o' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setConfig({ ...config, ai_model: 'gpt-4o' })}
+                >
+                  GPT-4o (최신)
+                </Button>
+                <Button
+                  variant={config.ai_model === 'gpt-4-turbo' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setConfig({ ...config, ai_model: 'gpt-4-turbo' })}
+                >
+                  GPT-4 Turbo
+                </Button>
+                <Button
+                  variant={config.ai_model === 'gpt-4o-mini' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setConfig({ ...config, ai_model: 'gpt-4o-mini' })}
+                >
+                  GPT-4o Mini (빠름)
+                </Button>
+                <Button
+                  variant={config.ai_model === 'gpt-3.5-turbo' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setConfig({ ...config, ai_model: 'gpt-3.5-turbo' })}
+                >
+                  GPT-3.5 Turbo (저렴)
+                </Button>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <div className="grid lg:grid-cols-2 gap-6">
         {/* Input Section */}
         <div className="space-y-6">
@@ -598,12 +706,12 @@ export default function CreatePostPage() {
                     <Input
                       type="number"
                       min={500}
-                      max={5000}
+                      max={2800}
                       step={100}
                       value={config.target_length}
                       onChange={(e) => {
                         const value = parseInt(e.target.value) || 500
-                        const clampedValue = Math.max(500, Math.min(5000, value))
+                        const clampedValue = Math.max(500, Math.min(2800, value))
                         setConfig({ ...config, target_length: clampedValue })
                       }}
                       className="w-24 h-8 text-sm"
@@ -615,36 +723,36 @@ export default function CreatePostPage() {
                   value={[config.target_length]}
                   onValueChange={(value) => setConfig({ ...config, target_length: value[0] })}
                   min={500}
-                  max={5000}
+                  max={2800}
                   step={100}
                   className="w-full"
                 />
                 <div className="flex justify-between text-xs text-muted-foreground">
                   <span>500자 (짧게)</span>
-                  <span>2,750자 (보통)</span>
-                  <span>5,000자 (길게)</span>
+                  <span>1,650자 (보통)</span>
+                  <span>2,800자 (길게)</span>
                 </div>
                 <div className="grid grid-cols-3 gap-2 mt-2">
                   <Button
-                    variant={config.target_length === 1000 ? 'default' : 'outline'}
+                    variant={config.target_length === 1200 ? 'default' : 'outline'}
                     size="sm"
-                    onClick={() => setConfig({ ...config, target_length: 1000 })}
+                    onClick={() => setConfig({ ...config, target_length: 1200 })}
                   >
-                    짧게 (1000)
+                    짧게 (1200)
                   </Button>
                   <Button
-                    variant={config.target_length === 1500 ? 'default' : 'outline'}
+                    variant={config.target_length === 1800 ? 'default' : 'outline'}
                     size="sm"
-                    onClick={() => setConfig({ ...config, target_length: 1500 })}
+                    onClick={() => setConfig({ ...config, target_length: 1800 })}
                   >
-                    보통 (1500)
+                    보통 (1800)
                   </Button>
                   <Button
-                    variant={config.target_length === 2000 ? 'default' : 'outline'}
+                    variant={config.target_length === 2400 ? 'default' : 'outline'}
                     size="sm"
-                    onClick={() => setConfig({ ...config, target_length: 2000 })}
+                    onClick={() => setConfig({ ...config, target_length: 2400 })}
                   >
-                    길게 (2000)
+                    길게 (2400)
                   </Button>
                 </div>
               </div>

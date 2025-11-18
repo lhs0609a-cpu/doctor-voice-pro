@@ -39,6 +39,9 @@ export function CafeReviewCreator() {
   const [writingPerspective, setWritingPerspective] = useState('1인칭')
   const [generatedReview, setGeneratedReview] = useState<string>('')
   const [copied, setCopied] = useState(false)
+  // AI 제공자 및 모델 선택
+  const [aiProvider, setAiProvider] = useState('claude')
+  const [aiModel, setAiModel] = useState('claude-sonnet-4-5-20250929')
 
   const handleGenerate = async () => {
     // 입력 검증 (최소 글자수 제한 제거, 간단한 키워드만 있어도 OK)
@@ -84,6 +87,8 @@ export function CafeReviewCreator() {
             framework: '경험공유형',
             target_length: reviewInput.target_length || 800,
             writing_perspective: writingPerspective,
+            ai_provider: aiProvider,
+            ai_model: aiModel,
             writing_style: {
               formality: 10 - reviewStyle.friendliness,
               friendliness: reviewStyle.friendliness,
@@ -97,15 +102,23 @@ export function CafeReviewCreator() {
             },
             requirements: {
               common: [
-                '실제 방문한 것처럼 자연스럽게 작성',
+                '🔥 실제 카페 회원이 급하게 쓴 것처럼 자연스럽고 비격식적으로 작성',
                 '의료법 준수 (효과 과장 금지)',
-                '개인적인 경험과 느낌 중심',
-                reviewStyle.emoji_usage > 6 ? '이모티콘 적절히 사용' : '이모티콘 최소화',
-                reviewStyle.honesty > 6 ? '작은 단점이나 아쉬움도 언급하여 신뢰도 높이기' : '긍정적인 면 강조',
+                '개인적인 경험과 느낌을 구어체로 표현',
+                '❌ 절대 소제목 사용 금지 (예: "왜 이런 증상이 생길까요?", "어떻게 관리하면 좋을까요?" 같은 제목 형식 절대 사용하지 말 것)',
+                '❌ 문단 구분이나 섹션 나누기 없이 자연스럽게 흐름대로 작성',
+                '이모티콘 적극 사용: ㅋㅋ, ㅎㅎ, ㅠㅠ, ^^, ㅜㅜ, !! 등을 문장 곳곳에 자연스럽게 배치',
+                '말줄임표(...) 자주 사용하여 생각하는 느낌 표현',
+                '느낌표(!!)를 과도하게 사용해서 감정 표현',
+                reviewStyle.honesty > 6 ? '작은 단점이나 아쉬움도 솔직하게 언급 (근데... 이건 좀 아쉬웠어요ㅠㅠ)' : '긍정적인 면 강조하되 과장은 금지',
+                '구어체 표현 적극 사용: "진짜", "완전", "대박", "헐", "와", "짱", "엄청", "개" 등',
+                '띄어쓰기가 일부 불규칙하거나 붙여쓰기도 자연스럽게',
+                '자연스러운 오타 1-2개 포함 (예: "넘 좋아요", "안됬어요" → "안됐어요" 대신 오타, "됬다" 등)',
+                '문장이 완벽하게 끝나지 않고 말을 흐리는 표현도 사용',
                 '구체적인 디테일 포함 (시간, 장소, 대화 등)',
                 '사용자가 입력한 간단한 키워드나 내용을 풍부하게 확장하여 작성',
               ],
-              individual: `카페 바이럴 후기 스타일로 작성. ${reviewInput.emphasis_points ? `특히 강조할 점: ${reviewInput.emphasis_points}` : ''}`,
+              individual: `진짜 카페에 급하게 올리는 바이럴 후기 스타일로 작성. 절대 소제목이나 구조화된 형식 사용하지 말고, 그냥 이야기하듯이 쭉 이어서 쓰기. 너무 정제되거나 진지하지 않게, 친구한테 얘기하듯이 편하게 쓰기. ${reviewInput.emphasis_points ? `특히 강조할 점: ${reviewInput.emphasis_points}` : ''}`,
             },
           })
 
@@ -163,13 +176,26 @@ ${reviewInput.experience_content}
 
 ${reviewInput.emphasis_points ? `[특히 강조하고 싶은 점]\n${reviewInput.emphasis_points}` : ''}
 
-**중요**: 위 내용은 간단한 키워드나 메모일 수 있습니다. 이를 바탕으로:
-1. 실제 방문 경험처럼 구체적인 디테일을 추가하여 풍부하게 확장
-2. 자연스러운 시간 흐름과 감정 변화를 담아 작성
-3. 실제 환자가 작성한 것처럼 생생하고 진솔하게 표현
-4. 구체적인 상황, 대화, 느낌 등을 추가하여 신뢰도 높이기
+**🔥 핵심 스타일 가이드**:
+- 네이버 카페나 맘카페에 올리는 실제 후기처럼 작성
+- 너무 정제되거나 문법이 완벽하면 안됨! 급하게 쓴 느낌으로
+- ❌ **절대 소제목 사용 금지!** ("왜 이런 증상이 생길까요?", "어떻게 관리하면 좋을까요?" 같은 제목 형식 절대 안됨)
+- ❌ **문단 구분이나 섹션 나누지 말고 쭉 이어서 작성**
+- 이모티콘 필수 사용: ㅋㅋ, ㅎㅎ, ㅠㅠ, ^^, ㅜㅜ, !!, ... 등
+- 구어체 적극 사용: "진짜", "완전", "대박", "헐", "와", "짱", "넘", "엄청" 등
+- 자연스러운 오타 1-2개 포함 (예: "됬어요", "넘좋아요", "되게" → "되게" 등)
+- 띄어쓰기 일부러 틀리거나 붙여쓰기
+- 말줄임표(...) 자주 사용
+- 느낌표 과다 사용(!!!)
+- 문장이 완벽하게 끝나지 않고 흐려지는 표현도 OK
 
-위 가이드를 따라 자연스러운 카페 바이럴 후기를 작성해주세요.
+**작성 방법**:
+1. 실제 방문 경험처럼 구체적인 디테일 추가 (시간, 위치, 대화 내용 등)
+2. 감정 변화를 솔직하게 표현 (처음엔 걱정했는데... 근데 가보니까...!)
+3. 친구한테 얘기하듯이 편하고 자연스럽게
+4. 완벽한 문장 구조보다는 생각나는대로 쓴 느낌으로
+
+위 가이드를 반드시 따라서 진짜 사람이 급하게 쓴 것 같은 자연스러운 카페 후기를 작성해주세요.
     `.trim()
   }
 
@@ -332,12 +358,12 @@ ${reviewInput.emphasis_points ? `[특히 강조하고 싶은 점]\n${reviewInput
                   <Input
                     type="number"
                     min={300}
-                    max={1500}
+                    max={2500}
                     step={50}
                     value={reviewInput.target_length}
                     onChange={(e) => {
                       const value = parseInt(e.target.value) || 300
-                      const clampedValue = Math.max(300, Math.min(1500, value))
+                      const clampedValue = Math.max(300, Math.min(2500, value))
                       setReviewInput({ ...reviewInput, target_length: clampedValue })
                     }}
                     className="w-24 h-8 text-sm"
@@ -349,14 +375,14 @@ ${reviewInput.emphasis_points ? `[특히 강조하고 싶은 점]\n${reviewInput
                 value={[reviewInput.target_length || 800]}
                 onValueChange={(value) => setReviewInput({ ...reviewInput, target_length: value[0] })}
                 min={300}
-                max={1500}
+                max={2500}
                 step={50}
                 className="w-full"
               />
               <div className="flex justify-between text-xs text-muted-foreground">
                 <span>300자 (짧게)</span>
-                <span>900자 (보통)</span>
-                <span>1500자 (길게)</span>
+                <span>1400자 (보통)</span>
+                <span>2500자 (길게)</span>
               </div>
             </div>
 
@@ -375,6 +401,93 @@ ${reviewInput.emphasis_points ? `[특히 강조하고 싶은 점]\n${reviewInput
                 ))}
               </div>
             </div>
+
+            {/* AI 제공자 선택 */}
+            <div className="space-y-2 pt-4 border-t">
+              <Label>AI 제공자 선택</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  variant={aiProvider === 'claude' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    setAiProvider('claude')
+                    setAiModel('claude-sonnet-4-5-20250929')
+                  }}
+                >
+                  Claude AI
+                </Button>
+                <Button
+                  variant={aiProvider === 'gpt' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    setAiProvider('gpt')
+                    setAiModel('gpt-4o')
+                  }}
+                >
+                  GPT
+                </Button>
+              </div>
+            </div>
+
+            {/* Claude 모델 선택 */}
+            {aiProvider === 'claude' && (
+              <div className="space-y-2">
+                <Label className="text-xs">Claude 모델</Label>
+                <div className="grid grid-cols-1 gap-2">
+                  <Button
+                    variant={aiModel === 'claude-sonnet-4-5-20250929' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setAiModel('claude-sonnet-4-5-20250929')}
+                  >
+                    Claude Sonnet 4.5
+                  </Button>
+                  <Button
+                    variant={aiModel === 'claude-3-5-sonnet-20241022' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setAiModel('claude-3-5-sonnet-20241022')}
+                  >
+                    Claude 3.5 Sonnet
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* GPT 모델 선택 */}
+            {aiProvider === 'gpt' && (
+              <div className="space-y-2">
+                <Label className="text-xs">GPT 모델</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    variant={aiModel === 'gpt-4o' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setAiModel('gpt-4o')}
+                  >
+                    GPT-4o
+                  </Button>
+                  <Button
+                    variant={aiModel === 'gpt-4-turbo' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setAiModel('gpt-4-turbo')}
+                  >
+                    GPT-4 Turbo
+                  </Button>
+                  <Button
+                    variant={aiModel === 'gpt-4o-mini' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setAiModel('gpt-4o-mini')}
+                  >
+                    GPT-4o Mini
+                  </Button>
+                  <Button
+                    variant={aiModel === 'gpt-3.5-turbo' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setAiModel('gpt-3.5-turbo')}
+                  >
+                    GPT-3.5 Turbo
+                  </Button>
+                </div>
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label>생성 개수 (다양한 버전 생성)</Label>
