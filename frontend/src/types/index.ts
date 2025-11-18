@@ -101,6 +101,8 @@ export interface PostCreateRequest {
   framework: string
   target_length: number
   writing_perspective?: string
+  ai_provider?: string
+  ai_model?: string
   writing_style?: WritingStyle
   requirements?: RequestRequirements
 }
@@ -185,4 +187,6 @@ export interface CafeReviewCreateRequest {
   review_input: CafeReviewInput
   review_style: CafeReviewStyle
   writing_perspective?: string   // 1인칭, 3인칭 등
+  ai_provider?: string
+  ai_model?: string
 }
