@@ -169,115 +169,6 @@ export function SavedPostsManager() {
     }
   }
 
-  // 자동 이미지 다운로드 (키워드로 자동 검색)
-  const exportWithAutoImages = async () => {
-    if (!selectedPost) {
-      toast.error('글을 선택해주세요')
-      return
-    }
-
-    const loadingToast = toast.loading('AI가 관련 이미지를 자동으로 찾고 있습니다...')
-
-    try {
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/export/docx-with-auto-images`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            content: selectedPost.generated_content || '',
-            title: selectedPost.suggested_titles?.[0] || '',
-            keywords: selectedPost.seo_keywords || [],
-            emphasis_phrases: [],
-          }),
-        }
-      )
-
-      if (!response.ok) {
-        throw new Error('워드 문서 생성 실패')
-      }
-
-      // 파일 다운로드
-      const blob = await response.blob()
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${selectedPost.suggested_titles?.[0] || 'blog'}_auto_images.docx`
-      document.body.appendChild(a)
-      a.click()
-      window.URL.revokeObjectURL(url)
-      document.body.removeChild(a)
-
-      toast.success('네이버 블로그용 워드 문서 다운로드 완료!', {
-        id: loadingToast,
-        description: '이미지 4개가 자동으로 포함되었습니다. 워드를 열어서 전체 선택 후 블로그에 붙여넣기 하세요',
-      })
-    } catch (error) {
-      console.error('Export error:', error)
-      toast.error('워드 문서 생성 실패', {
-        id: loadingToast,
-      })
-    }
-  }
-
-  // 이미지와 함께 워드 다운로드
-  const exportWithImages = async () => {
-    if (!selectedPost) {
-      toast.error('글을 선택해주세요')
-      return
-    }
-
-    if (uploadedImages.length === 0) {
-      toast.error('이미지를 먼저 업로드해주세요')
-      return
-    }
-
-    try {
-      const formData = new FormData()
-      formData.append('content', selectedPost.generated_content || '')
-      formData.append('title', selectedPost.suggested_titles?.[0] || '')
-      formData.append('keywords', JSON.stringify(selectedPost.seo_keywords || []))
-      formData.append('emphasis_phrases', JSON.stringify([]))
-      formData.append('distribution_strategy', distributionStrategy)
-
-      // 이미지 추가
-      uploadedImages.forEach((file) => {
-        formData.append('images', file)
-      })
-
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/export/with-images`,
-        {
-          method: 'POST',
-          body: formData,
-        }
-      )
-
-      if (!response.ok) {
-        throw new Error('워드 문서 생성 실패')
-      }
-
-      // 파일 다운로드
-      const blob = await response.blob()
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${selectedPost.suggested_titles?.[0] || 'blog'}_with_images.docx`
-      document.body.appendChild(a)
-      a.click()
-      window.URL.revokeObjectURL(url)
-      document.body.removeChild(a)
-
-      toast.success('네이버 블로그용 워드 문서 다운로드 완료!', {
-        description: '워드를 열어서 전체 선택 후 블로그에 붙여넣기 하세요',
-      })
-    } catch (error) {
-      console.error('Export error:', error)
-      toast.error('워드 문서 생성 실패')
-    }
-  }
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -374,11 +265,7 @@ export function SavedPostsManager() {
                   </TabsTrigger>
                   <TabsTrigger value="images" className="flex-1">
                     <Image className="w-4 h-4 mr-2" />
-                    이미지 ({uploadedImages.length})
-                  </TabsTrigger>
-                  <TabsTrigger value="export" className="flex-1">
-                    <Download className="w-4 h-4 mr-2" />
-                    다운로드
+                    이미지 업로드 ({uploadedImages.length})
                   </TabsTrigger>
                 </TabsList>
 
@@ -469,69 +356,20 @@ export function SavedPostsManager() {
                       <h4 className="font-semibold text-green-900 mb-2">
                         ✅ 이미지 {uploadedImages.length}개가 업로드되었습니다!
                       </h4>
-                      <p className="text-sm text-green-800">
+                      <p className="text-sm text-green-800 mb-2">
                         워드 문서가 자동으로 생성 중입니다. 잠시만 기다려주세요...
                       </p>
+                      <div className="mt-3 pt-3 border-t border-green-300">
+                        <p className="text-xs text-green-900 font-semibold mb-1">📋 네이버 블로그 복붙 방법:</p>
+                        <ol className="text-xs text-green-800 space-y-1 list-decimal list-inside">
+                          <li>다운로드된 .docx 파일 열기</li>
+                          <li>전체 선택 (Ctrl+A)</li>
+                          <li>복사 (Ctrl+C)</li>
+                          <li>네이버 블로그에 붙여넣기 (Ctrl+V)</li>
+                        </ol>
+                      </div>
                     </div>
                   )}
-                </TabsContent>
-
-                {/* 다운로드 탭 */}
-                <TabsContent value="export" className="space-y-4">
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                    <h3 className="font-semibold text-blue-900 mb-2">
-                      📋 네이버 블로그 복붙 가이드
-                    </h3>
-                    <ol className="text-sm text-blue-800 space-y-1 list-decimal list-inside">
-                      <li>아래 버튼으로 워드 문서 다운로드</li>
-                      <li>다운로드된 .docx 파일 열기</li>
-                      <li>전체 선택 (Ctrl+A 또는 Cmd+A)</li>
-                      <li>복사 (Ctrl+C 또는 Cmd+C)</li>
-                      <li>네이버 블로그 에디터에서 붙여넣기 (Ctrl+V)</li>
-                    </ol>
-                    <p className="text-xs text-blue-700 mt-3">
-                      ✨ 형광펜, 볼드, 인용구, 이미지 모두 완벽하게 유지됩니다!
-                    </p>
-                  </div>
-
-                  {/* 자동 이미지 다운로드 (권장) */}
-                  <div className="space-y-2">
-                    <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                      <div className="flex items-center gap-2 mb-1">
-                        <Sparkles className="w-4 h-4 text-green-600" />
-                        <span className="font-semibold text-green-900">추천</span>
-                      </div>
-                      <p className="text-sm text-green-800">
-                        이미지 4개를 키워드로 자동 검색해서 포함합니다!
-                      </p>
-                    </div>
-                    <Button
-                      onClick={exportWithAutoImages}
-                      className="w-full bg-green-600 hover:bg-green-700"
-                      size="lg"
-                    >
-                      <Sparkles className="w-5 h-5 mr-2" />
-                      네이버 블로그용 워드 다운로드 (이미지 자동)
-                    </Button>
-                  </div>
-
-                  {/* 내가 선택한 이미지 안내 */}
-                  <div className="pt-4 border-t">
-                    <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Upload className="w-5 h-5 text-orange-600" />
-                        <span className="font-semibold text-orange-900">내가 선택한 이미지 사용하기</span>
-                      </div>
-                      <p className="text-sm text-orange-800 mb-2">
-                        직접 고른 이미지를 사용하려면:
-                      </p>
-                      <ol className="text-sm text-orange-800 space-y-1 list-decimal list-inside">
-                        <li><span className="font-semibold">이미지 탭</span>을 클릭하세요</li>
-                        <li>원하는 사진들을 업로드하세요</li>
-                        <li>업로드가 완료되면 <span className="font-semibold">자동으로 워드 파일이 다운로드</span>됩니다!</li>
-                      </ol>
-                    </div>
-                  </div>
                 </TabsContent>
               </Tabs>
             )}
