@@ -14,7 +14,8 @@ import {
   PenTool,
   Shield,
   BarChart3,
-  Tags
+  Tags,
+  Save
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -40,14 +41,9 @@ export function DashboardNav() {
       icon: PenTool,
     },
     {
-      href: '/dashboard/posts',
-      label: '포스팅 관리',
-      icon: FileText,
-    },
-    {
-      href: '/dashboard/tags',
-      label: '태그',
-      icon: Tags,
+      href: '/dashboard/saved',
+      label: '저장된 글',
+      icon: Save,
     },
     {
       href: '/dashboard/analytics',
