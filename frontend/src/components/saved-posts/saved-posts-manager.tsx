@@ -380,12 +380,14 @@ export function SavedPostsManager() {
                       <Button
                         variant={distributionStrategy === 'paragraphs' ? 'default' : 'outline'}
                         onClick={() => setDistributionStrategy('paragraphs')}
+                        size="sm"
                       >
                         문단 사이 (추천)
                       </Button>
                       <Button
                         variant={distributionStrategy === 'even' ? 'default' : 'outline'}
                         onClick={() => setDistributionStrategy('even')}
+                        size="sm"
                       >
                         균등 분포
                       </Button>
@@ -396,6 +398,26 @@ export function SavedPostsManager() {
                         : '전체 글에 이미지를 균등하게 분포시킵니다'}
                     </p>
                   </div>
+
+                  {/* 이미지 탭에도 다운로드 버튼 추가 */}
+                  {uploadedImages.length > 0 && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                      <h4 className="font-semibold text-blue-900 mb-2">
+                        ✅ 이미지 {uploadedImages.length}개 준비 완료!
+                      </h4>
+                      <p className="text-sm text-blue-800 mb-3">
+                        아래 버튼을 클릭하여 이미지가 포함된 워드 파일을 다운로드하세요
+                      </p>
+                      <Button
+                        onClick={exportWithImages}
+                        className="w-full bg-blue-600 hover:bg-blue-700"
+                        size="lg"
+                      >
+                        <Download className="w-5 h-5 mr-2" />
+                        업로드한 이미지와 함께 워드 다운로드
+                      </Button>
+                    </div>
+                  )}
                 </TabsContent>
 
                 {/* 다운로드 탭 */}
@@ -439,23 +461,28 @@ export function SavedPostsManager() {
 
                   {/* 수동 이미지 업로드 */}
                   <div className="pt-4 border-t">
-                    <p className="text-sm text-gray-600 mb-2">
-                      또는 직접 이미지를 선택하려면:
-                    </p>
+                    <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 mb-3">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Upload className="w-4 h-4 text-orange-600" />
+                        <span className="font-semibold text-orange-900">내가 선택한 이미지 사용</span>
+                      </div>
+                      <p className="text-sm text-orange-800">
+                        이미지 탭에서 업로드한 사진들을 원고에 배치합니다
+                      </p>
+                    </div>
                     <Button
                       onClick={exportWithImages}
                       disabled={uploadedImages.length === 0}
-                      variant="outline"
-                      className="w-full"
+                      className={`w-full ${uploadedImages.length > 0 ? 'bg-orange-600 hover:bg-orange-700' : ''}`}
                       size="lg"
                     >
                       <Download className="w-5 h-5 mr-2" />
-                      수동 업로드 이미지로 다운로드
+                      업로드한 이미지 {uploadedImages.length}개와 함께 다운로드
                     </Button>
 
                     {uploadedImages.length === 0 && (
                       <p className="text-xs text-center text-gray-500 mt-2">
-                        이미지 탭에서 먼저 업로드해주세요
+                        💡 이미지 탭에서 먼저 사진을 업로드해주세요
                       </p>
                     )}
                   </div>
