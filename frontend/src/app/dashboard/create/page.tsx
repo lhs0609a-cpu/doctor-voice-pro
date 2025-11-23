@@ -33,6 +33,7 @@ import { KeywordTags } from '@/components/post/keyword-tags'
 import { TitleSelector } from '@/components/post/title-selector'
 import { SubtitlePreview } from '@/components/post/subtitle-preview'
 import { ForbiddenWordsAlert } from '@/components/post/forbidden-words-alert'
+import { DIACRANKScore } from '@/components/post/dia-crank-score'
 import { WritingStyleConfig } from '@/components/post/writing-style-config'
 import { RequestRequirementsInput } from '@/components/post/request-requirements-input'
 import { Slider } from '@/components/ui/slider'
@@ -57,6 +58,14 @@ export default function CreatePostPage() {
     count: 1, // 생성할 원고 개수
     ai_provider: 'claude', // AI 제공자: 'claude' or 'gpt'
     ai_model: 'claude-sonnet-4-5-20250929', // AI 모델
+  })
+  const [seoOptimization, setSeoOptimization] = useState({
+    enabled: false,
+    experience_focus: true,      // 실제 경험 중심 작성 (DIA: 경험 정보)
+    expertise: true,              // 전문성과 깊이 강화 (C-Rank: Content 품질)
+    originality: true,            // 독창성 강조 (DIA: 독창성)
+    timeliness: true,             // 적시성 반영 (DIA: 적시성)
+    topic_concentration: true,    // 주제 집중도 향상 (C-Rank: Context)
   })
   const [writingStyle, setWritingStyle] = useState<WritingStyle>({
     formality: 5,
@@ -200,6 +209,7 @@ export default function CreatePostPage() {
             ai_model: config.ai_model,
             writing_style: writingStyle,
             requirements: requirements,
+            seo_optimization: seoOptimization.enabled ? seoOptimization : undefined,
           })
           .then(post => {
             // 성공 시
@@ -287,8 +297,30 @@ export default function CreatePostPage() {
   }
 
   const handleSave = () => {
-    if (generatedPost) {
-      router.push(`/dashboard/posts/${generatedPost.id}`)
+    if (!generatedPost) return
+
+    // 로컬 스토리지에 저장
+    try {
+      const savedPost = {
+        ...generatedPost,
+        id: `post-${Date.now()}`,
+        savedAt: new Date().toISOString(),
+      }
+
+      const existing = localStorage.getItem('saved-posts')
+      const posts = existing ? JSON.parse(existing) : []
+      const updated = [savedPost, ...posts]
+      localStorage.setItem('saved-posts', JSON.stringify(updated))
+
+      toast.success('글이 저장되었습니다', {
+        description: '저장된 글 탭에서 확인하세요',
+      })
+
+      // 저장된 글 페이지로 이동
+      router.push('/dashboard/saved')
+    } catch (error) {
+      console.error('저장 실패:', error)
+      toast.error('글 저장에 실패했습니다')
     }
   }
 
@@ -631,11 +663,18 @@ export default function CreatePostPage() {
               <Label>GPT 모델</Label>
               <div className="grid grid-cols-2 gap-2">
                 <Button
+                  variant={config.ai_model === 'gpt-4-turbo-2024-04-09' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setConfig({ ...config, ai_model: 'gpt-4-turbo-2024-04-09' })}
+                >
+                  GPT-4.5 Turbo (최신)
+                </Button>
+                <Button
                   variant={config.ai_model === 'gpt-4o' ? 'default' : 'outline'}
                   size="sm"
                   onClick={() => setConfig({ ...config, ai_model: 'gpt-4o' })}
                 >
-                  GPT-4o (최신)
+                  GPT-4o
                 </Button>
                 <Button
                   variant={config.ai_model === 'gpt-4-turbo' ? 'default' : 'outline'}
@@ -863,6 +902,100 @@ export default function CreatePostPage() {
                 <p className="text-xs text-muted-foreground">
                   배치 처리로 안정적 생성 (3개씩 묶음 처리, Rate Limit 방지)
                 </p>
+              </div>
+
+              {/* 검색 최적화 (DIA/CRANK) */}
+              <div className="space-y-3 pt-2 border-t">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="seoOptimization"
+                      checked={seoOptimization.enabled}
+                      onChange={(e) => setSeoOptimization({ ...seoOptimization, enabled: e.target.checked })}
+                      className="rounded"
+                    />
+                    <Label htmlFor="seoOptimization" className="cursor-pointer font-semibold">
+                      🔍 검색 최적화 (DIA/CRANK)
+                    </Label>
+                  </div>
+                  <span className="text-xs text-muted-foreground">네이버 상위노출</span>
+                </div>
+
+                {seoOptimization.enabled && (
+                  <div className="pl-6 space-y-2">
+                    <p className="text-xs text-muted-foreground mb-3">
+                      네이버 검색 알고리즘(DIA/CRANK)에 최적화된 콘텐츠로 작성합니다
+                    </p>
+
+                    <div className="grid grid-cols-1 gap-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="experience_focus"
+                          checked={seoOptimization.experience_focus}
+                          onChange={(e) => setSeoOptimization({ ...seoOptimization, experience_focus: e.target.checked })}
+                          className="rounded"
+                        />
+                        <Label htmlFor="experience_focus" className="cursor-pointer text-sm">
+                          실제 경험 중심 작성 <span className="text-xs text-muted-foreground">(DIA: 경험 정보)</span>
+                        </Label>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="expertise"
+                          checked={seoOptimization.expertise}
+                          onChange={(e) => setSeoOptimization({ ...seoOptimization, expertise: e.target.checked })}
+                          className="rounded"
+                        />
+                        <Label htmlFor="expertise" className="cursor-pointer text-sm">
+                          전문성과 깊이 강화 <span className="text-xs text-muted-foreground">(C-Rank: Content)</span>
+                        </Label>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="originality"
+                          checked={seoOptimization.originality}
+                          onChange={(e) => setSeoOptimization({ ...seoOptimization, originality: e.target.checked })}
+                          className="rounded"
+                        />
+                        <Label htmlFor="originality" className="cursor-pointer text-sm">
+                          독창성 강조 <span className="text-xs text-muted-foreground">(DIA: 독창성)</span>
+                        </Label>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="timeliness"
+                          checked={seoOptimization.timeliness}
+                          onChange={(e) => setSeoOptimization({ ...seoOptimization, timeliness: e.target.checked })}
+                          className="rounded"
+                        />
+                        <Label htmlFor="timeliness" className="cursor-pointer text-sm">
+                          적시성 반영 <span className="text-xs text-muted-foreground">(DIA: 적시성)</span>
+                        </Label>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="topic_concentration"
+                          checked={seoOptimization.topic_concentration}
+                          onChange={(e) => setSeoOptimization({ ...seoOptimization, topic_concentration: e.target.checked })}
+                          className="rounded"
+                        />
+                        <Label htmlFor="topic_concentration" className="cursor-pointer text-sm">
+                          주제 집중도 향상 <span className="text-xs text-muted-foreground">(C-Rank: Context)</span>
+                        </Label>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <Button
@@ -1097,6 +1230,16 @@ export default function CreatePostPage() {
                             <span className="text-red-600">5️⃣</span> 금칙어 검사
                           </h4>
                           <ForbiddenWordsAlert forbiddenCheck={generatedPost.forbidden_words_check} />
+                        </div>
+                      )}
+
+                      {/* 6. DIA/CRANK 점수 */}
+                      {generatedPost.dia_crank_analysis && (
+                        <div>
+                          <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                            <span className="text-indigo-600">6️⃣</span> DIA/CRANK 점수
+                          </h4>
+                          <DIACRANKScore analysis={generatedPost.dia_crank_analysis} />
                         </div>
                       )}
                     </div>
