@@ -83,7 +83,7 @@ export function SavedPostsManager() {
   }
 
   // 이미지 폴더 선택
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
     const imageFiles = files.filter((file) =>
       /\.(jpg|jpeg|png|gif|webp)$/i.test(file.name)
@@ -102,7 +102,71 @@ export function SavedPostsManager() {
     const previews = imageFiles.map((file) => URL.createObjectURL(file))
     setImagePreview(previews)
 
-    toast.success(`${imageFiles.length}개의 이미지가 업로드되었습니다`)
+    toast.success(`${imageFiles.length}개의 이미지가 업로드되었습니다`, {
+      description: '자동으로 워드 문서를 생성하고 있습니다...'
+    })
+
+    // 자동으로 워드 다운로드 실행
+    if (selectedPost) {
+      // 짧은 딜레이 후 자동 다운로드 (UI 업데이트 대기)
+      setTimeout(() => {
+        exportWithImagesAuto(imageFiles)
+      }, 500)
+    }
+  }
+
+  // 자동 다운로드용 함수 (이미지 파일 직접 전달)
+  const exportWithImagesAuto = async (images: File[]) => {
+    if (!selectedPost) return
+
+    const loadingToast = toast.loading('이미지와 함께 워드 문서를 생성하고 있습니다...')
+
+    try {
+      const formData = new FormData()
+      formData.append('content', selectedPost.generated_content || '')
+      formData.append('title', selectedPost.suggested_titles?.[0] || '')
+      formData.append('keywords', JSON.stringify(selectedPost.seo_keywords || []))
+      formData.append('emphasis_phrases', JSON.stringify([]))
+      formData.append('distribution_strategy', distributionStrategy)
+
+      // 이미지 추가
+      images.forEach((file) => {
+        formData.append('images', file)
+      })
+
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/export/with-images`,
+        {
+          method: 'POST',
+          body: formData,
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error('워드 문서 생성 실패')
+      }
+
+      // 파일 다운로드
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${selectedPost.suggested_titles?.[0] || 'blog'}_with_images.docx`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+
+      toast.success('워드 문서 다운로드 완료!', {
+        id: loadingToast,
+        description: '이미지가 포함된 워드 파일이 저장되었습니다'
+      })
+    } catch (error) {
+      console.error('Export error:', error)
+      toast.error('워드 문서 생성 실패', {
+        id: loadingToast,
+      })
+    }
   }
 
   // 자동 이미지 다운로드 (키워드로 자동 검색)
@@ -399,23 +463,15 @@ export function SavedPostsManager() {
                     </p>
                   </div>
 
-                  {/* 이미지 탭에도 다운로드 버튼 추가 */}
+                  {/* 자동 다운로드 안내 */}
                   {uploadedImages.length > 0 && (
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                      <h4 className="font-semibold text-blue-900 mb-2">
-                        ✅ 이미지 {uploadedImages.length}개 준비 완료!
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                      <h4 className="font-semibold text-green-900 mb-2">
+                        ✅ 이미지 {uploadedImages.length}개가 업로드되었습니다!
                       </h4>
-                      <p className="text-sm text-blue-800 mb-3">
-                        아래 버튼을 클릭하여 이미지가 포함된 워드 파일을 다운로드하세요
+                      <p className="text-sm text-green-800">
+                        워드 문서가 자동으로 생성 중입니다. 잠시만 기다려주세요...
                       </p>
-                      <Button
-                        onClick={exportWithImages}
-                        className="w-full bg-blue-600 hover:bg-blue-700"
-                        size="lg"
-                      >
-                        <Download className="w-5 h-5 mr-2" />
-                        업로드한 이미지와 함께 워드 다운로드
-                      </Button>
                     </div>
                   )}
                 </TabsContent>
@@ -459,32 +515,22 @@ export function SavedPostsManager() {
                     </Button>
                   </div>
 
-                  {/* 수동 이미지 업로드 */}
+                  {/* 내가 선택한 이미지 안내 */}
                   <div className="pt-4 border-t">
-                    <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 mb-3">
-                      <div className="flex items-center gap-2 mb-1">
-                        <Upload className="w-4 h-4 text-orange-600" />
-                        <span className="font-semibold text-orange-900">내가 선택한 이미지 사용</span>
+                    <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Upload className="w-5 h-5 text-orange-600" />
+                        <span className="font-semibold text-orange-900">내가 선택한 이미지 사용하기</span>
                       </div>
-                      <p className="text-sm text-orange-800">
-                        이미지 탭에서 업로드한 사진들을 원고에 배치합니다
+                      <p className="text-sm text-orange-800 mb-2">
+                        직접 고른 이미지를 사용하려면:
                       </p>
+                      <ol className="text-sm text-orange-800 space-y-1 list-decimal list-inside">
+                        <li><span className="font-semibold">이미지 탭</span>을 클릭하세요</li>
+                        <li>원하는 사진들을 업로드하세요</li>
+                        <li>업로드가 완료되면 <span className="font-semibold">자동으로 워드 파일이 다운로드</span>됩니다!</li>
+                      </ol>
                     </div>
-                    <Button
-                      onClick={exportWithImages}
-                      disabled={uploadedImages.length === 0}
-                      className={`w-full ${uploadedImages.length > 0 ? 'bg-orange-600 hover:bg-orange-700' : ''}`}
-                      size="lg"
-                    >
-                      <Download className="w-5 h-5 mr-2" />
-                      업로드한 이미지 {uploadedImages.length}개와 함께 다운로드
-                    </Button>
-
-                    {uploadedImages.length === 0 && (
-                      <p className="text-xs text-center text-gray-500 mt-2">
-                        💡 이미지 탭에서 먼저 사진을 업로드해주세요
-                      </p>
-                    )}
                   </div>
                 </TabsContent>
               </Tabs>
