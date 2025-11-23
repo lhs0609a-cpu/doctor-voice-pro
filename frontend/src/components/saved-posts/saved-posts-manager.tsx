@@ -105,6 +105,59 @@ export function SavedPostsManager() {
     toast.success(`${imageFiles.length}개의 이미지가 업로드되었습니다`)
   }
 
+  // 자동 이미지 다운로드 (키워드로 자동 검색)
+  const exportWithAutoImages = async () => {
+    if (!selectedPost) {
+      toast.error('글을 선택해주세요')
+      return
+    }
+
+    const loadingToast = toast.loading('AI가 관련 이미지를 자동으로 찾고 있습니다...')
+
+    try {
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/export/docx-with-auto-images`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            content: selectedPost.generated_content || '',
+            title: selectedPost.suggested_titles?.[0] || '',
+            keywords: selectedPost.seo_keywords || [],
+            emphasis_phrases: [],
+          }),
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error('워드 문서 생성 실패')
+      }
+
+      // 파일 다운로드
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${selectedPost.suggested_titles?.[0] || 'blog'}_auto_images.docx`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+
+      toast.success('네이버 블로그용 워드 문서 다운로드 완료!', {
+        id: loadingToast,
+        description: '이미지 4개가 자동으로 포함되었습니다. 워드를 열어서 전체 선택 후 블로그에 붙여넣기 하세요',
+      })
+    } catch (error) {
+      console.error('Export error:', error)
+      toast.error('워드 문서 생성 실패', {
+        id: loadingToast,
+      })
+    }
+  }
+
   // 이미지와 함께 워드 다운로드
   const exportWithImages = async () => {
     if (!selectedPost) {
@@ -363,21 +416,49 @@ export function SavedPostsManager() {
                     </p>
                   </div>
 
-                  <Button
-                    onClick={exportWithImages}
-                    disabled={uploadedImages.length === 0}
-                    className="w-full"
-                    size="lg"
-                  >
-                    <Download className="w-5 h-5 mr-2" />
-                    네이버 블로그용 워드 다운로드
-                  </Button>
+                  {/* 자동 이미지 다운로드 (권장) */}
+                  <div className="space-y-2">
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Sparkles className="w-4 h-4 text-green-600" />
+                        <span className="font-semibold text-green-900">추천</span>
+                      </div>
+                      <p className="text-sm text-green-800">
+                        이미지 4개를 키워드로 자동 검색해서 포함합니다!
+                      </p>
+                    </div>
+                    <Button
+                      onClick={exportWithAutoImages}
+                      className="w-full bg-green-600 hover:bg-green-700"
+                      size="lg"
+                    >
+                      <Sparkles className="w-5 h-5 mr-2" />
+                      네이버 블로그용 워드 다운로드 (이미지 자동)
+                    </Button>
+                  </div>
 
-                  {uploadedImages.length === 0 && (
-                    <p className="text-sm text-center text-gray-500">
-                      이미지를 먼저 업로드해주세요
+                  {/* 수동 이미지 업로드 */}
+                  <div className="pt-4 border-t">
+                    <p className="text-sm text-gray-600 mb-2">
+                      또는 직접 이미지를 선택하려면:
                     </p>
-                  )}
+                    <Button
+                      onClick={exportWithImages}
+                      disabled={uploadedImages.length === 0}
+                      variant="outline"
+                      className="w-full"
+                      size="lg"
+                    >
+                      <Download className="w-5 h-5 mr-2" />
+                      수동 업로드 이미지로 다운로드
+                    </Button>
+
+                    {uploadedImages.length === 0 && (
+                      <p className="text-xs text-center text-gray-500 mt-2">
+                        이미지 탭에서 먼저 업로드해주세요
+                      </p>
+                    )}
+                  </div>
                 </TabsContent>
               </Tabs>
             )}
