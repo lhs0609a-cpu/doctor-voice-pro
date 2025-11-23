@@ -288,18 +288,16 @@ export function SavedPostsManager() {
                 {/* 이미지 탭 */}
                 <TabsContent value="images" className="space-y-4">
                   <div>
-                    <Label>이미지 폴더 업로드</Label>
+                    <Label>이미지 업로드 (여러 파일 선택 가능)</Label>
                     <Input
                       type="file"
                       multiple
                       accept=".jpg,.jpeg,.png,.gif,.webp"
                       onChange={handleImageUpload}
                       className="mt-2"
-                      webkitdirectory=""
-                      directory=""
                     />
                     <p className="text-xs text-gray-500 mt-1">
-                      JPG, PNG, GIF, WEBP 형식만 지원됩니다
+                      JPG, PNG, GIF, WEBP 형식만 지원됩니다. Ctrl+클릭으로 여러 파일을 선택하세요.
                     </p>
                   </div>
 
