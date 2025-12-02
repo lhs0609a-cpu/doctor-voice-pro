@@ -18,6 +18,9 @@ declare global {
   }
 }
 
+// 모듈로 만들기 위한 export
+export {}
+
 // 크롬 확장 프로그램 ID (환경변수 또는 기본값)
 const EXTENSION_ID = process.env.NEXT_PUBLIC_CHROME_EXTENSION_ID || 'bpjddkciomjopkhalbjnblbkedeghpaj'
 
@@ -55,7 +58,7 @@ export const useChromeExtension = () => {
       // 확장 프로그램에 핑 메시지 전송
       return new Promise<boolean>((resolve) => {
         try {
-          window.chrome.runtime.sendMessage(
+          window.chrome!.runtime!.sendMessage(
             extensionId,
             { type: 'PING' },
             (response: any) => {
@@ -115,13 +118,13 @@ export const useChromeExtension = () => {
         try {
           const message: ChromeExtensionMessage = { type, data }
 
-          window.chrome.runtime.sendMessage(
+          window.chrome!.runtime!.sendMessage(
             extensionId,
             message,
             (response: ChromeExtensionResponse) => {
               // 에러 체크
-              if (window.chrome.runtime.lastError) {
-                const error = window.chrome.runtime.lastError.message || '메시지 전송 실패'
+              if (window.chrome!.runtime!.lastError) {
+                const error = window.chrome!.runtime!.lastError.message || '메시지 전송 실패'
                 console.error('Chrome runtime error:', error)
                 toast.error(error)
                 resolve({
