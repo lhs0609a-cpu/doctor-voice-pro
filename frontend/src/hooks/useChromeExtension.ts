@@ -6,6 +6,18 @@
 import { useState, useEffect, useCallback } from 'react'
 import { toast } from 'sonner'
 
+// Chrome API 타입 선언
+declare global {
+  interface Window {
+    chrome?: {
+      runtime?: {
+        sendMessage: (extensionId: string, message: any, callback?: (response: any) => void) => void
+        lastError?: { message: string }
+      }
+    }
+  }
+}
+
 // 크롬 확장 프로그램 ID (환경변수 또는 기본값)
 const EXTENSION_ID = process.env.NEXT_PUBLIC_CHROME_EXTENSION_ID || 'bpjddkciomjopkhalbjnblbkedeghpaj'
 
