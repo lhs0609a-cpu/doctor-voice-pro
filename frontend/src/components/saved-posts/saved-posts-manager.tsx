@@ -538,7 +538,7 @@ export function SavedPostsManager() {
                     {selectedPost.seo_keywords && selectedPost.seo_keywords.length > 0 && (
                       <div className="flex flex-wrap gap-2">
                         <span className="text-sm text-gray-600 font-medium">키워드:</span>
-                        {selectedPost.seo_keywords.map((keyword, i) => (
+                        {selectedPost.seo_keywords.map((keyword: string, i: number) => (
                           <span
                             key={i}
                             className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded"
