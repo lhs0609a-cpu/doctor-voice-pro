@@ -69,9 +69,43 @@ interface BlogEditorProps {
   onSave: (post: SavedPost) => void
 }
 
+// 텍스트 정규화 함수
+function normalizeText(text: string): string {
+  if (!text) return ''
+
+  // 1. 다양한 줄바꿈 문자를 통일 (\r\n, \r → \n)
+  text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+
+  // 2. 각 글자 사이의 줄바꿈 제거 (세로 텍스트 방지)
+  // 예: "안\n녕\n하\n세\n요" → "안녕하세요"
+  // 단, 문장 끝이나 빈 줄이 아닌 경우에만 적용
+  text = text.replace(/(.)\n(?![.\n!?])/g, '$1 ')
+
+  // 3. 연속된 공백을 하나로 통일
+  text = text.replace(/ {2,}/g, ' ')
+
+  // 4. 연속된 빈 줄을 최대 2개로 제한
+  text = text.replace(/\n{3,}/g, '\n\n')
+
+  // 5. 문장 끝 공백 정리
+  text = text.replace(/\s+([.!?])/g, '$1')
+
+  return text.trim()
+}
+
 // 문단을 블록으로 변환
 function contentToBlocks(content: string): EditorBlock[] {
-  const paragraphs = content.split('\n').filter(p => p.trim())
+  if (!content) return []
+
+  // 텍스트 정규화
+  const normalizedContent = normalizeText(content)
+
+  // 빈 줄로 문단 구분 (연속된 줄바꿈 2개 이상)
+  const paragraphs = normalizedContent
+    .split(/\n\n+/)
+    .filter(p => p.trim())
+    .map(p => p.trim())
+
   return paragraphs.map((text, index) => ({
     id: `block-${Date.now()}-${index}`,
     type: 'text' as BlockType,
