@@ -1,0 +1,85 @@
+
+╔════════════════════════════════════════════════════════════════╗
+║          Doctor Voice Pro - 설치 가이드                         ║
+╚════════════════════════════════════════════════════════════════╝
+
+다른 컴퓨터에 설치하는 방법 (각 컴퓨터에서 독립 실행)
+
+【 방법 1: 완전 자동 설치 (권장 ⭐) 】
+  ✅ Python과 Node.js가 없어도 자동으로 설치됩니다!
+
+  1. 이 폴더 전체를 원하는 위치에 복사
+  2. "완전자동설치.bat"를 마우스 우클릭
+  3. "관리자 권한으로 실행" 선택
+  4. 끝! 모든 것이 자동으로 설치되고 실행됩니다.
+
+【 방법 2: 수동 설치 】
+  ⚠️ 먼저 Python 3.8 이상과 Node.js 16.0 이상이 설치되어 있어야 합니다.
+
+  1. 이 폴더 전체를 원하는 위치에 복사
+  2. install.bat 더블클릭
+  3. 설치 완료 후 run.bat 더블클릭
+
+【 Python/Node.js만 자동 설치 】
+  1. "auto_install_prerequisites.bat"를 마우스 우클릭
+  2. "관리자 권한으로 실행" 선택
+  3. 컴퓨터 재시작
+  4. install.bat → run.bat 실행
+
+【 Mac/Linux 설치 】
+  1. 터미널 열기
+  2. 이 폴더로 이동: cd [폴더경로]
+  3. 권한 부여: chmod +x install.sh run.sh
+  4. 설치: ./install.sh
+  5. 실행: ./run.sh
+
+【 접속 주소 】
+  프론트엔드: http://localhost:3000
+  백엔드 API: http://localhost:8010/docs
+
+【 기본 계정 】
+  이메일: admin@doctorvoice.com
+  비밀번호: admin123!@#
+
+【 문제 해결 】
+
+  ⚠️ 포트가 사용 중이라는 오류 발생 시:
+  → port_cleanup.bat 더블클릭 (Windows)
+
+  ⚠️ 로그인이 안 되거나 DB 오류 발생 시:
+  → python recreate_db.py 실행
+
+  ⚠️ 기타 문제:
+  → python health_check.py 실행 (자동 진단)
+
+【 각 컴퓨터에서 독립 실행 】
+  - 각 컴퓨터는 자신만의 데이터베이스를 가집니다
+  - 데이터는 다른 컴퓨터와 공유되지 않습니다
+  - 각각 admin 계정으로 로그인 필요
+
+【 API 키 설정 (선택) 】
+  AI 기능을 사용하려면:
+  1. backend/.env 파일 열기
+  2. ANTHROPIC_API_KEY 입력
+  3. 서버 재시작
+
+【 포함된 유틸리티 】
+  - 완전자동설치.bat: Python/Node.js 포함 완전 자동 설치 ⭐
+  - auto_install_prerequisites.bat: Python/Node.js 자동 설치
+  - auto_install_nodejs.bat: Node.js만 자동 설치
+  - install.bat: 애플리케이션 설치
+  - run.bat: 서버 실행 (포트 자동 탐지, Node.js 자동 설치 포함) ✨
+  - port_cleanup.bat: 포트 충돌 해결
+  - find_available_port.py: 사용 가능한 포트 자동 찾기
+  - recreate_db.py: 데이터베이스 초기화
+  - health_check.py: 시스템 진단
+
+【 새로운 자동화 기능 ✨ 】
+  ✅ 포트 자동 탐지: 8010/3000 포트가 사용 중이면 자동으로 다른 포트 사용
+  ✅ Node.js 자동 설치: Node.js가 없으면 자동 설치 제안
+  ✅ 설정 자동 업데이트: 포트 변경 시 설정 파일 자동 업데이트
+
+【 지원 】
+  - README.md 파일 참고
+  - README_INSTALL.md 상세 가이드
+

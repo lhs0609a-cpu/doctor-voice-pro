@@ -1,0 +1,174 @@
+================================================================
+  Doctor Voice Pro - Fly.io 배포 가이드
+================================================================
+
+📌 개요
+-------
+Fly.io는 무료로 백엔드를 배포할 수 있는 플랫폼입니다.
+ngrok보다 안정적이고, 고정 URL을 제공합니다.
+
+
+🚀 빠른 시작
+-----------
+1. Fly_배포.bat 파일을 더블클릭
+2. 자동으로 배포되고 프론트엔드가 연결됩니다!
+
+
+✅ 필수 요구사항
+---------------
+1. Fly.io 계정 (https://fly.io/app/sign-up)
+2. flyctl 설치
+3. Python 3.8 이상
+4. 인터넷 연결
+
+
+📋 설치 단계
+-----------
+
+1. Fly.io 계정 생성
+   https://fly.io/app/sign-up
+
+2. flyctl 설치 (Windows)
+   - PowerShell을 관리자 권한으로 실행
+   - 다음 명령어 실행:
+     iwr https://fly.io/install.ps1 -useb | iex
+
+3. Fly.io 로그인
+   - 명령 프롬프트에서:
+     flyctl auth login
+
+
+🎯 배포 방법
+-----------
+
+방법 1: 자동 배포 (권장)
+  1. Fly_배포.bat 더블클릭
+  2. 완료!
+
+방법 2: 수동 배포
+  1. backend 폴더로 이동
+  2. deploy_to_fly.bat 실행
+  3. 배포 완료 후 백엔드 URL 복사
+  4. frontend/.env.local에 URL 설정:
+     NEXT_PUBLIC_API_URL=https://doctor-voice-pro-backend.fly.dev
+
+
+📊 배포 과정
+-----------
+1. flyctl 설치 확인
+2. Fly.io 로그인 확인
+3. 백엔드 앱 생성 (최초 1회)
+4. SQLite 데이터베이스 볼륨 생성
+5. 환경 변수 설정
+6. Docker 이미지 빌드 및 배포
+7. 프론트엔드 환경 변수 자동 업데이트
+
+
+🌐 배포 후 URL
+-------------
+백엔드:     https://doctor-voice-pro-backend.fly.dev
+API 문서:   https://doctor-voice-pro-backend.fly.dev/docs
+헬스 체크:  https://doctor-voice-pro-backend.fly.dev/health
+
+
+🔧 환경 변수 설정
+---------------
+
+ANTHROPIC_API_KEY 설정 (필수)
+  방법 1: api_key.txt 파일 생성
+    - backend/api_key.txt 파일에 API 키 저장
+    - 배포 시 자동으로 설정됨
+
+  방법 2: 수동 설정
+    flyctl secrets set ANTHROPIC_API_KEY=your-key -a doctor-voice-pro-backend
+
+
+💡 Fly.io 무료 플랜
+-----------------
+- 256MB RAM
+- 1GB 스토리지
+- 자동 슬립 (사용하지 않을 때)
+- 사용 시 자동 깨어남
+- 고정 URL 제공
+- HTTPS 자동 제공
+
+
+🔄 업데이트 배포
+--------------
+코드를 수정한 후:
+1. Fly_배포.bat 다시 실행
+2. 자동으로 새 버전 배포됨
+
+
+📝 유용한 명령어
+--------------
+# 로그 확인
+flyctl logs -a doctor-voice-pro-backend
+
+# 상태 확인
+flyctl status -a doctor-voice-pro-backend
+
+# SSH 접속
+flyctl ssh console -a doctor-voice-pro-backend
+
+# 앱 재시작
+flyctl apps restart doctor-voice-pro-backend
+
+# 환경 변수 확인
+flyctl secrets list -a doctor-voice-pro-backend
+
+# 환경 변수 설정
+flyctl secrets set KEY=value -a doctor-voice-pro-backend
+
+
+⚠️ 문제 해결
+-----------
+
+[문제] flyctl을 찾을 수 없습니다
+[해결]
+  1. PowerShell 관리자 권한으로 실행
+  2. iwr https://fly.io/install.ps1 -useb | iex
+  3. 터미널 재시작
+
+[문제] 로그인 실패
+[해결]
+  1. flyctl auth login
+  2. 브라우저에서 인증
+
+[문제] 배포 실패
+[해결]
+  1. flyctl logs -a doctor-voice-pro-backend (로그 확인)
+  2. Docker가 설치되어 있는지 확인
+  3. 인터넷 연결 확인
+
+[문제] API 키 오류
+[해결]
+  1. backend/api_key.txt 파일 확인
+  2. 또는 수동으로 설정:
+     flyctl secrets set ANTHROPIC_API_KEY=your-key -a doctor-voice-pro-backend
+
+
+🎨 프론트엔드 연결
+----------------
+배포 후 자동으로 프론트엔드가 연결됩니다:
+  frontend/.env.local
+  frontend/.env.production
+
+수동으로 확인하려면:
+  NEXT_PUBLIC_API_URL=https://doctor-voice-pro-backend.fly.dev
+
+
+🔗 다음 단계
+-----------
+1. 로컬에서 프론트엔드 테스트
+   최종실행파일5.bat 실행
+
+2. 프론트엔드도 배포 (선택사항)
+   - Vercel: https://vercel.com
+   - Netlify: https://netlify.com
+   - Cloudflare Pages: https://pages.cloudflare.com
+
+
+================================================================
+Fly.io 공식 문서: https://fly.io/docs/
+================================================================

@@ -140,9 +140,9 @@ export const authAPI = {
 // Posts API
 export const postsAPI = {
   create: async (data: PostCreateRequest): Promise<Post> => {
-    // AI 생성은 오래 걸릴 수 있으므로 타임아웃을 더 길게 설정
+    // AI 생성은 오래 걸릴 수 있으므로 타임아웃을 더 길게 설정 (6분)
     const response = await api.post<Post>('/api/v1/posts/', data, {
-      timeout: 300000, // 5분 타임아웃
+      timeout: 360000, // 6분 타임아웃 (AI 생성 + 네트워크 지연 고려)
     })
     return response.data
   },
@@ -199,6 +199,36 @@ export const profileAPI = {
   },
 }
 
+// API Key 타입 정의
+export interface APIKeyInfo {
+  id: string
+  provider: string
+  name: string | null
+  is_active: boolean
+  last_checked_at: string | null
+  last_status: string
+  last_error: string | null
+  created_at: string
+  updated_at: string
+  api_key_preview: string
+}
+
+export interface APIKeyStatus {
+  configured: boolean
+  is_active: boolean
+  last_status: string
+  last_checked_at: string | null
+  last_error: string | null
+  api_key_preview: string | null
+}
+
+export interface APIKeyTestResult {
+  provider: string
+  connected: boolean
+  message: string
+  model: string | null
+}
+
 // Admin API
 export const adminAPI = {
   getUsers: async (
@@ -232,6 +262,31 @@ export const adminAPI = {
 
   deleteUser: async (userId: string): Promise<void> => {
     await api.delete(`/api/v1/admin/users/${userId}`)
+  },
+
+  // API 키 관리
+  getAPIKeys: async (): Promise<APIKeyInfo[]> => {
+    const response = await api.get<APIKeyInfo[]>('/api/v1/admin/api-keys')
+    return response.data
+  },
+
+  saveAPIKey: async (data: { provider: string; api_key: string; name?: string }): Promise<APIKeyInfo> => {
+    const response = await api.post<APIKeyInfo>('/api/v1/admin/api-keys', data)
+    return response.data
+  },
+
+  deleteAPIKey: async (provider: string): Promise<void> => {
+    await api.delete(`/api/v1/admin/api-keys/${provider}`)
+  },
+
+  testAPIKey: async (provider: string): Promise<APIKeyTestResult> => {
+    const response = await api.post<APIKeyTestResult>(`/api/v1/admin/api-keys/${provider}/test`)
+    return response.data
+  },
+
+  getAPIKeysStatus: async (): Promise<Record<string, APIKeyStatus>> => {
+    const response = await api.get<Record<string, APIKeyStatus>>('/api/v1/admin/api-keys/status')
+    return response.data
   },
 }
 

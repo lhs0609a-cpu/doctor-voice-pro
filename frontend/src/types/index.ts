@@ -35,6 +35,62 @@ export interface TokenResponse {
 }
 
 // Post Types
+export interface DIAScore {
+  total: number
+  experience: {
+    score: number
+    analysis: string
+    suggestions: string[]
+  }
+  information: {
+    score: number
+    analysis: string
+    suggestions: string[]
+  }
+  originality: {
+    score: number
+    analysis: string
+    suggestions: string[]
+  }
+  timeliness: {
+    score: number
+    analysis: string
+    suggestions: string[]
+  }
+}
+
+export interface CRANKScore {
+  total: number
+  context: {
+    score: number
+    analysis: string
+    suggestions: string[]
+  }
+  content: {
+    score: number
+    analysis: string
+    suggestions: string[]
+  }
+  chain: {
+    score: number
+    analysis: string
+    suggestions: string[]
+  }
+  creator: {
+    score: number
+    analysis: string
+    suggestions: string[]
+  }
+}
+
+export interface DIACRANKAnalysis {
+  dia_score: DIAScore
+  crank_score: CRANKScore
+  overall_grade: string
+  estimated_ranking: string
+  summary: string
+}
+
 export interface Post {
   id: string
   user_id: string
@@ -54,6 +110,7 @@ export interface Post {
   suggested_subtitles: string[] | null
   content_analysis: ContentAnalysis | null
   forbidden_words_check: ForbiddenWordsCheck | null
+  dia_crank_analysis: DIACRANKAnalysis | null
 }
 
 export interface MedicalLawCheck {
@@ -95,6 +152,15 @@ export interface ForbiddenWordsCheck {
   }>
 }
 
+export interface SEOOptimization {
+  enabled: boolean
+  experience_focus: boolean
+  expertise: boolean
+  originality: boolean
+  timeliness: boolean
+  topic_concentration: boolean
+}
+
 export interface PostCreateRequest {
   original_content: string
   persuasion_level: number
@@ -105,6 +171,7 @@ export interface PostCreateRequest {
   ai_model?: string
   writing_style?: WritingStyle
   requirements?: RequestRequirements
+  seo_optimization?: SEOOptimization
 }
 
 export interface PostListResponse {

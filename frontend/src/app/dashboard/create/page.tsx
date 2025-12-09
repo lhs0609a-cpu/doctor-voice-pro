@@ -39,6 +39,7 @@ import { RequestRequirementsInput } from '@/components/post/request-requirements
 import { Slider } from '@/components/ui/slider'
 import { Input } from '@/components/ui/input'
 import { CafeReviewCreator } from '@/components/cafe-review/cafe-review-creator'
+import { OneClickPublish } from '@/components/naver-publish/one-click-publish'
 
 export default function CreatePostPage() {
   const router = useRouter()
@@ -48,16 +49,20 @@ export default function CreatePostPage() {
   const [generatedPosts, setGeneratedPosts] = useState<Post[]>([])
   const [claudeApiStatus, setClaudeApiStatus] = useState<any>(null)
   const [gptApiStatus, setGptApiStatus] = useState<any>(null)
+  const [geminiApiStatus, setGeminiApiStatus] = useState<any>(null)
   const [checkingApi, setCheckingApi] = useState(true)
   const [checkingGptApi, setCheckingGptApi] = useState(true)
+  const [checkingGeminiApi, setCheckingGeminiApi] = useState(true)
+  const [aiPricing, setAiPricing] = useState<any>(null)
+  const [aiUsageStats, setAiUsageStats] = useState<any>(null)
   const [config, setConfig] = useState({
     persuasion_level: 4,
     framework: '관심유도형',
     target_length: 1800,
     writing_perspective: '1인칭',
     count: 1, // 생성할 원고 개수
-    ai_provider: 'claude', // AI 제공자: 'claude' or 'gpt'
-    ai_model: 'claude-sonnet-4-5-20250929', // AI 모델
+    ai_provider: 'gpt', // AI 제공자: 'claude' or 'gpt'
+    ai_model: 'gpt-4o-mini', // AI 모델 (기본: GPT-4o Mini - 빠름/저렴)
   })
   const [seoOptimization, setSeoOptimization] = useState({
     enabled: false,
@@ -141,6 +146,46 @@ export default function CreatePostPage() {
     checkGptApiStatus()
   }, [])
 
+  // Check Gemini API status
+  useEffect(() => {
+    const checkGeminiApiStatus = async () => {
+      setCheckingGeminiApi(true)
+      try {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/system/gemini-api-status`)
+        const data = await response.json()
+        setGeminiApiStatus(data)
+      } catch (error) {
+        console.error('Failed to check Gemini API status:', error)
+        setGeminiApiStatus({ connected: false, error: '연결 확인 실패' })
+      } finally {
+        setCheckingGeminiApi(false)
+      }
+    }
+
+    checkGeminiApiStatus()
+  }, [])
+
+  // Fetch AI pricing and usage stats
+  useEffect(() => {
+    const fetchAiData = async () => {
+      try {
+        // 가격 정보 가져오기
+        const pricingResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/system/ai-pricing`)
+        const pricingData = await pricingResponse.json()
+        setAiPricing(pricingData)
+
+        // 사용량 통계 가져오기
+        const usageResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/system/ai-usage-stats`)
+        const usageData = await usageResponse.json()
+        setAiUsageStats(usageData)
+      } catch (error) {
+        console.error('Failed to fetch AI data:', error)
+      }
+    }
+
+    fetchAiData()
+  }, [])
+
   // Load saved draft on mount
   useEffect(() => {
     const saved = loadSaved()
@@ -171,7 +216,7 @@ export default function CreatePostPage() {
     setGenerationProgress({ total: count, completed: 0, failed: 0, errors: [] })
 
     const loadingToast = toast.loading(`AI가 블로그를 생성하고 있습니다... (0/${count})`, {
-      description: `병렬 처리 시작...`
+      description: `순차 처리로 안정적 생성 중...`
     })
 
     try {
@@ -182,24 +227,19 @@ export default function CreatePostPage() {
         processedContent = originalContent.replace(regex, topicConversion.to)
       }
 
-      // Rate Limit 방지를 위한 배치 처리
-      // 한 번에 3개씩 처리하여 API 제한 회피
-      const BATCH_SIZE = 3
+      // 안정적인 순차 처리 (서버 과부하 방지)
       const results: Array<{ success: boolean; post?: Post; error?: string; index: number }> = []
+      let retryCount = 0
+      const MAX_RETRIES = 2
 
-      for (let batchStart = 0; batchStart < count; batchStart += BATCH_SIZE) {
-        const batchEnd = Math.min(batchStart + BATCH_SIZE, count)
-        const batchSize = batchEnd - batchStart
-
-        toast.loading(`AI가 블로그를 생성하고 있습니다... (${batchStart}/${count})`, {
+      for (let i = 0; i < count; i++) {
+        toast.loading(`AI가 블로그를 생성하고 있습니다... (${i}/${count})`, {
           id: loadingToast,
-          description: `배치 ${Math.floor(batchStart / BATCH_SIZE) + 1} 처리 중... (${batchSize}개)`
+          description: `${i + 1}번째 원고 생성 중... (약 30초 소요)`
         })
 
-        // 현재 배치의 요청들을 병렬로 실행
-        const batchPromises = Array.from({ length: batchSize }, (_, i) => {
-          const globalIndex = batchStart + i
-          return postsAPI.create({
+        try {
+          const post = await postsAPI.create({
             original_content: processedContent,
             persuasion_level: config.persuasion_level,
             framework: config.framework,
@@ -211,46 +251,55 @@ export default function CreatePostPage() {
             requirements: requirements,
             seo_optimization: seoOptimization.enabled ? seoOptimization : undefined,
           })
-          .then(post => {
-            // 성공 시
-            setGenerationProgress(prev => {
-              const newCompleted = prev.completed + 1
-              toast.loading(`AI가 블로그를 생성하고 있습니다... (${newCompleted}/${count})`, {
-                id: loadingToast,
-                description: `✅ ${newCompleted}개 완료 | ⏳ ${count - newCompleted}개 진행중`
-              })
-              return { ...prev, completed: newCompleted }
-            })
-            return { success: true, post, index: globalIndex }
-          })
-          .catch(error => {
-            // 실패 시 - 개별 원고 실패해도 다른 원고는 계속 진행
-            const errorMsg = error.response?.data?.detail || error.message || '생성 실패'
-            setGenerationProgress(prev => {
-              const newFailed = prev.failed + 1
-              const newCompleted = prev.completed + 1
-              toast.loading(`AI가 블로그를 생성하고 있습니다... (${newCompleted}/${count})`, {
-                id: loadingToast,
-                description: `✅ ${prev.completed}개 완료 | ❌ ${newFailed}개 실패 | ⏳ ${count - newCompleted}개 진행중`
-              })
-              return {
-                ...prev,
-                completed: newCompleted,
-                failed: newFailed,
-                errors: [...prev.errors, `원고 ${globalIndex + 1}: ${errorMsg}`]
-              }
-            })
-            return { success: false, error: errorMsg, index: globalIndex }
-          })
-        })
 
-        // 현재 배치 완료 대기
-        const batchResults = await Promise.all(batchPromises)
-        results.push(...batchResults)
+          // 성공 시
+          setGenerationProgress(prev => {
+            const newCompleted = prev.completed + 1
+            toast.loading(`AI가 블로그를 생성하고 있습니다... (${newCompleted}/${count})`, {
+              id: loadingToast,
+              description: `✅ ${newCompleted}개 완료 | ⏳ ${count - newCompleted}개 남음`
+            })
+            return { ...prev, completed: newCompleted }
+          })
+          results.push({ success: true, post, index: i })
+          retryCount = 0 // 성공하면 재시도 카운트 리셋
 
-        // 다음 배치 전에 짧은 딜레이 (Rate Limit 방지)
-        if (batchEnd < count) {
-          await new Promise(resolve => setTimeout(resolve, 1000))
+          // 다음 요청 전 잠시 대기 (서버 안정화)
+          if (i < count - 1) {
+            await new Promise(resolve => setTimeout(resolve, 2000))
+          }
+        } catch (error: any) {
+          const errorMsg = error.response?.data?.detail || error.message || '생성 실패'
+          const isServerError = error.response?.status >= 500 || errorMsg.includes('timeout') || errorMsg.includes('network')
+
+          // 서버 오류인 경우 재시도
+          if (isServerError && retryCount < MAX_RETRIES) {
+            retryCount++
+            toast.loading(`서버 오류 발생, ${retryCount}번째 재시도 중...`, {
+              id: loadingToast,
+              description: `5초 후 다시 시도합니다`
+            })
+            await new Promise(resolve => setTimeout(resolve, 5000))
+            i-- // 같은 인덱스 재시도
+            continue
+          }
+
+          // 실패 기록
+          setGenerationProgress(prev => {
+            const newFailed = prev.failed + 1
+            return {
+              ...prev,
+              failed: newFailed,
+              errors: [...prev.errors, `원고 ${i + 1}: ${errorMsg}`]
+            }
+          })
+          results.push({ success: false, error: errorMsg, index: i })
+          retryCount = 0
+
+          // 실패해도 다음 원고 진행 (잠시 대기 후)
+          if (i < count - 1) {
+            await new Promise(resolve => setTimeout(resolve, 3000))
+          }
         }
       }
 
@@ -595,6 +644,87 @@ export default function CreatePostPage() {
         </Card>
       )}
 
+      {/* Gemini API Status */}
+      {checkingGeminiApi ? (
+        <Card className="bg-blue-50 border-blue-200">
+          <CardContent className="flex items-center gap-3 py-4">
+            <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
+            <div>
+              <p className="font-medium text-blue-900">Gemini API 연결 확인 중...</p>
+              <p className="text-sm text-blue-700">잠시만 기다려주세요</p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : geminiApiStatus?.connected ? (
+        <Card className="bg-green-50 border-green-200">
+          <CardContent className="flex items-center gap-3 py-4">
+            <CheckCircle2 className="h-5 w-5 text-green-600" />
+            <div className="flex-1">
+              <p className="font-medium text-green-900">Gemini API 연결됨</p>
+              <p className="text-sm text-green-700">
+                API 키: {geminiApiStatus.api_key_prefix} | 모델: {geminiApiStatus.model}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card className="bg-yellow-50 border-yellow-200">
+          <CardContent className="flex items-center gap-3 py-4">
+            <AlertCircle className="h-5 w-5 text-yellow-600" />
+            <div className="flex-1">
+              <p className="font-medium text-yellow-900">Gemini API 미연결</p>
+              <p className="text-sm text-yellow-700">
+                {geminiApiStatus?.error || 'GEMINI_API_KEY를 설정하면 사용 가능'}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* AI 사용량 및 비용 현황 */}
+      {aiUsageStats && (
+        <Card className="bg-gradient-to-r from-purple-50 to-blue-50 border-purple-200">
+          <CardContent className="py-4">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-6">
+                <div>
+                  <p className="text-xs text-gray-500">오늘 사용</p>
+                  <p className="text-lg font-bold text-purple-700">
+                    {aiUsageStats.today?.requests || 0}건 / ₩{(aiUsageStats.today?.cost_krw || 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="h-8 w-px bg-gray-300" />
+                <div>
+                  <p className="text-xs text-gray-500">이번달 누적</p>
+                  <p className="text-lg font-bold text-blue-700">
+                    {aiUsageStats.this_month?.requests || 0}건 / ₩{(aiUsageStats.this_month?.cost_krw || 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="h-8 w-px bg-gray-300" />
+                <div>
+                  <p className="text-xs text-gray-500">전체 누적</p>
+                  <p className="text-lg font-bold text-gray-700">
+                    {aiUsageStats.total?.requests || 0}건 / ₩{(aiUsageStats.total?.cost_krw || 0).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-gray-500">선택한 모델 예상 비용</p>
+                <p className="text-lg font-bold text-green-700">
+                  {(() => {
+                    const modelPricing = aiPricing?.pricing?.find((p: any) => p.model_id === config.ai_model)
+                    return modelPricing
+                      ? `₩${Math.round(modelPricing.estimated_cost_per_post_krw * config.count).toLocaleString()}`
+                      : '계산 중...'
+                  })()}
+                  <span className="text-xs font-normal text-gray-500"> / {config.count}건</span>
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* AI 제공자 선택 */}
       <Card>
         <CardHeader>
@@ -604,7 +734,7 @@ export default function CreatePostPage() {
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label>AI 제공자</Label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <Button
                 variant={config.ai_provider === 'claude' ? 'default' : 'outline'}
                 size="sm"
@@ -625,11 +755,25 @@ export default function CreatePostPage() {
                   setConfig({
                     ...config,
                     ai_provider: 'gpt',
-                    ai_model: 'gpt-4o'
+                    ai_model: 'gpt-4o-mini'
                   })
                 }}
               >
                 GPT
+              </Button>
+              <Button
+                variant={config.ai_provider === 'gemini' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  setConfig({
+                    ...config,
+                    ai_provider: 'gemini',
+                    ai_model: 'gemini-2.5-flash-preview-05-20'
+                  })
+                }}
+                disabled={!geminiApiStatus?.connected}
+              >
+                Gemini {!geminiApiStatus?.connected && '(미연결)'}
               </Button>
             </div>
           </div>
@@ -637,21 +781,25 @@ export default function CreatePostPage() {
           {/* Claude 모델 선택 */}
           {config.ai_provider === 'claude' && (
             <div className="space-y-2">
-              <Label>Claude 모델</Label>
+              <Label>Claude 모델 (1건당 예상 비용)</Label>
               <div className="grid grid-cols-1 gap-2">
                 <Button
                   variant={config.ai_model === 'claude-sonnet-4-5-20250929' ? 'default' : 'outline'}
                   size="sm"
+                  className="justify-between"
                   onClick={() => setConfig({ ...config, ai_model: 'claude-sonnet-4-5-20250929' })}
                 >
-                  Claude Sonnet 4.5 (최신, 고성능)
+                  <span>Claude Sonnet 4.5 (최신)</span>
+                  <span className="text-xs opacity-70">₩{aiPricing?.pricing?.find((p: any) => p.model_id === 'claude-sonnet-4-5-20250929')?.estimated_cost_per_post_krw?.toLocaleString() || '...'}</span>
                 </Button>
                 <Button
                   variant={config.ai_model === 'claude-3-5-sonnet-20241022' ? 'default' : 'outline'}
                   size="sm"
+                  className="justify-between"
                   onClick={() => setConfig({ ...config, ai_model: 'claude-3-5-sonnet-20241022' })}
                 >
-                  Claude 3.5 Sonnet (안정적)
+                  <span>Claude 3.5 Sonnet (안정적)</span>
+                  <span className="text-xs opacity-70">₩{aiPricing?.pricing?.find((p: any) => p.model_id === 'claude-3-5-sonnet-20241022')?.estimated_cost_per_post_krw?.toLocaleString() || '...'}</span>
                 </Button>
               </div>
             </div>
@@ -660,42 +808,52 @@ export default function CreatePostPage() {
           {/* GPT 모델 선택 */}
           {config.ai_provider === 'gpt' && (
             <div className="space-y-2">
-              <Label>GPT 모델</Label>
-              <div className="grid grid-cols-2 gap-2">
-                <Button
-                  variant={config.ai_model === 'gpt-4-turbo-2024-04-09' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setConfig({ ...config, ai_model: 'gpt-4-turbo-2024-04-09' })}
-                >
-                  GPT-4.5 Turbo (최신)
-                </Button>
-                <Button
-                  variant={config.ai_model === 'gpt-4o' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setConfig({ ...config, ai_model: 'gpt-4o' })}
-                >
-                  GPT-4o
-                </Button>
-                <Button
-                  variant={config.ai_model === 'gpt-4-turbo' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setConfig({ ...config, ai_model: 'gpt-4-turbo' })}
-                >
-                  GPT-4 Turbo
-                </Button>
+              <Label>GPT 모델 (1건당 예상 비용)</Label>
+              <div className="grid grid-cols-1 gap-2">
                 <Button
                   variant={config.ai_model === 'gpt-4o-mini' ? 'default' : 'outline'}
                   size="sm"
+                  className="justify-between"
                   onClick={() => setConfig({ ...config, ai_model: 'gpt-4o-mini' })}
                 >
-                  GPT-4o Mini (빠름)
+                  <span>GPT-4o Mini (빠름/저렴)</span>
+                  <span className="text-xs opacity-70">₩{aiPricing?.pricing?.find((p: any) => p.model_id === 'gpt-4o-mini')?.estimated_cost_per_post_krw?.toLocaleString() || '...'}</span>
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Gemini 모델 선택 */}
+          {config.ai_provider === 'gemini' && (
+            <div className="space-y-2">
+              <Label>Gemini 모델 (1건당 예상 비용)</Label>
+              <div className="grid grid-cols-1 gap-2">
+                <Button
+                  variant={config.ai_model === 'gemini-2.5-flash-preview-05-20' ? 'default' : 'outline'}
+                  size="sm"
+                  className="justify-between"
+                  onClick={() => setConfig({ ...config, ai_model: 'gemini-2.5-flash-preview-05-20' })}
+                >
+                  <span>Gemini 2.5 Flash (고성능, 빠름)</span>
+                  <span className="text-xs opacity-70">₩{aiPricing?.pricing?.find((p: any) => p.model_id === 'gemini-2.5-flash-preview-05-20')?.estimated_cost_per_post_krw?.toLocaleString() || '...'}</span>
                 </Button>
                 <Button
-                  variant={config.ai_model === 'gpt-3.5-turbo' ? 'default' : 'outline'}
+                  variant={config.ai_model === 'gemini-2.0-flash' ? 'default' : 'outline'}
                   size="sm"
-                  onClick={() => setConfig({ ...config, ai_model: 'gpt-3.5-turbo' })}
+                  className="justify-between"
+                  onClick={() => setConfig({ ...config, ai_model: 'gemini-2.0-flash' })}
                 >
-                  GPT-3.5 Turbo (저렴)
+                  <span>Gemini 2.0 Flash (빠름)</span>
+                  <span className="text-xs opacity-70">₩{aiPricing?.pricing?.find((p: any) => p.model_id === 'gemini-2.0-flash')?.estimated_cost_per_post_krw?.toLocaleString() || '...'}</span>
+                </Button>
+                <Button
+                  variant={config.ai_model === 'gemini-1.5-pro' ? 'default' : 'outline'}
+                  size="sm"
+                  className="justify-between"
+                  onClick={() => setConfig({ ...config, ai_model: 'gemini-1.5-pro' })}
+                >
+                  <span>Gemini 1.5 Pro (고성능)</span>
+                  <span className="text-xs opacity-70">₩{aiPricing?.pricing?.find((p: any) => p.model_id === 'gemini-1.5-pro')?.estimated_cost_per_post_krw?.toLocaleString() || '...'}</span>
                 </Button>
               </div>
             </div>
@@ -874,7 +1032,7 @@ export default function CreatePostPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>생성 개수 (병렬 처리로 빠르게!)</Label>
+                <Label>생성 개수</Label>
                 <div className="grid grid-cols-5 gap-2">
                   {[1, 2, 3, 4, 5].map((count) => (
                     <Button
@@ -900,7 +1058,7 @@ export default function CreatePostPage() {
                   ))}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  배치 처리로 안정적 생성 (3개씩 묶음 처리, Rate Limit 방지)
+                  순차 처리로 안정적 생성 (1개당 약 30초, 오류 시 자동 재시도)
                 </p>
               </div>
 
@@ -1318,9 +1476,10 @@ export default function CreatePostPage() {
                         텍스트 저장
                       </Button>
                     </div>
-                    <Button className="w-full" onClick={handleSave}>
+                    <Button className="w-full" variant="outline" onClick={handleSave}>
                       저장하고 상세보기
                     </Button>
+                    <OneClickPublish post={generatedPost} />
                   </div>
                 </CardContent>
               </Card>

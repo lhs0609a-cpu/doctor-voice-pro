@@ -39,9 +39,9 @@ export function CafeReviewCreator() {
   const [writingPerspective, setWritingPerspective] = useState('1인칭')
   const [generatedReview, setGeneratedReview] = useState<string>('')
   const [copied, setCopied] = useState(false)
-  // AI 제공자 및 모델 선택
-  const [aiProvider, setAiProvider] = useState('claude')
-  const [aiModel, setAiModel] = useState('claude-sonnet-4-5-20250929')
+  // AI 제공자 및 모델 선택 (GPT만 사용)
+  const [aiProvider] = useState('gpt')
+  const [aiModel, setAiModel] = useState('gpt-4o-mini')
 
   const handleGenerate = async () => {
     // 입력 검증 (최소 글자수 제한 제거, 간단한 키워드만 있어도 OK)
@@ -402,92 +402,19 @@ ${reviewInput.emphasis_points ? `[특히 강조하고 싶은 점]\n${reviewInput
               </div>
             </div>
 
-            {/* AI 제공자 선택 */}
+            {/* GPT 모델 선택 */}
             <div className="space-y-2 pt-4 border-t">
-              <Label>AI 제공자 선택</Label>
-              <div className="grid grid-cols-2 gap-2">
+              <Label>GPT 모델 선택</Label>
+              <div className="grid grid-cols-1 gap-2">
                 <Button
-                  variant={aiProvider === 'claude' ? 'default' : 'outline'}
+                  variant={aiModel === 'gpt-4o-mini' ? 'default' : 'outline'}
                   size="sm"
-                  onClick={() => {
-                    setAiProvider('claude')
-                    setAiModel('claude-sonnet-4-5-20250929')
-                  }}
+                  onClick={() => setAiModel('gpt-4o-mini')}
                 >
-                  Claude AI
-                </Button>
-                <Button
-                  variant={aiProvider === 'gpt' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => {
-                    setAiProvider('gpt')
-                    setAiModel('gpt-4o')
-                  }}
-                >
-                  GPT
+                  GPT-4o Mini (빠름)
                 </Button>
               </div>
             </div>
-
-            {/* Claude 모델 선택 */}
-            {aiProvider === 'claude' && (
-              <div className="space-y-2">
-                <Label className="text-xs">Claude 모델</Label>
-                <div className="grid grid-cols-1 gap-2">
-                  <Button
-                    variant={aiModel === 'claude-sonnet-4-5-20250929' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setAiModel('claude-sonnet-4-5-20250929')}
-                  >
-                    Claude Sonnet 4.5
-                  </Button>
-                  <Button
-                    variant={aiModel === 'claude-3-5-sonnet-20241022' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setAiModel('claude-3-5-sonnet-20241022')}
-                  >
-                    Claude 3.5 Sonnet
-                  </Button>
-                </div>
-              </div>
-            )}
-
-            {/* GPT 모델 선택 */}
-            {aiProvider === 'gpt' && (
-              <div className="space-y-2">
-                <Label className="text-xs">GPT 모델</Label>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    variant={aiModel === 'gpt-4o' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setAiModel('gpt-4o')}
-                  >
-                    GPT-4o
-                  </Button>
-                  <Button
-                    variant={aiModel === 'gpt-4-turbo' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setAiModel('gpt-4-turbo')}
-                  >
-                    GPT-4 Turbo
-                  </Button>
-                  <Button
-                    variant={aiModel === 'gpt-4o-mini' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setAiModel('gpt-4o-mini')}
-                  >
-                    GPT-4o Mini
-                  </Button>
-                  <Button
-                    variant={aiModel === 'gpt-3.5-turbo' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setAiModel('gpt-3.5-turbo')}
-                  >
-                    GPT-3.5 Turbo
-                  </Button>
-                </div>
-              </div>
-            )}
 
             <div className="space-y-2">
               <Label>생성 개수 (다양한 버전 생성)</Label>
