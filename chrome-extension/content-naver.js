@@ -1,5 +1,5 @@
-// 네이버 블로그 스마트에디터 v8.0 - 이미지 자동 업로드 지원
-console.log('[닥터보이스] v8.0 로드 - 이미지 자동 업로드 지원');
+// 네이버 블로그 스마트에디터 v9.0 - 전자동 발행 시스템
+console.log('[닥터보이스] v9.0 로드 - 전자동 발행 시스템');
 
 // 메시지 수신 (background.js에서)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -13,41 +13,146 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-// 글 입력 처리
+// 전자동 글 입력 및 발행 처리
 async function handleInsertPost(postData, options) {
-  console.log('[닥터보이스] 글 입력 시작');
+  console.log('[닥터보이스] 전자동 발행 시작');
   console.log('[닥터보이스] 제목:', postData.title);
   console.log('[닥터보이스] 이미지 수:', postData.images?.length || 0);
 
-  showNotification('📝 글 입력 시작...');
+  showProgressNotification('📝 전자동 발행 시작...', 0);
 
-  // 1. 에디터 로딩 대기
-  await waitForEditor();
-  await sleep(1500);
+  try {
+    // 1. 에디터 로딩 대기
+    await waitForEditor();
+    await sleep(2000);
+    showProgressNotification('✅ 에디터 로딩 완료', 10);
 
-  // 2. 제목 입력
-  if (postData.title) {
-    await inputTitle(postData.title);
-    showNotification('✅ 제목 입력 완료');
-    await sleep(500);
+    // 2. 제목 입력
+    if (postData.title) {
+      await inputTitle(postData.title);
+      showProgressNotification('✅ 제목 입력 완료', 20);
+      await sleep(500);
+    }
+
+    // 3. 본문 입력
+    if (postData.content) {
+      await insertContent(postData.content, options);
+      showProgressNotification('✅ 본문 입력 완료', 40);
+      await sleep(500);
+    }
+
+    // 4. 이미지 업로드 (있는 경우)
+    if (postData.images && postData.images.length > 0 && options?.useImages) {
+      const totalImages = postData.images.length;
+      for (let i = 0; i < totalImages; i++) {
+        showProgressNotification(`📷 이미지 업로드 중... (${i + 1}/${totalImages})`, 40 + ((i + 1) / totalImages) * 40);
+        await uploadSingleImageV2(postData.images[i], i);
+        await sleep(1500);
+      }
+      showProgressNotification('✅ 이미지 업로드 완료', 80);
+    }
+
+    // 5. 잠시 대기 후 발행 버튼 자동 클릭
+    showProgressNotification('🚀 발행 준비 중...', 90);
+    await sleep(1500);
+
+    // 6. 발행 버튼 클릭 (자동 발행)
+    const publishSuccess = await clickPublishButton();
+
+    if (publishSuccess) {
+      showProgressNotification('✅ 발행 완료!', 100);
+      showBigSuccessNotification('🎉 블로그 발행 완료!', '글이 성공적으로 발행되었습니다.');
+    } else {
+      showProgressNotification('⚠️ 발행 버튼을 직접 클릭해주세요', 95);
+      showBigSuccessNotification('✅ 글 입력 완료!', '발행 버튼을 클릭하여 발행해주세요.');
+    }
+
+    // 자동 발행 플래그 해제
+    await chrome.storage.local.set({ autoPostEnabled: false });
+
+  } catch (error) {
+    console.error('[닥터보이스] 전자동 발행 오류:', error);
+    showNotification('❌ 오류 발생: ' + error.message);
+  }
+}
+
+// 발행 버튼 자동 클릭
+async function clickPublishButton() {
+  console.log('[닥터보이스] 발행 버튼 찾기...');
+
+  // 발행 버튼 선택자들 (네이버 스마트에디터 ONE)
+  const publishSelectors = [
+    'button.publish_btn__Y5mLP',              // 새 클래스명
+    'button[class*="publish"]',               // publish 포함
+    '.se-publish-button',
+    'button.se-toolbar-button-publish',
+    '#publish-btn',
+    'button[data-name="publish"]',
+    '.btn_publish',
+    'button.btn_ok',                          // 확인 버튼
+  ];
+
+  let publishBtn = null;
+
+  // 선택자로 찾기
+  for (const selector of publishSelectors) {
+    publishBtn = document.querySelector(selector);
+    if (publishBtn) {
+      console.log('[닥터보이스] 발행 버튼 발견 (선택자):', selector);
+      break;
+    }
   }
 
-  // 3. 본문 입력 (HTML 직접 삽입)
-  if (postData.content) {
-    await insertContent(postData.content, options);
-    showNotification('✅ 본문 입력 완료');
-    await sleep(500);
+  // 텍스트로 찾기
+  if (!publishBtn) {
+    const allButtons = document.querySelectorAll('button, a.btn, span[role="button"]');
+    for (const btn of allButtons) {
+      const text = btn.textContent?.trim() || '';
+      if (text === '발행' || text === '발행하기' || text === '등록' || text === '올리기') {
+        publishBtn = btn;
+        console.log('[닥터보이스] 발행 버튼 발견 (텍스트):', text);
+        break;
+      }
+    }
   }
 
-  // 4. 이미지 업로드 (있는 경우)
-  if (postData.images && postData.images.length > 0 && options?.useImages) {
-    showNotification(`📷 이미지 업로드 중... (0/${postData.images.length})`);
-    await uploadImages(postData.images);
-    showNotification('✅ 이미지 업로드 완료!');
+  if (!publishBtn) {
+    console.log('[닥터보이스] 발행 버튼을 찾을 수 없음');
+    return false;
   }
 
-  // 5. 완료 알림
-  showBigSuccessNotification();
+  // 버튼이 보이는지 확인
+  const rect = publishBtn.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) {
+    console.log('[닥터보이스] 발행 버튼이 숨겨져 있음');
+    return false;
+  }
+
+  // 클릭
+  console.log('[닥터보이스] 발행 버튼 클릭!');
+  publishBtn.click();
+
+  // 확인 다이얼로그가 나타날 수 있으므로 대기 후 확인 버튼도 클릭
+  await sleep(1000);
+
+  // 확인 버튼 찾기 (모달/팝업)
+  const confirmSelectors = [
+    '.modal button.btn_ok',
+    '.popup button.confirm',
+    'button[class*="confirm"]',
+    '.se-popup button.ok',
+  ];
+
+  for (const selector of confirmSelectors) {
+    const confirmBtn = document.querySelector(selector);
+    if (confirmBtn) {
+      console.log('[닥터보이스] 확인 버튼 클릭');
+      confirmBtn.click();
+      break;
+    }
+  }
+
+  return true;
 }
 
 // 자동 실행
@@ -224,6 +329,136 @@ async function findBodyArea() {
   }
 
   return null;
+}
+
+// V2 이미지 업로드 - 클립보드 붙여넣기 방식
+async function uploadSingleImageV2(base64Data, index) {
+  console.log('[닥터보이스] V2 이미지 업로드:', index + 1);
+
+  try {
+    // 에디터 본문 영역 포커스
+    const bodyArea = await findBodyArea();
+    if (bodyArea) {
+      bodyArea.click();
+      bodyArea.focus();
+      await sleep(300);
+    }
+
+    // Base64를 Blob으로 변환
+    const blob = base64ToBlob(base64Data);
+
+    // 클립보드에 이미지 복사 후 붙여넣기
+    try {
+      const clipboardItem = new ClipboardItem({
+        [blob.type]: blob
+      });
+      await navigator.clipboard.write([clipboardItem]);
+      console.log('[닥터보이스] 클립보드에 이미지 복사됨');
+
+      // 붙여넣기 이벤트 발생
+      await sleep(300);
+      document.execCommand('paste');
+      console.log('[닥터보이스] 붙여넣기 완료');
+
+      await sleep(1500); // 이미지 처리 대기
+      return true;
+    } catch (clipError) {
+      console.log('[닥터보이스] 클립보드 방식 실패, 드래그앤드롭 시도:', clipError.message);
+    }
+
+    // 대체: 드래그앤드롭 방식
+    const file = base64ToFile(base64Data, `image_${index + 1}.jpg`);
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+
+    // 에디터에 드롭 이벤트
+    const editorArea = document.querySelector('.se-content') ||
+                       document.querySelector('.se-component-content') ||
+                       document.querySelector('[contenteditable="true"]');
+
+    if (editorArea) {
+      const dropEvent = new DragEvent('drop', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: dataTransfer
+      });
+      editorArea.dispatchEvent(dropEvent);
+      await sleep(1500);
+      console.log('[닥터보이스] 드롭 이벤트 발생');
+    }
+
+    return true;
+  } catch (e) {
+    console.error('[닥터보이스] V2 이미지 업로드 실패:', e);
+    return false;
+  }
+}
+
+// Base64를 Blob으로 변환
+function base64ToBlob(base64Data) {
+  let base64 = base64Data;
+  let mimeType = 'image/jpeg';
+
+  if (base64Data.includes(',')) {
+    const parts = base64Data.split(',');
+    const mimeMatch = parts[0].match(/data:(.+);base64/);
+    if (mimeMatch) {
+      mimeType = mimeMatch[1];
+    }
+    base64 = parts[1];
+  }
+
+  const byteCharacters = atob(base64);
+  const byteArrays = [];
+
+  for (let offset = 0; offset < byteCharacters.length; offset += 512) {
+    const slice = byteCharacters.slice(offset, offset + 512);
+    const byteNumbers = new Array(slice.length);
+
+    for (let i = 0; i < slice.length; i++) {
+      byteNumbers[i] = slice.charCodeAt(i);
+    }
+
+    const byteArray = new Uint8Array(byteNumbers);
+    byteArrays.push(byteArray);
+  }
+
+  return new Blob(byteArrays, { type: mimeType });
+}
+
+// 진행 상황 알림 (프로그레스 바 포함)
+function showProgressNotification(msg, progress) {
+  const old = document.querySelector('.dv-progress-notify');
+  if (old) old.remove();
+
+  const el = document.createElement('div');
+  el.className = 'dv-progress-notify';
+  el.innerHTML = `
+    <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px;">${msg}</div>
+    <div style="background: rgba(255,255,255,0.3); border-radius: 4px; height: 8px; overflow: hidden;">
+      <div style="background: white; height: 100%; width: ${progress}%; transition: width 0.3s ease;"></div>
+    </div>
+    <div style="font-size: 11px; margin-top: 4px; opacity: 0.9;">${Math.round(progress)}% 완료</div>
+  `;
+  el.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    padding: 16px 24px;
+    border-radius: 12px;
+    min-width: 250px;
+    z-index: 999999;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  `;
+
+  document.body.appendChild(el);
+
+  // 100% 완료 시 3초 후 제거
+  if (progress >= 100) {
+    setTimeout(() => el.remove(), 3000);
+  }
 }
 
 // 유틸리티 함수
@@ -412,7 +647,7 @@ function convertToNaverHtml(content, options) {
   return html;
 }
 
-// 이미지 업로드
+// 이미지 업로드 (네이버 스마트에디터 ONE 전용)
 async function uploadImages(images) {
   console.log('[닥터보이스] 이미지 업로드 시작:', images.length, '개');
 
@@ -421,81 +656,229 @@ async function uploadImages(images) {
     showNotification(`📷 이미지 업로드 중... (${i + 1}/${images.length})`);
 
     try {
-      await uploadSingleImage(imageBase64, i);
-      await sleep(1500); // 이미지 간 간격
+      const success = await uploadSingleImage(imageBase64, i);
+      if (success) {
+        console.log(`[닥터보이스] 이미지 ${i + 1} 업로드 성공`);
+      } else {
+        console.warn(`[닥터보이스] 이미지 ${i + 1} 업로드 실패, 다음 이미지로`);
+      }
+      await sleep(2000); // 이미지 간 간격 (네이버 서버 처리 시간)
     } catch (e) {
       console.error('[닥터보이스] 이미지 업로드 실패:', i, e);
     }
   }
 }
 
-// 단일 이미지 업로드
+// 단일 이미지 업로드 (네이버 스마트에디터 ONE)
 async function uploadSingleImage(base64Data, index) {
-  console.log('[닥터보이스] 이미지 업로드:', index + 1);
+  console.log('[닥터보이스] 이미지 업로드 시도:', index + 1);
 
-  // 1. 사진 버튼 클릭
-  const photoBtn = document.querySelector('.se-toolbar-item-image') ||
-                   document.querySelector('[data-name="image"]') ||
-                   document.querySelector('.se-toolbar button[data-type="image"]') ||
-                   findButtonByText('사진');
+  // 방법 1: 드래그 앤 드롭으로 에디터에 직접 이미지 삽입
+  const dropSuccess = await tryDropImage(base64Data, index);
+  if (dropSuccess) return true;
 
-  if (!photoBtn) {
-    console.error('[닥터보이스] 사진 버튼을 찾을 수 없습니다');
-    // 대체 방법: 파일 input 직접 트리거
-    await uploadViaFileInput(base64Data);
-    return;
+  // 방법 2: 사진 버튼 클릭 후 파일 선택
+  const buttonSuccess = await tryButtonUpload(base64Data, index);
+  if (buttonSuccess) return true;
+
+  // 방법 3: 숨겨진 파일 input 직접 사용
+  const inputSuccess = await tryHiddenInput(base64Data, index);
+  if (inputSuccess) return true;
+
+  console.error('[닥터보이스] 모든 이미지 업로드 방법 실패');
+  return false;
+}
+
+// 방법 1: 드래그 앤 드롭
+async function tryDropImage(base64Data, index) {
+  console.log('[닥터보이스] 드래그 앤 드롭 방식 시도');
+
+  try {
+    // 에디터 영역 찾기
+    const editorArea = document.querySelector('.se-component.se-text') ||
+                       document.querySelector('.se-content') ||
+                       document.querySelector('[contenteditable="true"]');
+
+    if (!editorArea) {
+      console.log('[닥터보이스] 에디터 영역 없음');
+      return false;
+    }
+
+    // Base64를 File로 변환
+    const file = base64ToFile(base64Data, `image_${index + 1}.jpg`);
+
+    // DataTransfer 생성
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+
+    // 드롭 이벤트 생성 및 발생
+    const dropEvent = new DragEvent('drop', {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: dataTransfer
+    });
+
+    editorArea.dispatchEvent(dropEvent);
+    await sleep(1500);
+
+    console.log('[닥터보이스] 드롭 이벤트 발생 완료');
+    return true;
+  } catch (e) {
+    console.log('[닥터보이스] 드래그 앤 드롭 실패:', e.message);
+    return false;
   }
+}
 
-  photoBtn.click();
-  await sleep(800);
+// 방법 2: 사진 버튼 클릭 후 파일 선택
+async function tryButtonUpload(base64Data, index) {
+  console.log('[닥터보이스] 버튼 클릭 방식 시도');
 
-  // 2. 파일 선택 input 찾기
-  const fileInput = document.querySelector('input[type="file"][accept*="image"]') ||
-                    document.querySelector('.se-popup-add-image input[type="file"]');
+  try {
+    // 네이버 스마트에디터 ONE의 사진 버튼 선택자들
+    const photoBtnSelectors = [
+      'button.se-toolbar-button-image',
+      '.se-toolbar-item-image',
+      'button[data-name="image"]',
+      'button[data-type="image"]',
+      '.se-toolbar button[title*="사진"]',
+      '.se-toolbar button[title*="이미지"]',
+      '.se-image-toolbar-button',
+      // 아이콘으로 찾기
+      'button svg use[href*="image"]',
+    ];
 
-  if (fileInput) {
-    // base64를 File 객체로 변환
-    const file = base64ToFile(base64Data, `image_${index + 1}.png`);
+    let photoBtn = null;
+    for (const selector of photoBtnSelectors) {
+      photoBtn = document.querySelector(selector);
+      if (photoBtn) {
+        // svg use 요소인 경우 부모 button 찾기
+        if (photoBtn.tagName === 'use') {
+          photoBtn = photoBtn.closest('button');
+        }
+        console.log('[닥터보이스] 사진 버튼 발견:', selector);
+        break;
+      }
+    }
 
-    // DataTransfer를 사용하여 파일 설정
+    // 텍스트로 버튼 찾기
+    if (!photoBtn) {
+      photoBtn = findButtonByText('사진') || findButtonByText('이미지');
+    }
+
+    if (!photoBtn) {
+      console.log('[닥터보이스] 사진 버튼 없음');
+      return false;
+    }
+
+    // 버튼 클릭
+    photoBtn.click();
+    await sleep(1000);
+
+    // 파일 선택 input 찾기 (팝업 내부)
+    const fileInputSelectors = [
+      'input[type="file"][accept*="image"]',
+      '.se-popup input[type="file"]',
+      '.se-image-uploader input[type="file"]',
+      'input.se-file-input',
+      '#image-upload-input',
+    ];
+
+    let fileInput = null;
+    for (const selector of fileInputSelectors) {
+      fileInput = document.querySelector(selector);
+      if (fileInput) {
+        console.log('[닥터보이스] 파일 input 발견:', selector);
+        break;
+      }
+    }
+
+    // 모든 file input 중 이미지용 찾기
+    if (!fileInput) {
+      const allInputs = document.querySelectorAll('input[type="file"]');
+      for (const input of allInputs) {
+        if (!input.accept || input.accept.includes('image')) {
+          fileInput = input;
+          console.log('[닥터보이스] 파일 input 발견 (일반)');
+          break;
+        }
+      }
+    }
+
+    if (!fileInput) {
+      // 팝업 닫기
+      const closeBtn = document.querySelector('.se-popup-close');
+      if (closeBtn) closeBtn.click();
+      console.log('[닥터보이스] 파일 input 없음');
+      return false;
+    }
+
+    // 파일 설정
+    const file = base64ToFile(base64Data, `image_${index + 1}.jpg`);
     const dataTransfer = new DataTransfer();
     dataTransfer.items.add(file);
     fileInput.files = dataTransfer.files;
 
-    // change 이벤트 발생
+    // 이벤트 발생
     fileInput.dispatchEvent(new Event('change', { bubbles: true }));
-    console.log('[닥터보이스] 파일 input에 이미지 설정 완료');
+    fileInput.dispatchEvent(new Event('input', { bubbles: true }));
 
-    await sleep(2000); // 업로드 대기
-  } else {
-    console.error('[닥터보이스] 파일 input을 찾을 수 없습니다');
-  }
+    await sleep(2500); // 업로드 대기
 
-  // 팝업 닫기 (있으면)
-  const closeBtn = document.querySelector('.se-popup-close') ||
-                   document.querySelector('.se-popup button.cancel');
-  if (closeBtn) {
-    await sleep(1000);
-    // closeBtn.click();
+    console.log('[닥터보이스] 버튼 업로드 완료');
+    return true;
+  } catch (e) {
+    console.log('[닥터보이스] 버튼 업로드 실패:', e.message);
+    return false;
   }
 }
 
-// 파일 input으로 직접 업로드
-async function uploadViaFileInput(base64Data) {
-  // 숨겨진 파일 input 찾기
-  const allFileInputs = document.querySelectorAll('input[type="file"]');
+// 방법 3: 숨겨진 파일 input 직접 사용
+async function tryHiddenInput(base64Data, index) {
+  console.log('[닥터보이스] 숨겨진 input 방식 시도');
 
-  for (const input of allFileInputs) {
-    if (input.accept && input.accept.includes('image')) {
-      const file = base64ToFile(base64Data, 'uploaded_image.png');
-      const dataTransfer = new DataTransfer();
-      dataTransfer.items.add(file);
-      input.files = dataTransfer.files;
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-      console.log('[닥터보이스] 대체 방법으로 이미지 업로드 시도');
-      await sleep(2000);
-      return;
+  try {
+    // 페이지 내 모든 파일 input 찾기
+    const allFileInputs = document.querySelectorAll('input[type="file"]');
+    console.log('[닥터보이스] 발견된 파일 input 수:', allFileInputs.length);
+
+    for (const input of allFileInputs) {
+      // 이미지 관련 input인지 확인
+      const accept = input.accept || '';
+      if (accept.includes('image') || accept === '' || accept === '*/*') {
+        console.log('[닥터보이스] 이미지 input 발견, accept:', accept);
+
+        const file = base64ToFile(base64Data, `image_${index + 1}.jpg`);
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
+
+        // 파일 설정
+        Object.defineProperty(input, 'files', {
+          value: dataTransfer.files,
+          writable: true
+        });
+
+        // 여러 이벤트 발생
+        input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+        input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+
+        // 커스텀 이벤트도 시도
+        input.dispatchEvent(new CustomEvent('file-selected', {
+          bubbles: true,
+          detail: { files: dataTransfer.files }
+        }));
+
+        await sleep(2000);
+
+        console.log('[닥터보이스] 숨겨진 input 업로드 시도 완료');
+        return true;
+      }
     }
+
+    console.log('[닥터보이스] 적합한 파일 input 없음');
+    return false;
+  } catch (e) {
+    console.log('[닥터보이스] 숨겨진 input 실패:', e.message);
+    return false;
   }
 }
 
@@ -545,17 +928,21 @@ function findButtonByText(text) {
   return null;
 }
 
-// 성공 알림
-function showBigSuccessNotification() {
+// 성공 알림 (커스텀 메시지 지원)
+function showBigSuccessNotification(title = '✅ 포스팅 준비 완료!', desc = '내용을 확인하고 발행 버튼을 클릭하세요') {
   const old = document.querySelector('.dv-big-notify');
   if (old) old.remove();
+
+  // 프로그레스 알림도 제거
+  const progressNotify = document.querySelector('.dv-progress-notify');
+  if (progressNotify) progressNotify.remove();
 
   const el = document.createElement('div');
   el.className = 'dv-big-notify';
   el.innerHTML = `
-    <div style="font-size: 48px; margin-bottom: 16px;">✅</div>
-    <div style="font-size: 24px; font-weight: bold; margin-bottom: 8px;">포스팅 준비 완료!</div>
-    <div style="font-size: 14px; opacity: 0.95;">내용을 확인하고 발행 버튼을 클릭하세요</div>
+    <div style="font-size: 48px; margin-bottom: 16px;">${title.includes('🎉') ? '🎉' : '✅'}</div>
+    <div style="font-size: 24px; font-weight: bold; margin-bottom: 8px;">${title.replace(/[🎉✅]/g, '').trim()}</div>
+    <div style="font-size: 14px; opacity: 0.95;">${desc}</div>
     <button id="dv-close-btn" style="
       margin-top: 20px;
       padding: 10px 30px;
@@ -582,6 +969,20 @@ function showBigSuccessNotification() {
     animation: popIn 0.3s ease;
   `;
 
+  // 애니메이션 스타일
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes popIn {
+      from { transform: translate(-50%, -50%) scale(0.8); opacity: 0; }
+      to { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+    }
+    @keyframes fadeOut {
+      from { opacity: 1; }
+      to { opacity: 0; }
+    }
+  `;
+  document.head.appendChild(style);
+
   document.body.appendChild(el);
 
   const closeBtn = el.querySelector('#dv-close-btn');
@@ -592,13 +993,13 @@ function showBigSuccessNotification() {
     });
   }
 
-  // 10초 후 자동 닫기
+  // 5초 후 자동 닫기
   setTimeout(() => {
     if (el.parentNode) {
       el.style.animation = 'fadeOut 0.2s ease';
       setTimeout(() => el.remove(), 200);
     }
-  }, 10000);
+  }, 5000);
 }
 
-console.log('[닥터보이스] v8.0 초기화 완료');
+console.log('[닥터보이스] v9.0 전자동 발행 시스템 초기화 완료');
