@@ -26,6 +26,7 @@ import {
   Loader2,
   CheckCircle2,
   AlertCircle,
+  Database,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import {
@@ -46,6 +47,9 @@ interface SavedPost {
   original_content?: string
   title?: string
   content?: string
+  // DB에서 온 글 식별용
+  sourcePostId?: string
+  sourceType?: 'database' | 'local'
 }
 
 // 샘플 글 (항상 유지)
@@ -124,6 +128,17 @@ export function SavedPostsManager() {
         }
 
         setSavedPosts(posts)
+
+        // 자동 선택할 글이 있는지 확인
+        const selectId = localStorage.getItem('saved-posts-select')
+        if (selectId) {
+          const postToSelect = posts.find(p => p.id === selectId)
+          if (postToSelect) {
+            setSelectedPost(postToSelect)
+            // 사용 후 제거
+            localStorage.removeItem('saved-posts-select')
+          }
+        }
       } catch (error) {
         console.error('저장된 글 로드 실패:', error)
         // 오류 시 샘플 글만이라도 표시
@@ -590,12 +605,22 @@ export function SavedPostsManager() {
                   className={`p-4 border rounded-lg cursor-pointer transition-all ${
                     selectedPost?.id === post.id
                       ? 'border-blue-500 bg-blue-50'
+                      : post.sourceType === 'database'
+                      ? 'border-green-200 hover:border-green-300 bg-green-50/30'
                       : 'border-gray-200 hover:border-gray-300'
                   }`}
                 >
-                  <h3 className="font-semibold text-sm line-clamp-2">
-                    {post.suggested_titles?.[0] || '제목 없음'}
-                  </h3>
+                  <div className="flex items-start justify-between gap-2">
+                    <h3 className="font-semibold text-sm line-clamp-2 flex-1">
+                      {post.suggested_titles?.[0] || post.title || '제목 없음'}
+                    </h3>
+                    {post.sourceType === 'database' && (
+                      <span className="flex-shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-medium rounded">
+                        <Database className="w-2.5 h-2.5" />
+                        DB
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2 mt-2 text-xs text-gray-500">
                     <Calendar className="w-3 h-3" />
                     {new Date(post.savedAt).toLocaleDateString('ko-KR')}

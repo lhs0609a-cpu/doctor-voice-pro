@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { postsAPI } from '@/lib/api'
+import { postsAPI, systemAPI } from '@/lib/api'
 import type { Post } from '@/types'
 import {
   FileText,
@@ -14,9 +15,15 @@ import {
   ArrowRight,
   Calendar,
   Sparkles,
+  CheckCircle2,
+  XCircle,
+  Server,
+  Send,
 } from 'lucide-react'
+import { toast } from 'sonner'
 
 export default function DashboardPage() {
+  const router = useRouter()
   const [posts, setPosts] = useState<Post[]>([])
   const [stats, setStats] = useState({
     total: 0,
@@ -24,10 +31,87 @@ export default function DashboardPage() {
     avgScore: 0,
   })
   const [loading, setLoading] = useState(true)
+  const [systemInfo, setSystemInfo] = useState<{
+    version: string
+    status: string
+    aiConnected: boolean
+  } | null>(null)
 
   useEffect(() => {
     loadPosts()
+    loadSystemInfo()
   }, [])
+
+  // Post를 SavedPost 형식으로 변환하여 localStorage에 저장하고 발행 페이지로 이동
+  const handlePublish = (post: Post) => {
+    // SavedPost 형식으로 변환
+    const savedPost = {
+      id: `db-post-${post.id}`,
+      savedAt: new Date().toISOString(),
+      suggested_titles: post.suggested_titles || (post.title ? [post.title] : []),
+      generated_content: post.generated_content || '',
+      seo_keywords: post.seo_keywords || [],
+      original_content: post.original_content || '',
+      title: post.title || '',
+      content: post.generated_content || '',
+      // DB Post 식별을 위한 추가 필드
+      sourcePostId: post.id,
+      sourceType: 'database',
+    }
+
+    try {
+      // 기존 저장된 글 로드
+      const existing = localStorage.getItem('saved-posts')
+      const posts = existing ? JSON.parse(existing) : []
+
+      // 이미 같은 Post가 저장되어 있는지 확인
+      const existingIndex = posts.findIndex((p: any) => p.sourcePostId === post.id)
+
+      if (existingIndex >= 0) {
+        // 기존 항목 업데이트
+        posts[existingIndex] = savedPost
+      } else {
+        // 새로 추가 (맨 앞에)
+        posts.unshift(savedPost)
+      }
+
+      localStorage.setItem('saved-posts', JSON.stringify(posts))
+
+      // 선택할 글 ID를 저장 (저장된 글 페이지에서 자동 선택용)
+      localStorage.setItem('saved-posts-select', savedPost.id)
+
+      toast.success('발행 준비 완료', {
+        description: '저장된 글 페이지로 이동합니다',
+      })
+
+      // 저장된 글 페이지로 이동
+      router.push('/dashboard/saved')
+    } catch (error) {
+      console.error('발행 준비 실패:', error)
+      toast.error('발행 준비에 실패했습니다')
+    }
+  }
+
+  const loadSystemInfo = async () => {
+    try {
+      const [info, health] = await Promise.all([
+        systemAPI.getInfo(),
+        systemAPI.healthCheck(),
+      ])
+      setSystemInfo({
+        version: info.version,
+        status: health.status,
+        aiConnected: health.ai?.connected || false,
+      })
+    } catch (error) {
+      console.error('Failed to load system info:', error)
+      setSystemInfo({
+        version: '-',
+        status: 'offline',
+        aiConnected: false,
+      })
+    }
+  }
 
   const loadPosts = async () => {
     try {
@@ -73,9 +157,48 @@ export default function DashboardPage() {
   return (
     <div className="space-y-8 animate-fade-in-up">
       {/* Welcome Section */}
-      <div className="pb-4">
-        <h1 className="text-4xl font-bold mb-3 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">대시보드</h1>
-        <p className="text-lg text-gray-600">AI 블로그 각색 현황을 한눈에 확인하세요</p>
+      <div className="pb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div>
+          <h1 className="text-4xl font-bold mb-3 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">대시보드</h1>
+          <p className="text-lg text-gray-600">AI 블로그 각색 현황을 한눈에 확인하세요</p>
+        </div>
+        {/* System Status */}
+        <div className="flex items-center gap-4 bg-white rounded-xl px-5 py-3 shadow-md border border-gray-100">
+          <div className="flex items-center gap-2">
+            <Server className="h-4 w-4 text-gray-500" />
+            <span className="text-sm font-medium text-gray-600">v{systemInfo?.version || '...'}</span>
+          </div>
+          <div className="h-4 w-px bg-gray-200" />
+          <div className="flex items-center gap-2">
+            {systemInfo?.status === 'healthy' ? (
+              <CheckCircle2 className="h-4 w-4 text-green-500" />
+            ) : systemInfo?.status === 'offline' ? (
+              <XCircle className="h-4 w-4 text-red-500" />
+            ) : (
+              <div className="h-4 w-4 rounded-full border-2 border-gray-300 border-t-transparent animate-spin" />
+            )}
+            <span className={`text-sm font-medium ${
+              systemInfo?.status === 'healthy' ? 'text-green-600' :
+              systemInfo?.status === 'offline' ? 'text-red-600' : 'text-gray-500'
+            }`}>
+              {systemInfo?.status === 'healthy' ? '서버 정상' :
+               systemInfo?.status === 'offline' ? '서버 오프라인' : '확인 중...'}
+            </span>
+          </div>
+          <div className="h-4 w-px bg-gray-200" />
+          <div className="flex items-center gap-2">
+            {systemInfo?.aiConnected ? (
+              <CheckCircle2 className="h-4 w-4 text-green-500" />
+            ) : (
+              <XCircle className="h-4 w-4 text-red-500" />
+            )}
+            <span className={`text-sm font-medium ${
+              systemInfo?.aiConnected ? 'text-green-600' : 'text-red-600'
+            }`}>
+              AI {systemInfo?.aiConnected ? '연결됨' : '미연결'}
+            </span>
+          </div>
+        </div>
       </div>
 
       {/* Quick Action */}
@@ -212,12 +335,22 @@ export default function DashboardPage() {
                       </span>
                     </div>
                   </div>
-                  <Link href={`/dashboard/posts/${post.id}`}>
-                    <Button variant="ghost" size="sm" className="hover:bg-blue-100 transition-all font-medium">
-                      상세보기
-                      <ArrowRight className="h-4 w-4 ml-1" />
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      className="bg-green-600 hover:bg-green-700 text-white font-medium gap-1.5"
+                      onClick={() => handlePublish(post)}
+                    >
+                      <Send className="h-3.5 w-3.5" />
+                      발행하기
                     </Button>
-                  </Link>
+                    <Link href={`/dashboard/posts/${post.id}`}>
+                      <Button variant="ghost" size="sm" className="hover:bg-blue-100 transition-all font-medium">
+                        상세보기
+                        <ArrowRight className="h-4 w-4 ml-1" />
+                      </Button>
+                    </Link>
+                  </div>
                 </div>
               ))}
             </div>

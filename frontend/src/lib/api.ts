@@ -383,6 +383,26 @@ export const tagsAPI = {
   },
 }
 
+// System API
+export interface SystemInfo {
+  name: string
+  version: string
+  status: string
+  docs: string
+}
+
+export const systemAPI = {
+  getInfo: async (): Promise<SystemInfo> => {
+    const response = await api.get<SystemInfo>('/')
+    return response.data
+  },
+
+  healthCheck: async (): Promise<{ status: string; ai: { connected: boolean; model: string | null } }> => {
+    const response = await api.get('/health')
+    return response.data
+  },
+}
+
 // Extended Posts API
 export const postsAPIExtended = {
   toggleFavorite: async (postId: string) => {
