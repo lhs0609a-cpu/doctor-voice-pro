@@ -455,4 +455,57 @@ export const postsAPIExtended = {
   },
 }
 
+// Images API (imgBB)
+export interface ImageUploadResponse {
+  success: boolean
+  url: string
+  delete_url?: string
+  thumbnail?: string
+}
+
+export interface MultiImageUploadResponse {
+  success: boolean
+  images: ImageUploadResponse[]
+  failed: number
+}
+
+export const imagesAPI = {
+  // 파일 업로드
+  upload: async (file: File): Promise<ImageUploadResponse> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    const response = await api.post<ImageUploadResponse>('/api/v1/images/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 60000,
+    })
+    return response.data
+  },
+
+  // Base64 이미지 업로드
+  uploadBase64: async (base64Image: string, name?: string): Promise<ImageUploadResponse> => {
+    const response = await api.post<ImageUploadResponse>('/api/v1/images/upload-base64', {
+      image: base64Image,
+      name: name || 'image',
+    }, { timeout: 60000 })
+    return response.data
+  },
+
+  // 여러 이미지 업로드
+  uploadMultiple: async (files: File[]): Promise<MultiImageUploadResponse> => {
+    const formData = new FormData()
+    files.forEach(file => formData.append('files', file))
+    const response = await api.post<MultiImageUploadResponse>('/api/v1/images/upload-multiple', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
+    })
+    return response.data
+  },
+
+  // 상태 확인
+  getStatus: async () => {
+    const response = await api.get('/api/v1/images/status')
+    return response.data
+  },
+}
+
 export default api

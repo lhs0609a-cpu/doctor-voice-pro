@@ -27,7 +27,9 @@ import {
   CheckCircle2,
   AlertCircle,
   Database,
+  CloudUpload,
 } from 'lucide-react'
+import { imagesAPI } from '@/lib/api'
 import { useRouter } from 'next/navigation'
 import {
   Dialog,
@@ -473,6 +475,28 @@ export function SavedPostsManager() {
     }
   }
 
+  // 이미지를 imgBB에 업로드하고 URL 반환
+  const uploadImagesToImgBB = async (files: File[]): Promise<string[]> => {
+    const urls: string[] = []
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      try {
+        toast.loading(`이미지 업로드 중... (${i + 1}/${files.length})`, { id: 'img-upload' })
+        const response = await imagesAPI.upload(file)
+        if (response.success && response.url) {
+          urls.push(response.url)
+        }
+      } catch (error) {
+        console.error(`이미지 ${i + 1} 업로드 실패:`, error)
+        // 실패한 이미지는 건너뛰고 계속 진행
+      }
+    }
+
+    toast.dismiss('img-upload')
+    return urls
+  }
+
   // 네이버 블로그 자동 발행 - 확장 프로그램을 통해 자동 입력
   const handleNaverAutoPublish = async () => {
     if (!selectedPost) {
@@ -483,19 +507,25 @@ export function SavedPostsManager() {
     const loadingToast = toast.loading('발행 데이터 준비 중...')
 
     try {
-      // 이미지를 Base64로 변환
-      toast.loading('이미지 변환 중...', { id: loadingToast })
-      const imageBase64List: string[] = []
-      for (const file of uploadedImages) {
-        const base64 = await imageToBase64(file)
-        imageBase64List.push(base64)
+      // 이미지를 imgBB에 업로드하고 URL 가져오기
+      let imageUrls: string[] = []
+      if (uploadedImages.length > 0) {
+        toast.loading('이미지를 클라우드에 업로드 중...', { id: loadingToast })
+        imageUrls = await uploadImagesToImgBB(uploadedImages)
+
+        if (imageUrls.length === 0 && uploadedImages.length > 0) {
+          toast.error('이미지 업로드에 실패했습니다', { id: loadingToast })
+          return
+        }
+
+        toast.loading(`${imageUrls.length}개 이미지 업로드 완료!`, { id: loadingToast })
       }
 
-      // 발행 데이터 준비
+      // 발행 데이터 준비 (이미지 URL 사용)
       const postData = {
         title: selectedPost.suggested_titles?.[0] || selectedPost.title || '',
         content: selectedPost.generated_content || selectedPost.content || '',
-        images: imageBase64List,
+        imageUrls: imageUrls,  // URL 배열로 전달
         keywords: selectedPost.seo_keywords || [],
       }
 

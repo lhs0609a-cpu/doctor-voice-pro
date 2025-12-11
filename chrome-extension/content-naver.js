@@ -1,5 +1,5 @@
-// 네이버 블로그 스마트에디터 v9.0 - 전자동 발행 시스템
-console.log('[닥터보이스] v9.0 로드 - 전자동 발행 시스템');
+// 네이버 블로그 스마트에디터 v10.0 - imgBB URL 이미지 지원
+console.log('[닥터보이스] v10.0 로드 - imgBB URL 이미지 지원');
 
 // 메시지 수신 (background.js에서)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -17,7 +17,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function handleInsertPost(postData, options) {
   console.log('[닥터보이스] 전자동 발행 시작');
   console.log('[닥터보이스] 제목:', postData.title);
-  console.log('[닥터보이스] 이미지 수:', postData.images?.length || 0);
+  console.log('[닥터보이스] 이미지 URL 수:', postData.imageUrls?.length || 0);
+  console.log('[닥터보이스] 이미지 Base64 수:', postData.images?.length || 0);
 
   showProgressNotification('📝 전자동 발행 시작...', 0);
 
@@ -34,15 +35,18 @@ async function handleInsertPost(postData, options) {
       await sleep(500);
     }
 
-    // 3. 본문 입력
+    // 3. 본문 입력 (이미지 URL이 있으면 함께 삽입)
     if (postData.content) {
-      await insertContent(postData.content, options);
-      showProgressNotification('✅ 본문 입력 완료', 40);
+      // imageUrls가 있으면 본문에 이미지 URL을 <img> 태그로 포함
+      const imageUrls = postData.imageUrls || [];
+      await insertContentWithImages(postData.content, imageUrls, options);
+      showProgressNotification('✅ 본문 및 이미지 입력 완료', 80);
       await sleep(500);
     }
 
-    // 4. 이미지 업로드 (있는 경우)
-    if (postData.images && postData.images.length > 0 && options?.useImages) {
+    // 4. Base64 이미지 업로드 (URL이 없고 Base64만 있는 경우 - fallback)
+    if ((!postData.imageUrls || postData.imageUrls.length === 0) &&
+        postData.images && postData.images.length > 0 && options?.useImages) {
       const totalImages = postData.images.length;
       for (let i = 0; i < totalImages; i++) {
         showProgressNotification(`📷 이미지 업로드 중... (${i + 1}/${totalImages})`, 40 + ((i + 1) / totalImages) * 40);
@@ -629,6 +633,111 @@ async function insertContent(content, options) {
   }
 }
 
+// 본문 + 이미지 URL 함께 삽입 (imgBB URL 사용)
+async function insertContentWithImages(content, imageUrls, options) {
+  console.log('[닥터보이스] 본문 + 이미지 URL 삽입 시작');
+  console.log('[닥터보이스] 이미지 URL 개수:', imageUrls.length);
+
+  const bodyArea = await findBodyArea();
+  if (!bodyArea) {
+    console.error('[닥터보이스] 본문 영역 찾기 실패');
+    return;
+  }
+
+  bodyArea.click();
+  await sleep(300);
+  bodyArea.focus();
+  await sleep(300);
+
+  // 이미지 URL이 없으면 기존 방식으로 본문만 삽입
+  if (!imageUrls || imageUrls.length === 0) {
+    await insertContent(content, options);
+    return;
+  }
+
+  // 본문을 문단으로 분리
+  const paragraphs = content.split('\n\n').filter(p => p.trim());
+
+  // 이미지를 문단 사이에 균등하게 배치
+  const totalParagraphs = paragraphs.length;
+  const totalImages = imageUrls.length;
+
+  // 이미지 삽입 위치 계산 (2-3문단마다 이미지 1개)
+  const imagePositions = [];
+  if (totalImages > 0) {
+    const interval = Math.max(2, Math.floor(totalParagraphs / (totalImages + 1)));
+    for (let i = 0; i < totalImages; i++) {
+      const position = Math.min((i + 1) * interval, totalParagraphs);
+      imagePositions.push(position);
+    }
+  }
+
+  // HTML 생성 (본문 + 이미지 태그 포함)
+  let htmlContent = '';
+  let imageIndex = 0;
+
+  for (let i = 0; i < paragraphs.length; i++) {
+    const para = paragraphs[i].trim();
+    if (!para) continue;
+
+    // 문단 추가 (인용구 처리)
+    if (options?.useQuote && para.startsWith('>')) {
+      htmlContent += `<blockquote style="border-left: 4px solid #ddd; padding-left: 16px; margin: 16px 0; color: #666;">${para.slice(1).trim()}</blockquote>`;
+    } else {
+      htmlContent += `<p style="margin: 12px 0; line-height: 1.8;">${para.replace(/\n/g, '<br>')}</p>`;
+    }
+
+    // 이미지 삽입 위치인 경우
+    if (imageIndex < totalImages && imagePositions[imageIndex] === i + 1) {
+      const imgUrl = imageUrls[imageIndex];
+      console.log(`[닥터보이스] 이미지 ${imageIndex + 1} 삽입: ${imgUrl}`);
+
+      // 이미지 태그 삽입 (중앙 정렬, 최대 너비 100%)
+      htmlContent += `
+        <div style="text-align: center; margin: 24px 0;">
+          <img src="${imgUrl}" alt="이미지 ${imageIndex + 1}" style="max-width: 100%; height: auto; border-radius: 8px;" />
+        </div>
+      `;
+      imageIndex++;
+    }
+  }
+
+  // 남은 이미지 처리 (문단 끝에 추가)
+  while (imageIndex < totalImages) {
+    const imgUrl = imageUrls[imageIndex];
+    console.log(`[닥터보이스] 남은 이미지 ${imageIndex + 1} 삽입: ${imgUrl}`);
+    htmlContent += `
+      <div style="text-align: center; margin: 24px 0;">
+        <img src="${imgUrl}" alt="이미지 ${imageIndex + 1}" style="max-width: 100%; height: auto; border-radius: 8px;" />
+      </div>
+    `;
+    imageIndex++;
+  }
+
+  // 클립보드에 HTML 복사 후 붙여넣기
+  try {
+    const blob = new Blob([htmlContent], { type: 'text/html' });
+    const plainText = content;
+    const clipboardItem = new ClipboardItem({
+      'text/html': blob,
+      'text/plain': new Blob([plainText], { type: 'text/plain' })
+    });
+    await navigator.clipboard.write([clipboardItem]);
+
+    // 붙여넣기
+    document.execCommand('paste');
+    console.log('[닥터보이스] 본문 + 이미지 URL 붙여넣기 완료');
+
+    // 이미지 로딩 대기
+    await sleep(1000);
+
+  } catch (e) {
+    console.error('[닥터보이스] HTML + 이미지 붙여넣기 실패:', e);
+    // 실패 시 텍스트만 삽입
+    await insertContent(content, options);
+  }
+}
+
 // 네이버 블로그용 HTML 변환
 function convertToNaverHtml(content, options) {
   let html = content;
@@ -1002,4 +1111,4 @@ function showBigSuccessNotification(title = '✅ 포스팅 준비 완료!', desc
   }, 5000);
 }
 
-console.log('[닥터보이스] v9.0 전자동 발행 시스템 초기화 완료');
+console.log('[닥터보이스] v10.0 imgBB URL 이미지 지원 초기화 완료');
