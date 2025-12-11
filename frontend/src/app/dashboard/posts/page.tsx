@@ -123,14 +123,14 @@ export default function PostsPageEnhanced() {
           console.error('Search API failed, falling back to list:', searchError)
           // search 실패 시 기본 list API로 fallback
           const data = await postsAPI.list(page, 10)
-          setPosts(data.posts || [])
+          setPosts((data.posts || []) as unknown as Post[])
           setTotalPages(data.total_pages || 1)
           toast.error('검색 기능을 사용할 수 없습니다. 전체 목록을 표시합니다.')
         }
       } else {
         // 필터 없으면 기본 list API 사용
         const data = await postsAPI.list(page, 10)
-        setPosts(data.posts || [])
+        setPosts((data.posts || []) as unknown as Post[])
         setTotalPages(data.total_pages || 1)
       }
     } catch (error) {
