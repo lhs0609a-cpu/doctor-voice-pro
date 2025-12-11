@@ -473,6 +473,101 @@ export function SavedPostsManager() {
     }
   }
 
+  // 네이버 블로그 자동 발행 - 확장 프로그램을 통해 자동 입력
+  const handleNaverAutoPublish = async () => {
+    if (!selectedPost) {
+      toast.error('발행할 글을 선택해주세요')
+      return
+    }
+
+    const loadingToast = toast.loading('발행 데이터 준비 중...')
+
+    try {
+      // 이미지를 Base64로 변환
+      toast.loading('이미지 변환 중...', { id: loadingToast })
+      const imageBase64List: string[] = []
+      for (const file of uploadedImages) {
+        const base64 = await imageToBase64(file)
+        imageBase64List.push(base64)
+      }
+
+      // 발행 데이터 준비
+      const postData = {
+        title: selectedPost.suggested_titles?.[0] || selectedPost.title || '',
+        content: selectedPost.generated_content || selectedPost.content || '',
+        images: imageBase64List,
+        keywords: selectedPost.seo_keywords || [],
+      }
+
+      // 저장된 로그인 정보 로드
+      const savedCredentials = localStorage.getItem('naver-credentials')
+      const credentials = savedCredentials ? JSON.parse(savedCredentials) : { id: '', pw: '' }
+
+      // 확장 프로그램 ID 확인
+      const savedExtId = localStorage.getItem('doctorvoice-extension-id')
+
+      if (savedExtId) {
+        // 확장 프로그램으로 직접 전송
+        toast.loading('확장 프로그램으로 전송 중...', { id: loadingToast })
+
+        try {
+          const response = await sendMessageToExtension(savedExtId, {
+            action: 'ONE_CLICK_PUBLISH',
+            postData,
+            credentials,
+            options: { useQuote: true, useHighlight: true, useImages: true }
+          })
+
+          if (response?.success) {
+            toast.success('발행 프로세스 시작!', {
+              id: loadingToast,
+              description: '새 탭에서 네이버 로그인 후 자동으로 글이 작성됩니다',
+            })
+          } else {
+            throw new Error(response?.error || '확장 프로그램 통신 실패')
+          }
+        } catch (extError) {
+          console.error('확장 프로그램 통신 실패:', extError)
+          // 확장 프로그램 연결 실패 시 수동 방식으로 전환
+          await fallbackManualPublish(postData, loadingToast)
+        }
+      } else {
+        // 확장 프로그램 ID 없음 - 수동 방식
+        await fallbackManualPublish(postData, loadingToast)
+      }
+
+    } catch (error: any) {
+      console.error('발행 준비 실패:', error)
+      toast.error('발행 준비 실패', {
+        id: loadingToast,
+        description: error.message || '다시 시도해주세요',
+      })
+    }
+  }
+
+  // 수동 발행 방식 (확장 프로그램 없을 때)
+  const fallbackManualPublish = async (postData: any, loadingToast: string | number) => {
+    // localStorage에 데이터 저장 (팝업에서 읽을 수 있도록)
+    localStorage.setItem('doctorvoice-pending-post', JSON.stringify(postData))
+
+    toast.success('발행 데이터 준비 완료!', {
+      id: loadingToast,
+      description: '확장 프로그램 아이콘을 클릭하여 발행하세요',
+    })
+
+    // 확장 프로그램 연결 안내 다이얼로그 표시
+    const confirmConnect = window.confirm(
+      '확장 프로그램이 연결되어 있지 않습니다.\n\n' +
+      '1. 크롬 확장 프로그램 아이콘 클릭\n' +
+      '2. "발행 시작" 버튼 클릭\n\n' +
+      '확장 프로그램 ID를 등록하시겠습니까?'
+    )
+
+    if (confirmConnect) {
+      handleSetExtensionId()
+    }
+  }
+
   // 자동 다운로드용 함수 (이미지 파일 직접 전달)
   const exportWithImagesAuto = async (images: File[]) => {
     if (!selectedPost) return
@@ -775,21 +870,40 @@ export function SavedPostsManager() {
                     </p>
                   </div>
 
-                  {/* 자동 다운로드 안내 */}
+                  {/* 이미지 업로드 완료 시 발행 옵션 */}
                   {uploadedImages.length > 0 && (
-                    <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                      <h4 className="font-semibold text-green-900 mb-2">
-                        ✅ 이미지 {uploadedImages.length}개가 업로드되었습니다!
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-4">
+                      <h4 className="font-semibold text-green-900 flex items-center gap-2">
+                        <CheckCircle2 className="h-5 w-5" />
+                        이미지 {uploadedImages.length}개가 업로드되었습니다!
                       </h4>
-                      <p className="text-sm text-green-800 mb-2">
-                        워드 문서가 자동으로 생성 중입니다. 잠시만 기다려주세요...
-                      </p>
-                      <div className="mt-3 pt-3 border-t border-green-300">
-                        <p className="text-xs text-green-900 font-semibold mb-1">📋 네이버 블로그 복붙 방법:</p>
-                        <ol className="text-xs text-green-800 space-y-1 list-decimal list-inside">
+
+                      {/* 네이버 블로그 자동 발행 버튼 */}
+                      <div className="bg-white rounded-lg p-4 border border-green-300">
+                        <h5 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                          <Globe className="h-4 w-4 text-green-600" />
+                          네이버 블로그 자동 발행
+                        </h5>
+                        <p className="text-sm text-gray-600 mb-3">
+                          버튼을 클릭하면 네이버 로그인 후 자동으로 글과 이미지가 입력됩니다.
+                        </p>
+                        <Button
+                          className="w-full bg-green-600 hover:bg-green-700 gap-2"
+                          onClick={handleNaverAutoPublish}
+                          disabled={!selectedPost}
+                        >
+                          <Send className="h-4 w-4" />
+                          네이버 블로그에 발행하기
+                        </Button>
+                      </div>
+
+                      {/* 워드 다운로드 옵션 */}
+                      <div className="pt-3 border-t border-green-300">
+                        <p className="text-xs text-green-900 font-semibold mb-2">📋 또는 워드 파일로 복붙하기:</p>
+                        <ol className="text-xs text-green-800 space-y-1 list-decimal list-inside mb-2">
+                          <li>워드 문서가 자동 생성됩니다</li>
                           <li>다운로드된 .docx 파일 열기</li>
-                          <li>전체 선택 (Ctrl+A)</li>
-                          <li>복사 (Ctrl+C)</li>
+                          <li>전체 선택 (Ctrl+A) → 복사 (Ctrl+C)</li>
                           <li>네이버 블로그에 붙여넣기 (Ctrl+V)</li>
                         </ol>
                       </div>

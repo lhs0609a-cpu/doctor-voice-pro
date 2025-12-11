@@ -1,10 +1,11 @@
-// 팝업 스크립트 - 닥터보이스 프로 v7.1 - 클립보드 복사 방식
+// 팝업 스크립트 - 닥터보이스 프로 v8.0 - 자동 발행 방식
 document.addEventListener('DOMContentLoaded', async () => {
   const statusCard = document.getElementById('statusCard');
   const statusTitle = document.getElementById('statusTitle');
   const statusDesc = document.getElementById('statusDesc');
   const btnFetchPosts = document.getElementById('btnFetchPosts');
   const btnPost = document.getElementById('btnPost');
+  const btnCopyOnly = document.getElementById('btnCopyOnly');
   const postList = document.getElementById('postList');
 
   let savedPosts = [];
@@ -72,15 +73,62 @@ document.addEventListener('DOMContentLoaded', async () => {
         const index = parseInt(item.dataset.index);
         selectedPost = savedPosts[index];
         btnPost.disabled = false;
+        btnCopyOnly.disabled = false;
 
         const title = selectedPost.title || (selectedPost.suggested_titles && selectedPost.suggested_titles[0]) || '(제목 없음)';
-        setStatus('success', '글 선택됨', `"${title}" - 복사 버튼을 클릭하세요`);
+        setStatus('success', '글 선택됨', `"${title}" - 발행 버튼을 클릭하세요`);
       });
     });
   }
 
-  // 클립보드 복사 버튼
+  // 자동 발행 버튼 (네이버 로그인 → 자동 입력)
   btnPost.addEventListener('click', async () => {
+    if (!selectedPost) {
+      setStatus('error', '오류', '발행할 글을 선택하세요');
+      return;
+    }
+
+    const title = selectedPost.title || (selectedPost.suggested_titles && selectedPost.suggested_titles[0]) || '';
+    const content = selectedPost.content || selectedPost.generated_content || '';
+    const images = selectedPost.images || [];
+
+    try {
+      setStatus('warning', '준비 중...', '네이버 로그인 페이지로 이동합니다...');
+      btnPost.textContent = '🔄 이동 중...';
+      btnPost.disabled = true;
+
+      // 데이터 저장 (content-naver.js에서 사용)
+      await chrome.storage.local.set({
+        pendingPost: {
+          title: title,
+          content: content,
+          images: images
+        },
+        postOptions: { useQuote: true, useHighlight: true, useImages: true },
+        autoPostEnabled: true
+      });
+
+      // 네이버 로그인 페이지로 이동 (로그인 후 자동으로 글쓰기 페이지로 리다이렉트)
+      const tab = await chrome.tabs.create({
+        url: 'https://nid.naver.com/nidlogin.login?url=https://blog.naver.com/GoBlogWrite.naver',
+        active: true
+      });
+
+      // 로그인 탭 ID 저장 (로그인 완료 후 자동 감지용)
+      await chrome.storage.local.set({ loginTabId: tab.id });
+
+      setStatus('success', '✅ 이동 완료!', '로그인 후 자동으로 글이 입력됩니다');
+
+    } catch (error) {
+      console.error('Post error:', error);
+      setStatus('error', '발행 실패', '다시 시도해주세요');
+      btnPost.textContent = '🚀 네이버 블로그 발행';
+      btnPost.disabled = false;
+    }
+  });
+
+  // 클립보드만 복사 버튼 (수동 붙여넣기용)
+  btnCopyOnly.addEventListener('click', async () => {
     if (!selectedPost) {
       setStatus('error', '오류', '복사할 글을 선택하세요');
       return;
@@ -112,8 +160,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         autoPasteEnabled: true
       });
 
-      setStatus('success', '✅ 복사 완료!', '네이버 블로그로 이동합니다...');
-      btnPost.textContent = '✅ 이동 중...';
+      setStatus('success', '✅ 복사 완료!', '네이버 블로그에서 Ctrl+V로 붙여넣기 하세요');
 
       // 네이버 블로그 글쓰기 페이지로 이동
       chrome.tabs.create({
