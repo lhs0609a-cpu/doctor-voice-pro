@@ -7,164 +7,158 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      width: 360px;
+      width: 320px;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: #f8f9fa;
     }
     .header {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
       color: white;
-      padding: 14px;
+      padding: 16px;
       text-align: center;
     }
-    .header h1 { font-size: 16px; margin-bottom: 2px; }
-    .header p { font-size: 11px; opacity: 0.9; }
-    .content { padding: 12px; }
-    .card {
+    .header h1 { font-size: 18px; margin-bottom: 4px; }
+    .header p { font-size: 12px; opacity: 0.9; }
+    .content { padding: 16px; }
+
+    .status-box {
       background: white;
-      border-radius: 8px;
-      padding: 12px;
-      margin-bottom: 10px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      text-align: center;
     }
-    .card h3 {
-      font-size: 13px;
-      color: #374151;
-      margin-bottom: 10px;
+    .status-icon {
+      width: 48px;
+      height: 48px;
+      margin: 0 auto 12px;
+      border-radius: 50%;
       display: flex;
       align-items: center;
-      gap: 6px;
+      justify-content: center;
+      font-size: 24px;
     }
-    .card h3 svg { width: 16px; height: 16px; }
-    .status-card { border-left: 4px solid #f59e0b; }
-    .status-card.success { border-left-color: #10b981; }
-    .status-card.error { border-left-color: #ef4444; }
-    .status-title { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
-    .status-desc { font-size: 11px; color: #6b7280; }
+    .status-icon.ready { background: #d1fae5; }
+    .status-icon.waiting { background: #fef3c7; }
+    .status-icon.error { background: #fee2e2; }
 
-    .post-list {
-      max-height: 250px;
-      overflow-y: auto;
-      border: 1px solid #e5e7eb;
-      border-radius: 6px;
+    .status-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #111827;
+      margin-bottom: 4px;
     }
-    .post-item {
-      padding: 10px;
-      border-bottom: 1px solid #f3f4f6;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-    .post-item:last-child { border-bottom: none; }
-    .post-item:hover { background: #f9fafb; }
-    .post-item.selected { background: #eff6ff; border-left: 3px solid #667eea; }
-    .post-item-title {
-      font-size: 12px;
-      font-weight: 500;
-      color: #1f2937;
-      margin-bottom: 3px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .post-item-meta { font-size: 10px; color: #9ca3af; }
-    .no-posts {
-      padding: 20px;
-      text-align: center;
-      color: #9ca3af;
-      font-size: 12px;
+    .status-desc {
+      font-size: 13px;
+      color: #6b7280;
+      line-height: 1.5;
     }
 
     .btn {
       width: 100%;
-      padding: 12px;
+      padding: 14px;
       border: none;
-      border-radius: 6px;
-      font-size: 14px;
+      border-radius: 10px;
+      font-size: 15px;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.2s;
-      margin-bottom: 6px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
     }
     .btn-primary {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
       color: white;
     }
     .btn-primary:hover:not(:disabled) {
       transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
     }
-    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
     .btn-secondary {
       background: #f3f4f6;
       color: #374151;
-      font-size: 11px;
-      padding: 6px;
+      font-size: 13px;
+      padding: 10px;
     }
     .btn-secondary:hover { background: #e5e7eb; }
 
-    .help-text {
-      background: #fef3c7;
-      border: 1px solid #fcd34d;
-      border-radius: 6px;
-      padding: 10px;
-      font-size: 11px;
-      color: #92400e;
-      margin-bottom: 10px;
+    .post-preview {
+      background: white;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     }
-    .help-text strong { display: block; margin-bottom: 4px; }
-    .help-text ol { margin-left: 16px; line-height: 1.6; }
+    .post-preview h3 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #111827;
+      margin-bottom: 8px;
+      line-height: 1.4;
+    }
+    .post-preview .meta {
+      font-size: 12px;
+      color: #9ca3af;
+    }
+
+    .help-box {
+      background: #ecfdf5;
+      border: 1px solid #a7f3d0;
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 12px;
+      color: #065f46;
+      line-height: 1.6;
+    }
+    .help-box strong { display: block; margin-bottom: 6px; font-size: 13px; }
   </style>
 </head>
 <body>
   <div class="header">
-    <h1>📋 닥터보이스 프로</h1>
-    <p>클립보드 복사 → 네이버 블로그 붙여넣기 <span style="opacity:0.7; font-size:10px;">v7.4.0</span></p>
+    <h1>닥터보이스 프로</h1>
+    <p>네이버 블로그 자동 발행 v10.0</p>
   </div>
 
   <div class="content">
-    <!-- 상태 카드 -->
-    <div id="statusCard" class="card status-card">
-      <div class="status-title" id="statusTitle">불러오는 중...</div>
-      <div class="status-desc" id="statusDesc">저장된 글을 확인하고 있습니다</div>
+    <!-- 상태 박스 -->
+    <div class="status-box">
+      <div class="status-icon waiting" id="statusIcon">⏳</div>
+      <div class="status-title" id="statusTitle">대기 중</div>
+      <div class="status-desc" id="statusDesc">닥터보이스 프로 웹사이트에서<br>"네이버 블로그에 발행" 버튼을 클릭하세요</div>
     </div>
 
-    <!-- 저장된 글 목록 -->
-    <div class="card">
-      <h3>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-          <polyline points="14 2 14 8 20 8"/>
-          <line x1="16" y1="13" x2="8" y2="13"/>
-          <line x1="16" y1="17" x2="8" y2="17"/>
-        </svg>
-        저장된 글 선택
-      </h3>
-      <div class="post-list" id="postList">
-        <div class="no-posts">불러오는 중...</div>
+    <!-- 선택된 글 미리보기 (있으면 표시) -->
+    <div class="post-preview" id="postPreview" style="display:none;">
+      <h3 id="postTitle">-</h3>
+      <div class="meta">
+        <span id="postLength">0자</span> ·
+        <span id="postImages">이미지 0개</span>
       </div>
-      <button id="btnFetchPosts" class="btn btn-secondary" style="margin-top: 8px;">
-        새로고침
-      </button>
-    </div>
-
-    <!-- 사용 안내 -->
-    <div class="help-text">
-      <strong>📌 사용 방법</strong>
-      <ol>
-        <li>위에서 글 선택</li>
-        <li>"네이버 블로그 발행" 버튼 클릭</li>
-        <li>네이버 로그인 후 자동 입력됨</li>
-      </ol>
     </div>
 
     <!-- 발행 버튼 -->
-    <button id="btnPost" class="btn btn-primary" disabled>
-      🚀 네이버 블로그 발행
+    <button id="btnPublish" class="btn btn-primary" disabled>
+      🚀 네이버 블로그에 글 입력하기
     </button>
 
-    <!-- 복사만 하기 버튼 -->
-    <button id="btnCopyOnly" class="btn btn-secondary" disabled style="margin-top: 8px;">
-      📋 클립보드에만 복사 (수동 붙여넣기)
+    <!-- 도움말 -->
+    <div class="help-box">
+      <strong>📌 간단 사용법</strong>
+      1. 닥터보이스 프로 웹사이트 열기<br>
+      2. 발행할 글 선택 → "네이버 블로그에 발행" 클릭<br>
+      3. 이 팝업에서 "글 입력하기" 버튼 클릭
+    </div>
+
+    <button id="btnOpenSite" class="btn btn-secondary" style="margin-top: 12px;">
+      닥터보이스 프로 웹사이트 열기
     </button>
   </div>
 
