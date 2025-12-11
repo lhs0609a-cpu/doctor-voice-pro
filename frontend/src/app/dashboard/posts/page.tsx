@@ -82,9 +82,10 @@ export default function PostsPageEnhanced() {
   const loadTags = async () => {
     try {
       const data = await tagsAPI.getAll()
-      setTags(data)
+      setTags(data || [])
     } catch (error) {
       console.error('Failed to load tags:', error)
+      setTags([])
     }
   }
 
@@ -92,23 +93,50 @@ export default function PostsPageEnhanced() {
     try {
       setLoading(true)
 
-      const params: any = {
-        page,
-        page_size: 10,
+      // 필터가 적용되어 있으면 search API 사용, 아니면 기본 list API 사용
+      const hasFilters = searchQuery ||
+        (statusFilter && statusFilter !== 'all') ||
+        favoriteFilter !== undefined ||
+        tagFilter ||
+        scoreRange[0] > 0 ||
+        scoreRange[1] < 100
+
+      if (hasFilters) {
+        // search API 시도
+        try {
+          const params: any = {
+            page,
+            page_size: 10,
+          }
+
+          if (searchQuery) params.q = searchQuery
+          if (statusFilter && statusFilter !== 'all') params.status = statusFilter
+          if (favoriteFilter !== undefined) params.is_favorited = favoriteFilter
+          if (tagFilter) params.tag_id = tagFilter
+          if (scoreRange[0] > 0) params.min_score = scoreRange[0]
+          if (scoreRange[1] < 100) params.max_score = scoreRange[1]
+
+          const data = await postsAPIExtended.search(params)
+          setPosts(data.posts || [])
+          setTotalPages(data.total_pages || 1)
+        } catch (searchError) {
+          console.error('Search API failed, falling back to list:', searchError)
+          // search 실패 시 기본 list API로 fallback
+          const data = await postsAPI.list(page, 10)
+          setPosts(data.posts || [])
+          setTotalPages(data.total_pages || 1)
+          toast.error('검색 기능을 사용할 수 없습니다. 전체 목록을 표시합니다.')
+        }
+      } else {
+        // 필터 없으면 기본 list API 사용
+        const data = await postsAPI.list(page, 10)
+        setPosts(data.posts || [])
+        setTotalPages(data.total_pages || 1)
       }
-
-      if (searchQuery) params.q = searchQuery
-      if (statusFilter && statusFilter !== 'all') params.status = statusFilter
-      if (favoriteFilter !== undefined) params.is_favorited = favoriteFilter
-      if (tagFilter) params.tag_id = tagFilter
-      if (scoreRange[0] > 0) params.min_score = scoreRange[0]
-      if (scoreRange[1] < 100) params.max_score = scoreRange[1]
-
-      const data = await postsAPIExtended.search(params)
-      setPosts(data.posts)
-      setTotalPages(data.total_pages || 1)
     } catch (error) {
-      toast.error('포스팅 로드 실패')
+      console.error('Failed to load posts:', error)
+      setPosts([])
+      setTotalPages(1)
     } finally {
       setLoading(false)
     }
