@@ -39,6 +39,9 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
+import { PublishGuide } from './publish-guide'
+import { HelpCircle, PlayCircle } from 'lucide-react'
+
 // 저장된 글 타입 (간단한 버전)
 interface SavedPost {
   id: string
@@ -98,6 +101,9 @@ export function SavedPostsManager() {
   const [publishing, setPublishing] = useState(false)
   const [extensionId, setExtensionId] = useState<string | null>(null)
   const [extensionConnected, setExtensionConnected] = useState<boolean | null>(null)
+
+  // 실시간 가이드 상태
+  const [guideOpen, setGuideOpen] = useState(false)
 
   // 크롬 확장 프로그램 설치 여부 확인
   useEffect(() => {
@@ -662,14 +668,23 @@ export function SavedPostsManager() {
             AI가 생성한 글을 저장하고 이미지와 함께 네이버 블로그용으로 내보내세요
           </p>
         </div>
-        <Button
-          variant="outline"
-          onClick={downloadExtension}
-          className="gap-2"
-        >
-          <Globe className="w-4 h-4" />
-          확장 프로그램 다운로드
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            onClick={() => setGuideOpen(true)}
+            className="gap-2 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700"
+          >
+            <PlayCircle className="w-4 h-4" />
+            발행 가이드 시작
+          </Button>
+          <Button
+            variant="outline"
+            onClick={downloadExtension}
+            className="gap-2"
+          >
+            <Globe className="w-4 h-4" />
+            확장프로그램
+          </Button>
+        </div>
       </div>
 
       {/* 확장 프로그램 안내 카드 */}
@@ -1099,6 +1114,17 @@ export function SavedPostsManager() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 실시간 발행 가이드 */}
+      <PublishGuide
+        isOpen={guideOpen}
+        onClose={() => setGuideOpen(false)}
+        onDownloadExtension={downloadExtension}
+        hasExtension={extensionInstalled}
+        hasSelectedPost={!!selectedPost}
+        hasImages={uploadedImages.length > 0}
+        onStartPublish={handleNaverAutoPublish}
+      />
     </div>
   )
 }
