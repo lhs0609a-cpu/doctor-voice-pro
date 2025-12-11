@@ -27,7 +27,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Database,
-  CloudUpload,
+  Cloud,
 } from 'lucide-react'
 import { imagesAPI } from '@/lib/api'
 import { useRouter } from 'next/navigation'
