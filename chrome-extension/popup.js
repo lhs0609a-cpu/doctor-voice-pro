@@ -43,7 +43,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 웹사이트 열기 버튼
   btnOpenSite.addEventListener('click', () => {
     chrome.tabs.create({
-      url: 'https://frontend-fewfs-projects-83cc0821.vercel.app/dashboard/saved',
+      url: 'https://doctor-voice-pro-ghwi.vercel.app/dashboard/saved',
       active: true
     });
   });

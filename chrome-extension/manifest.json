@@ -50,6 +50,11 @@
       "matches": ["https://nid.naver.com/*", "https://www.naver.com/*", "https://naver.com/*"],
       "js": ["content-login.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://*.vercel.app/*", "http://localhost:*/*"],
+      "js": ["content-website.js"],
+      "run_at": "document_idle"
     }
   ],
   "background": {

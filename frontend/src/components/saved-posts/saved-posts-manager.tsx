@@ -90,7 +90,7 @@ export function SavedPostsManager() {
   const [selectedPost, setSelectedPost] = useState<SavedPost | null>(null)
   const [uploadedImages, setUploadedImages] = useState<File[]>([])
   const [imagePreview, setImagePreview] = useState<string[]>([])
-  const [distributionStrategy, setDistributionStrategy] = useState<'even' | 'paragraphs'>('paragraphs')
+  const [distributionStrategy, setDistributionStrategy] = useState<'even' | 'paragraphs'>('even')
   const [extensionInstalled, setExtensionInstalled] = useState(false)
 
   // 원클릭 발행 관련 상태
@@ -218,17 +218,9 @@ export function SavedPostsManager() {
     const previews = imageFiles.map((file) => URL.createObjectURL(file))
     setImagePreview(previews)
 
-    toast.success(`${imageFiles.length}개의 이미지가 업로드되었습니다`, {
-      description: '자동으로 워드 문서를 생성하고 있습니다...'
+    toast.success(`${imageFiles.length}개의 이미지가 준비되었습니다`, {
+      description: '네이버 블로그 발행 버튼을 클릭하세요'
     })
-
-    // 자동으로 워드 다운로드 실행
-    if (selectedPost) {
-      // 짧은 딜레이 후 자동 다운로드 (UI 업데이트 대기)
-      setTimeout(() => {
-        exportWithImagesAuto(imageFiles)
-      }, 500)
-    }
   }
 
   // 블로그 자동 포스팅용 데이터 전송
@@ -481,29 +473,51 @@ export function SavedPostsManager() {
     }
   }
 
-  // 이미지를 imgBB에 업로드하고 URL 반환
+  // 이미지를 imgBB에 업로드 (3개씩 병렬 + 재시도)
   const uploadImagesToImgBB = async (files: File[]): Promise<string[]> => {
     const urls: string[] = []
+    const total = files.length
+    let completed = 0
+    let failed = 0
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i]
-      try {
-        toast.loading(`이미지 업로드 중... (${i + 1}/${files.length})`, { id: 'img-upload' })
-        const response = await imagesAPI.upload(file)
-        if (response.success && response.url) {
-          urls.push(response.url)
+    // 단일 이미지 업로드 (재시도 포함)
+    const uploadWithRetry = async (file: File): Promise<string | null> => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const result = await imagesAPI.upload(file)
+          if (result.success && result.url) return result.url
+        } catch (e) {
+          if (attempt < 1) await new Promise(r => setTimeout(r, 500))
         }
-      } catch (error) {
-        console.error(`이미지 ${i + 1} 업로드 실패:`, error)
-        // 실패한 이미지는 건너뛰고 계속 진행
       }
+      return null
     }
 
-    toast.dismiss('img-upload')
+    // 3개씩 병렬 업로드
+    const BATCH_SIZE = 3
+    for (let i = 0; i < files.length; i += BATCH_SIZE) {
+      const batch = files.slice(i, i + BATCH_SIZE)
+      toast.loading(`이미지 업로드 중... (${Math.min(i + BATCH_SIZE, total)}/${total})`, { id: 'img-upload' })
+
+      const results = await Promise.all(batch.map(f => uploadWithRetry(f)))
+
+      results.forEach(url => {
+        completed++
+        if (url) urls.push(url)
+        else failed++
+      })
+    }
+
+    if (failed > 0) {
+      toast.warning(`${urls.length}개 성공, ${failed}개 실패`, { id: 'img-upload' })
+    } else {
+      toast.success(`${urls.length}개 업로드 완료!`, { id: 'img-upload' })
+    }
+
     return urls
   }
 
-  // 네이버 블로그 자동 발행 - 확장 프로그램을 통해 자동 입력
+  // 네이버 블로그 자동 발행 - localStorage에 저장 후 이동
   const handleNaverAutoPublish = async () => {
     if (!selectedPost) {
       toast.error('발행할 글을 선택해주세요')
@@ -516,61 +530,24 @@ export function SavedPostsManager() {
       // 이미지를 imgBB에 업로드하고 URL 가져오기
       let imageUrls: string[] = []
       if (uploadedImages.length > 0) {
-        toast.loading('이미지를 클라우드에 업로드 중...', { id: loadingToast })
         imageUrls = await uploadImagesToImgBB(uploadedImages)
 
         if (imageUrls.length === 0 && uploadedImages.length > 0) {
           toast.error('이미지 업로드에 실패했습니다', { id: loadingToast })
           return
         }
-
-        toast.loading(`${imageUrls.length}개 이미지 업로드 완료!`, { id: loadingToast })
       }
 
       // 발행 데이터 준비 (이미지 URL 사용)
       const postData = {
         title: selectedPost.suggested_titles?.[0] || selectedPost.title || '',
         content: selectedPost.generated_content || selectedPost.content || '',
-        imageUrls: imageUrls,  // URL 배열로 전달
+        imageUrls: imageUrls,
         keywords: selectedPost.seo_keywords || [],
       }
 
-      // 저장된 로그인 정보 로드
-      const savedCredentials = localStorage.getItem('naver-credentials')
-      const credentials = savedCredentials ? JSON.parse(savedCredentials) : { id: '', pw: '' }
-
-      // 확장 프로그램 ID 확인
-      const savedExtId = localStorage.getItem('doctorvoice-extension-id')
-
-      if (savedExtId) {
-        // 확장 프로그램으로 직접 전송
-        toast.loading('확장 프로그램으로 전송 중...', { id: loadingToast })
-
-        try {
-          const response = await sendMessageToExtension(savedExtId, {
-            action: 'ONE_CLICK_PUBLISH',
-            postData,
-            credentials,
-            options: { useQuote: true, useHighlight: true, useImages: true }
-          })
-
-          if (response?.success) {
-            toast.success('발행 프로세스 시작!', {
-              id: loadingToast,
-              description: '새 탭에서 네이버 로그인 후 자동으로 글이 작성됩니다',
-            })
-          } else {
-            throw new Error(response?.error || '확장 프로그램 통신 실패')
-          }
-        } catch (extError) {
-          console.error('확장 프로그램 통신 실패:', extError)
-          // 확장 프로그램 연결 실패 시 수동 방식으로 전환
-          await fallbackManualPublish(postData, loadingToast)
-        }
-      } else {
-        // 확장 프로그램 ID 없음 - 수동 방식
-        await fallbackManualPublish(postData, loadingToast)
-      }
+      // localStorage에 저장 후 네이버 블로그로 이동
+      await fallbackManualPublish(postData, loadingToast)
 
     } catch (error: any) {
       console.error('발행 준비 실패:', error)
@@ -581,27 +558,83 @@ export function SavedPostsManager() {
     }
   }
 
-  // 수동 발행 방식 (확장 프로그램 없을 때)
+  // 자동 발행 (확장 프로그램 통신 후 네이버 블로그로 이동)
   const fallbackManualPublish = async (postData: any, loadingToast: string | number) => {
-    // localStorage에 데이터 저장 (팝업에서 읽을 수 있도록)
+    // localStorage에 데이터 저장 (백업용)
     localStorage.setItem('doctorvoice-pending-post', JSON.stringify(postData))
+    localStorage.setItem('doctorvoice-auto-publish', 'true')
 
-    toast.success('발행 데이터 준비 완료!', {
-      id: loadingToast,
-      description: '확장 프로그램 아이콘을 클릭하여 발행하세요',
-    })
+    // 확장 프로그램이 연결되어 있으면 content script를 통해 데이터 전송
+    const extensionConnected = checkExtensionViaContentScript()
 
-    // 확장 프로그램 연결 안내 다이얼로그 표시
-    const confirmConnect = window.confirm(
-      '확장 프로그램이 연결되어 있지 않습니다.\n\n' +
-      '1. 크롬 확장 프로그램 아이콘 클릭\n' +
-      '2. "발행 시작" 버튼 클릭\n\n' +
-      '확장 프로그램 ID를 등록하시겠습니까?'
-    )
+    if (extensionConnected) {
+      toast.loading('확장 프로그램에 데이터 전송 중...', { id: loadingToast })
 
-    if (confirmConnect) {
-      handleSetExtensionId()
+      const success = await sendDataViaContentScript(postData, {
+        useQuote: true,
+        useHighlight: true,
+        useImages: true
+      })
+
+      if (success) {
+        toast.success('발행 데이터 전송 완료!', {
+          id: loadingToast,
+          description: '네이버 블로그 글쓰기 페이지로 이동합니다...',
+        })
+      } else {
+        toast.success('발행 데이터 준비 완료!', {
+          id: loadingToast,
+          description: '네이버 블로그 글쓰기 페이지로 이동합니다...',
+        })
+      }
+    } else {
+      toast.success('발행 데이터 준비 완료!', {
+        id: loadingToast,
+        description: '네이버 블로그 글쓰기 페이지로 이동합니다...',
+      })
     }
+
+    // 1초 후 네이버 블로그 글쓰기 페이지로 이동
+    setTimeout(() => {
+      window.open('https://blog.naver.com/GoBlogWrite.naver', '_blank')
+    }, 1000)
+  }
+
+  // 확장 프로그램 연결 확인 (content script 통신)
+  const checkExtensionViaContentScript = (): boolean => {
+    const indicator = document.getElementById('doctorvoice-extension-indicator')
+    if (indicator && indicator.dataset.extensionId) {
+      setExtensionInstalled(true)
+      return true
+    }
+    return false
+  }
+
+  // 확장 프로그램에 발행 데이터 전송 (content script 통해)
+  const sendDataViaContentScript = (postData: any, options: any): Promise<boolean> => {
+    return new Promise((resolve) => {
+      // 응답 리스너 설정
+      const handleResponse = (event: MessageEvent) => {
+        if (event.data?.type === 'DOCTORVOICE_PUBLISH_RESPONSE') {
+          window.removeEventListener('message', handleResponse)
+          resolve(event.data.success)
+        }
+      }
+      window.addEventListener('message', handleResponse)
+
+      // 요청 전송
+      window.postMessage({
+        type: 'DOCTORVOICE_PUBLISH_REQUEST',
+        data: postData,
+        options: options
+      }, '*')
+
+      // 3초 타임아웃
+      setTimeout(() => {
+        window.removeEventListener('message', handleResponse)
+        resolve(false)
+      }, 3000)
+    })
   }
 
   // 자동 다운로드용 함수 (이미지 파일 직접 전달)
@@ -741,7 +774,17 @@ export function SavedPostsManager() {
               savedPosts.map((post) => (
                 <div
                   key={post.id}
-                  onClick={() => setSelectedPost(post)}
+                  onClick={() => {
+                    setSelectedPost(post)
+                    // 확장 프로그램 연동을 위해 선택된 글 정보 저장
+                    const previewData = {
+                      title: post.suggested_titles?.[0] || post.title || '',
+                      content: post.generated_content || post.content || '',
+                      imageUrls: [],
+                      keywords: post.seo_keywords || [],
+                    }
+                    localStorage.setItem('doctorvoice-pending-post', JSON.stringify(previewData))
+                  }}
                   className={`p-4 border rounded-lg cursor-pointer transition-all ${
                     selectedPost?.id === post.id
                       ? 'border-blue-500 bg-blue-50'

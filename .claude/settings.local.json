@@ -162,7 +162,14 @@
       "Bash(E:\\u\\doctor-voice-pro\\backend\\venv\\Scripts\\python.exe -m uvicorn:*)",
       "Bash(npx vercel --prod --yes)",
       "WebFetch(domain:frontend-9ub6795k2-fewfs-projects-83cc0821.vercel.app)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(\"C:\\Users\\u\\AppData\\Roaming\\npm\\vercel.cmd\" --prod --yes)",
+      "Bash(\"C:\\Users\\u\\AppData\\Roaming\\npm\\vercel.cmd\" ls)",
+      "Bash(\"C:\\Users\\u\\AppData\\Roaming\\npm\\vercel.cmd\" domains ls)",
+      "Bash(\"C:\\Users\\u\\AppData\\Roaming\\npm\\vercel.cmd\" --prod --yes --project doctor-voice-pro-ghwi)",
+      "Bash(\"C:\\Users\\u\\AppData\\Roaming\\npm\\vercel.cmd\" link --project doctor-voice-pro-ghwi --yes)",
+      "Bash(\"C:\\Users\\u\\AppData\\Roaming\\npm\\vercel.cmd\" env ls)",
+      "Bash(\"C:\\Users\\u\\AppData\\Roaming\\npm\\vercel.cmd\" env add NEXT_PUBLIC_API_URL production)"
     ],
     "deny": [],
     "ask": []
