@@ -1,5 +1,51 @@
-// 백그라운드 서비스 워커 - v10.1 단순화 버전
-console.log('[닥터보이스] 백그라운드 서비스 워커 시작 v10.1');
+// 백그라운드 서비스 워커 - v10.2 자동 데이터 동기화 버전
+console.log('[닥터보이스] 백그라운드 서비스 워커 시작 v10.2');
+
+// 닥터보이스 사이트에서 localStorage 데이터 가져오기
+async function syncDataFromWebsite() {
+  try {
+    const tabs = await chrome.tabs.query({});
+    const doctorVoiceTab = tabs.find(tab =>
+      tab.url && (
+        tab.url.includes('localhost:3000') ||
+        tab.url.includes('localhost:3001') ||
+        tab.url.includes('doctor-voice-pro') ||
+        tab.url.includes('vercel.app')
+      )
+    );
+
+    if (!doctorVoiceTab) {
+      console.log('[닥터보이스] 웹사이트 탭 없음');
+      return null;
+    }
+
+    const result = await chrome.scripting.executeScript({
+      target: { tabId: doctorVoiceTab.id },
+      func: () => {
+        const pending = localStorage.getItem('doctorvoice-pending-post');
+        const autoPublish = localStorage.getItem('doctorvoice-auto-publish');
+        // 데이터 읽은 후 플래그 초기화
+        if (autoPublish) localStorage.removeItem('doctorvoice-auto-publish');
+        return { post: pending ? JSON.parse(pending) : null, autoPublish: autoPublish === 'true' };
+      }
+    });
+
+    const data = result?.[0]?.result;
+    if (data?.post && data.post.title) {
+      console.log('[닥터보이스] 웹사이트에서 데이터 동기화:', data.post.title);
+      await chrome.storage.local.set({
+        pendingPost: data.post,
+        postOptions: { useQuote: true, useHighlight: true, useImages: true },
+        autoPostEnabled: true
+      });
+      return data.post;
+    }
+    return null;
+  } catch (e) {
+    console.log('[닥터보이스] 데이터 동기화 실패:', e.message);
+    return null;
+  }
+}
 
 // 탭 업데이트 감지 - 블로그 글쓰기 페이지 도착 시 자동 입력
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
@@ -10,9 +56,12 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
   // 블로그 글쓰기 페이지인지 확인
   if (!url.includes('blog.naver.com')) return;
-  if (!url.includes('GoBlogWrite') && !url.includes('PostWrite')) return;
+  if (!url.includes('GoBlogWrite') && !url.includes('PostWrite') && !url.includes('Redirect=Write') && !url.includes('editor')) return;
 
   console.log('[닥터보이스] 블로그 글쓰기 페이지 감지:', url);
+
+  // 먼저 웹사이트에서 최신 데이터 동기화 시도
+  await syncDataFromWebsite();
 
   // 저장된 데이터 확인
   const stored = await chrome.storage.local.get(['pendingPost', 'postOptions', 'autoPostEnabled']);

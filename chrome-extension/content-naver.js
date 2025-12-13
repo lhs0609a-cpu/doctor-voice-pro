@@ -1,5 +1,277 @@
-// 네이버 블로그 스마트에디터 v10.0 - imgBB URL 이미지 지원
-console.log('[닥터보이스] v10.0 로드 - imgBB URL 이미지 지원');
+// 네이버 블로그 스마트에디터 v10.1 - 가이드 오버레이 추가
+console.log('[닥터보이스] v10.1 로드 - 가이드 오버레이 추가');
+
+// 페이지 로드 시 가이드 오버레이 표시
+function showGuideOverlay() {
+  const url = window.location.href;
+  if (!url.includes('blog.naver.com')) return;
+  if (!url.includes('GoBlogWrite') && !url.includes('PostWrite') && !url.includes('Redirect=Write') && !url.includes('editor')) return;
+
+  // 기존 가이드 제거
+  const existingGuide = document.querySelector('.dv-guide-overlay');
+  if (existingGuide) existingGuide.remove();
+
+  // 가이드 오버레이 생성
+  const overlay = document.createElement('div');
+  overlay.className = 'dv-guide-overlay';
+  overlay.innerHTML = `
+    <style>
+      .dv-guide-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 999998;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        animation: fadeIn 0.3s ease;
+      }
+      @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      @keyframes pulse {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.05); }
+      }
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      .dv-guide-card {
+        background: white;
+        border-radius: 20px;
+        padding: 32px 40px;
+        max-width: 480px;
+        text-align: center;
+        box-shadow: 0 25px 80px rgba(0,0,0,0.4);
+        animation: pulse 2s ease infinite;
+      }
+      .dv-guide-icon {
+        width: 80px;
+        height: 80px;
+        margin: 0 auto 20px;
+        background: linear-gradient(135deg, #10b981, #059669);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 40px;
+      }
+      .dv-guide-spinner {
+        width: 40px;
+        height: 40px;
+        border: 4px solid rgba(255,255,255,0.3);
+        border-top-color: white;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      .dv-guide-title {
+        font-size: 24px;
+        font-weight: bold;
+        color: #1f2937;
+        margin-bottom: 12px;
+      }
+      .dv-guide-desc {
+        font-size: 16px;
+        color: #6b7280;
+        margin-bottom: 24px;
+        line-height: 1.6;
+      }
+      .dv-guide-steps {
+        background: #f3f4f6;
+        border-radius: 12px;
+        padding: 16px 20px;
+        text-align: left;
+        margin-bottom: 20px;
+      }
+      .dv-guide-step {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 0;
+        font-size: 14px;
+        color: #374151;
+      }
+      .dv-guide-step.active {
+        color: #059669;
+        font-weight: 600;
+      }
+      .dv-guide-step.done {
+        color: #9ca3af;
+        text-decoration: line-through;
+      }
+      .dv-guide-step-num {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background: #e5e7eb;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        font-weight: bold;
+      }
+      .dv-guide-step.active .dv-guide-step-num {
+        background: #10b981;
+        color: white;
+      }
+      .dv-guide-step.done .dv-guide-step-num {
+        background: #9ca3af;
+        color: white;
+      }
+      .dv-guide-btn {
+        background: linear-gradient(135deg, #10b981, #059669);
+        color: white;
+        border: none;
+        padding: 14px 32px;
+        border-radius: 10px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.2s, box-shadow 0.2s;
+      }
+      .dv-guide-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(16, 185, 129, 0.4);
+      }
+      .dv-guide-btn-secondary {
+        background: #f3f4f6;
+        color: #374151;
+        margin-left: 10px;
+      }
+      .dv-guide-btn-secondary:hover {
+        box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+      }
+      .dv-guide-status {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        margin-bottom: 16px;
+        padding: 12px;
+        background: #fef3c7;
+        border-radius: 8px;
+        color: #92400e;
+        font-size: 14px;
+      }
+      .dv-guide-status.ready {
+        background: #d1fae5;
+        color: #065f46;
+      }
+      .dv-guide-status.error {
+        background: #fee2e2;
+        color: #991b1b;
+      }
+    </style>
+    <div class="dv-guide-card">
+      <div class="dv-guide-icon">
+        <div class="dv-guide-spinner"></div>
+      </div>
+      <h2 class="dv-guide-title">자동 발행 준비 중...</h2>
+      <p class="dv-guide-desc">잠시만 기다려주세요.<br>글과 이미지가 자동으로 입력됩니다.</p>
+
+      <div class="dv-guide-status" id="dv-status">
+        <span>⏳</span>
+        <span id="dv-status-text">데이터 확인 중...</span>
+      </div>
+
+      <div class="dv-guide-steps">
+        <div class="dv-guide-step done" id="step1">
+          <span class="dv-guide-step-num">✓</span>
+          <span>네이버 블로그 글쓰기 페이지 열기</span>
+        </div>
+        <div class="dv-guide-step active" id="step2">
+          <span class="dv-guide-step-num">2</span>
+          <span>발행 데이터 로딩 중...</span>
+        </div>
+        <div class="dv-guide-step" id="step3">
+          <span class="dv-guide-step-num">3</span>
+          <span>제목 및 본문 자동 입력</span>
+        </div>
+        <div class="dv-guide-step" id="step4">
+          <span class="dv-guide-step-num">4</span>
+          <span>이미지 자동 삽입</span>
+        </div>
+      </div>
+
+      <div>
+        <button class="dv-guide-btn" id="dv-start-btn" style="display:none;">
+          📝 수동으로 시작하기
+        </button>
+        <button class="dv-guide-btn dv-guide-btn-secondary" id="dv-close-btn">
+          ✕ 닫기
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  // 닫기 버튼
+  document.getElementById('dv-close-btn').addEventListener('click', () => {
+    overlay.style.opacity = '0';
+    setTimeout(() => overlay.remove(), 300);
+  });
+
+  // 수동 시작 버튼
+  document.getElementById('dv-start-btn').addEventListener('click', async () => {
+    const stored = await chrome.storage.local.get(['pendingPost', 'postOptions']);
+    if (stored.pendingPost) {
+      overlay.remove();
+      handleInsertPost(stored.pendingPost, stored.postOptions || {});
+    } else {
+      updateGuideStatus('error', '발행할 데이터가 없습니다. 웹사이트에서 다시 시도해주세요.');
+    }
+  });
+
+  return overlay;
+}
+
+// 가이드 상태 업데이트
+function updateGuideStatus(status, text) {
+  const statusEl = document.getElementById('dv-status');
+  const statusText = document.getElementById('dv-status-text');
+  const startBtn = document.getElementById('dv-start-btn');
+
+  if (!statusEl) return;
+
+  statusEl.className = 'dv-guide-status ' + status;
+  statusText.textContent = text;
+
+  if (status === 'ready') {
+    statusEl.querySelector('span:first-child').textContent = '✅';
+  } else if (status === 'error') {
+    statusEl.querySelector('span:first-child').textContent = '❌';
+    if (startBtn) startBtn.style.display = 'inline-block';
+  }
+}
+
+// 가이드 단계 업데이트
+function updateGuideStep(stepNum, status) {
+  const step = document.getElementById(`step${stepNum}`);
+  if (!step) return;
+
+  step.className = 'dv-guide-step ' + status;
+
+  if (status === 'done') {
+    step.querySelector('.dv-guide-step-num').textContent = '✓';
+  } else if (status === 'active') {
+    step.querySelector('.dv-guide-step-num').textContent = stepNum;
+  }
+}
+
+// 가이드 제거
+function removeGuideOverlay() {
+  const overlay = document.querySelector('.dv-guide-overlay');
+  if (overlay) {
+    overlay.style.opacity = '0';
+    setTimeout(() => overlay.remove(), 300);
+  }
+}
 
 // 메시지 수신 (background.js에서)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -20,6 +292,11 @@ async function handleInsertPost(postData, options) {
   console.log('[닥터보이스] 이미지 URL 수:', postData.imageUrls?.length || 0);
   console.log('[닥터보이스] 이미지 Base64 수:', postData.images?.length || 0);
 
+  // 가이드 업데이트
+  updateGuideStatus('ready', '데이터 로딩 완료! 자동 입력을 시작합니다.');
+  updateGuideStep(2, 'done');
+  updateGuideStep(3, 'active');
+
   showProgressNotification('📝 전자동 발행 시작...', 0);
 
   try {
@@ -27,20 +304,28 @@ async function handleInsertPost(postData, options) {
     await waitForEditor();
     await sleep(2000);
     showProgressNotification('✅ 에디터 로딩 완료', 10);
+    updateGuideStatus('ready', '에디터 준비 완료! 제목을 입력합니다.');
 
     // 2. 제목 입력
     if (postData.title) {
       await inputTitle(postData.title);
       showProgressNotification('✅ 제목 입력 완료', 20);
+      updateGuideStatus('ready', '제목 입력 완료! 본문을 입력합니다.');
       await sleep(500);
     }
 
     // 3. 본문 입력 (이미지 URL이 있으면 함께 삽입)
     if (postData.content) {
+      updateGuideStep(3, 'done');
+      updateGuideStep(4, 'active');
+      updateGuideStatus('ready', '본문 입력 중... 잠시만 기다려주세요.');
+
       // imageUrls가 있으면 본문에 이미지 URL을 <img> 태그로 포함
       const imageUrls = postData.imageUrls || [];
       await insertContentWithImages(postData.content, imageUrls, options);
       showProgressNotification('✅ 본문 및 이미지 입력 완료', 80);
+      updateGuideStep(4, 'done');
+      updateGuideStatus('ready', '본문 및 이미지 입력 완료!');
       await sleep(500);
     }
 
@@ -63,12 +348,15 @@ async function handleInsertPost(postData, options) {
     // 6. 발행 버튼 클릭 (자동 발행)
     const publishSuccess = await clickPublishButton();
 
+    // 가이드 제거
+    removeGuideOverlay();
+
     if (publishSuccess) {
       showProgressNotification('✅ 발행 완료!', 100);
       showBigSuccessNotification('🎉 블로그 발행 완료!', '글이 성공적으로 발행되었습니다.');
     } else {
       showProgressNotification('⚠️ 발행 버튼을 직접 클릭해주세요', 95);
-      showBigSuccessNotification('✅ 글 입력 완료!', '발행 버튼을 클릭하여 발행해주세요.');
+      showBigSuccessNotification('✅ 글 입력 완료!', '오른쪽 상단의 녹색 "발행" 버튼을 클릭하여 발행해주세요.');
     }
 
     // 자동 발행 플래그 해제
@@ -76,6 +364,7 @@ async function handleInsertPost(postData, options) {
 
   } catch (error) {
     console.error('[닥터보이스] 전자동 발행 오류:', error);
+    updateGuideStatus('error', '오류 발생: ' + error.message);
     showNotification('❌ 오류 발생: ' + error.message);
   }
 }
@@ -163,46 +452,96 @@ async function clickPublishButton() {
 async function autoExecute() {
   const url = window.location.href;
   if (!url.includes('blog.naver.com')) return;
-  if (!url.includes('GoBlogWrite') && !url.includes('PostWrite') && !url.includes('editor')) return;
+  if (!url.includes('GoBlogWrite') && !url.includes('PostWrite') && !url.includes('Redirect=Write') && !url.includes('editor')) return;
 
   console.log('[닥터보이스] 글쓰기 페이지 감지');
 
+  // 가이드 오버레이 표시
+  showGuideOverlay();
+
   try {
-    const stored = await chrome.storage.local.get(['pendingPost', 'autoPasteEnabled']);
+    // 저장된 데이터 확인
+    const stored = await chrome.storage.local.get(['pendingPost', 'postOptions', 'autoPostEnabled']);
 
-    if (!stored.autoPasteEnabled || !stored.pendingPost) {
-      console.log('[닥터보이스] 자동 붙여넣기 비활성화 또는 데이터 없음');
-      return;
+    console.log('[닥터보이스] 저장된 데이터:', stored.pendingPost ? '있음' : '없음', 'autoPostEnabled:', stored.autoPostEnabled);
+
+    if (stored.autoPostEnabled && stored.pendingPost) {
+      // 자동 발행 데이터가 있으면 바로 시작
+      console.log('[닥터보이스] 자동 발행 시작!');
+      updateGuideStatus('ready', '발행 데이터 발견! 자동 입력을 시작합니다.');
+
+      // 에디터 로딩 대기
+      await waitForEditor();
+      await sleep(2000);
+
+      // 자동 입력 시작
+      await handleInsertPost(stored.pendingPost, stored.postOptions || {});
+    } else {
+      // 데이터가 없으면 대기 상태로 안내
+      console.log('[닥터보이스] 자동 발행 데이터 없음, 대기 모드');
+      updateGuideStatus('error', '발행할 데이터가 없습니다.');
+
+      // 가이드 카드 내용 변경
+      const guideCard = document.querySelector('.dv-guide-card');
+      if (guideCard) {
+        guideCard.innerHTML = `
+          <div class="dv-guide-icon" style="background: linear-gradient(135deg, #f59e0b, #d97706);">
+            <span style="font-size: 40px;">📋</span>
+          </div>
+          <h2 class="dv-guide-title">발행 데이터가 없습니다</h2>
+          <p class="dv-guide-desc">
+            닥터보이스 프로 웹사이트에서<br>
+            <strong>"네이버 블로그에 발행하기"</strong> 버튼을 클릭하세요.
+          </p>
+
+          <div class="dv-guide-steps">
+            <div class="dv-guide-step">
+              <span class="dv-guide-step-num">1</span>
+              <span>닥터보이스 프로 웹사이트 열기</span>
+            </div>
+            <div class="dv-guide-step">
+              <span class="dv-guide-step-num">2</span>
+              <span>저장된 글 탭에서 글 선택</span>
+            </div>
+            <div class="dv-guide-step">
+              <span class="dv-guide-step-num">3</span>
+              <span>이미지 업로드 (선택)</span>
+            </div>
+            <div class="dv-guide-step active">
+              <span class="dv-guide-step-num">4</span>
+              <span><strong>"네이버 블로그에 발행하기"</strong> 버튼 클릭</span>
+            </div>
+          </div>
+
+          <div>
+            <button class="dv-guide-btn" onclick="window.open('https://doctor-voice-pro-ghwi.vercel.app/dashboard/saved', '_blank')">
+              🌐 웹사이트 열기
+            </button>
+            <button class="dv-guide-btn dv-guide-btn-secondary" id="dv-close-btn-alt">
+              ✕ 닫기
+            </button>
+          </div>
+        `;
+
+        // 새 닫기 버튼에 이벤트 추가
+        document.getElementById('dv-close-btn-alt')?.addEventListener('click', () => {
+          const overlay = document.querySelector('.dv-guide-overlay');
+          if (overlay) {
+            overlay.style.opacity = '0';
+            setTimeout(() => overlay.remove(), 300);
+          }
+        });
+      }
     }
-
-    console.log('[닥터보이스] 자동 붙여넣기 시작');
-    showNotification('📋 자동 붙여넣기 시작...');
-
-    // 에디터 로딩 대기
-    await waitForEditor();
-    await sleep(2000);
-
-    // 본문 영역 클릭해서 포커스
-    const bodyArea = await findBodyArea();
-    if (bodyArea) {
-      bodyArea.click();
-      bodyArea.focus();
-    }
-
-    // 완료 후 플래그 초기화
-    await chrome.storage.local.set({ autoPasteEnabled: false });
-
-    // 큰 알림으로 Ctrl+V 안내
-    showBigNotification();
 
   } catch (err) {
     console.error('[닥터보이스] 오류:', err);
-    showNotification('❌ 오류: ' + err.message);
+    updateGuideStatus('error', '오류 발생: ' + err.message);
   }
 }
 
 // 페이지 로드 후 실행
-setTimeout(autoExecute, 3000);
+setTimeout(autoExecute, 2000);
 
 // 에디터 로딩 대기
 async function waitForEditor() {
@@ -633,9 +972,9 @@ async function insertContent(content, options) {
   }
 }
 
-// 본문 + 이미지 URL 함께 삽입 (imgBB URL 사용)
+// 본문 + 이미지 URL 함께 삽입 (DOM 직접 조작 - 5MB 제한 우회)
 async function insertContentWithImages(content, imageUrls, options) {
-  console.log('[닥터보이스] 본문 + 이미지 URL 삽입 시작');
+  console.log('[닥터보이스] 본문 + 이미지 URL 삽입 시작 (DOM 직접 조작)');
   console.log('[닥터보이스] 이미지 URL 개수:', imageUrls.length);
 
   const bodyArea = await findBodyArea();
@@ -649,93 +988,73 @@ async function insertContentWithImages(content, imageUrls, options) {
   bodyArea.focus();
   await sleep(300);
 
-  // 이미지 URL이 없으면 기존 방식으로 본문만 삽입
-  if (!imageUrls || imageUrls.length === 0) {
-    await insertContent(content, options);
-    return;
-  }
-
   // 본문을 문단으로 분리
   const paragraphs = content.split('\n\n').filter(p => p.trim());
-
-  // 이미지를 문단 사이에 균등하게 배치
   const totalParagraphs = paragraphs.length;
-  const totalImages = imageUrls.length;
+  const totalImages = imageUrls?.length || 0;
 
-  // 이미지 삽입 위치 계산 (2-3문단마다 이미지 1개)
+  // 이미지 균등 배치 위치 계산
   const imagePositions = [];
   if (totalImages > 0) {
-    const interval = Math.max(2, Math.floor(totalParagraphs / (totalImages + 1)));
+    const interval = Math.max(1, Math.floor(totalParagraphs / (totalImages + 1)));
     for (let i = 0; i < totalImages; i++) {
       const position = Math.min((i + 1) * interval, totalParagraphs);
       imagePositions.push(position);
     }
   }
 
-  // HTML 생성 (본문 + 이미지 태그 포함)
-  let htmlContent = '';
+  console.log('[닥터보이스] 이미지 삽입 위치:', imagePositions);
+
+  // 문단별로 순차 입력 (DOM 직접 조작)
   let imageIndex = 0;
 
   for (let i = 0; i < paragraphs.length; i++) {
     const para = paragraphs[i].trim();
     if (!para) continue;
 
-    // 문단 추가 (인용구 처리)
-    if (options?.useQuote && para.startsWith('>')) {
-      htmlContent += `<blockquote style="border-left: 4px solid #ddd; padding-left: 16px; margin: 16px 0; color: #666;">${para.slice(1).trim()}</blockquote>`;
-    } else {
-      htmlContent += `<p style="margin: 12px 0; line-height: 1.8;">${para.replace(/\n/g, '<br>')}</p>`;
-    }
+    // 텍스트 입력 (insertHTML 사용)
+    const paraHtml = `<p>${para.replace(/\n/g, '<br>')}</p>`;
+    document.execCommand('insertHTML', false, paraHtml);
+    await sleep(100);
 
     // 이미지 삽입 위치인 경우
     if (imageIndex < totalImages && imagePositions[imageIndex] === i + 1) {
       const imgUrl = imageUrls[imageIndex];
-      console.log(`[닥터보이스] 이미지 ${imageIndex + 1} 삽입: ${imgUrl}`);
+      console.log(`[닥터보이스] 이미지 ${imageIndex + 1} 삽입: ${imgUrl.substring(0, 50)}...`);
 
-      // 이미지 태그 삽입 (중앙 정렬, 최대 너비 100%)
-      htmlContent += `
-        <div style="text-align: center; margin: 24px 0;">
-          <img src="${imgUrl}" alt="이미지 ${imageIndex + 1}" style="max-width: 100%; height: auto; border-radius: 8px;" />
-        </div>
-      `;
+      // 줄바꿈 후 이미지 삽입
+      document.execCommand('insertHTML', false, '<br>');
+      await sleep(50);
+
+      // 이미지 태그 삽입
+      const imgHtml = `<img src="${imgUrl}" alt="이미지" style="max-width:100%;display:block;margin:16px auto;"><br>`;
+      document.execCommand('insertHTML', false, imgHtml);
+
       imageIndex++;
+      await sleep(300); // 이미지 로딩 대기
+    }
+
+    // 진행률 표시
+    if (i % 5 === 0) {
+      const progress = Math.round(((i + 1) / totalParagraphs) * 60) + 20;
+      showProgressNotification(`📝 본문 입력 중... (${i + 1}/${totalParagraphs})`, progress);
     }
   }
 
-  // 남은 이미지 처리 (문단 끝에 추가)
+  // 남은 이미지 처리
   while (imageIndex < totalImages) {
     const imgUrl = imageUrls[imageIndex];
-    console.log(`[닥터보이스] 남은 이미지 ${imageIndex + 1} 삽입: ${imgUrl}`);
-    htmlContent += `
-      <div style="text-align: center; margin: 24px 0;">
-        <img src="${imgUrl}" alt="이미지 ${imageIndex + 1}" style="max-width: 100%; height: auto; border-radius: 8px;" />
-      </div>
-    `;
+    console.log(`[닥터보이스] 남은 이미지 ${imageIndex + 1} 삽입`);
+
+    document.execCommand('insertHTML', false, '<br>');
+    const imgHtml = `<img src="${imgUrl}" alt="이미지" style="max-width:100%;display:block;margin:16px auto;"><br>`;
+    document.execCommand('insertHTML', false, imgHtml);
+
     imageIndex++;
+    await sleep(300);
   }
 
-  // 클립보드에 HTML 복사 후 붙여넣기
-  try {
-    const blob = new Blob([htmlContent], { type: 'text/html' });
-    const plainText = content;
-    const clipboardItem = new ClipboardItem({
-      'text/html': blob,
-      'text/plain': new Blob([plainText], { type: 'text/plain' })
-    });
-    await navigator.clipboard.write([clipboardItem]);
-
-    // 붙여넣기
-    document.execCommand('paste');
-    console.log('[닥터보이스] 본문 + 이미지 URL 붙여넣기 완료');
-
-    // 이미지 로딩 대기
-    await sleep(1000);
-
-  } catch (e) {
-    console.error('[닥터보이스] HTML + 이미지 붙여넣기 실패:', e);
-    // 실패 시 텍스트만 삽입
-    await insertContent(content, options);
-  }
+  console.log('[닥터보이스] 본문 + 이미지 입력 완료 (DOM 직접 조작)');
 }
 
 // 네이버 블로그용 HTML 변환
