@@ -5,25 +5,51 @@ console.log('[닥터보이스] 백그라운드 서비스 워커 시작 v10.2');
 async function syncDataFromWebsite() {
   try {
     const tabs = await chrome.tabs.query({});
+
+    // 닥터보이스 웹사이트 탭 찾기 (여러 패턴 지원)
     const doctorVoiceTab = tabs.find(tab =>
       tab.url && (
         tab.url.includes('localhost:3000') ||
         tab.url.includes('localhost:3001') ||
         tab.url.includes('doctor-voice-pro') ||
-        tab.url.includes('vercel.app')
+        tab.url.includes('vercel.app') ||
+        tab.url.includes('doctor-voice')
       )
     );
 
     if (!doctorVoiceTab) {
-      console.log('[닥터보이스] 웹사이트 탭 없음');
+      console.log('[닥터보이스] 웹사이트 탭 없음, 모든 탭 검색...');
+
+      // 모든 vercel.app 탭에서 시도
+      for (const tab of tabs) {
+        if (tab.url && tab.url.includes('vercel.app')) {
+          try {
+            const result = await tryGetDataFromTab(tab.id);
+            if (result) return result;
+          } catch (e) {
+            console.log('[닥터보이스] 탭에서 데이터 가져오기 실패:', tab.url);
+          }
+        }
+      }
       return null;
     }
 
+    return await tryGetDataFromTab(doctorVoiceTab.id);
+  } catch (e) {
+    console.log('[닥터보이스] 데이터 동기화 실패:', e.message);
+    return null;
+  }
+}
+
+// 특정 탭에서 데이터 가져오기
+async function tryGetDataFromTab(tabId) {
+  try {
     const result = await chrome.scripting.executeScript({
-      target: { tabId: doctorVoiceTab.id },
+      target: { tabId: tabId },
       func: () => {
         const pending = localStorage.getItem('doctorvoice-pending-post');
         const autoPublish = localStorage.getItem('doctorvoice-auto-publish');
+        console.log('[닥터보이스] localStorage 확인:', pending ? '데이터 있음' : '없음', 'autoPublish:', autoPublish);
         // 데이터 읽은 후 플래그 초기화
         if (autoPublish) localStorage.removeItem('doctorvoice-auto-publish');
         return { post: pending ? JSON.parse(pending) : null, autoPublish: autoPublish === 'true' };
@@ -32,17 +58,21 @@ async function syncDataFromWebsite() {
 
     const data = result?.[0]?.result;
     if (data?.post && data.post.title) {
-      console.log('[닥터보이스] 웹사이트에서 데이터 동기화:', data.post.title);
+      console.log('[닥터보이스] 웹사이트에서 데이터 동기화 성공:', data.post.title);
+      console.log('[닥터보이스] 이미지 URL 수:', data.post.imageUrls?.length || 0);
+
       await chrome.storage.local.set({
         pendingPost: data.post,
         postOptions: { useQuote: true, useHighlight: true, useImages: true },
-        autoPostEnabled: true
+        autoPostEnabled: data.autoPublish
       });
+
+      console.log('[닥터보이스] chrome.storage.local에 저장 완료, autoPostEnabled:', data.autoPublish);
       return data.post;
     }
     return null;
   } catch (e) {
-    console.log('[닥터보이스] 데이터 동기화 실패:', e.message);
+    console.log('[닥터보이스] 탭 데이터 가져오기 실패:', e.message);
     return null;
   }
 }
@@ -60,11 +90,22 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
   console.log('[닥터보이스] 블로그 글쓰기 페이지 감지:', url);
 
-  // 먼저 웹사이트에서 최신 데이터 동기화 시도
-  await syncDataFromWebsite();
+  // 여러 번 동기화 시도 (타이밍 문제 해결)
+  let syncSuccess = false;
+  for (let i = 0; i < 3; i++) {
+    console.log(`[닥터보이스] 데이터 동기화 시도 ${i + 1}/3`);
+    const result = await syncDataFromWebsite();
+    if (result) {
+      syncSuccess = true;
+      console.log('[닥터보이스] 동기화 성공!');
+      break;
+    }
+    await sleep(1000); // 1초 대기 후 재시도
+  }
 
   // 저장된 데이터 확인
   const stored = await chrome.storage.local.get(['pendingPost', 'postOptions', 'autoPostEnabled']);
+  console.log('[닥터보이스] 저장된 데이터 확인:', stored.pendingPost ? '있음' : '없음', 'autoPostEnabled:', stored.autoPostEnabled);
 
   if (!stored.autoPostEnabled || !stored.pendingPost) {
     console.log('[닥터보이스] 자동 포스팅 비활성화 또는 데이터 없음');

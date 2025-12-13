@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "닥터보이스 프로 - 네이버 블로그 자동 포스팅",
-  "version": "10.1.0",
+  "version": "10.3.0",
   "description": "닥터보이스 프로에서 저장된 글을 네이버 블로그에 자동으로 포스팅합니다 (imgBB 이미지 URL 지원)",
   "permissions": [
     "activeTab",
