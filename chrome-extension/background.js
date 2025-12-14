@@ -1,5 +1,5 @@
-// 백그라운드 서비스 워커 v13.2 - 다중 입력 방식 (insertText → IME → char)
-console.log('[닥터보이스] 백그라운드 v13.2 시작 - 다중 입력 방식');
+// 백그라운드 서비스 워커 v13.3 - Runtime.evaluate + 클립보드 + Ctrl+V
+console.log('[닥터보이스] 백그라운드 v13.3 시작 - 클립보드+Ctrl+V 방식');
 
 // 전역 변수
 let pendingPostData = null;
@@ -10,7 +10,7 @@ chrome.runtime.onMessageExternal.addListener(async (message, sender, sendRespons
   console.log('[닥터보이스] 외부 메시지:', message.action);
 
   if (message.action === 'PING') {
-    sendResponse({ success: true, version: '13.2.0' });
+    sendResponse({ success: true, version: '13.3.0' });
     return true;
   }
 
@@ -23,10 +23,25 @@ chrome.runtime.onMessageExternal.addListener(async (message, sender, sendRespons
       autoPostEnabled: true
     });
 
-    chrome.tabs.create({
-      url: 'https://blog.naver.com/GoBlogWrite.naver',
-      active: true
-    });
+    // 이미 열린 블로그 글쓰기 탭이 있는지 확인
+    const tabs = await chrome.tabs.query({});
+    const existingTab = tabs.find(tab =>
+      tab.url && tab.url.includes('blog.naver.com') &&
+      (tab.url.includes('Write') || tab.url.includes('editor'))
+    );
+
+    if (existingTab) {
+      // 기존 탭 활성화 및 새로고침
+      await chrome.tabs.update(existingTab.id, { active: true });
+      await chrome.tabs.reload(existingTab.id);
+      console.log('[닥터보이스] 기존 블로그 탭 사용:', existingTab.id);
+    } else {
+      // 새 탭 열기
+      chrome.tabs.create({
+        url: 'https://blog.naver.com/GoBlogWrite.naver',
+        active: true
+      });
+    }
 
     sendResponse({ success: true });
     return true;
@@ -116,87 +131,90 @@ async function autoTypeWithDebugger(tabId, title, content, titlePos, bodyPos) {
   }
 }
 
-// 텍스트 입력 (IME 방식 - 한글 호환)
+// 텍스트 입력 (클립보드 + Ctrl+V 방식 - 가장 안정적)
 async function insertText(tabId, text) {
   console.log('[닥터보이스] 텍스트 삽입 시작, 길이:', text.length);
 
-  // 먼저 Input.insertText 시도
   try {
-    await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', {
-      text: text
+    // 1. Runtime.evaluate로 클립보드에 텍스트 복사 (페이지 컨텍스트에서 실행)
+    await chrome.debugger.sendCommand({ tabId }, 'Runtime.evaluate', {
+      expression: `
+        (async () => {
+          try {
+            await navigator.clipboard.writeText(${JSON.stringify(text)});
+            return true;
+          } catch (e) {
+            // 클립보드 API 실패 시 execCommand 사용
+            const textarea = document.createElement('textarea');
+            textarea.value = ${JSON.stringify(text)};
+            textarea.style.position = 'fixed';
+            textarea.style.left = '-9999px';
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+            return true;
+          }
+        })()
+      `,
+      awaitPromise: true
     });
-    console.log('[닥터보이스] insertText 완료');
-    return;
-  } catch (e) {
-    console.log('[닥터보이스] insertText 실패, 대체 방식 시도:', e.message);
-  }
+    console.log('[닥터보이스] 클립보드 복사 완료');
 
-  // 실패 시 IME 방식으로 시도
-  try {
-    // IME composition 시작
-    await chrome.debugger.sendCommand({ tabId }, 'Input.imeSetComposition', {
-      text: text,
-      selectionStart: text.length,
-      selectionEnd: text.length
-    });
-    await sleep(50);
+    await sleep(100);
 
-    // IME 확정
+    // 2. Ctrl+V로 붙여넣기
     await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
       type: 'keyDown',
-      key: 'Enter',
-      code: 'Enter',
-      windowsVirtualKeyCode: 13
+      key: 'Control',
+      code: 'ControlLeft',
+      windowsVirtualKeyCode: 17,
+      modifiers: 2
     });
+
+    await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'v',
+      code: 'KeyV',
+      text: 'v',
+      windowsVirtualKeyCode: 86,
+      modifiers: 2
+    });
+
+    await sleep(100);
+
     await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
       type: 'keyUp',
-      key: 'Enter',
-      code: 'Enter',
-      windowsVirtualKeyCode: 13
+      key: 'v',
+      code: 'KeyV',
+      windowsVirtualKeyCode: 86,
+      modifiers: 2
     });
 
-    console.log('[닥터보이스] IME 방식 완료');
-    return;
+    await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Control',
+      code: 'ControlLeft',
+      windowsVirtualKeyCode: 17,
+      modifiers: 0
+    });
+
+    console.log('[닥터보이스] Ctrl+V 붙여넣기 완료');
+
   } catch (e) {
-    console.log('[닥터보이스] IME 방식 실패:', e.message);
-  }
+    console.error('[닥터보이스] 클립보드 방식 실패:', e.message);
 
-  // 최종 대안: 문자 단위 입력 (빠른 속도)
-  console.log('[닥터보이스] 문자 단위 입력 시작');
-  const startTime = Date.now();
-
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-
-    if (char === '\n') {
-      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
-        type: 'keyDown',
-        key: 'Enter',
-        code: 'Enter',
-        windowsVirtualKeyCode: 13
+    // 폴백: Input.insertText 시도
+    try {
+      await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', {
+        text: text
       });
-      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
-        type: 'keyUp',
-        key: 'Enter',
-        code: 'Enter',
-        windowsVirtualKeyCode: 13
-      });
-    } else {
-      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
-        type: 'char',
-        text: char
-      });
-    }
-
-    // 100자마다 진행률 표시
-    if (i > 0 && i % 100 === 0) {
-      const progress = Math.round((i / text.length) * 100);
-      console.log(`[닥터보이스] 입력 진행: ${progress}%`);
+      console.log('[닥터보이스] insertText 폴백 완료');
+    } catch (e2) {
+      console.error('[닥터보이스] insertText도 실패:', e2.message);
+      throw e2;
     }
   }
-
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`[닥터보이스] 문자 단위 입력 완료 (${elapsed}초)`);
 }
 
 // 클릭

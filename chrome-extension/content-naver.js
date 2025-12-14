@@ -1,5 +1,5 @@
-// 네이버 블로그 스마트에디터 v13.2 - 완전자동 (debugger API)
-console.log('[닥터보이스] v13.2 로드 - 완전자동 debugger API');
+// 네이버 블로그 스마트에디터 v13.3 - 완전자동 (클립보드+Ctrl+V)
+console.log('[닥터보이스] v13.3 로드 - 클립보드+Ctrl+V 방식');
 
 // 페이지 로드 시 가이드 오버레이 표시
 function showGuideOverlay() {
