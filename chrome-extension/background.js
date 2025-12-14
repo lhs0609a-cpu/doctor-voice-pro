@@ -1,5 +1,5 @@
-// 백그라운드 서비스 워커 v13.3 - Runtime.evaluate + 클립보드 + Ctrl+V
-console.log('[닥터보이스] 백그라운드 v13.3 시작 - 클립보드+Ctrl+V 방식');
+// 백그라운드 서비스 워커 v13.4 - DOM 직접 조작 방식
+console.log('[닥터보이스] 백그라운드 v13.4 시작 - DOM 직접 조작');
 
 // 전역 변수
 let pendingPostData = null;
@@ -10,7 +10,7 @@ chrome.runtime.onMessageExternal.addListener(async (message, sender, sendRespons
   console.log('[닥터보이스] 외부 메시지:', message.action);
 
   if (message.action === 'PING') {
-    sendResponse({ success: true, version: '13.3.0' });
+    sendResponse({ success: true, version: '13.4.0' });
     return true;
   }
 
@@ -90,35 +90,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-// 완전자동 입력 (Input.insertText 방식 - 클립보드 불필요, 즉시 삽입!)
+// 완전자동 입력 (Runtime.evaluate + DOM 직접 조작)
 async function autoTypeWithDebugger(tabId, title, content, titlePos, bodyPos) {
-  console.log('[닥터보이스] === 완전자동 입력 시작 (insertText 방식) ===');
+  console.log('[닥터보이스] === 완전자동 입력 시작 (DOM 직접 조작) ===');
 
   try {
     // 1. debugger 연결
     console.log('[닥터보이스] 1단계: debugger 연결');
     await attachDebugger(tabId);
 
-    // 2. 제목 입력: 클릭 → 클립보드 복사 → Ctrl+V
-    console.log('[닥터보이스] 2단계: 제목 클릭');
-    await clickAt(tabId, titlePos.x, titlePos.y);
-    await sleep(300);
+    // 2. 제목 입력: DOM으로 직접 focus + execCommand
+    console.log('[닥터보이스] 2단계: 제목 입력');
+    await insertTextViaDOM(tabId, 'title', title);
+    await sleep(500);
 
-    console.log('[닥터보이스] 3단계: 제목 입력');
-    await insertText(tabId, title);
-    await sleep(200);
-
-    // 3. 본문 입력: 클릭 → 직접 삽입
-    console.log('[닥터보이스] 4단계: 본문 클릭');
-    await clickAt(tabId, bodyPos.x, bodyPos.y);
-    await sleep(300);
-
-    console.log('[닥터보이스] 5단계: 본문 입력');
-    await insertText(tabId, content);
+    // 3. 본문 입력: DOM으로 직접 focus + execCommand
+    console.log('[닥터보이스] 3단계: 본문 입력');
+    await insertTextViaDOM(tabId, 'body', content);
     await sleep(200);
 
     // 4. debugger 연결 해제
-    console.log('[닥터보이스] 6단계: debugger 해제');
+    console.log('[닥터보이스] 4단계: debugger 해제');
     await detachDebugger(tabId);
 
     console.log('[닥터보이스] === 완전자동 입력 완료! ===');
@@ -128,6 +120,81 @@ async function autoTypeWithDebugger(tabId, title, content, titlePos, bodyPos) {
     console.error('[닥터보이스] 오류:', error);
     try { await detachDebugger(tabId); } catch (e) {}
     throw error;
+  }
+}
+
+// DOM 직접 조작으로 텍스트 입력
+async function insertTextViaDOM(tabId, type, text) {
+  const selector = type === 'title'
+    ? '.se-documentTitle .se-text-paragraph'
+    : '.se-component.se-text:not(.se-documentTitle) .se-text-paragraph';
+
+  const result = await chrome.debugger.sendCommand({ tabId }, 'Runtime.evaluate', {
+    expression: `
+      (function() {
+        // iframe 내부 찾기
+        let doc = document;
+        const iframes = document.querySelectorAll('iframe');
+        for (const iframe of iframes) {
+          try {
+            if (iframe.contentDocument && iframe.contentDocument.querySelector('.se-component')) {
+              doc = iframe.contentDocument;
+              break;
+            }
+          } catch(e) {}
+        }
+
+        // 요소 찾기
+        const selector = '${selector}';
+        const el = doc.querySelector(selector);
+        if (!el) {
+          return { success: false, error: 'Element not found: ' + selector };
+        }
+
+        // 포커스 및 선택
+        el.focus();
+
+        // 기존 내용 선택 및 삭제
+        const selection = doc.getSelection();
+        const range = doc.createRange();
+        range.selectNodeContents(el);
+        selection.removeAllRanges();
+        selection.addRange(range);
+
+        // execCommand로 텍스트 삽입
+        const success = doc.execCommand('insertText', false, ${JSON.stringify(text)});
+
+        if (!success) {
+          // execCommand 실패 시 직접 입력
+          el.textContent = ${JSON.stringify(text)};
+
+          // React 이벤트 트리거
+          const inputEvent = new InputEvent('input', {
+            bubbles: true,
+            cancelable: true,
+            inputType: 'insertText',
+            data: ${JSON.stringify(text)}
+          });
+          el.dispatchEvent(inputEvent);
+        }
+
+        // 포커스 해제를 위해 다른 곳 클릭
+        const changeEvent = new Event('change', { bubbles: true });
+        el.dispatchEvent(changeEvent);
+
+        const blurEvent = new Event('blur', { bubbles: true });
+        el.dispatchEvent(blurEvent);
+
+        return { success: true, method: success ? 'execCommand' : 'textContent' };
+      })()
+    `,
+    returnByValue: true
+  });
+
+  console.log('[닥터보이스] DOM 입력 결과:', result.result?.value);
+
+  if (!result.result?.value?.success) {
+    throw new Error(result.result?.value?.error || 'DOM 입력 실패');
   }
 }
 
