@@ -172,7 +172,9 @@
       "Bash(\"C:\\Users\\u\\AppData\\Roaming\\npm\\vercel.cmd\" env add NEXT_PUBLIC_API_URL production)",
       "Bash(\"C:\\Users\\u\\AppData\\Roaming\\npm\\vercel.cmd\" logs doctor-voice-pro-ghwi --limit 50)",
       "Bash(npx vercel:*)",
-      "Bash(\"C:\\Users\\u\\AppData\\Roaming\\npm\\vercel.cmd\" logs doctor-voice-pro-ghwi.vercel.app --limit 100)"
+      "Bash(\"C:\\Users\\u\\AppData\\Roaming\\npm\\vercel.cmd\" logs doctor-voice-pro-ghwi.vercel.app --limit 100)",
+      "Bash(grep:*)",
+      "Bash(xargs:*)"
     ],
     "deny": [],
     "ask": []

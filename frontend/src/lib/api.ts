@@ -508,4 +508,110 @@ export const imagesAPI = {
   },
 }
 
+// Top Post Analysis API (대량 분석)
+export interface TopPostDashboard {
+  total_posts: number
+  total_keywords: number
+  categories: {
+    category: string
+    category_name: string
+    posts_count: number
+    keywords_count: number
+    sample_count: number
+    confidence: number
+    last_updated?: string
+  }[]
+  recent_jobs: {
+    id: string
+    category: string
+    category_name: string
+    target_count: number
+    status: string
+    progress: number
+    posts_analyzed: number
+    created_at: string
+  }[]
+}
+
+export const topPostsAPI = {
+  // 대시보드 통계
+  getDashboard: async (): Promise<TopPostDashboard> => {
+    const response = await api.get('/api/v1/top-posts/dashboard')
+    return response.data
+  },
+
+  // 카테고리 목록 (통계 포함)
+  getCategoriesWithStats: async () => {
+    const response = await api.get('/api/v1/top-posts/categories-with-stats')
+    return response.data
+  },
+
+  // 대량 분석 시작
+  startBulkAnalysis: async (data: { category: string; target_count: number; keywords?: string[] }) => {
+    const response = await api.post('/api/v1/top-posts/bulk-analyze', data)
+    return response.data
+  },
+
+  // 분석 작업 목록
+  getJobs: async (params?: { category?: string; status?: string; limit?: number }) => {
+    const response = await api.get('/api/v1/top-posts/jobs', { params })
+    return response.data
+  },
+
+  // 작업 상태 조회
+  getJobStatus: async (jobId: string) => {
+    const response = await api.get(`/api/v1/top-posts/jobs/${jobId}`)
+    return response.data
+  },
+
+  // 작업 취소
+  cancelJob: async (jobId: string) => {
+    const response = await api.delete(`/api/v1/top-posts/jobs/${jobId}`)
+    return response.data
+  },
+
+  // 연관검색어 수집
+  collectKeywords: async (category: string, maxKeywords: number = 100) => {
+    const response = await api.post('/api/v1/top-posts/collect-keywords', null, {
+      params: { category, max_keywords: maxKeywords }
+    })
+    return response.data
+  },
+
+  // 카테고리별 키워드 조회
+  getCategoryKeywords: async (category: string, limit: number = 100, onlyUnanalyzed: boolean = false) => {
+    const response = await api.get(`/api/v1/top-posts/keywords/${category}`, {
+      params: { limit, only_unanalyzed: onlyUnanalyzed }
+    })
+    return response.data
+  },
+
+  // 카테고리별 규칙 조회
+  getCategoryRules: async (category: string) => {
+    const response = await api.get(`/api/v1/top-posts/rules/${category}`)
+    return response.data
+  },
+
+  // 단일 키워드 분석
+  analyzeKeyword: async (keyword: string, topN: number = 3) => {
+    const response = await api.post('/api/v1/top-posts/analyze', { keyword, top_n: topN })
+    return response.data
+  },
+
+  // 글쓰기 가이드 조회
+  getWritingGuide: async (category?: string, keyword?: string) => {
+    const params: any = {}
+    if (category) params.category = category
+    if (keyword) params.keyword = keyword
+    const response = await api.get('/api/v1/top-posts/writing-guide', { params })
+    return response.data
+  },
+
+  // 전체 통계
+  getStats: async () => {
+    const response = await api.get('/api/v1/top-posts/stats')
+    return response.data
+  }
+}
+
 export default api

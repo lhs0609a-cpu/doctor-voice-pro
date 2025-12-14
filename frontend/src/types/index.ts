@@ -273,3 +273,114 @@ export interface CafeReviewCreateRequest {
   ai_provider?: string
   ai_model?: string
 }
+
+// ============================================================
+// 대량 분석 관련 타입
+// ============================================================
+
+export interface AnalysisJob {
+  id: string
+  category: string
+  category_name: string
+  target_count: number
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+  progress: number
+  keywords_collected: number
+  keywords_total: number
+  posts_analyzed: number
+  posts_failed: number
+  keywords: string[]
+  error_message?: string
+  result_summary?: {
+    total_keywords: number
+    posts_analyzed: number
+    posts_failed: number
+    category: string
+  }
+  created_at: string
+  started_at?: string
+  completed_at?: string
+}
+
+export interface CategoryWithStats {
+  id: string
+  name: string
+  seeds: string[]
+  posts_count: number
+  sample_count: number
+  confidence: number
+  has_rules: boolean
+}
+
+export interface CategoryStats {
+  category: string
+  category_name: string
+  posts_count: number
+  keywords_count: number
+  sample_count: number
+  confidence: number
+  last_updated?: string
+}
+
+export interface AnalysisDashboard {
+  total_posts: number
+  total_keywords: number
+  categories: CategoryStats[]
+  recent_jobs: AnalysisJob[]
+}
+
+export interface WritingRules {
+  title: {
+    length: { optimal: number; min: number; max: number }
+    keyword_placement: {
+      include_keyword: boolean
+      rate: number
+      best_position: string
+      position_distribution: { front: number; middle: number; end: number }
+    }
+  }
+  content: {
+    length: { optimal: number; min: number; max: number }
+    structure: {
+      heading_count: { optimal: number; min: number; max: number }
+      keyword_density: { optimal: number; min: number; max: number }
+      keyword_count: { optimal: number; min: number; max: number }
+    }
+  }
+  media: {
+    images: { optimal: number; min: number; max: number }
+    videos: { usage_rate: number; recommended: boolean }
+  }
+}
+
+export interface CategoryRules {
+  status: 'data_driven' | 'insufficient_data'
+  category: string
+  category_name: string
+  sample_count: number
+  confidence: number
+  message?: string
+  rules: WritingRules | null
+}
+
+export interface BulkAnalyzeRequest {
+  category: string
+  target_count: number
+  keywords?: string[]
+}
+
+export interface BulkAnalyzeResponse {
+  job_id: string
+  category: string
+  target_count: number
+  status: string
+  message: string
+}
+
+export interface CollectedKeyword {
+  keyword: string
+  source: string
+  is_analyzed: boolean
+  analysis_count: number
+  created_at: string
+}

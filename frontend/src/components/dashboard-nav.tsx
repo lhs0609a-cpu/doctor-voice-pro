@@ -15,7 +15,8 @@ import {
   Shield,
   BarChart3,
   Tags,
-  Save
+  Save,
+  TrendingUp
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -49,6 +50,11 @@ export function DashboardNav() {
       href: '/dashboard/analytics',
       label: '분석',
       icon: BarChart3,
+    },
+    {
+      href: '/dashboard/top-post-analysis',
+      label: '상위노출',
+      icon: TrendingUp,
     },
     {
       href: '/dashboard/profile',
