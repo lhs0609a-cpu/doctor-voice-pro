@@ -1,5 +1,5 @@
-// 네이버 블로그 스마트에디터 v13.4 - 완전자동 (DOM 직접 조작)
-console.log('[닥터보이스] v13.4 로드 - DOM 직접 조작 방식');
+// 네이버 블로그 스마트에디터 v13.5 - content script에서 직접 DOM 조작
+console.log('[닥터보이스] v13.5 로드 - content script 직접 DOM 조작');
 
 // 페이지 로드 시 가이드 오버레이 표시
 function showGuideOverlay() {
@@ -325,24 +325,26 @@ async function handleInsertPost(postData, options) {
 
     showProgressNotification('⌨️ 자동 입력 중... (잠시 기다려주세요)', 40);
 
-    // 5. background에 완전자동 입력 요청
-    console.log('[닥터보이스] AUTO_TYPE 요청 전송...');
-    const result = await chrome.runtime.sendMessage({
-      action: 'AUTO_TYPE',
-      title: cleanTitle,
-      content: cleanContent,
-      titlePos: positions.title,
-      bodyPos: positions.body
-    });
+    // 5. content script에서 직접 DOM 조작으로 입력
+    console.log('[닥터보이스] DOM 직접 조작 시작...');
 
-    console.log('[닥터보이스] AUTO_TYPE 결과:', result);
+    // 제목 입력
+    const titleResult = await insertTextDirectly(editorInfo, 'title', cleanTitle);
+    console.log('[닥터보이스] 제목 입력 결과:', titleResult);
+    showProgressNotification('⌨️ 제목 입력 완료, 본문 입력 중...', 60);
 
-    if (result.success) {
+    await sleep(500);
+
+    // 본문 입력
+    const bodyResult = await insertTextDirectly(editorInfo, 'body', cleanContent);
+    console.log('[닥터보이스] 본문 입력 결과:', bodyResult);
+
+    if (titleResult.success && bodyResult.success) {
       showProgressNotification('✅ 입력 완료!', 100);
       await sleep(500);
       showBigSuccessNotification('✅ 완전자동 입력 완료!', '내용을 확인하고 발행 버튼을 클릭하세요');
     } else {
-      throw new Error(result.error || '입력 실패');
+      throw new Error(titleResult.error || bodyResult.error || '입력 실패');
     }
 
     // 자동 발행 플래그 해제
@@ -351,6 +353,83 @@ async function handleInsertPost(postData, options) {
   } catch (error) {
     console.error('[닥터보이스] 발행 오류:', error);
     showNotification('❌ 오류 발생: ' + error.message);
+  }
+}
+
+// DOM 직접 조작으로 텍스트 입력 (content script에서 직접 실행)
+async function insertTextDirectly(editorInfo, type, text) {
+  const { doc } = editorInfo;
+
+  try {
+    // 요소 찾기
+    let targetEl;
+    if (type === 'title') {
+      const titleComponent = doc.querySelector('.se-component.se-documentTitle');
+      targetEl = titleComponent?.querySelector('.se-text-paragraph');
+    } else {
+      const bodyComponents = doc.querySelectorAll('.se-component.se-text');
+      for (const comp of bodyComponents) {
+        if (!comp.classList.contains('se-documentTitle') && !comp.closest('.se-documentTitle')) {
+          targetEl = comp.querySelector('.se-text-paragraph');
+          if (targetEl) break;
+        }
+      }
+    }
+
+    if (!targetEl) {
+      return { success: false, error: `${type} 요소를 찾을 수 없습니다` };
+    }
+
+    console.log(`[닥터보이스] ${type} 요소 찾음:`, targetEl);
+
+    // 1. 요소에 포커스
+    targetEl.focus();
+    await sleep(100);
+
+    // 2. 기존 내용 전체 선택
+    const selection = doc.getSelection();
+    const range = doc.createRange();
+    range.selectNodeContents(targetEl);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    await sleep(50);
+
+    // 3. 방법 1: execCommand 시도
+    let success = doc.execCommand('insertText', false, text);
+    console.log(`[닥터보이스] execCommand 결과: ${success}`);
+
+    if (!success) {
+      // 4. 방법 2: textContent 직접 설정 + 이벤트 트리거
+      console.log('[닥터보이스] execCommand 실패, textContent 방식 시도');
+
+      // span 요소 찾기 또는 생성
+      let spanEl = targetEl.querySelector('span');
+      if (!spanEl) {
+        spanEl = doc.createElement('span');
+        targetEl.appendChild(spanEl);
+      }
+      spanEl.textContent = text;
+
+      // React 이벤트 트리거
+      const inputEvent = new InputEvent('input', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertText',
+        data: text
+      });
+      targetEl.dispatchEvent(inputEvent);
+      spanEl.dispatchEvent(inputEvent);
+    }
+
+    // 5. blur 이벤트로 저장 트리거
+    await sleep(100);
+    targetEl.dispatchEvent(new Event('blur', { bubbles: true }));
+
+    return { success: true, method: success ? 'execCommand' : 'textContent' };
+
+  } catch (error) {
+    console.error(`[닥터보이스] ${type} 입력 오류:`, error);
+    return { success: false, error: error.message };
   }
 }
 
