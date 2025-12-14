@@ -1,5 +1,5 @@
-// 네이버 블로그 스마트에디터 v13.5 - content script에서 직접 DOM 조작
-console.log('[닥터보이스] v13.5 로드 - content script 직접 DOM 조작');
+// 네이버 블로그 스마트에디터 v13.6 - 텍스트 + 이미지 자동 삽입
+console.log('[닥터보이스] v13.6 로드 - 텍스트 + 이미지 자동 삽입');
 
 // 페이지 로드 시 가이드 오버레이 표시
 function showGuideOverlay() {
@@ -340,6 +340,16 @@ async function handleInsertPost(postData, options) {
     console.log('[닥터보이스] 본문 입력 결과:', bodyResult);
 
     if (titleResult.success && bodyResult.success) {
+      // 6. 이미지 삽입
+      const imageUrls = postData.imageUrls || postData.images || [];
+      if (imageUrls.length > 0) {
+        showProgressNotification(`🖼️ 이미지 삽입 중... (${imageUrls.length}개)`, 80);
+        await sleep(500);
+
+        const imageResult = await insertImagesDirectly(editorInfo, imageUrls);
+        console.log('[닥터보이스] 이미지 삽입 결과:', imageResult);
+      }
+
       showProgressNotification('✅ 입력 완료!', 100);
       await sleep(500);
       showBigSuccessNotification('✅ 완전자동 입력 완료!', '내용을 확인하고 발행 버튼을 클릭하세요');
@@ -354,6 +364,140 @@ async function handleInsertPost(postData, options) {
     console.error('[닥터보이스] 발행 오류:', error);
     showNotification('❌ 오류 발생: ' + error.message);
   }
+}
+
+// 이미지 직접 삽입 (URL을 fetch해서 업로드)
+async function insertImagesDirectly(editorInfo, imageUrls) {
+  const { doc } = editorInfo;
+  const results = [];
+
+  console.log('[닥터보이스] 이미지 삽입 시작:', imageUrls.length, '개');
+
+  for (let i = 0; i < imageUrls.length; i++) {
+    const url = imageUrls[i];
+    console.log(`[닥터보이스] 이미지 ${i + 1}/${imageUrls.length} 처리:`, url);
+
+    try {
+      // 1. 이미지 URL에서 blob 가져오기
+      const response = await fetch(url);
+      const blob = await response.blob();
+
+      // 2. File 객체 생성
+      const fileName = `image_${i + 1}.${blob.type.split('/')[1] || 'jpg'}`;
+      const file = new File([blob], fileName, { type: blob.type });
+
+      console.log(`[닥터보이스] 이미지 파일 생성:`, fileName, file.size, 'bytes');
+
+      // 3. 사진 버튼 찾기 및 클릭
+      const photoBtn = findPhotoButton(doc);
+      if (photoBtn) {
+        photoBtn.click();
+        await sleep(500);
+      }
+
+      // 4. file input 찾기
+      const fileInput = findFileInput(doc);
+      if (fileInput) {
+        // DataTransfer로 파일 설정
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
+        fileInput.files = dataTransfer.files;
+
+        // change 이벤트 발생
+        const changeEvent = new Event('change', { bubbles: true });
+        fileInput.dispatchEvent(changeEvent);
+
+        console.log(`[닥터보이스] 이미지 ${i + 1} 업로드 요청됨`);
+        results.push({ success: true, index: i });
+
+        // 업로드 완료 대기
+        await sleep(2000);
+      } else {
+        // file input 없으면 드래그 앤 드롭 방식 시도
+        console.log('[닥터보이스] file input 없음, 드래그 앤 드롭 시도');
+
+        const dropZone = doc.querySelector('.se-content') ||
+                         doc.querySelector('.se-component.se-text') ||
+                         doc.querySelector('[contenteditable="true"]');
+
+        if (dropZone) {
+          const dropEvent = new DragEvent('drop', {
+            bubbles: true,
+            cancelable: true,
+            dataTransfer: (() => {
+              const dt = new DataTransfer();
+              dt.items.add(file);
+              return dt;
+            })()
+          });
+          dropZone.dispatchEvent(dropEvent);
+          results.push({ success: true, index: i, method: 'drop' });
+          await sleep(2000);
+        } else {
+          results.push({ success: false, index: i, error: 'No drop zone' });
+        }
+      }
+
+    } catch (error) {
+      console.error(`[닥터보이스] 이미지 ${i + 1} 실패:`, error);
+      results.push({ success: false, index: i, error: error.message });
+    }
+  }
+
+  return { results, successCount: results.filter(r => r.success).length };
+}
+
+// 사진 버튼 찾기
+function findPhotoButton(doc) {
+  // 다양한 선택자 시도
+  const selectors = [
+    'button[data-name="image"]',
+    'button[data-name="photo"]',
+    '.se-toolbar button[title*="사진"]',
+    '.se-toolbar button[title*="이미지"]',
+    '.se-toolbar-item-image',
+    'button.se-toolbar-item-image'
+  ];
+
+  for (const sel of selectors) {
+    const btn = doc.querySelector(sel);
+    if (btn) {
+      console.log('[닥터보이스] 사진 버튼 발견:', sel);
+      return btn;
+    }
+  }
+
+  // 아이콘으로 찾기
+  const allButtons = doc.querySelectorAll('.se-toolbar button');
+  for (const btn of allButtons) {
+    const icon = btn.querySelector('svg, img, i');
+    if (icon && (btn.title?.includes('사진') || btn.title?.includes('이미지'))) {
+      console.log('[닥터보이스] 사진 버튼 발견 (아이콘)');
+      return btn;
+    }
+  }
+
+  return null;
+}
+
+// file input 찾기
+function findFileInput(doc) {
+  const inputs = doc.querySelectorAll('input[type="file"]');
+  for (const input of inputs) {
+    const accept = input.accept || '';
+    if (accept.includes('image') || accept === '' || accept.includes('*')) {
+      console.log('[닥터보이스] file input 발견:', input.accept);
+      return input;
+    }
+  }
+
+  // 최근에 추가된 input 찾기
+  const allInputs = doc.querySelectorAll('input[type="file"]');
+  if (allInputs.length > 0) {
+    return allInputs[allInputs.length - 1];
+  }
+
+  return null;
 }
 
 // DOM 직접 조작으로 텍스트 입력 (content script에서 직접 실행)
