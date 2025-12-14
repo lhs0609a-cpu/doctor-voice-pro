@@ -1,5 +1,5 @@
-// 네이버 블로그 스마트에디터 v11.0 - 단순화 버전
-console.log('[닥터보이스] v11.0 로드 - 단순화 버전');
+// 네이버 블로그 스마트에디터 v13.0 - 완전자동 (debugger API)
+console.log('[닥터보이스] v13.0 로드 - 완전자동 debugger API');
 
 // 페이지 로드 시 가이드 오버레이 표시
 function showGuideOverlay() {
@@ -285,88 +285,965 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-// 전자동 글 입력 및 발행 처리
+// 완전자동 글 입력 처리 (debugger API)
 async function handleInsertPost(postData, options) {
-  console.log('[닥터보이스] 전자동 발행 시작');
+  console.log('[닥터보이스] 완전자동 발행 시작 v13.0');
   console.log('[닥터보이스] 제목:', postData.title);
   console.log('[닥터보이스] 이미지 URL 수:', postData.imageUrls?.length || 0);
-  console.log('[닥터보이스] 이미지 Base64 수:', postData.images?.length || 0);
 
-  // 가이드 업데이트
-  updateGuideStatus('ready', '데이터 로딩 완료! 자동 입력을 시작합니다.');
-  updateGuideStep(2, 'done');
-  updateGuideStep(3, 'active');
-
-  showProgressNotification('📝 전자동 발행 시작...', 0);
+  // 가이드 오버레이 제거
+  removeGuideOverlay();
+  showProgressNotification('📝 완전자동 입력 준비 중...', 0);
 
   try {
     // 1. 에디터 로딩 대기
     await waitForEditor();
     await sleep(2000);
-    showProgressNotification('✅ 에디터 로딩 완료', 10);
-    updateGuideStatus('ready', '에디터 준비 완료! 제목을 입력합니다.');
+    showProgressNotification('✅ 에디터 로딩 완료', 20);
 
-    // 2. 제목 입력
-    if (postData.title) {
-      await inputTitle(postData.title);
-      showProgressNotification('✅ 제목 입력 완료', 20);
-      updateGuideStatus('ready', '제목 입력 완료! 본문을 입력합니다.');
+    // 2. iframe과 에디터 문서 찾기
+    const editorInfo = findEditorIframe();
+    if (!editorInfo) {
+      throw new Error('에디터를 찾을 수 없습니다');
+    }
+
+    console.log('[닥터보이스] 에디터 발견:', editorInfo.type);
+
+    // 3. 제목/본문 영역 위치 계산
+    const positions = getElementPositions(editorInfo);
+    if (!positions) {
+      throw new Error('입력 영역을 찾을 수 없습니다');
+    }
+
+    console.log('[닥터보이스] 제목 위치:', positions.title);
+    console.log('[닥터보이스] 본문 위치:', positions.body);
+
+    // 4. 텍스트 정리
+    let cleanTitle = postData.title.replace(/^["']|["']$/g, '').trim();
+    let cleanContent = formatContentForBlog(postData.content);
+    cleanContent = cleanContent.replace(/^["']|["']$/g, '').trim();
+
+    showProgressNotification('⌨️ 자동 입력 중... (잠시 기다려주세요)', 40);
+
+    // 5. background에 완전자동 입력 요청
+    console.log('[닥터보이스] AUTO_TYPE 요청 전송...');
+    const result = await chrome.runtime.sendMessage({
+      action: 'AUTO_TYPE',
+      title: cleanTitle,
+      content: cleanContent,
+      titlePos: positions.title,
+      bodyPos: positions.body
+    });
+
+    console.log('[닥터보이스] AUTO_TYPE 결과:', result);
+
+    if (result.success) {
+      showProgressNotification('✅ 입력 완료!', 100);
       await sleep(500);
-    }
-
-    // 3. 본문 입력 (이미지 URL이 있으면 함께 삽입)
-    if (postData.content) {
-      updateGuideStep(3, 'done');
-      updateGuideStep(4, 'active');
-      updateGuideStatus('ready', '본문 입력 중... 잠시만 기다려주세요.');
-
-      // imageUrls가 있으면 본문에 이미지 URL을 <img> 태그로 포함
-      const imageUrls = postData.imageUrls || [];
-      await insertContentWithImages(postData.content, imageUrls, options);
-      showProgressNotification('✅ 본문 및 이미지 입력 완료', 80);
-      updateGuideStep(4, 'done');
-      updateGuideStatus('ready', '본문 및 이미지 입력 완료!');
-      await sleep(500);
-    }
-
-    // 4. Base64 이미지 업로드 (URL이 없고 Base64만 있는 경우 - fallback)
-    if ((!postData.imageUrls || postData.imageUrls.length === 0) &&
-        postData.images && postData.images.length > 0 && options?.useImages) {
-      const totalImages = postData.images.length;
-      for (let i = 0; i < totalImages; i++) {
-        showProgressNotification(`📷 이미지 업로드 중... (${i + 1}/${totalImages})`, 40 + ((i + 1) / totalImages) * 40);
-        await uploadSingleImageV2(postData.images[i], i);
-        await sleep(1500);
-      }
-      showProgressNotification('✅ 이미지 업로드 완료', 80);
-    }
-
-    // 5. 잠시 대기 후 발행 버튼 자동 클릭
-    showProgressNotification('🚀 발행 준비 중...', 90);
-    await sleep(1500);
-
-    // 6. 발행 버튼 클릭 (자동 발행)
-    const publishSuccess = await clickPublishButton();
-
-    // 가이드 제거
-    removeGuideOverlay();
-
-    if (publishSuccess) {
-      showProgressNotification('✅ 발행 완료!', 100);
-      showBigSuccessNotification('🎉 블로그 발행 완료!', '글이 성공적으로 발행되었습니다.');
+      showBigSuccessNotification('✅ 완전자동 입력 완료!', '내용을 확인하고 발행 버튼을 클릭하세요');
     } else {
-      showProgressNotification('⚠️ 발행 버튼을 직접 클릭해주세요', 95);
-      showBigSuccessNotification('✅ 글 입력 완료!', '오른쪽 상단의 녹색 "발행" 버튼을 클릭하여 발행해주세요.');
+      throw new Error(result.error || '입력 실패');
     }
 
     // 자동 발행 플래그 해제
     await chrome.storage.local.set({ autoPostEnabled: false });
 
   } catch (error) {
-    console.error('[닥터보이스] 전자동 발행 오류:', error);
-    updateGuideStatus('error', '오류 발생: ' + error.message);
+    console.error('[닥터보이스] 발행 오류:', error);
     showNotification('❌ 오류 발생: ' + error.message);
   }
+}
+
+// 제목/본문 영역 위치 계산 (화면 기준 절대 좌표)
+function getElementPositions(editorInfo) {
+  const { doc, iframe } = editorInfo;
+
+  // 제목 영역 찾기
+  const titleComponent = doc.querySelector('.se-component.se-documentTitle');
+  if (!titleComponent) {
+    console.error('[닥터보이스] 제목 컴포넌트 없음');
+    return null;
+  }
+
+  const titleParagraph = titleComponent.querySelector('.se-text-paragraph');
+  if (!titleParagraph) {
+    console.error('[닥터보이스] 제목 paragraph 없음');
+    return null;
+  }
+
+  // 본문 영역 찾기
+  const bodyComponents = doc.querySelectorAll('.se-component.se-text');
+  let bodyParagraph = null;
+
+  for (const comp of bodyComponents) {
+    if (!comp.classList.contains('se-documentTitle') && !comp.closest('.se-documentTitle')) {
+      bodyParagraph = comp.querySelector('.se-text-paragraph');
+      if (bodyParagraph) break;
+    }
+  }
+
+  if (!bodyParagraph) {
+    console.error('[닥터보이스] 본문 paragraph 없음');
+    return null;
+  }
+
+  // 위치 계산
+  const titleRect = titleParagraph.getBoundingClientRect();
+  const bodyRect = bodyParagraph.getBoundingClientRect();
+
+  let titleX = titleRect.left + titleRect.width / 2;
+  let titleY = titleRect.top + titleRect.height / 2;
+  let bodyX = bodyRect.left + bodyRect.width / 2;
+  let bodyY = bodyRect.top + bodyRect.height / 2;
+
+  // iframe 내부인 경우 iframe 오프셋 추가
+  if (iframe) {
+    const iframeRect = iframe.getBoundingClientRect();
+    titleX += iframeRect.left;
+    titleY += iframeRect.top;
+    bodyX += iframeRect.left;
+    bodyY += iframeRect.top;
+    console.log('[닥터보이스] iframe 오프셋:', iframeRect.left, iframeRect.top);
+  }
+
+  return {
+    title: { x: Math.round(titleX), y: Math.round(titleY) },
+    body: { x: Math.round(bodyX), y: Math.round(bodyY) }
+  };
+}
+
+// Ctrl+V 붙여넣기 단계 안내
+function showPasteStep(title, desc, content) {
+  return new Promise((resolve) => {
+    // 기존 알림 제거
+    const old = document.querySelector('.dv-paste-step');
+    if (old) old.remove();
+
+    const preview = content.length > 50 ? content.substring(0, 50) + '...' : content;
+
+    const el = document.createElement('div');
+    el.className = 'dv-paste-step';
+    el.innerHTML = `
+      <div style="font-size: 32px; margin-bottom: 12px;">📋</div>
+      <div style="font-size: 20px; font-weight: bold; margin-bottom: 8px;">${title}</div>
+      <div style="font-size: 14px; opacity: 0.9; margin-bottom: 16px;">${desc}</div>
+      <div style="
+        background: rgba(0,0,0,0.4);
+        padding: 20px 32px;
+        border-radius: 12px;
+        margin-bottom: 20px;
+      ">
+        <div style="font-size: 32px; font-weight: bold; letter-spacing: 3px;">Ctrl + V</div>
+        <div style="font-size: 13px; margin-top: 8px; opacity: 0.8;">키보드에서 눌러주세요</div>
+      </div>
+      <div style="
+        background: rgba(255,255,255,0.1);
+        padding: 10px 16px;
+        border-radius: 8px;
+        font-size: 12px;
+        max-width: 280px;
+        word-break: break-all;
+        margin-bottom: 16px;
+      ">
+        <span style="opacity: 0.6;">클립보드:</span> ${preview}
+      </div>
+      <button class="dv-skip-btn" style="
+        background: rgba(255,255,255,0.2);
+        border: 1px solid rgba(255,255,255,0.3);
+        color: white;
+        padding: 8px 20px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 13px;
+      ">건너뛰기</button>
+    `;
+    el.style.cssText = `
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+      color: white;
+      padding: 32px 40px;
+      border-radius: 20px;
+      text-align: center;
+      z-index: 999999;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+      animation: popIn 0.3s ease;
+    `;
+
+    // 애니메이션 스타일
+    if (!document.querySelector('#dv-paste-style')) {
+      const style = document.createElement('style');
+      style.id = 'dv-paste-style';
+      style.textContent = `
+        @keyframes popIn {
+          from { transform: translate(-50%, -50%) scale(0.8); opacity: 0; }
+          to { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    document.body.appendChild(el);
+
+    // Ctrl+V 감지
+    const handlePaste = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+        document.removeEventListener('keydown', handlePaste);
+        el.innerHTML = `
+          <div style="font-size: 48px;">✅</div>
+          <div style="font-size: 18px; margin-top: 12px;">붙여넣기 완료!</div>
+        `;
+        setTimeout(() => {
+          el.remove();
+          resolve();
+        }, 800);
+      }
+    };
+    document.addEventListener('keydown', handlePaste);
+
+    // 건너뛰기 버튼
+    el.querySelector('.dv-skip-btn').addEventListener('click', () => {
+      document.removeEventListener('keydown', handlePaste);
+      el.remove();
+      resolve();
+    });
+  });
+}
+
+// iframe과 에디터 문서 찾기
+function findEditorIframe() {
+  // 메인 문서에서 직접 찾기
+  const mainTitle = document.querySelector('.se-component.se-documentTitle');
+  if (mainTitle) {
+    return { doc: document, win: window, type: 'main' };
+  }
+
+  // iframe에서 찾기
+  const iframes = document.querySelectorAll('iframe');
+  for (const iframe of iframes) {
+    try {
+      const iframeDoc = iframe.contentDocument;
+      const iframeWin = iframe.contentWindow;
+      if (iframeDoc) {
+        const titleEl = iframeDoc.querySelector('.se-component.se-documentTitle');
+        if (titleEl) {
+          return { doc: iframeDoc, win: iframeWin, iframe: iframe, type: 'iframe' };
+        }
+      }
+    } catch (e) {
+      // cross-origin 무시
+    }
+  }
+
+  return null;
+}
+
+// 제목 자동 입력 (클립보드 복사 후 수동 Ctrl+V 안내)
+async function autoInsertTitle(title, editorInfo) {
+  const { doc, win, iframe } = editorInfo;
+  console.log('[닥터보이스] 제목 입력 시작:', title);
+
+  // 제목에서 불필요한 따옴표 제거
+  let cleanTitle = title.replace(/^["']|["']$/g, '').trim();
+  console.log('[닥터보이스] 정리된 제목:', cleanTitle);
+
+  // 제목 영역 찾기
+  const titleComponent = doc.querySelector('.se-component.se-documentTitle');
+  if (!titleComponent) {
+    console.error('[닥터보이스] 제목 컴포넌트 없음');
+    return false;
+  }
+
+  const titleParagraph = titleComponent.querySelector('.se-text-paragraph');
+  if (!titleParagraph) {
+    console.error('[닥터보이스] 제목 paragraph 없음');
+    return false;
+  }
+
+  // 1. 클립보드에 텍스트 복사
+  try {
+    await navigator.clipboard.writeText(cleanTitle);
+    console.log('[닥터보이스] 제목 클립보드 복사 완료');
+  } catch (e) {
+    console.error('[닥터보이스] 클립보드 복사 실패:', e.message);
+    return false;
+  }
+
+  // 2. 제목 영역 직접 클릭하여 포커스
+  titleParagraph.click();
+  await sleep(100);
+  titleParagraph.focus();
+  await sleep(100);
+
+  // 3. Selection 설정
+  const selection = doc.getSelection();
+  const range = doc.createRange();
+  range.selectNodeContents(titleParagraph);
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  console.log('[닥터보이스] 제목 영역 포커스 완료');
+  return true; // 클립보드 복사 성공
+}
+
+// 본문 자동 입력 (클립보드 복사 후 수동 Ctrl+V 안내)
+async function autoInsertBody(content, editorInfo) {
+  const { doc, win, iframe } = editorInfo;
+  console.log('[닥터보이스] 본문 입력 시작');
+
+  // 본문 컴포넌트 찾기
+  const bodyComponents = doc.querySelectorAll('.se-component.se-text');
+  let bodyComponent = null;
+
+  for (const comp of bodyComponents) {
+    if (!comp.classList.contains('se-documentTitle') && !comp.closest('.se-documentTitle')) {
+      bodyComponent = comp;
+      break;
+    }
+  }
+
+  if (!bodyComponent) {
+    console.error('[닥터보이스] 본문 컴포넌트 없음');
+    return false;
+  }
+
+  const bodyParagraph = bodyComponent.querySelector('.se-text-paragraph');
+  if (!bodyParagraph) {
+    console.error('[닥터보이스] 본문 paragraph 없음');
+    return false;
+  }
+
+  // 본문 포맷팅 (따옴표 제거 포함)
+  let formattedContent = formatContentForBlog(content);
+  formattedContent = formattedContent.replace(/^["']|["']$/g, '').trim();
+
+  // 1. 클립보드에 텍스트 복사
+  try {
+    await navigator.clipboard.writeText(formattedContent);
+    console.log('[닥터보이스] 본문 클립보드 복사 완료, 길이:', formattedContent.length);
+  } catch (e) {
+    console.error('[닥터보이스] 클립보드 복사 실패:', e.message);
+    return false;
+  }
+
+  // 2. 본문 영역 직접 클릭하여 포커스
+  bodyParagraph.click();
+  await sleep(100);
+  bodyParagraph.focus();
+  await sleep(100);
+
+  // 3. Selection 설정
+  const selection = doc.getSelection();
+  const range = doc.createRange();
+  range.selectNodeContents(bodyParagraph);
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  console.log('[닥터보이스] 본문 영역 포커스 완료');
+  return true; // 클립보드 복사 성공
+}
+
+// 요소에 텍스트 입력 (execCommand 방식)
+async function insertTextToElement(element, text, doc, win) {
+  console.log('[닥터보이스] insertTextToElement 시작, 텍스트 길이:', text.length);
+
+  // 1. 요소 클릭 및 포커스
+  element.click();
+  await sleep(100);
+  element.focus();
+  await sleep(100);
+
+  // 2. 전체 선택 (기존 내용 삭제를 위해)
+  doc.execCommand('selectAll', false, null);
+  await sleep(50);
+
+  // 3. 삭제
+  doc.execCommand('delete', false, null);
+  await sleep(50);
+
+  // 4. 텍스트 입력 시도 - execCommand 우선
+  console.log('[닥터보이스] execCommand insertText 시도');
+  const insertResult = doc.execCommand('insertText', false, text);
+  console.log('[닥터보이스] insertText 결과:', insertResult);
+
+  if (insertResult) {
+    await sleep(100);
+    // 이벤트 발생
+    element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+    return true;
+  }
+
+  // 5. execCommand 실패시 직접 입력
+  console.log('[닥터보이스] 직접 텍스트 노드 삽입');
+
+  // span.__se-node 찾거나 생성
+  let targetSpan = element.querySelector('span.__se-node');
+  if (!targetSpan) {
+    targetSpan = doc.createElement('span');
+    targetSpan.className = '__se-node';
+    element.appendChild(targetSpan);
+  }
+
+  // 텍스트 설정
+  targetSpan.textContent = text;
+
+  // 이벤트 발생
+  element.dispatchEvent(new Event('focus', { bubbles: true }));
+  element.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertText', data: text }));
+  element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+  element.dispatchEvent(new Event('change', { bubbles: true }));
+
+  await sleep(100);
+  return targetSpan.textContent.length > 0;
+}
+
+// 모든 입력 방법 시도 (React 호환 방식 우선)
+async function tryAllInsertMethods(element, text, doc, win) {
+  console.log('[닥터보이스] v12.2 입력 시도 시작');
+  console.log('[닥터보이스] 텍스트 길이:', text.length);
+
+  // 요소 활성화 및 포커스
+  element.click();
+  await sleep(100);
+  element.focus();
+  await sleep(100);
+
+  // 방법 1: React 호환 InputEvent 방식 (가장 효과적)
+  console.log('[닥터보이스] 방법1: React InputEvent 방식');
+  try {
+    const success = await insertWithReactEvents(element, text, doc);
+    if (success) {
+      console.log('[닥터보이스] 방법1 성공!');
+      return true;
+    }
+  } catch (e) {
+    console.log('[닥터보이스] 방법1 실패:', e.message);
+  }
+
+  // 방법 2: 한 글자씩 키 입력 시뮬레이션
+  console.log('[닥터보이스] 방법2: 키 입력 시뮬레이션');
+  try {
+    const success = await insertCharByChar(element, text, doc);
+    if (success) {
+      console.log('[닥터보이스] 방법2 성공!');
+      return true;
+    }
+  } catch (e) {
+    console.log('[닥터보이스] 방법2 실패:', e.message);
+  }
+
+  // 방법 3: execCommand insertText
+  console.log('[닥터보이스] 방법3: execCommand insertText');
+  try {
+    element.focus();
+    const selection = doc.getSelection();
+    const range = doc.createRange();
+    range.selectNodeContents(element);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    const insertResult = doc.execCommand('insertText', false, text);
+    console.log('[닥터보이스] insertText 결과:', insertResult);
+    await sleep(200);
+
+    if (element.textContent.includes(text.substring(0, 20))) {
+      console.log('[닥터보이스] 방법3 성공!');
+      return true;
+    }
+  } catch (e) {
+    console.log('[닥터보이스] 방법3 실패:', e.message);
+  }
+
+  // 방법 4: ClipboardEvent 발생
+  console.log('[닥터보이스] 방법4: ClipboardEvent');
+  try {
+    element.focus();
+    await sleep(100);
+
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData('text/plain', text);
+
+    const pasteEvent = new ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: dataTransfer
+    });
+
+    element.dispatchEvent(pasteEvent);
+    await sleep(300);
+
+    if (element.textContent.includes(text.substring(0, 20))) {
+      console.log('[닥터보이스] 방법4 성공!');
+      return true;
+    }
+  } catch (e) {
+    console.log('[닥터보이스] 방법4 실패:', e.message);
+  }
+
+  // 방법 5: 직접 입력 + 이벤트 (최후의 수단)
+  console.log('[닥터보이스] 방법5: 직접 DOM 조작');
+  try {
+    element.textContent = text;
+    dispatchInputEvents(element, text);
+
+    element.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    element.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: text }));
+
+    await sleep(200);
+    console.log('[닥터보이스] 방법5 완료 (텍스트 길이:', element.textContent.length, ')');
+    return element.textContent.length > 10;
+  } catch (e) {
+    console.log('[닥터보이스] 방법5 실패:', e.message);
+  }
+
+  console.log('[닥터보이스] 모든 방법 실패');
+  return false;
+}
+
+// React 호환 InputEvent 방식으로 입력
+async function insertWithReactEvents(element, text, doc) {
+  console.log('[닥터보이스] React InputEvent 방식 시작');
+
+  // 요소 포커스
+  element.focus();
+  await sleep(50);
+
+  // 캐럿을 요소 끝에 위치
+  const selection = doc.getSelection();
+  const range = doc.createRange();
+  range.selectNodeContents(element);
+  range.collapse(false); // 끝에 위치
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  // beforeinput 이벤트 발생 (React가 주로 사용)
+  const beforeInputEvent = new InputEvent('beforeinput', {
+    bubbles: true,
+    cancelable: true,
+    inputType: 'insertText',
+    data: text
+  });
+  element.dispatchEvent(beforeInputEvent);
+
+  // 텍스트 직접 삽입
+  const textNode = doc.createTextNode(text);
+  range.insertNode(textNode);
+
+  // input 이벤트 발생
+  const inputEvent = new InputEvent('input', {
+    bubbles: true,
+    inputType: 'insertText',
+    data: text
+  });
+  element.dispatchEvent(inputEvent);
+
+  await sleep(100);
+
+  // 성공 여부 확인
+  const success = element.textContent.includes(text.substring(0, 20));
+  console.log('[닥터보이스] React InputEvent 결과:', success);
+  return success;
+}
+
+// 한 글자씩 키 입력 시뮬레이션 (청크 단위)
+async function insertCharByChar(element, text, doc) {
+  console.log('[닥터보이스] 키 입력 시뮬레이션 시작');
+
+  element.focus();
+  await sleep(50);
+
+  // 캐럿 위치 설정
+  const selection = doc.getSelection();
+  const range = doc.createRange();
+  range.selectNodeContents(element);
+  range.collapse(false);
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  // 청크 단위로 입력 (성능 최적화)
+  const chunkSize = 50;
+  const chunks = [];
+  for (let i = 0; i < text.length; i += chunkSize) {
+    chunks.push(text.substring(i, i + chunkSize));
+  }
+
+  console.log('[닥터보이스] 청크 수:', chunks.length);
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+
+    // Composition 이벤트 시작
+    element.dispatchEvent(new CompositionEvent('compositionstart', {
+      bubbles: true,
+      data: ''
+    }));
+
+    // Composition 업데이트
+    element.dispatchEvent(new CompositionEvent('compositionupdate', {
+      bubbles: true,
+      data: chunk
+    }));
+
+    // beforeinput 이벤트
+    element.dispatchEvent(new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'insertCompositionText',
+      data: chunk
+    }));
+
+    // 텍스트 노드 삽입
+    const textNode = doc.createTextNode(chunk);
+    const currentRange = selection.getRangeAt(0);
+    currentRange.insertNode(textNode);
+    currentRange.setStartAfter(textNode);
+    currentRange.setEndAfter(textNode);
+    selection.removeAllRanges();
+    selection.addRange(currentRange);
+
+    // input 이벤트
+    element.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      inputType: 'insertCompositionText',
+      data: chunk
+    }));
+
+    // Composition 종료
+    element.dispatchEvent(new CompositionEvent('compositionend', {
+      bubbles: true,
+      data: chunk
+    }));
+
+    // 진행상황 표시 (10% 단위)
+    if (i % Math.ceil(chunks.length / 10) === 0) {
+      const progress = Math.round((i / chunks.length) * 100);
+      console.log('[닥터보이스] 입력 진행:', progress + '%');
+    }
+
+    // 짧은 대기 (UI 업데이트 허용)
+    if (i % 5 === 0) await sleep(10);
+  }
+
+  await sleep(100);
+  const success = element.textContent.includes(text.substring(0, 20));
+  console.log('[닥터보이스] 키 입력 시뮬레이션 결과:', success);
+  return success;
+}
+
+// 입력 이벤트 발생
+function dispatchInputEvents(element, text) {
+  const events = [
+    new Event('focus', { bubbles: true }),
+    new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }),
+    new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }),
+    new Event('change', { bubbles: true }),
+    new Event('blur', { bubbles: true }),
+    new Event('focus', { bubbles: true })
+  ];
+
+  for (const event of events) {
+    try {
+      element.dispatchEvent(event);
+    } catch (e) {}
+  }
+
+  // 부모 요소에도 이벤트 발생
+  const parent = element.closest('.se-component');
+  if (parent) {
+    parent.dispatchEvent(new Event('input', { bubbles: true }));
+    parent.dispatchEvent(new CustomEvent('change', { bubbles: true }));
+  }
+}
+
+// 블로그용 텍스트 포맷팅 (HTML 없이 텍스트만)
+function formatContentForBlog(content) {
+  let result = content;
+
+  // 1. > 인용구를 ━━ 구분선으로 강조
+  result = result.replace(/^>\s*(.+)$/gm, '\n━━━━━━━━━━━━━━━━\n💬 $1\n━━━━━━━━━━━━━━━━\n');
+
+  // 2. 핵심 문장에 이모지 추가
+  const keyPhrases = ['핵심은', '결론은', '요점은', '비결은', '포인트는', '기억하세요', '명심하세요'];
+  for (const phrase of keyPhrases) {
+    result = result.replace(new RegExp(`(${phrase}.{0,100}[.!?])`, 'g'), '\n⭐ $1 ⭐\n');
+  }
+
+  // 3. 줄바꿈 정리 (가독성 향상)
+  result = result
+    .replace(/\n{4,}/g, '\n\n\n')  // 과도한 줄바꿈 제거
+    .replace(/([.!?])\s+/g, '$1\n\n')  // 문장 끝에 줄바꿈 추가
+    .trim();
+
+  console.log('[닥터보이스] 텍스트 포맷팅 완료');
+  return result;
+}
+
+// 본문 입력 단계
+async function startBodyInput(postData, doc) {
+  // 본문을 읽기 좋게 정리 (HTML 없이 텍스트만)
+  const formattedContent = formatContentForBlog(postData.content);
+
+  // 일반 텍스트로 클립보드에 복사
+  await navigator.clipboard.writeText(formattedContent);
+
+  // 본문 영역 클릭하여 포커스
+  const bodyComponents = doc.querySelectorAll('.se-component.se-text');
+  for (const comp of bodyComponents) {
+    if (comp.classList.contains('se-documentTitle')) continue;
+    if (comp.closest('.se-documentTitle')) continue;
+
+    const bodyParagraph = comp.querySelector('.se-text-paragraph');
+    if (bodyParagraph) {
+      simulateRealClick(bodyParagraph);
+      await sleep(300);
+      bodyParagraph.focus();
+      break;
+    }
+  }
+
+  // 간단한 안내 표시
+  showSimplePasteGuide('본문', postData.content, async () => {
+    // 이미지가 있으면 이미지 안내
+    if (postData.imageUrls && postData.imageUrls.length > 0) {
+      await sleep(500);
+      showImageGuide(postData.imageUrls);
+    } else {
+      // 완료
+      showFinalSuccess();
+    }
+  });
+}
+
+// 이미지 안내
+function showImageGuide(imageUrls) {
+  const old = document.querySelector('.dv-step-notify');
+  if (old) old.remove();
+
+  const el = document.createElement('div');
+  el.className = 'dv-step-notify';
+  el.innerHTML = `
+    <div style="font-size: 40px; margin-bottom: 12px;">🖼️</div>
+    <div style="font-size: 20px; font-weight: bold; margin-bottom: 8px;">3단계: 이미지 추가</div>
+    <div style="font-size: 14px; opacity: 0.9; margin-bottom: 16px;">
+      이미지 ${imageUrls.length}개를 추가해주세요
+    </div>
+    <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 8px; margin-bottom: 16px; text-align: left; max-height: 150px; overflow-y: auto;">
+      ${imageUrls.map((url, i) => `
+        <div style="margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+          <span style="background: white; color: #333; padding: 2px 8px; border-radius: 4px; font-size: 12px;">${i+1}</span>
+          <button class="dv-copy-img-btn" data-url="${url}" style="
+            background: white;
+            color: #333;
+            border: none;
+            padding: 4px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+          ">URL 복사</button>
+        </div>
+      `).join('')}
+    </div>
+    <div style="font-size: 13px; opacity: 0.9; margin-bottom: 16px;">
+      💡 상단 도구모음에서 <strong>"사진"</strong> 버튼 클릭 → <strong>"URL"</strong> 탭 선택 → URL 붙여넣기
+    </div>
+    <button id="dv-done-btn" style="
+      background: white;
+      color: #333;
+      border: none;
+      padding: 12px 32px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 15px;
+      font-weight: 600;
+    ">✅ 완료</button>
+  `;
+  el.style.cssText = `
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+    color: white;
+    padding: 28px 36px;
+    border-radius: 16px;
+    text-align: center;
+    z-index: 999999;
+    box-shadow: 0 15px 50px rgba(0,0,0,0.4);
+    max-width: 400px;
+  `;
+
+  document.body.appendChild(el);
+
+  // URL 복사 버튼들
+  el.querySelectorAll('.dv-copy-img-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await navigator.clipboard.writeText(btn.dataset.url);
+      btn.textContent = '✅ 복사됨!';
+      setTimeout(() => btn.textContent = 'URL 복사', 2000);
+    });
+  });
+
+  // 완료 버튼
+  document.getElementById('dv-done-btn').addEventListener('click', () => {
+    el.remove();
+    showFinalSuccess();
+  });
+}
+
+// 최종 완료 알림
+function showFinalSuccess() {
+  const old = document.querySelector('.dv-step-notify');
+  if (old) old.remove();
+
+  const el = document.createElement('div');
+  el.className = 'dv-step-notify';
+  el.innerHTML = `
+    <div style="font-size: 48px; margin-bottom: 12px;">🎉</div>
+    <div style="font-size: 22px; font-weight: bold; margin-bottom: 8px;">입력 완료!</div>
+    <div style="font-size: 14px; opacity: 0.95; margin-bottom: 20px;">
+      내용을 확인하고 오른쪽 상단의<br>
+      <strong style="color: #4ade80;">녹색 "발행" 버튼</strong>을 클릭하세요
+    </div>
+    <button id="dv-final-close" style="
+      background: rgba(255,255,255,0.2);
+      border: 1px solid rgba(255,255,255,0.4);
+      color: white;
+      padding: 10px 30px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+    ">확인</button>
+  `;
+  el.style.cssText = `
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: white;
+    padding: 36px 48px;
+    border-radius: 20px;
+    text-align: center;
+    z-index: 999999;
+    box-shadow: 0 15px 50px rgba(0,0,0,0.4);
+  `;
+
+  document.body.appendChild(el);
+
+  document.getElementById('dv-final-close').addEventListener('click', () => {
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 200);
+  });
+
+  // 5초 후 자동 닫기
+  setTimeout(() => {
+    if (el.parentNode) {
+      el.style.opacity = '0';
+      setTimeout(() => el.remove(), 200);
+    }
+  }, 5000);
+}
+
+// 단계별 알림 표시
+function showStepNotification(step, desc, instruction, preview, onPaste) {
+  const old = document.querySelector('.dv-step-notify');
+  if (old) old.remove();
+
+  const el = document.createElement('div');
+  el.className = 'dv-step-notify';
+  el.innerHTML = `
+    <div style="font-size: 40px; margin-bottom: 12px;">📋</div>
+    <div style="font-size: 20px; font-weight: bold; margin-bottom: 8px;">${step}</div>
+    <div style="font-size: 14px; opacity: 0.9; margin-bottom: 16px;">${desc}</div>
+
+    <div style="
+      background: rgba(0,0,0,0.3);
+      padding: 16px 24px;
+      border-radius: 12px;
+      margin-bottom: 16px;
+    ">
+      <div style="font-size: 28px; font-weight: bold; letter-spacing: 2px;">Ctrl + V</div>
+      <div style="font-size: 12px; margin-top: 4px; opacity: 0.8;">${instruction}</div>
+    </div>
+
+    <div style="
+      background: rgba(255,255,255,0.1);
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      text-align: left;
+      max-height: 60px;
+      overflow: hidden;
+      margin-bottom: 16px;
+    ">
+      <div style="opacity: 0.7;">미리보기:</div>
+      <div style="margin-top: 4px;">${preview}</div>
+    </div>
+
+    <button id="dv-skip-btn" style="
+      background: rgba(255,255,255,0.2);
+      border: 1px solid rgba(255,255,255,0.3);
+      color: white;
+      padding: 8px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+    ">건너뛰기</button>
+  `;
+  el.style.cssText = `
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+    color: white;
+    padding: 28px 36px;
+    border-radius: 16px;
+    text-align: center;
+    z-index: 999999;
+    box-shadow: 0 15px 50px rgba(0,0,0,0.4);
+    max-width: 380px;
+    animation: popIn 0.3s ease;
+  `;
+
+  // 애니메이션 스타일
+  const style = document.createElement('style');
+  style.textContent = `
+    @keyframes popIn {
+      from { transform: translate(-50%, -50%) scale(0.9); opacity: 0; }
+      to { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+    }
+  `;
+  document.head.appendChild(style);
+
+  document.body.appendChild(el);
+
+  // Ctrl+V 감지
+  const handleKeydown = async (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+      document.removeEventListener('keydown', handleKeydown);
+      el.innerHTML = `
+        <div style="font-size: 40px;">✅</div>
+        <div style="font-size: 18px; margin-top: 8px;">붙여넣기 완료!</div>
+      `;
+      await sleep(800);
+      el.remove();
+      if (onPaste) onPaste();
+    }
+  };
+  document.addEventListener('keydown', handleKeydown);
+
+  // 건너뛰기 버튼
+  document.getElementById('dv-skip-btn').addEventListener('click', () => {
+    document.removeEventListener('keydown', handleKeydown);
+    el.remove();
+    if (onPaste) onPaste();
+  });
 }
 
 // 발행 버튼 자동 클릭
@@ -612,47 +1489,560 @@ async function waitForEditor() {
   });
 }
 
-// 제목 입력
-async function inputTitle(title) {
-  console.log('[닥터보이스] 제목 입력:', title);
+// 실제 마우스 클릭 시뮬레이션
+function simulateRealClick(element) {
+  const rect = element.getBoundingClientRect();
+  const x = rect.left + rect.width / 2;
+  const y = rect.top + rect.height / 2;
 
-  // 메인 문서에서 제목 요소 찾기 (se-fs32는 제목 폰트 크기)
-  const titleSpan = document.querySelector('span.se-fs32.__se-node') ||
-                    document.querySelector('.se-documentTitle span.__se-node') ||
-                    document.querySelector('[class*="se-fs32"].__se-node');
+  const mousedownEvent = new MouseEvent('mousedown', {
+    bubbles: true,
+    cancelable: true,
+    view: window,
+    clientX: x,
+    clientY: y
+  });
 
-  if (titleSpan) {
-    // 제목 영역 클릭하여 활성화
-    titleSpan.click();
-    await sleep(200);
+  const mouseupEvent = new MouseEvent('mouseup', {
+    bubbles: true,
+    cancelable: true,
+    view: window,
+    clientX: x,
+    clientY: y
+  });
 
-    // 직접 텍스트 삽입
-    titleSpan.textContent = title;
+  const clickEvent = new MouseEvent('click', {
+    bubbles: true,
+    cancelable: true,
+    view: window,
+    clientX: x,
+    clientY: y
+  });
 
-    // 입력 이벤트 발생
-    titleSpan.dispatchEvent(new Event('input', { bubbles: true }));
-    titleSpan.dispatchEvent(new Event('change', { bubbles: true }));
+  element.dispatchEvent(mousedownEvent);
+  element.dispatchEvent(mouseupEvent);
+  element.dispatchEvent(clickEvent);
+}
 
-    console.log('[닥터보이스] 제목 입력 완료 (직접 삽입)');
-    return;
+// 에디터 document 가져오기 (메인 또는 iframe)
+function getActiveEditorDocument() {
+  // 먼저 메인 문서에서 확인
+  if (document.querySelector('.se-component.se-documentTitle')) {
+    console.log('[닥터보이스] 에디터: 메인 문서');
+    return document;
   }
 
-  // 대안: 제목 문단 찾기
-  const titleParagraph = document.querySelector('.se-documentTitle .se-text-paragraph');
-  if (titleParagraph) {
-    titleParagraph.click();
-    await sleep(200);
-
-    const innerSpan = titleParagraph.querySelector('span.__se-node');
-    if (innerSpan) {
-      innerSpan.textContent = title;
-      innerSpan.dispatchEvent(new Event('input', { bubbles: true }));
-      console.log('[닥터보이스] 제목 입력 완료 (문단 내 span)');
-      return;
+  // iframe 내부에서 찾기
+  const iframes = document.querySelectorAll('iframe');
+  for (const iframe of iframes) {
+    try {
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (iframeDoc && iframeDoc.querySelector('.se-component.se-documentTitle')) {
+        console.log('[닥터보이스] 에디터: iframe 내부');
+        return iframeDoc;
+      }
+    } catch (e) {
+      // cross-origin 무시
     }
   }
 
-  console.warn('[닥터보이스] 제목 입력 필드 없음');
+  // 찾지 못하면 전역 editorDoc 사용
+  if (editorDoc) {
+    console.log('[닥터보이스] 에디터: 전역 editorDoc 사용');
+    return editorDoc;
+  }
+
+  console.log('[닥터보이스] 에디터: 기본 document 사용');
+  return document;
+}
+
+// 제목 입력 (execCommand insertText 방식)
+async function inputTitle(title) {
+  console.log('[닥터보이스] 제목 입력:', title);
+
+  const doc = getActiveEditorDocument();
+  const win = doc.defaultView || window;
+
+  // 제목 영역 찾기
+  const titleComponent = doc.querySelector('.se-component.se-documentTitle');
+  if (!titleComponent) {
+    console.warn('[닥터보이스] 제목 컴포넌트 찾기 실패');
+    return false;
+  }
+
+  const titleParagraph = titleComponent.querySelector('.se-text-paragraph');
+  if (!titleParagraph) {
+    console.warn('[닥터보이스] 제목 paragraph 찾기 실패');
+    return false;
+  }
+
+  // 제목 span 찾기
+  let titleSpan = titleComponent.querySelector('span.se-fs32.__se-node') ||
+                  titleComponent.querySelector('span.__se-node');
+
+  // 방법 1: execCommand insertText (가장 효과적인 방법)
+  const execSuccess = await tryExecCommandInsert(titleParagraph, titleSpan, title, doc);
+  if (execSuccess) {
+    console.log('[닥터보이스] 제목 execCommand insertText 성공');
+    return true;
+  }
+
+  // 방법 2: 한 글자씩 입력 시뮬레이션
+  const typeSuccess = await tryTypeText(titleParagraph, titleSpan, title, doc);
+  if (typeSuccess) {
+    console.log('[닥터보이스] 제목 글자별 입력 성공');
+    return true;
+  }
+
+  // 방법 3: Selection + insertText
+  const selectionSuccess = await trySelectionInsert(titleParagraph, titleSpan, title, doc);
+  if (selectionSuccess) {
+    console.log('[닥터보이스] 제목 Selection 삽입 성공');
+    return true;
+  }
+
+  console.log('[닥터보이스] 제목 자동 입력 실패');
+  return false;
+}
+
+// execCommand insertText 시도
+async function tryExecCommandInsert(paragraph, span, text, doc) {
+  try {
+    const targetEl = span || paragraph;
+
+    // 요소 클릭하여 활성화
+    simulateRealClick(paragraph);
+    await sleep(200);
+
+    if (span) {
+      simulateRealClick(span);
+      await sleep(100);
+    }
+
+    // 포커스
+    targetEl.focus();
+    await sleep(100);
+
+    // 기존 내용 선택 (있으면)
+    const selection = doc.getSelection();
+    const range = doc.createRange();
+    range.selectNodeContents(targetEl);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    await sleep(50);
+
+    // execCommand insertText 실행
+    const result = doc.execCommand('insertText', false, text);
+    console.log('[닥터보이스] execCommand insertText 결과:', result);
+
+    if (result) {
+      // 입력 이벤트 발생
+      targetEl.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        cancelable: false,
+        inputType: 'insertText',
+        data: text
+      }));
+      return true;
+    }
+  } catch (e) {
+    console.log('[닥터보이스] execCommand insertText 실패:', e.message);
+  }
+  return false;
+}
+
+// 한 글자씩 타이핑 시뮬레이션
+async function tryTypeText(paragraph, span, text, doc) {
+  try {
+    const targetEl = span || paragraph;
+
+    // 요소 활성화
+    simulateRealClick(paragraph);
+    await sleep(200);
+    if (span) {
+      simulateRealClick(span);
+      await sleep(100);
+    }
+    targetEl.focus();
+    await sleep(100);
+
+    // 기존 내용 삭제
+    const selection = doc.getSelection();
+    const range = doc.createRange();
+    range.selectNodeContents(targetEl);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    doc.execCommand('delete', false, null);
+    await sleep(100);
+
+    // 한 글자씩 입력
+    for (const char of text) {
+      // keydown
+      targetEl.dispatchEvent(new KeyboardEvent('keydown', {
+        key: char,
+        code: 'Key' + char.toUpperCase(),
+        bubbles: true,
+        cancelable: true
+      }));
+
+      // beforeinput
+      targetEl.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertText',
+        data: char
+      }));
+
+      // 실제 텍스트 삽입
+      doc.execCommand('insertText', false, char);
+
+      // input
+      targetEl.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        cancelable: false,
+        inputType: 'insertText',
+        data: char
+      }));
+
+      // keyup
+      targetEl.dispatchEvent(new KeyboardEvent('keyup', {
+        key: char,
+        code: 'Key' + char.toUpperCase(),
+        bubbles: true
+      }));
+
+      // 짧은 지연 (타이핑 속도 시뮬레이션)
+      await sleep(5);
+    }
+
+    console.log('[닥터보이스] 글자별 입력 완료');
+    return true;
+  } catch (e) {
+    console.log('[닥터보이스] 글자별 입력 실패:', e.message);
+  }
+  return false;
+}
+
+// Selection API로 텍스트 삽입
+async function trySelectionInsert(paragraph, span, text, doc) {
+  try {
+    const targetEl = span || paragraph;
+
+    // 포커스 및 선택
+    simulateRealClick(paragraph);
+    await sleep(200);
+    targetEl.focus();
+
+    const selection = doc.getSelection();
+    const range = doc.createRange();
+
+    // 텍스트 노드 생성 및 삽입
+    range.selectNodeContents(targetEl);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    // 선택된 내용 삭제
+    range.deleteContents();
+
+    // 새 텍스트 노드 삽입
+    const textNode = doc.createTextNode(text);
+    range.insertNode(textNode);
+
+    // 커서를 텍스트 끝으로
+    range.setStartAfter(textNode);
+    range.setEndAfter(textNode);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    // 입력 이벤트
+    targetEl.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      inputType: 'insertText',
+      data: text
+    }));
+
+    console.log('[닥터보이스] Selection 삽입 완료');
+    return true;
+  } catch (e) {
+    console.log('[닥터보이스] Selection 삽입 실패:', e.message);
+  }
+  return false;
+}
+
+// React Fiber를 통한 상태 업데이트 시도
+async function tryReactStateUpdate(element, text, doc) {
+  if (!element) return false;
+
+  try {
+    // React Fiber 키 찾기
+    const reactKey = Object.keys(element).find(k =>
+      k.startsWith('__reactFiber') ||
+      k.startsWith('__reactInternalInstance') ||
+      k.startsWith('__reactProps')
+    );
+
+    if (!reactKey) {
+      console.log('[닥터보이스] React Fiber 없음');
+      return false;
+    }
+
+    const fiber = element[reactKey];
+    console.log('[닥터보이스] React Fiber 발견:', reactKey);
+
+    // stateNode에서 setState 찾기
+    if (fiber.stateNode && typeof fiber.stateNode.setState === 'function') {
+      console.log('[닥터보이스] setState 발견, 호출 시도');
+      fiber.stateNode.setState({ text: text, value: text });
+      return true;
+    }
+
+    // memoizedProps에서 onChange 찾기
+    if (fiber.memoizedProps) {
+      const props = fiber.memoizedProps;
+      console.log('[닥터보이스] React Props:', Object.keys(props));
+
+      if (typeof props.onChange === 'function') {
+        console.log('[닥터보이스] onChange 호출');
+        props.onChange({ target: { value: text } });
+        return true;
+      }
+
+      if (typeof props.onInput === 'function') {
+        console.log('[닥터보이스] onInput 호출');
+        props.onInput({ target: { value: text } });
+        return true;
+      }
+    }
+
+    // 부모 Fiber에서 찾기
+    let current = fiber.return;
+    let depth = 0;
+    while (current && depth < 10) {
+      if (current.stateNode && current.stateNode.props) {
+        const props = current.stateNode.props;
+        if (typeof props.onChange === 'function') {
+          console.log('[닥터보이스] 부모 onChange 발견');
+          props.onChange({ target: { value: text } });
+          return true;
+        }
+      }
+      current = current.return;
+      depth++;
+    }
+
+  } catch (e) {
+    console.log('[닥터보이스] React 상태 업데이트 실패:', e.message);
+  }
+
+  return false;
+}
+
+// 네이버 에디터 내부 API 호출 시도
+async function tryNaverEditorAPI(component, text, type, win) {
+  try {
+    // 전역 에디터 인스턴스 찾기
+    const editorPatterns = [
+      'SE', 'seEditor', 'smartEditor', 'blogEditor', 'editor', 'Editor',
+      '__EDITOR__', 'EDITOR_INSTANCE', 'editorInstance'
+    ];
+
+    for (const pattern of editorPatterns) {
+      if (win[pattern]) {
+        console.log('[닥터보이스] 전역 에디터 발견:', pattern);
+        const editor = win[pattern];
+
+        // 일반적인 에디터 메서드 시도
+        const methods = ['setContent', 'setValue', 'insertText', 'setText', 'setHTML',
+                        'setTitle', 'setBody', 'insert', 'write', 'paste'];
+
+        for (const method of methods) {
+          if (typeof editor[method] === 'function') {
+            console.log('[닥터보이스] 메서드 발견:', method);
+            try {
+              editor[method](text);
+              return true;
+            } catch (e) {
+              console.log('[닥터보이스] 메서드 호출 실패:', method);
+            }
+          }
+        }
+
+        // 중첩된 객체 탐색
+        for (const key in editor) {
+          if (typeof editor[key] === 'object' && editor[key] !== null) {
+            for (const method of methods) {
+              if (typeof editor[key][method] === 'function') {
+                console.log('[닥터보이스] 중첩 메서드 발견:', key + '.' + method);
+                try {
+                  editor[key][method](text);
+                  return true;
+                } catch (e) {}
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 컴포넌트 ID로 에디터 접근 시도
+    const compId = component.getAttribute('data-compid');
+    if (compId && win.SE && win.SE.editor) {
+      console.log('[닥터보이스] 컴포넌트 ID로 접근:', compId);
+      const compEditor = win.SE.editor.getComponent?.(compId);
+      if (compEditor) {
+        console.log('[닥터보이스] 컴포넌트 에디터 발견');
+        if (typeof compEditor.setValue === 'function') {
+          compEditor.setValue(text);
+          return true;
+        }
+      }
+    }
+
+  } catch (e) {
+    console.log('[닥터보이스] 네이버 API 호출 실패:', e.message);
+  }
+
+  return false;
+}
+
+// 직접 텍스트 노드 교체 + 이벤트 발생
+async function tryDirectTextInsert(element, text, doc) {
+  if (!element) return false;
+
+  try {
+    // 기존 텍스트 노드 제거하고 새로 생성
+    const textNode = doc.createTextNode(text);
+
+    // 플레이스홀더 제거
+    const placeholder = element.closest('.se-module-text')?.querySelector('.se-placeholder');
+    if (placeholder) {
+      placeholder.style.display = 'none';
+    }
+
+    // 기존 내용 제거
+    while (element.firstChild) {
+      element.removeChild(element.firstChild);
+    }
+
+    // 새 텍스트 노드 추가
+    element.appendChild(textNode);
+
+    // 다양한 이벤트 발생
+    const events = [
+      new Event('focus', { bubbles: true }),
+      new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }),
+      new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }),
+      new Event('change', { bubbles: true }),
+      new Event('blur', { bubbles: true })
+    ];
+
+    for (const event of events) {
+      element.dispatchEvent(event);
+      await sleep(50);
+    }
+
+    // 커스텀 이벤트도 시도
+    element.dispatchEvent(new CustomEvent('se-text-change', { bubbles: true, detail: { text } }));
+    element.dispatchEvent(new CustomEvent('contentchange', { bubbles: true, detail: { text } }));
+
+    console.log('[닥터보이스] 직접 삽입 완료');
+    return true;
+
+  } catch (e) {
+    console.log('[닥터보이스] 직접 삽입 실패:', e.message);
+  }
+
+  return false;
+}
+
+// 붙여넣기 시뮬레이션
+async function simulatePaste(doc, targetElement, text) {
+  const win = doc.defaultView || window;
+
+  // 포커스 확인
+  targetElement.focus();
+  await sleep(100);
+
+  // 방법 1: execCommand paste (보안상 대부분 차단됨)
+  try {
+    const pasteResult = doc.execCommand('paste');
+    if (pasteResult) {
+      console.log('[닥터보이스] execCommand paste 성공');
+      return true;
+    }
+  } catch (e) {
+    console.log('[닥터보이스] execCommand paste 실패');
+  }
+
+  // 방법 2: ClipboardEvent 직접 생성
+  try {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData('text/plain', text);
+
+    const pasteEvent = new ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: clipboardData
+    });
+
+    targetElement.dispatchEvent(pasteEvent);
+    console.log('[닥터보이스] ClipboardEvent 발생');
+    await sleep(200);
+
+    // 입력 이벤트도 발생
+    targetElement.dispatchEvent(new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'insertFromPaste',
+      data: text
+    }));
+
+    targetElement.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      inputType: 'insertFromPaste',
+      data: text
+    }));
+
+    return true;
+  } catch (e) {
+    console.log('[닥터보이스] ClipboardEvent 실패:', e.message);
+  }
+
+  // 방법 3: Ctrl+V 키보드 이벤트
+  try {
+    const keydownEvent = new KeyboardEvent('keydown', {
+      bubbles: true,
+      cancelable: true,
+      key: 'v',
+      code: 'KeyV',
+      keyCode: 86,
+      which: 86,
+      ctrlKey: true,
+      metaKey: false
+    });
+
+    targetElement.dispatchEvent(keydownEvent);
+    await sleep(100);
+
+    const keyupEvent = new KeyboardEvent('keyup', {
+      bubbles: true,
+      cancelable: true,
+      key: 'v',
+      code: 'KeyV',
+      keyCode: 86,
+      which: 86,
+      ctrlKey: true
+    });
+
+    targetElement.dispatchEvent(keyupEvent);
+    console.log('[닥터보이스] Ctrl+V 키보드 이벤트 발생');
+
+    return true;
+  } catch (e) {
+    console.log('[닥터보이스] 키보드 이벤트 실패:', e.message);
+  }
+
+  return false;
 }
 
 // 본문 붙여넣기 (클립보드 내용 사용)
@@ -697,54 +2087,52 @@ async function pasteContent() {
 
 // 본문 영역 찾기
 async function findBodyArea() {
-  // 1. 메인 문서에서 se-fs16 span 찾기 (본문 폰트)
-  const allSpans = document.querySelectorAll('span.__se-node');
-  console.log('[닥터보이스] __se-node span 개수:', allSpans.length);
+  console.log('[닥터보이스] 본문 영역 찾기 시작');
 
-  for (const span of allSpans) {
-    // se-fs32는 제목이므로 제외
-    if (span.classList.contains('se-fs32')) continue;
-    // 제목 영역 내부면 제외
-    if (span.closest('.se-documentTitle')) continue;
+  // 메인 문서에서 먼저 찾기
+  let bodySpan = findBodySpanInDocument(document);
 
-    console.log('[닥터보이스] 본문 영역 발견: span.__se-node (메인)');
-    return span;
+  // 메인 문서에 없으면 editorDoc에서 찾기
+  if (!bodySpan && editorDoc && editorDoc !== document) {
+    bodySpan = findBodySpanInDocument(editorDoc);
   }
 
-  // 2. iframe 내부에서 찾기
-  const iframes = document.querySelectorAll('iframe');
-  for (const iframe of iframes) {
-    try {
-      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-      if (iframeDoc && iframeDoc.body) {
-        // contenteditable body 찾기
-        if (iframeDoc.body.contentEditable === 'true' || iframeDoc.body.getAttribute('contenteditable') === 'true') {
-          console.log('[닥터보이스] 본문 영역 발견: iframe body');
-          return iframeDoc.body;
-        }
-      }
-    } catch (e) {
-      // cross-origin 무시
-    }
-  }
-
-  // 3. 플레이스홀더의 형제 요소
-  const placeholder = document.querySelector('.se-placeholder:not(.se-fs32)');
-  if (placeholder) {
-    const parent = placeholder.parentElement;
-    const sibling = parent?.querySelector('span[id^="SE-"]');
-    if (sibling) {
-      console.log('[닥터보이스] 본문 영역 발견: placeholder sibling');
-      return sibling;
-    }
-    // 부모 p 태그 반환
-    if (parent?.tagName === 'P') {
-      console.log('[닥터보이스] 본문 영역 발견: placeholder parent P');
-      return parent;
-    }
+  if (bodySpan) {
+    return bodySpan;
   }
 
   console.log('[닥터보이스] 본문 영역 찾기 실패');
+  return null;
+}
+
+// 특정 문서에서 본문 span 찾기
+function findBodySpanInDocument(doc) {
+  // 1. .se-module-text 중 제목이 아닌 것에서 span 찾기
+  const bodyModules = doc.querySelectorAll('.se-module-text');
+
+  for (const module of bodyModules) {
+    // 제목 영역 내부면 제외
+    if (module.closest('.se-section-documentTitle')) continue;
+    // se-title-text 클래스면 제외
+    if (module.classList.contains('se-title-text')) continue;
+
+    const bodySpan = module.querySelector('span.se-fs16.__se-node') ||
+                     module.querySelector('span[id^="SE-"].__se-node:not(.se-fs32)');
+    if (bodySpan) {
+      console.log('[닥터보이스] 본문 영역 발견 (module):', bodySpan.id);
+      return bodySpan;
+    }
+  }
+
+  // 2. se-fs16 span 직접 찾기 (제목 영역 제외)
+  const fs16Spans = doc.querySelectorAll('span.se-fs16.__se-node');
+  for (const span of fs16Spans) {
+    if (!span.closest('.se-section-documentTitle')) {
+      console.log('[닥터보이스] 본문 영역 발견 (se-fs16):', span.id);
+      return span;
+    }
+  }
+
   return null;
 }
 
@@ -1094,70 +2482,208 @@ async function insertContentDirectly(bodyEl, content, imageUrls) {
   console.log('[닥터보이스] 본문 직접 삽입 완료');
 }
 
-// 본문 + 이미지 URL 함께 삽입 (DOM 직접 조작 - 5MB 제한 우회)
+// 본문 + 이미지 URL 함께 삽입 (execCommand insertText 방식)
 async function insertContentWithImages(content, imageUrls, options) {
-  console.log('[닥터보이스] 본문 + 이미지 URL 삽입 시작 (DOM 직접 조작)');
+  console.log('[닥터보이스] 본문 + 이미지 URL 삽입 시작');
   console.log('[닥터보이스] 이미지 URL 개수:', imageUrls.length);
 
-  const bodyArea = await findBodyArea();
+  const doc = getActiveEditorDocument();
+  const win = doc.defaultView || window;
 
+  // 본문 컴포넌트 찾기 (제목이 아닌 se-text 컴포넌트)
+  const bodyComponents = doc.querySelectorAll('.se-component.se-text');
+  let bodyComponent = null;
+
+  for (const comp of bodyComponents) {
+    if (comp.classList.contains('se-documentTitle')) continue;
+    if (comp.closest('.se-documentTitle')) continue;
+    bodyComponent = comp;
+    break;
+  }
+
+  if (!bodyComponent) {
+    console.error('[닥터보이스] 본문 컴포넌트 찾기 실패');
+    return false;
+  }
+
+  console.log('[닥터보이스] 본문 컴포넌트 발견:', bodyComponent.id);
+
+  const bodyParagraph = bodyComponent.querySelector('.se-text-paragraph');
+  if (!bodyParagraph) {
+    console.error('[닥터보이스] 본문 paragraph 찾기 실패');
+    return false;
+  }
+
+  // 본문 span 찾기
+  let bodySpan = bodyComponent.querySelector('span[contenteditable="true"].__se-node') ||
+                 bodyComponent.querySelector('span.se-fs16.__se-node') ||
+                 bodyComponent.querySelector('span.__se-node');
+
+  // 플레이스홀더 숨기기
+  const placeholders = bodyComponent.querySelectorAll('.se-placeholder');
+  placeholders.forEach(p => p.style.display = 'none');
+
+  // 방법 1: execCommand insertText (가장 효과적인 방법)
+  const execSuccess = await tryExecCommandInsert(bodyParagraph, bodySpan, content, doc);
+  if (execSuccess) {
+    console.log('[닥터보이스] 본문 execCommand insertText 성공');
+    return true;
+  }
+
+  // 방법 2: 짧은 본문은 글자별 입력 시도 (긴 본문은 시간이 너무 오래 걸림)
+  if (content.length < 500) {
+    const typeSuccess = await tryTypeText(bodyParagraph, bodySpan, content, doc);
+    if (typeSuccess) {
+      console.log('[닥터보이스] 본문 글자별 입력 성공');
+      return true;
+    }
+  }
+
+  // 방법 3: Selection + insertText
+  const selectionSuccess = await trySelectionInsert(bodyParagraph, bodySpan, content, doc);
+  if (selectionSuccess) {
+    console.log('[닥터보이스] 본문 Selection 삽입 성공');
+    return true;
+  }
+
+  console.log('[닥터보이스] 본문 자동 입력 실패');
+
+  // 이미지 URL 처리
+  if (imageUrls && imageUrls.length > 0) {
+    console.log('[닥터보이스] 이미지 URL', imageUrls.length, '개');
+  }
+
+  return false;
+}
+
+// 실제 편집 가능한 본문 영역 찾기
+async function findEditableBodyArea() {
+  console.log('[닥터보이스] 편집 가능한 본문 영역 찾기');
+
+  // 요소가 화면에 보이는지 확인하는 함수
+  function isVisible(el) {
+    const style = window.getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+
+    // 화면 밖에 있는 요소 제외 (left: -9999px 같은 숨겨진 요소)
+    if (rect.left < -1000 || rect.top < -1000) return false;
+    if (style.display === 'none') return false;
+    if (style.visibility === 'hidden') return false;
+    if (rect.width === 0 || rect.height === 0) return false;
+
+    return true;
+  }
+
+  // 1. 네이버 스마트에디터 본문 영역 직접 찾기 (가장 우선)
+  // 본문 텍스트 컴포넌트 찾기 (제목 영역 제외)
+  const textComponents = document.querySelectorAll('.se-component.se-text');
+  for (const comp of textComponents) {
+    // 제목 영역 제외
+    if (comp.closest('.se-section-documentTitle')) continue;
+
+    // se-text-paragraph 찾기
+    const paragraph = comp.querySelector('.se-text-paragraph');
+    if (paragraph && isVisible(paragraph)) {
+      console.log('[닥터보이스] 본문 se-text-paragraph 발견');
+      return paragraph;
+    }
+  }
+
+  // 2. se-section (섹션)에서 본문 찾기
+  const sections = document.querySelectorAll('.se-section');
+  for (const section of sections) {
+    // 제목 섹션 제외
+    if (section.classList.contains('se-section-documentTitle')) continue;
+
+    const paragraph = section.querySelector('.se-text-paragraph');
+    if (paragraph && isVisible(paragraph)) {
+      console.log('[닥터보이스] 본문 섹션 paragraph 발견');
+      return paragraph;
+    }
+  }
+
+  // 3. 보이는 contenteditable 찾기 (숨겨진 클립보드 헬퍼 제외)
+  const editables = document.querySelectorAll('[contenteditable="true"]');
+  for (const el of editables) {
+    // 제목 영역 제외
+    if (el.closest('.se-section-documentTitle') || el.closest('.se-documentTitle')) continue;
+
+    // 숨겨진 요소 제외
+    if (!isVisible(el)) {
+      console.log('[닥터보이스] 숨겨진 contenteditable 스킵');
+      continue;
+    }
+
+    console.log('[닥터보이스] 보이는 contenteditable 발견:', el.className);
+    return el;
+  }
+
+  // 4. iframe 내부에서 찾기
+  const iframes = document.querySelectorAll('iframe');
+  for (const iframe of iframes) {
+    try {
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (!iframeDoc) continue;
+
+      // iframe body가 contenteditable인 경우
+      if (iframeDoc.body && iframeDoc.body.getAttribute('contenteditable') === 'true') {
+        console.log('[닥터보이스] iframe body contenteditable 발견');
+        return iframeDoc.body;
+      }
+    } catch (e) {
+      // cross-origin 무시
+    }
+  }
+
+  // 5. 마지막 시도: .se-content 내부의 텍스트 영역
+  const seContent = document.querySelector('.se-content');
+  if (seContent) {
+    const textPara = seContent.querySelector('.se-text-paragraph:not(.se-section-documentTitle .se-text-paragraph)');
+    if (textPara) {
+      console.log('[닥터보이스] se-content 내 paragraph 발견');
+      return textPara;
+    }
+  }
+
+  console.log('[닥터보이스] 편집 가능한 본문 영역 찾기 실패');
+  return null;
+}
+
+// 대체 방법: span 요소에 직접 입력
+async function insertContentFallback(content, imageUrls) {
+  console.log('[닥터보이스] 대체 방법으로 본문 입력');
+
+  const bodyArea = await findBodyArea();
   if (!bodyArea) {
-    console.error('[닥터보이스] 본문 영역 찾기 실패');
+    console.error('[닥터보이스] 본문 영역 완전히 찾기 실패');
     return;
   }
 
-  // 본문 영역 클릭하여 활성화
+  // span을 contenteditable로 만들기
+  bodyArea.setAttribute('contenteditable', 'true');
   bodyArea.click();
-  await sleep(300);
+  await sleep(200);
+  bodyArea.focus();
+  await sleep(200);
 
-  // 본문을 HTML로 변환
+  // 본문 HTML 생성
   const paragraphs = content.split('\n\n').filter(p => p.trim());
-  const totalImages = imageUrls?.length || 0;
+  let html = paragraphs.map(p => p.replace(/\n/g, '<br>')).join('<br><br>');
 
-  // 이미지 균등 배치 계산
-  const imagePositions = [];
-  if (totalImages > 0) {
-    const interval = Math.max(1, Math.floor(paragraphs.length / (totalImages + 1)));
-    for (let i = 0; i < totalImages; i++) {
-      imagePositions.push(Math.min((i + 1) * interval, paragraphs.length));
+  // 이미지 추가
+  if (imageUrls && imageUrls.length > 0) {
+    html += '<br><br>';
+    for (const url of imageUrls) {
+      html += `<img src="${url}" style="max-width:100%"><br><br>`;
     }
   }
 
-  // HTML 생성
-  let html = '';
-  let imageIndex = 0;
+  // execCommand로 삽입
+  document.execCommand('selectAll', false, null);
+  document.execCommand('insertHTML', false, html);
 
-  for (let i = 0; i < paragraphs.length; i++) {
-    const para = paragraphs[i].trim();
-    if (!para) continue;
-
-    html += para.replace(/\n/g, '<br>');
-
-    // 이미지 삽입 위치
-    if (imageIndex < totalImages && imagePositions[imageIndex] === i + 1) {
-      const imgUrl = imageUrls[imageIndex];
-      console.log(`[닥터보이스] 이미지 ${imageIndex + 1} 삽입: ${imgUrl.substring(0, 50)}...`);
-      html += `<br><br><img src="${imgUrl}" style="max-width:100%"><br><br>`;
-      imageIndex++;
-    } else {
-      html += '<br><br>';
-    }
-  }
-
-  // 남은 이미지 추가
-  while (imageIndex < totalImages) {
-    html += `<img src="${imageUrls[imageIndex]}" style="max-width:100%"><br><br>`;
-    imageIndex++;
-  }
-
-  // 직접 innerHTML 설정
-  bodyArea.innerHTML = html;
-
-  // 입력 이벤트 발생
-  bodyArea.dispatchEvent(new Event('input', { bubbles: true }));
-  bodyArea.dispatchEvent(new Event('change', { bubbles: true }));
-
-  console.log('[닥터보이스] 본문 + 이미지 입력 완료 (직접 삽입)');
+  bodyArea.dispatchEvent(new InputEvent('input', { bubbles: true }));
+  console.log('[닥터보이스] 대체 방법 입력 완료');
 }
 
 // 네이버 블로그용 HTML 변환
@@ -1459,6 +2985,90 @@ function findButtonByText(text) {
   return null;
 }
 
+// 수동 붙여넣기 안내 알림
+function showManualPasteNotification(title, content) {
+  const old = document.querySelector('.dv-manual-paste');
+  if (old) old.remove();
+
+  const el = document.createElement('div');
+  el.className = 'dv-manual-paste';
+  el.innerHTML = `
+    <div style="font-size: 48px; margin-bottom: 16px;">📋</div>
+    <div style="font-size: 22px; font-weight: bold; margin-bottom: 12px;">수동 입력이 필요합니다</div>
+    <div style="font-size: 14px; opacity: 0.95; margin-bottom: 20px;">
+      보안 정책으로 인해 자동 입력이 제한되었습니다.<br>
+      아래 단계를 따라주세요:
+    </div>
+    <div style="background: rgba(255,255,255,0.15); padding: 16px; border-radius: 10px; text-align: left; margin-bottom: 20px;">
+      <div style="margin-bottom: 10px;"><strong>1️⃣ 제목 입력:</strong> 제목 영역 클릭 → <kbd style="background:#fff;color:#333;padding:2px 6px;border-radius:4px;">Ctrl+V</kbd></div>
+      <div style="margin-bottom: 10px;"><strong>2️⃣ 제목 복사:</strong> 아래 버튼 클릭</div>
+      <button id="dv-copy-title" style="
+        background: white;
+        color: #333;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 13px;
+        margin-bottom: 10px;
+      ">📋 제목 복사하기</button>
+      <div style="margin-top: 10px;"><strong>3️⃣ 본문 입력:</strong> 본문 영역 클릭 → <kbd style="background:#fff;color:#333;padding:2px 6px;border-radius:4px;">Ctrl+V</kbd></div>
+      <button id="dv-copy-content" style="
+        background: white;
+        color: #333;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 13px;
+        margin-top: 10px;
+      ">📋 본문 복사하기</button>
+    </div>
+    <button id="dv-close-manual" style="
+      background: rgba(255,255,255,0.2);
+      border: 1px solid rgba(255,255,255,0.4);
+      color: white;
+      padding: 10px 30px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+    ">확인</button>
+  `;
+  el.style.cssText = `
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    color: white;
+    padding: 32px 40px;
+    border-radius: 20px;
+    text-align: center;
+    z-index: 999999;
+    box-shadow: 0 15px 50px rgba(0,0,0,0.5);
+    max-width: 450px;
+  `;
+
+  document.body.appendChild(el);
+
+  // 제목 복사 버튼
+  document.getElementById('dv-copy-title').addEventListener('click', async () => {
+    await navigator.clipboard.writeText(title);
+    document.getElementById('dv-copy-title').textContent = '✅ 제목 복사됨!';
+  });
+
+  // 본문 복사 버튼
+  document.getElementById('dv-copy-content').addEventListener('click', async () => {
+    await navigator.clipboard.writeText(content);
+    document.getElementById('dv-copy-content').textContent = '✅ 본문 복사됨!';
+  });
+
+  // 닫기 버튼
+  document.getElementById('dv-close-manual').addEventListener('click', () => {
+    el.remove();
+  });
+}
+
 // 성공 알림 (커스텀 메시지 지원)
 function showBigSuccessNotification(title = '✅ 포스팅 준비 완료!', desc = '내용을 확인하고 발행 버튼을 클릭하세요') {
   const old = document.querySelector('.dv-big-notify');
@@ -1533,4 +3143,4 @@ function showBigSuccessNotification(title = '✅ 포스팅 준비 완료!', desc
   }, 5000);
 }
 
-console.log('[닥터보이스] v11.0 초기화 완료');
+console.log('[닥터보이스] v12.0 초기화 완료');
