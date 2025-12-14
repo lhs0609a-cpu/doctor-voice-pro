@@ -1,5 +1,5 @@
-// 네이버 블로그 스마트에디터 v13.0 - 완전자동 (debugger API)
-console.log('[닥터보이스] v13.0 로드 - 완전자동 debugger API');
+// 네이버 블로그 스마트에디터 v13.2 - 완전자동 (debugger API)
+console.log('[닥터보이스] v13.2 로드 - 완전자동 debugger API');
 
 // 페이지 로드 시 가이드 오버레이 표시
 function showGuideOverlay() {
@@ -396,15 +396,41 @@ function getElementPositions(editorInfo) {
   let bodyX = bodyRect.left + bodyRect.width / 2;
   let bodyY = bodyRect.top + bodyRect.height / 2;
 
-  // iframe 내부인 경우 iframe 오프셋 추가
+  // 현재 스크립트가 iframe 내부에서 실행 중인지 확인
+  let frameOffsetX = 0;
+  let frameOffsetY = 0;
+
+  try {
+    if (window !== window.top) {
+      // iframe 내부에서 실행 중 - frameElement로 위치 계산
+      const frameEl = window.frameElement;
+      if (frameEl) {
+        const frameRect = frameEl.getBoundingClientRect();
+        frameOffsetX = frameRect.left;
+        frameOffsetY = frameRect.top;
+        console.log('[닥터보이스] frameElement 오프셋:', frameOffsetX, frameOffsetY);
+      }
+    }
+  } catch (e) {
+    // cross-origin인 경우 무시
+    console.log('[닥터보이스] 프레임 오프셋 계산 실패 (cross-origin)');
+  }
+
+  // iframe 내부인 경우 iframe 오프셋 추가 (findEditorIframe에서 찾은 경우)
   if (iframe) {
     const iframeRect = iframe.getBoundingClientRect();
-    titleX += iframeRect.left;
-    titleY += iframeRect.top;
-    bodyX += iframeRect.left;
-    bodyY += iframeRect.top;
-    console.log('[닥터보이스] iframe 오프셋:', iframeRect.left, iframeRect.top);
+    frameOffsetX += iframeRect.left;
+    frameOffsetY += iframeRect.top;
+    console.log('[닥터보이스] 추가 iframe 오프셋:', iframeRect.left, iframeRect.top);
   }
+
+  titleX += frameOffsetX;
+  titleY += frameOffsetY;
+  bodyX += frameOffsetX;
+  bodyY += frameOffsetY;
+
+  console.log('[닥터보이스] 최종 제목 좌표:', titleX, titleY);
+  console.log('[닥터보이스] 최종 본문 좌표:', bodyX, bodyY);
 
   return {
     title: { x: Math.round(titleX), y: Math.round(titleY) },

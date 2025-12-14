@@ -1,5 +1,5 @@
-// 백그라운드 서비스 워커 v13.1 - Input.insertText 방식
-console.log('[닥터보이스] 백그라운드 v13.1 시작 - insertText API');
+// 백그라운드 서비스 워커 v13.2 - 다중 입력 방식 (insertText → IME → char)
+console.log('[닥터보이스] 백그라운드 v13.2 시작 - 다중 입력 방식');
 
 // 전역 변수
 let pendingPostData = null;
@@ -10,7 +10,7 @@ chrome.runtime.onMessageExternal.addListener(async (message, sender, sendRespons
   console.log('[닥터보이스] 외부 메시지:', message.action);
 
   if (message.action === 'PING') {
-    sendResponse({ success: true, version: '13.1.0' });
+    sendResponse({ success: true, version: '13.2.0' });
     return true;
   }
 
@@ -116,15 +116,87 @@ async function autoTypeWithDebugger(tabId, title, content, titlePos, bodyPos) {
   }
 }
 
-// 직접 텍스트 삽입 (Input.insertText 사용 - 클립보드 불필요)
+// 텍스트 입력 (IME 방식 - 한글 호환)
 async function insertText(tabId, text) {
   console.log('[닥터보이스] 텍스트 삽입 시작, 길이:', text.length);
 
-  await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', {
-    text: text
-  });
+  // 먼저 Input.insertText 시도
+  try {
+    await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', {
+      text: text
+    });
+    console.log('[닥터보이스] insertText 완료');
+    return;
+  } catch (e) {
+    console.log('[닥터보이스] insertText 실패, 대체 방식 시도:', e.message);
+  }
 
-  console.log('[닥터보이스] 텍스트 삽입 완료');
+  // 실패 시 IME 방식으로 시도
+  try {
+    // IME composition 시작
+    await chrome.debugger.sendCommand({ tabId }, 'Input.imeSetComposition', {
+      text: text,
+      selectionStart: text.length,
+      selectionEnd: text.length
+    });
+    await sleep(50);
+
+    // IME 확정
+    await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Enter',
+      code: 'Enter',
+      windowsVirtualKeyCode: 13
+    });
+    await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Enter',
+      code: 'Enter',
+      windowsVirtualKeyCode: 13
+    });
+
+    console.log('[닥터보이스] IME 방식 완료');
+    return;
+  } catch (e) {
+    console.log('[닥터보이스] IME 방식 실패:', e.message);
+  }
+
+  // 최종 대안: 문자 단위 입력 (빠른 속도)
+  console.log('[닥터보이스] 문자 단위 입력 시작');
+  const startTime = Date.now();
+
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+
+    if (char === '\n') {
+      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+        type: 'keyDown',
+        key: 'Enter',
+        code: 'Enter',
+        windowsVirtualKeyCode: 13
+      });
+      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+        type: 'keyUp',
+        key: 'Enter',
+        code: 'Enter',
+        windowsVirtualKeyCode: 13
+      });
+    } else {
+      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+        type: 'char',
+        text: char
+      });
+    }
+
+    // 100자마다 진행률 표시
+    if (i > 0 && i % 100 === 0) {
+      const progress = Math.round((i / text.length) * 100);
+      console.log(`[닥터보이스] 입력 진행: ${progress}%`);
+    }
+  }
+
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+  console.log(`[닥터보이스] 문자 단위 입력 완료 (${elapsed}초)`);
 }
 
 // 클릭
