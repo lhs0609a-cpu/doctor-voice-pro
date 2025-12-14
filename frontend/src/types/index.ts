@@ -161,6 +161,21 @@ export interface SEOOptimization {
   topic_concentration: boolean
 }
 
+export interface TopPostRules {
+  title?: {
+    length?: { optimal?: number; min?: number; max?: number }
+    keyword_placement?: Record<string, unknown>
+  }
+  content?: {
+    length?: { optimal?: number; min?: number; max?: number }
+    structure?: Record<string, unknown>
+  }
+  media?: {
+    images?: { optimal?: number; min?: number; max?: number }
+    videos?: Record<string, unknown>
+  }
+}
+
 export interface PostCreateRequest {
   original_content: string
   persuasion_level: number
@@ -172,6 +187,7 @@ export interface PostCreateRequest {
   writing_style?: WritingStyle
   requirements?: RequestRequirements
   seo_optimization?: SEOOptimization
+  top_post_rules?: TopPostRules
 }
 
 export interface PostListResponse {
