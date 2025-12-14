@@ -1,5 +1,5 @@
-// 네이버 블로그 스마트에디터 v13.8 - 임시저장 팝업 자동 닫기
-console.log('[닥터보이스] v13.8 로드 - 팝업 자동 닫기');
+// 네이버 블로그 스마트에디터 v14.0 - 실제 입력 시뮬레이션
+console.log('[닥터보이스] v14.0 로드');
 
 // 페이지 로드 시 가이드 오버레이 표시
 function showGuideOverlay() {
@@ -374,19 +374,31 @@ async function handleInsertPost(postData, options) {
 
     showProgressNotification('⌨️ 자동 입력 중... (잠시 기다려주세요)', 40);
 
-    // 5. content script에서 직접 DOM 조작으로 입력
-    console.log('[닥터보이스] DOM 직접 조작 시작...');
+    // 5. background.js의 debugger API를 통해 실제 키보드 입력
+    console.log('[닥터보이스] Debugger API를 통한 입력 시작...');
 
-    // 제목 입력
-    const titleResult = await insertTextDirectly(editorInfo, 'title', cleanTitle);
-    console.log('[닥터보이스] 제목 입력 결과:', titleResult);
-    showProgressNotification('⌨️ 제목 입력 완료, 본문 입력 중...', 60);
+    // background.js에 AUTO_TYPE 요청
+    const typeResult = await new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({
+        action: 'AUTO_TYPE',
+        title: cleanTitle,
+        content: cleanContent,
+        titlePos: positions.title,
+        bodyPos: positions.body
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+        } else {
+          resolve(response);
+        }
+      });
+    });
 
-    await sleep(500);
+    console.log('[닥터보이스] AUTO_TYPE 결과:', typeResult);
 
-    // 본문 입력
-    const bodyResult = await insertTextDirectly(editorInfo, 'body', cleanContent);
-    console.log('[닥터보이스] 본문 입력 결과:', bodyResult);
+    const titleResult = { success: typeResult?.success };
+    const bodyResult = { success: typeResult?.success };
+    showProgressNotification('⌨️ 텍스트 입력 완료', 70);
 
     if (titleResult.success && bodyResult.success) {
       // 6. 이미지 삽입
@@ -1703,6 +1715,10 @@ let editorDoc = null;
 
 // 자동 실행 - 데이터 확인 후 직접 처리
 async function autoExecute() {
+  console.log('[닥터보이스] autoExecute 시작');
+  console.log('[닥터보이스] window.self === window.top:', window.self === window.top);
+  console.log('[닥터보이스] 현재 URL:', window.location.href);
+
   // 메인 프레임에서만 실행 (iframe 중복 방지)
   if (window.self !== window.top) {
     console.log('[닥터보이스] iframe에서는 실행 안함');
@@ -1710,13 +1726,24 @@ async function autoExecute() {
   }
 
   const url = window.location.href;
-  if (!url.includes('blog.naver.com')) return;
-  if (!url.includes('GoBlogWrite') && !url.includes('PostWrite') && !url.includes('Redirect=Write') && !url.includes('editor')) return;
+  if (!url.includes('blog.naver.com')) {
+    console.log('[닥터보이스] blog.naver.com이 아님, 종료');
+    return;
+  }
+  if (!url.includes('GoBlogWrite') && !url.includes('PostWrite') && !url.includes('Redirect=Write') && !url.includes('editor')) {
+    console.log('[닥터보이스] 글쓰기 페이지가 아님, 종료');
+    return;
+  }
 
   console.log('[닥터보이스] 글쓰기 페이지 감지 (메인 프레임)');
 
   // 저장된 데이터 확인
   const stored = await chrome.storage.local.get(['pendingPost', 'autoPostEnabled']);
+  console.log('[닥터보이스] 저장된 데이터:', {
+    autoPostEnabled: stored.autoPostEnabled,
+    hasPendingPost: !!stored.pendingPost,
+    pendingPostTitle: stored.pendingPost?.title?.substring(0, 30)
+  });
 
   if (stored.autoPostEnabled && stored.pendingPost) {
     console.log('[닥터보이스] 자동 발행 데이터 있음, 처리 시작');
@@ -1737,7 +1764,7 @@ async function autoExecute() {
       updateGuideStatus('error', '오류: ' + err.message);
     }
   } else {
-    console.log('[닥터보이스] 자동 발행 데이터 없음');
+    console.log('[닥터보이스] 자동 발행 데이터 없음 - autoPostEnabled:', stored.autoPostEnabled, ', pendingPost:', !!stored.pendingPost);
   }
 }
 

@@ -1,49 +1,79 @@
-// 백그라운드 서비스 워커 v13.4 - DOM 직접 조작 방식
-console.log('[닥터보이스] 백그라운드 v13.4 시작 - DOM 직접 조작');
+// 백그라운드 서비스 워커 v14.0 - 실제 입력 시뮬레이션
+console.log('[닥터보이스] 백그라운드 v14.0 시작');
 
 // 전역 변수
 let pendingPostData = null;
 let currentDebuggerTabId = null;
+
+// 블로그 글쓰기 페이지 열기 공통 함수
+async function openBlogWritePage(postData) {
+  console.log('[닥터보이스] 발행 요청:', postData?.title);
+
+  pendingPostData = postData;
+  await chrome.storage.local.set({
+    pendingPost: postData,
+    autoPostEnabled: true
+  });
+
+  console.log('[닥터보이스] storage 저장 완료');
+
+  // 이미 열린 블로그 글쓰기 탭이 있는지 확인
+  const tabs = await chrome.tabs.query({});
+  const existingTab = tabs.find(tab =>
+    tab.url && tab.url.includes('blog.naver.com') &&
+    (tab.url.includes('Write') || tab.url.includes('editor'))
+  );
+
+  if (existingTab) {
+    // 기존 탭 활성화 및 새로고침
+    await chrome.tabs.update(existingTab.id, { active: true });
+    await chrome.tabs.reload(existingTab.id);
+    console.log('[닥터보이스] 기존 블로그 탭 사용:', existingTab.id);
+  } else {
+    // 새 탭 열기
+    chrome.tabs.create({
+      url: 'https://blog.naver.com/GoBlogWrite.naver',
+      active: true
+    });
+    console.log('[닥터보이스] 새 블로그 탭 열기');
+  }
+
+  return { success: true };
+}
 
 // 외부 메시지 수신 (웹페이지에서)
 chrome.runtime.onMessageExternal.addListener(async (message, sender, sendResponse) => {
   console.log('[닥터보이스] 외부 메시지:', message.action);
 
   if (message.action === 'PING') {
-    sendResponse({ success: true, version: '13.4.0' });
+    sendResponse({ success: true, version: '14.0.0' });
     return true;
   }
 
-  if (message.action === 'PUBLISH_TO_BLOG') {
-    console.log('[닥터보이스] 발행 요청:', message.data?.title);
+  // ONE_CLICK_PUBLISH (프론트엔드에서 사용)
+  if (message.action === 'ONE_CLICK_PUBLISH') {
+    console.log('[닥터보이스] ONE_CLICK_PUBLISH 요청');
+    console.log('[닥터보이스] postData:', message.postData?.title);
 
-    pendingPostData = message.data;
-    await chrome.storage.local.set({
-      pendingPost: message.data,
-      autoPostEnabled: true
-    });
-
-    // 이미 열린 블로그 글쓰기 탭이 있는지 확인
-    const tabs = await chrome.tabs.query({});
-    const existingTab = tabs.find(tab =>
-      tab.url && tab.url.includes('blog.naver.com') &&
-      (tab.url.includes('Write') || tab.url.includes('editor'))
-    );
-
-    if (existingTab) {
-      // 기존 탭 활성화 및 새로고침
-      await chrome.tabs.update(existingTab.id, { active: true });
-      await chrome.tabs.reload(existingTab.id);
-      console.log('[닥터보이스] 기존 블로그 탭 사용:', existingTab.id);
-    } else {
-      // 새 탭 열기
-      chrome.tabs.create({
-        url: 'https://blog.naver.com/GoBlogWrite.naver',
-        active: true
-      });
+    try {
+      const result = await openBlogWritePage(message.postData);
+      sendResponse(result);
+    } catch (err) {
+      console.error('[닥터보이스] 오류:', err);
+      sendResponse({ success: false, error: err.message });
     }
+    return true;
+  }
 
-    sendResponse({ success: true });
+  // PUBLISH_TO_BLOG (기존 방식 유지)
+  if (message.action === 'PUBLISH_TO_BLOG') {
+    try {
+      const result = await openBlogWritePage(message.data);
+      sendResponse(result);
+    } catch (err) {
+      console.error('[닥터보이스] 오류:', err);
+      sendResponse({ success: false, error: err.message });
+    }
     return true;
   }
 });
@@ -90,27 +120,52 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-// 완전자동 입력 (Runtime.evaluate + DOM 직접 조작)
+// 완전자동 입력 (Input.dispatchMouseEvent + Input.insertText)
 async function autoTypeWithDebugger(tabId, title, content, titlePos, bodyPos) {
-  console.log('[닥터보이스] === 완전자동 입력 시작 (DOM 직접 조작) ===');
+  console.log('[닥터보이스] === 완전자동 입력 시작 (실제 입력 시뮬레이션) ===');
+  console.log('[닥터보이스] titlePos:', titlePos);
+  console.log('[닥터보이스] bodyPos:', bodyPos);
 
   try {
     // 1. debugger 연결
     console.log('[닥터보이스] 1단계: debugger 연결');
     await attachDebugger(tabId);
-
-    // 2. 제목 입력: DOM으로 직접 focus + execCommand
-    console.log('[닥터보이스] 2단계: 제목 입력');
-    await insertTextViaDOM(tabId, 'title', title);
     await sleep(500);
 
-    // 3. 본문 입력: DOM으로 직접 focus + execCommand
-    console.log('[닥터보이스] 3단계: 본문 입력');
-    await insertTextViaDOM(tabId, 'body', content);
-    await sleep(200);
+    // 2. 제목 클릭 후 입력
+    console.log('[닥터보이스] 2단계: 제목 영역 클릭');
+    await clickAt(tabId, titlePos.x, titlePos.y);
+    await sleep(300);
+
+    // Ctrl+A로 전체 선택
+    await sendCtrlA(tabId);
+    await sleep(100);
+
+    // 제목 입력 (Input.insertText 사용)
+    console.log('[닥터보이스] 3단계: 제목 입력 -', title.substring(0, 30));
+    await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', {
+      text: title
+    });
+    await sleep(500);
+
+    // 3. 본문 클릭 후 입력
+    console.log('[닥터보이스] 4단계: 본문 영역 클릭');
+    await clickAt(tabId, bodyPos.x, bodyPos.y);
+    await sleep(300);
+
+    // Ctrl+A로 전체 선택
+    await sendCtrlA(tabId);
+    await sleep(100);
+
+    // 본문 입력 (Input.insertText 사용)
+    console.log('[닥터보이스] 5단계: 본문 입력 - 길이:', content.length);
+    await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', {
+      text: content
+    });
+    await sleep(300);
 
     // 4. debugger 연결 해제
-    console.log('[닥터보이스] 4단계: debugger 해제');
+    console.log('[닥터보이스] 6단계: debugger 해제');
     await detachDebugger(tabId);
 
     console.log('[닥터보이스] === 완전자동 입력 완료! ===');
@@ -123,79 +178,41 @@ async function autoTypeWithDebugger(tabId, title, content, titlePos, bodyPos) {
   }
 }
 
-// DOM 직접 조작으로 텍스트 입력
-async function insertTextViaDOM(tabId, type, text) {
-  const selector = type === 'title'
-    ? '.se-documentTitle .se-text-paragraph'
-    : '.se-component.se-text:not(.se-documentTitle) .se-text-paragraph';
-
-  const result = await chrome.debugger.sendCommand({ tabId }, 'Runtime.evaluate', {
-    expression: `
-      (function() {
-        // iframe 내부 찾기
-        let doc = document;
-        const iframes = document.querySelectorAll('iframe');
-        for (const iframe of iframes) {
-          try {
-            if (iframe.contentDocument && iframe.contentDocument.querySelector('.se-component')) {
-              doc = iframe.contentDocument;
-              break;
-            }
-          } catch(e) {}
-        }
-
-        // 요소 찾기
-        const selector = '${selector}';
-        const el = doc.querySelector(selector);
-        if (!el) {
-          return { success: false, error: 'Element not found: ' + selector };
-        }
-
-        // 포커스 및 선택
-        el.focus();
-
-        // 기존 내용 선택 및 삭제
-        const selection = doc.getSelection();
-        const range = doc.createRange();
-        range.selectNodeContents(el);
-        selection.removeAllRanges();
-        selection.addRange(range);
-
-        // execCommand로 텍스트 삽입
-        const success = doc.execCommand('insertText', false, ${JSON.stringify(text)});
-
-        if (!success) {
-          // execCommand 실패 시 직접 입력
-          el.textContent = ${JSON.stringify(text)};
-
-          // React 이벤트 트리거
-          const inputEvent = new InputEvent('input', {
-            bubbles: true,
-            cancelable: true,
-            inputType: 'insertText',
-            data: ${JSON.stringify(text)}
-          });
-          el.dispatchEvent(inputEvent);
-        }
-
-        // 포커스 해제를 위해 다른 곳 클릭
-        const changeEvent = new Event('change', { bubbles: true });
-        el.dispatchEvent(changeEvent);
-
-        const blurEvent = new Event('blur', { bubbles: true });
-        el.dispatchEvent(blurEvent);
-
-        return { success: true, method: success ? 'execCommand' : 'textContent' };
-      })()
-    `,
-    returnByValue: true
+// Ctrl+A 전체 선택
+async function sendCtrlA(tabId) {
+  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    key: 'Control',
+    code: 'ControlLeft',
+    windowsVirtualKeyCode: 17,
+    modifiers: 2
   });
 
-  console.log('[닥터보이스] DOM 입력 결과:', result.result?.value);
+  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    key: 'a',
+    code: 'KeyA',
+    windowsVirtualKeyCode: 65,
+    modifiers: 2
+  });
 
-  if (!result.result?.value?.success) {
-    throw new Error(result.result?.value?.error || 'DOM 입력 실패');
-  }
+  await sleep(50);
+
+  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    key: 'a',
+    code: 'KeyA',
+    windowsVirtualKeyCode: 65,
+    modifiers: 2
+  });
+
+  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    key: 'Control',
+    code: 'ControlLeft',
+    windowsVirtualKeyCode: 17,
+    modifiers: 0
+  });
 }
 
 // 텍스트 입력 (클립보드 + Ctrl+V 방식 - 가장 안정적)

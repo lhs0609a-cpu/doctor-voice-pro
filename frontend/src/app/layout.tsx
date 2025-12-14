@@ -8,8 +8,8 @@ import './globals.css'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: '닥터보이스 프로 - AI 의료 블로그 자동 각색',
-  description: '의료 정보를 원장님의 개성있는 말투로 자동 변환',
+  title: '닥터보이스 프로 - AI 블로그 자동화 솔루션 | 플라톤마케팅',
+  description: '플라톤마케팅이 개발한 AI 블로그 자동화 솔루션. AI가 전문적인 블로그 글을 작성하고 네이버 블로그에 자동으로 발행합니다.',
 }
 
 export default function RootLayout({

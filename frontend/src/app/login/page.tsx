@@ -133,7 +133,7 @@ export default function LoginPage() {
     {
       icon: <Bot className="h-6 w-6" />,
       title: "AI 글 자동 생성",
-      description: "Claude AI가 전문적인 블로그 글을 자동으로 작성합니다"
+      description: "AI가 전문적인 블로그 글을 자동으로 작성합니다"
     },
     {
       icon: <Image className="h-6 w-6" />,
@@ -171,12 +171,13 @@ export default function LoginPage() {
 
           <div className="relative z-10">
             {/* 로고 */}
-            <div className="flex items-center gap-3 mb-12">
+            <div className="flex items-center gap-3 mb-4">
               <div className="p-2 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl">
                 <Sparkles className="h-8 w-8 text-white" />
               </div>
               <span className="font-bold text-3xl">닥터보이스 프로</span>
             </div>
+            <p className="text-sm text-gray-400 mb-12">by 플라톤마케팅</p>
 
             {/* 메인 카피 */}
             <div className="mb-12">
@@ -188,9 +189,12 @@ export default function LoginPage() {
                 블로그 자동화 솔루션
               </h1>
               <p className="text-xl text-gray-300 leading-relaxed">
-                Claude AI가 전문적인 블로그 글을 작성하고,<br />
+                AI가 전문적인 블로그 글을 작성하고,<br />
                 네이버 블로그에 이미지까지 자동으로 발행합니다.<br />
                 <strong className="text-white">하루 10분으로 블로그 운영을 자동화하세요.</strong>
+              </p>
+              <p className="mt-4 text-sm text-gray-400">
+                플라톤마케팅이 개발한 블로그 자동화 솔루션
               </p>
             </div>
 
@@ -223,17 +227,26 @@ export default function LoginPage() {
                 </div>
               ))}
             </div>
+            <div className="mt-6 text-center">
+              <p className="text-sm text-gray-500">
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400 font-semibold">플라톤마케팅</span>
+                에서 개발한 AI 블로그 자동화 솔루션
+              </p>
+            </div>
           </div>
         </div>
 
         {/* 오른쪽: 로그인 영역 */}
         <div className="w-full lg:w-2/5 flex flex-col justify-center p-8 lg:p-12 bg-white">
           {/* 모바일 로고 */}
-          <div className="lg:hidden flex items-center justify-center gap-2 mb-8">
-            <div className="p-2 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl">
-              <Sparkles className="h-6 w-6 text-white" />
+          <div className="lg:hidden flex flex-col items-center mb-8">
+            <div className="flex items-center gap-2 mb-1">
+              <div className="p-2 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl">
+                <Sparkles className="h-6 w-6 text-white" />
+              </div>
+              <span className="font-bold text-xl">닥터보이스 프로</span>
             </div>
-            <span className="font-bold text-xl">닥터보이스 프로</span>
+            <span className="text-xs text-gray-400">by 플라톤마케팅</span>
           </div>
 
           {/* 백엔드 상태 (축소) */}
@@ -373,8 +386,14 @@ export default function LoginPage() {
 
           {/* 하단 정보 */}
           <div className="mt-8 pt-6 border-t border-gray-100">
-            <p className="text-center text-xs text-gray-400">
+            <p className="text-center text-xs text-gray-400 mb-3">
               로그인하면 서비스 이용약관 및 개인정보처리방침에 동의하게 됩니다.
+            </p>
+            <p className="text-center text-xs text-gray-500 mb-2">
+              닥터보이스 프로는 <span className="font-semibold text-purple-600">플라톤마케팅</span>에서 개발했습니다.
+            </p>
+            <p className="text-center text-xs text-gray-400">
+              &copy; 2024 플라톤마케팅. All rights reserved.
             </p>
           </div>
         </div>

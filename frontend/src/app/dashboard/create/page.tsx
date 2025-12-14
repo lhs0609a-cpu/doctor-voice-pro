@@ -40,6 +40,7 @@ import { Slider } from '@/components/ui/slider'
 import { Input } from '@/components/ui/input'
 import { CafeReviewCreator } from '@/components/cafe-review/cafe-review-creator'
 import { OneClickPublish } from '@/components/naver-publish/one-click-publish'
+import { TopPostAnalyzer } from '@/components/post/top-post-analyzer'
 
 export default function CreatePostPage() {
   const router = useRouter()
@@ -92,6 +93,7 @@ export default function CreatePostPage() {
     from: '',
     to: '',
   })
+  const [topPostRules, setTopPostRules] = useState<any>(null)
   const [selectedPostIndex, setSelectedPostIndex] = useState(0)
   const [generationProgress, setGenerationProgress] = useState<{
     total: number
@@ -250,6 +252,7 @@ export default function CreatePostPage() {
             writing_style: writingStyle,
             requirements: requirements,
             seo_optimization: seoOptimization.enabled ? seoOptimization : undefined,
+            top_post_rules: topPostRules || undefined,
           })
 
           // 성공 시
@@ -1155,6 +1158,24 @@ export default function CreatePostPage() {
                   </div>
                 )}
               </div>
+
+              {/* 네이버 상위노출 분석 */}
+              {seoOptimization.enabled && (
+                <div className="pt-2">
+                  <TopPostAnalyzer
+                    onRulesGenerated={(rules) => {
+                      setTopPostRules(rules)
+                      if (rules) {
+                        // 규칙이 생성되면 target_length를 자동 조정
+                        setConfig(prev => ({
+                          ...prev,
+                          target_length: Math.min(2800, Math.max(500, rules.content.length.optimal))
+                        }))
+                      }
+                    }}
+                  />
+                </div>
+              )}
 
               <Button
                 className="w-full gap-2"

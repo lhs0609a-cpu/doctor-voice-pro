@@ -40,10 +40,13 @@ export default function RegisterPage() {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         {/* Logo */}
-        <Link href="/" className="flex items-center justify-center gap-2 mb-8">
-          <Sparkles className="h-8 w-8 text-blue-600" />
-          <span className="font-bold text-2xl">닥터보이스 프로</span>
-        </Link>
+        <div className="flex flex-col items-center mb-8">
+          <Link href="/" className="flex items-center gap-2">
+            <Sparkles className="h-8 w-8 text-blue-600" />
+            <span className="font-bold text-2xl">닥터보이스 프로</span>
+          </Link>
+          <span className="text-xs text-gray-400 mt-1">by 플라톤마케팅</span>
+        </div>
 
         {/* Register Card */}
         <Card className="border-0 shadow-xl">
@@ -164,6 +167,16 @@ export default function RegisterPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Footer */}
+        <div className="mt-6 text-center">
+          <p className="text-xs text-gray-500">
+            닥터보이스 프로는 <span className="font-semibold text-purple-600">플라톤마케팅</span>에서 개발했습니다.
+          </p>
+          <p className="text-xs text-gray-400 mt-1">
+            &copy; 2024 플라톤마케팅. All rights reserved.
+          </p>
+        </div>
       </div>
     </div>
   )

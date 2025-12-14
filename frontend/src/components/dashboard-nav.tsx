@@ -72,7 +72,10 @@ export function DashboardNav() {
         <div className="flex items-center gap-8">
           <Link href="/dashboard" className="flex items-center gap-2">
             <Sparkles className="h-6 w-6 text-blue-600" />
-            <span className="font-bold text-xl">닥터보이스 프로</span>
+            <div className="flex flex-col">
+              <span className="font-bold text-xl leading-tight">닥터보이스 프로</span>
+              <span className="text-[10px] text-gray-400 leading-tight">by 플라톤마케팅</span>
+            </div>
           </Link>
 
           <nav className="hidden md:flex gap-1">
