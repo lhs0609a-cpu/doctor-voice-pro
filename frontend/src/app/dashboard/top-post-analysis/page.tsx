@@ -23,7 +23,7 @@ import {
   AlertCircle,
   Clock,
   Loader2,
-  Hospital,
+  HeartPulse,
   Utensils,
   Sparkles,
   Baby,
@@ -40,7 +40,7 @@ import { topPostsAPI } from '@/lib/api'
 
 // 카테고리 아이콘 매핑
 const CATEGORY_ICONS: Record<string, any> = {
-  hospital: Hospital,
+  hospital: HeartPulse,
   restaurant: Utensils,
   beauty: Sparkles,
   parenting: Baby,
