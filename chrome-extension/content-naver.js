@@ -1,5 +1,5 @@
-// 네이버 블로그 스마트에디터 v13.7 - React 호환 입력 + 드래그앤드롭 이미지
-console.log('[닥터보이스] v13.7 로드 - React 호환 입력');
+// 네이버 블로그 스마트에디터 v13.8 - 임시저장 팝업 자동 닫기
+console.log('[닥터보이스] v13.8 로드 - 팝업 자동 닫기');
 
 // 페이지 로드 시 가이드 오버레이 표시
 function showGuideOverlay() {
@@ -285,6 +285,52 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
+// "작성 중인 글이 있습니다" 팝업 자동 닫기
+async function dismissDraftPopup() {
+  return new Promise((resolve) => {
+    let attempts = 0;
+    const maxAttempts = 10;
+
+    const checkPopup = () => {
+      attempts++;
+
+      // 팝업 찾기 (여러 선택자 시도)
+      const popup = document.querySelector('.popup_layer') ||
+                    document.querySelector('.layer_popup') ||
+                    document.querySelector('[class*="popup"]') ||
+                    document.querySelector('[class*="modal"]') ||
+                    document.querySelector('[role="dialog"]');
+
+      if (popup) {
+        // "취소" 버튼 찾기
+        const cancelBtn = popup.querySelector('button:first-child') ||
+                         popup.querySelector('[class*="cancel"]') ||
+                         popup.querySelector('button.cancel') ||
+                         Array.from(popup.querySelectorAll('button')).find(btn =>
+                           btn.textContent.includes('취소')
+                         );
+
+        if (cancelBtn) {
+          console.log('[닥터보이스] 임시저장 팝업 감지, 취소 클릭');
+          cancelBtn.click();
+          setTimeout(resolve, 500);
+          return;
+        }
+      }
+
+      if (attempts < maxAttempts) {
+        setTimeout(checkPopup, 300);
+      } else {
+        console.log('[닥터보이스] 임시저장 팝업 없음 또는 시간 초과');
+        resolve();
+      }
+    };
+
+    // 즉시 확인 + 반복 확인
+    checkPopup();
+  });
+}
+
 // 완전자동 글 입력 처리 (debugger API)
 async function handleInsertPost(postData, options) {
   console.log('[닥터보이스] 완전자동 발행 시작 v13.0');
@@ -296,6 +342,9 @@ async function handleInsertPost(postData, options) {
   showProgressNotification('📝 완전자동 입력 준비 중...', 0);
 
   try {
+    // 0. "작성 중인 글이 있습니다" 팝업 자동 닫기
+    await dismissDraftPopup();
+
     // 1. 에디터 로딩 대기
     await waitForEditor();
     await sleep(2000);
@@ -1694,6 +1743,13 @@ async function autoExecute() {
 
 // 페이지 로드 후 실행
 setTimeout(autoExecute, 2000);
+
+// 팝업 자동 닫기 (페이지 로드 직후)
+setTimeout(() => {
+  dismissDraftPopup().then(() => {
+    console.log('[닥터보이스] 초기 팝업 체크 완료');
+  });
+}, 1000);
 
 // 에디터 로딩 대기
 async function waitForEditor() {

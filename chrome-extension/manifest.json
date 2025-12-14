@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "닥터보이스 프로 - 네이버 블로그 자동 포스팅",
-  "version": "13.7.0",
+  "version": "13.8.0",
   "description": "닥터보이스 프로 - 네이버 블로그 완전자동 포스팅",
   "permissions": [
     "activeTab",
