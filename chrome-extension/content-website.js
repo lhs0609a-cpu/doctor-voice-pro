@@ -1,138 +1,71 @@
-// 닥터보이스 프로 웹사이트용 Content Script
-// 웹사이트 localStorage 데이터를 자동으로 확장 프로그램에 전달
+// 닥터보이스 웹사이트용 Content Script v11.0 - 단순화
+console.log('[닥터보이스] 웹사이트 스크립트 v11.0 로드');
 
-console.log('[닥터보이스 확장] 웹사이트 연결 스크립트 로드됨 v10.2');
+const EXTENSION_ID = chrome.runtime.id;
 
-// localStorage 데이터를 chrome.storage.local에 동기화
-async function syncLocalStorageData() {
-  try {
-    const pendingPost = localStorage.getItem('doctorvoice-pending-post');
-    const autoPublish = localStorage.getItem('doctorvoice-auto-publish');
-
-    if (pendingPost) {
-      const postData = JSON.parse(pendingPost);
-      console.log('[닥터보이스 확장] 발행 데이터 발견:', postData.title);
-
-      // chrome.storage.local에 저장
-      await chrome.storage.local.set({
-        pendingPost: postData,
-        postOptions: { useQuote: true, useHighlight: true, useImages: true },
-        autoPostEnabled: autoPublish === 'true'
-      });
-
-      console.log('[닥터보이스 확장] 데이터 동기화 완료! autoPostEnabled:', autoPublish === 'true');
-
-      // 동기화 후 플래그 초기화 (중복 방지)
-      if (autoPublish === 'true') {
-        localStorage.removeItem('doctorvoice-auto-publish');
-      }
-    }
-  } catch (e) {
-    console.error('[닥터보이스 확장] 데이터 동기화 오류:', e);
-  }
-}
-
-// 확장 프로그램 ID를 웹사이트에 알려주기
-function injectExtensionId() {
-  const extensionId = chrome.runtime.id;
-  console.log('[닥터보이스 확장] Extension ID:', extensionId);
-
+// 확장 프로그램 연결 표시
+function showExtensionConnected() {
   // localStorage에 확장 프로그램 ID 저장
-  localStorage.setItem('doctorvoice-extension-id', extensionId);
+  localStorage.setItem('doctorvoice-extension-id', EXTENSION_ID);
 
-  // 웹사이트에 메시지 전송
-  window.postMessage({
-    type: 'DOCTORVOICE_EXTENSION_READY',
-    extensionId: extensionId,
-    version: '10.2.0'
-  }, '*');
+  // DOM에 연결 표시
+  let indicator = document.getElementById('doctorvoice-extension-connected');
+  if (!indicator) {
+    indicator = document.createElement('div');
+    indicator.id = 'doctorvoice-extension-connected';
+    indicator.style.display = 'none';
+    indicator.dataset.extensionId = EXTENSION_ID;
+    document.body.appendChild(indicator);
+  }
 
-  // DOM에 표시용 요소 추가
-  const existingIndicator = document.getElementById('doctorvoice-extension-indicator');
-  if (existingIndicator) existingIndicator.remove();
-
-  const indicator = document.createElement('div');
-  indicator.id = 'doctorvoice-extension-indicator';
-  indicator.style.cssText = 'display: none;';
-  indicator.dataset.extensionId = extensionId;
-  indicator.dataset.version = '10.2.0';
-  document.body.appendChild(indicator);
-
-  console.log('[닥터보이스 확장] 웹사이트에 연결 완료!');
-
-  // 데이터 동기화
-  syncLocalStorageData();
+  console.log('[닥터보이스] 확장 프로그램 연결됨, ID:', EXTENSION_ID);
 }
 
-// 웹사이트에서 발행 요청 수신
-window.addEventListener('message', async (event) => {
-  if (event.source !== window) return;
+// localStorage 변화 감지해서 발행 요청 처리
+function checkForPublishRequest() {
+  const pendingPost = localStorage.getItem('doctorvoice-pending-post');
+  const autoPublish = localStorage.getItem('doctorvoice-auto-publish');
 
-  const message = event.data;
-
-  // 발행 데이터 전달 요청
-  if (message.type === 'DOCTORVOICE_PUBLISH_REQUEST') {
-    console.log('[닥터보이스 확장] 발행 요청 수신:', message.data?.title);
+  if (pendingPost && autoPublish === 'true') {
+    console.log('[닥터보이스] 발행 요청 감지!');
 
     try {
-      // chrome.storage.local에 데이터 저장
-      await chrome.storage.local.set({
-        pendingPost: message.data,
-        postOptions: message.options || { useQuote: true, useHighlight: true, useImages: true },
+      const postData = JSON.parse(pendingPost);
+      console.log('[닥터보이스] 제목:', postData.title);
+      console.log('[닥터보이스] 이미지:', postData.imageUrls?.length || 0, '개');
+
+      // 플래그 초기화 (중복 방지)
+      localStorage.removeItem('doctorvoice-auto-publish');
+
+      // chrome.storage.local에 저장
+      chrome.storage.local.set({
+        pendingPost: postData,
         autoPostEnabled: true
+      }, () => {
+        console.log('[닥터보이스] chrome.storage에 저장 완료');
+
+        // 네이버 블로그 열기
+        window.open('https://blog.naver.com/GoBlogWrite.naver', '_blank');
       });
 
-      // 성공 응답
-      window.postMessage({
-        type: 'DOCTORVOICE_PUBLISH_RESPONSE',
-        success: true,
-        message: '데이터 저장 완료'
-      }, '*');
-
-      console.log('[닥터보이스 확장] 발행 데이터 저장 완료!');
-
-    } catch (error) {
-      console.error('[닥터보이스 확장] 오류:', error);
-      window.postMessage({
-        type: 'DOCTORVOICE_PUBLISH_RESPONSE',
-        success: false,
-        error: error.message
-      }, '*');
+    } catch (e) {
+      console.error('[닥터보이스] 발행 데이터 파싱 오류:', e);
     }
   }
-
-  // 네이버 블로그 열기 요청
-  if (message.type === 'DOCTORVOICE_OPEN_BLOG') {
-    console.log('[닥터보이스 확장] 네이버 블로그 열기 요청');
-
-    chrome.runtime.sendMessage({
-      action: 'OPEN_NAVER_BLOG'
-    });
-  }
-});
-
-// 페이지 로드 완료 후 실행
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', injectExtensionId);
-} else {
-  injectExtensionId();
 }
 
-// 주기적으로 연결 상태 및 데이터 확인 (SPA 대응)
-setInterval(() => {
-  const existingIndicator = document.getElementById('doctorvoice-extension-indicator');
-  if (!existingIndicator) {
-    injectExtensionId();
-  }
+// 초기화
+showExtensionConnected();
 
-  // localStorage 변화 감지해서 동기화
-  syncLocalStorageData();
-}, 1000);
+// 1초마다 발행 요청 확인
+setInterval(checkForPublishRequest, 1000);
 
-// localStorage 변화 감지 (storage 이벤트)
-window.addEventListener('storage', (event) => {
-  if (event.key === 'doctorvoice-pending-post' || event.key === 'doctorvoice-auto-publish') {
-    console.log('[닥터보이스 확장] localStorage 변화 감지:', event.key);
-    syncLocalStorageData();
+// storage 이벤트로도 감지
+window.addEventListener('storage', (e) => {
+  if (e.key === 'doctorvoice-auto-publish' && e.newValue === 'true') {
+    console.log('[닥터보이스] storage 이벤트로 발행 요청 감지');
+    setTimeout(checkForPublishRequest, 100);
   }
 });
+
+console.log('[닥터보이스] 웹사이트 스크립트 초기화 완료');

@@ -1,5 +1,5 @@
-// 네이버 블로그 스마트에디터 v10.1 - 가이드 오버레이 추가
-console.log('[닥터보이스] v10.1 로드 - 가이드 오버레이 추가');
+// 네이버 블로그 스마트에디터 v11.0 - 단순화 버전
+console.log('[닥터보이스] v11.0 로드 - 단순화 버전');
 
 // 페이지 로드 시 가이드 오버레이 표시
 function showGuideOverlay() {
@@ -373,6 +373,9 @@ async function handleInsertPost(postData, options) {
 async function clickPublishButton() {
   console.log('[닥터보이스] 발행 버튼 찾기...');
 
+  // 메인 문서에서 찾기 (발행 버튼은 항상 메인 페이지에 있음)
+  const mainDoc = document;
+
   // 발행 버튼 선택자들 (네이버 스마트에디터 ONE)
   const publishSelectors = [
     'button.publish_btn__Y5mLP',              // 새 클래스명
@@ -383,13 +386,15 @@ async function clickPublishButton() {
     'button[data-name="publish"]',
     '.btn_publish',
     'button.btn_ok',                          // 확인 버튼
+    '[class*="publish_btn"]',                 // 클래스에 publish_btn 포함
+    '[class*="Publish"]',                     // 대문자 Publish
   ];
 
   let publishBtn = null;
 
   // 선택자로 찾기
   for (const selector of publishSelectors) {
-    publishBtn = document.querySelector(selector);
+    publishBtn = mainDoc.querySelector(selector);
     if (publishBtn) {
       console.log('[닥터보이스] 발행 버튼 발견 (선택자):', selector);
       break;
@@ -398,7 +403,7 @@ async function clickPublishButton() {
 
   // 텍스트로 찾기
   if (!publishBtn) {
-    const allButtons = document.querySelectorAll('button, a.btn, span[role="button"]');
+    const allButtons = mainDoc.querySelectorAll('button, a.btn, span[role="button"], a[class*="btn"]');
     for (const btn of allButtons) {
       const text = btn.textContent?.trim() || '';
       if (text === '발행' || text === '발행하기' || text === '등록' || text === '올리기') {
@@ -409,8 +414,20 @@ async function clickPublishButton() {
     }
   }
 
+  // 오른쪽 상단의 녹색 발행 버튼 찾기
   if (!publishBtn) {
-    console.log('[닥터보이스] 발행 버튼을 찾을 수 없음');
+    const greenButtons = mainDoc.querySelectorAll('[style*="background"][style*="green"], [style*="#03c75a"], .btn_publish, [class*="green"]');
+    for (const btn of greenButtons) {
+      if (btn.textContent?.includes('발행')) {
+        publishBtn = btn;
+        console.log('[닥터보이스] 발행 버튼 발견 (녹색 버튼)');
+        break;
+      }
+    }
+  }
+
+  if (!publishBtn) {
+    console.log('[닥터보이스] 발행 버튼을 찾을 수 없음 - 수동으로 클릭해주세요');
     return false;
   }
 
@@ -448,95 +465,78 @@ async function clickPublishButton() {
   return true;
 }
 
-// 자동 실행
+// 에디터 iframe 문서 찾기
+function getEditorDocument() {
+  // 먼저 메인 문서에서 찾기
+  const mainEditor = document.querySelector('.se-documentTitle') ||
+                     document.querySelector('.se-component.se-text');
+  if (mainEditor) {
+    console.log('[닥터보이스] 에디터: 메인 문서');
+    return document;
+  }
+
+  // iframe 내부에서 찾기
+  const iframes = document.querySelectorAll('iframe');
+  for (const iframe of iframes) {
+    try {
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (iframeDoc) {
+        const editor = iframeDoc.querySelector('[contenteditable="true"]') ||
+                       iframeDoc.querySelector('.se-component') ||
+                       iframeDoc.body;
+        if (editor) {
+          console.log('[닥터보이스] 에디터: iframe 내부');
+          return iframeDoc;
+        }
+      }
+    } catch (e) {
+      // cross-origin 무시
+    }
+  }
+
+  return document;
+}
+
+// 전역 에디터 문서 변수
+let editorDoc = null;
+
+// 자동 실행 - 데이터 확인 후 직접 처리
 async function autoExecute() {
+  // 메인 프레임에서만 실행 (iframe 중복 방지)
+  if (window.self !== window.top) {
+    console.log('[닥터보이스] iframe에서는 실행 안함');
+    return;
+  }
+
   const url = window.location.href;
   if (!url.includes('blog.naver.com')) return;
   if (!url.includes('GoBlogWrite') && !url.includes('PostWrite') && !url.includes('Redirect=Write') && !url.includes('editor')) return;
 
-  console.log('[닥터보이스] 글쓰기 페이지 감지');
+  console.log('[닥터보이스] 글쓰기 페이지 감지 (메인 프레임)');
 
-  // 가이드 오버레이 표시
-  showGuideOverlay();
+  // 저장된 데이터 확인
+  const stored = await chrome.storage.local.get(['pendingPost', 'autoPostEnabled']);
 
-  try {
-    // 저장된 데이터 확인
-    const stored = await chrome.storage.local.get(['pendingPost', 'postOptions', 'autoPostEnabled']);
+  if (stored.autoPostEnabled && stored.pendingPost) {
+    console.log('[닥터보이스] 자동 발행 데이터 있음, 처리 시작');
+    showGuideOverlay();
+    updateGuideStatus('ready', '발행 데이터 발견! 자동 입력을 시작합니다...');
 
-    console.log('[닥터보이스] 저장된 데이터:', stored.pendingPost ? '있음' : '없음', 'autoPostEnabled:', stored.autoPostEnabled);
-
-    if (stored.autoPostEnabled && stored.pendingPost) {
-      // 자동 발행 데이터가 있으면 바로 시작
-      console.log('[닥터보이스] 자동 발행 시작!');
-      updateGuideStatus('ready', '발행 데이터 발견! 자동 입력을 시작합니다.');
-
-      // 에디터 로딩 대기
+    // 에디터 로딩 대기 후 직접 처리
+    try {
       await waitForEditor();
       await sleep(2000);
 
-      // 자동 입력 시작
-      await handleInsertPost(stored.pendingPost, stored.postOptions || {});
-    } else {
-      // 데이터가 없으면 대기 상태로 안내
-      console.log('[닥터보이스] 자동 발행 데이터 없음, 대기 모드');
-      updateGuideStatus('error', '발행할 데이터가 없습니다.');
+      // 에디터 문서 설정
+      editorDoc = getEditorDocument();
 
-      // 가이드 카드 내용 변경
-      const guideCard = document.querySelector('.dv-guide-card');
-      if (guideCard) {
-        guideCard.innerHTML = `
-          <div class="dv-guide-icon" style="background: linear-gradient(135deg, #f59e0b, #d97706);">
-            <span style="font-size: 40px;">📋</span>
-          </div>
-          <h2 class="dv-guide-title">발행 데이터가 없습니다</h2>
-          <p class="dv-guide-desc">
-            닥터보이스 프로 웹사이트에서<br>
-            <strong>"네이버 블로그에 발행하기"</strong> 버튼을 클릭하세요.
-          </p>
-
-          <div class="dv-guide-steps">
-            <div class="dv-guide-step">
-              <span class="dv-guide-step-num">1</span>
-              <span>닥터보이스 프로 웹사이트 열기</span>
-            </div>
-            <div class="dv-guide-step">
-              <span class="dv-guide-step-num">2</span>
-              <span>저장된 글 탭에서 글 선택</span>
-            </div>
-            <div class="dv-guide-step">
-              <span class="dv-guide-step-num">3</span>
-              <span>이미지 업로드 (선택)</span>
-            </div>
-            <div class="dv-guide-step active">
-              <span class="dv-guide-step-num">4</span>
-              <span><strong>"네이버 블로그에 발행하기"</strong> 버튼 클릭</span>
-            </div>
-          </div>
-
-          <div>
-            <button class="dv-guide-btn" onclick="window.open('https://doctor-voice-pro-ghwi.vercel.app/dashboard/saved', '_blank')">
-              🌐 웹사이트 열기
-            </button>
-            <button class="dv-guide-btn dv-guide-btn-secondary" id="dv-close-btn-alt">
-              ✕ 닫기
-            </button>
-          </div>
-        `;
-
-        // 새 닫기 버튼에 이벤트 추가
-        document.getElementById('dv-close-btn-alt')?.addEventListener('click', () => {
-          const overlay = document.querySelector('.dv-guide-overlay');
-          if (overlay) {
-            overlay.style.opacity = '0';
-            setTimeout(() => overlay.remove(), 300);
-          }
-        });
-      }
+      await handleInsertPost(stored.pendingPost, {});
+    } catch (err) {
+      console.error('[닥터보이스] 자동 발행 오류:', err);
+      updateGuideStatus('error', '오류: ' + err.message);
     }
-
-  } catch (err) {
-    console.error('[닥터보이스] 오류:', err);
-    updateGuideStatus('error', '오류 발생: ' + err.message);
+  } else {
+    console.log('[닥터보이스] 자동 발행 데이터 없음');
   }
 }
 
@@ -547,22 +547,62 @@ setTimeout(autoExecute, 2000);
 async function waitForEditor() {
   return new Promise((resolve, reject) => {
     let attempts = 0;
-    const maxAttempts = 30;
+    const maxAttempts = 60; // 30초 대기
 
     const check = () => {
       attempts++;
-      // 에디터 영역 확인
-      const editor = document.querySelector('.se-component.se-text') ||
-                     document.querySelector('[contenteditable="true"]');
+
+      // 다양한 에디터 선택자 시도
+      const selectors = [
+        '.se-component.se-text',
+        '.se-documentTitle',
+        '[contenteditable="true"]',
+        '.se-content',
+        '.se-main-container',
+        '.se-viewer',
+        '#content',
+        '.blog_editor',
+        'iframe[id*="editor"]',
+        'iframe[name*="editor"]'
+      ];
+
+      let editor = null;
+      for (const sel of selectors) {
+        editor = document.querySelector(sel);
+        if (editor) {
+          console.log('[닥터보이스] 에디터 발견:', sel);
+          break;
+        }
+      }
+
+      // iframe 내부도 확인
+      if (!editor) {
+        const iframes = document.querySelectorAll('iframe');
+        for (const iframe of iframes) {
+          try {
+            const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+            if (iframeDoc) {
+              editor = iframeDoc.querySelector('[contenteditable="true"]') ||
+                       iframeDoc.querySelector('.se-component');
+              if (editor) {
+                console.log('[닥터보이스] 에디터 발견 (iframe 내부)');
+                break;
+              }
+            }
+          } catch (e) {
+            // cross-origin iframe 무시
+          }
+        }
+      }
 
       if (editor) {
-        console.log('[닥터보이스] 에디터 발견');
         resolve(editor);
         return;
       }
 
       if (attempts >= maxAttempts) {
-        reject(new Error('에디터 로딩 타임아웃'));
+        console.log('[닥터보이스] 에디터 타임아웃, 강제 진행');
+        resolve(null); // 타임아웃이어도 진행
         return;
       }
 
@@ -576,32 +616,43 @@ async function waitForEditor() {
 async function inputTitle(title) {
   console.log('[닥터보이스] 제목 입력:', title);
 
-  // 제목 영역 클릭
-  const titleArea = document.querySelector('.se-documentTitle') ||
-                    document.querySelector('.se-placeholder.se-fs32')?.parentElement;
+  // 메인 문서에서 제목 요소 찾기 (se-fs32는 제목 폰트 크기)
+  const titleSpan = document.querySelector('span.se-fs32.__se-node') ||
+                    document.querySelector('.se-documentTitle span.__se-node') ||
+                    document.querySelector('[class*="se-fs32"].__se-node');
 
-  if (titleArea) {
-    titleArea.click();
-    await sleep(300);
-  }
-
-  // 제목 입력 필드 찾기
-  const titleInput = document.querySelector('.se-documentTitle .se-text-paragraph') ||
-                     document.querySelector('.se-documentTitle [contenteditable="true"]');
-
-  if (titleInput) {
-    titleInput.click();
-    titleInput.focus();
+  if (titleSpan) {
+    // 제목 영역 클릭하여 활성화
+    titleSpan.click();
     await sleep(200);
 
-    // 클립보드로 제목 복사 후 붙여넣기
-    await navigator.clipboard.writeText(title);
-    document.execCommand('paste');
+    // 직접 텍스트 삽입
+    titleSpan.textContent = title;
 
-    console.log('[닥터보이스] 제목 입력 완료');
-  } else {
-    console.warn('[닥터보이스] 제목 입력 필드 없음');
+    // 입력 이벤트 발생
+    titleSpan.dispatchEvent(new Event('input', { bubbles: true }));
+    titleSpan.dispatchEvent(new Event('change', { bubbles: true }));
+
+    console.log('[닥터보이스] 제목 입력 완료 (직접 삽입)');
+    return;
   }
+
+  // 대안: 제목 문단 찾기
+  const titleParagraph = document.querySelector('.se-documentTitle .se-text-paragraph');
+  if (titleParagraph) {
+    titleParagraph.click();
+    await sleep(200);
+
+    const innerSpan = titleParagraph.querySelector('span.__se-node');
+    if (innerSpan) {
+      innerSpan.textContent = title;
+      innerSpan.dispatchEvent(new Event('input', { bubbles: true }));
+      console.log('[닥터보이스] 제목 입력 완료 (문단 내 span)');
+      return;
+    }
+  }
+
+  console.warn('[닥터보이스] 제목 입력 필드 없음');
 }
 
 // 본문 붙여넣기 (클립보드 내용 사용)
@@ -646,31 +697,54 @@ async function pasteContent() {
 
 // 본문 영역 찾기
 async function findBodyArea() {
-  // 플레이스홀더 클릭 (본문 영역 활성화)
-  const placeholder = document.querySelector('.se-placeholder:not(.se-fs32)');
-  if (placeholder) {
-    placeholder.click();
-    await sleep(500);
+  // 1. 메인 문서에서 se-fs16 span 찾기 (본문 폰트)
+  const allSpans = document.querySelectorAll('span.__se-node');
+  console.log('[닥터보이스] __se-node span 개수:', allSpans.length);
+
+  for (const span of allSpans) {
+    // se-fs32는 제목이므로 제외
+    if (span.classList.contains('se-fs32')) continue;
+    // 제목 영역 내부면 제외
+    if (span.closest('.se-documentTitle')) continue;
+
+    console.log('[닥터보이스] 본문 영역 발견: span.__se-node (메인)');
+    return span;
   }
 
-  // 본문 영역 선택자들
-  const selectors = [
-    '.se-component.se-text:not(.se-documentTitle) .se-text-paragraph',
-    '.se-component.se-text:not(.se-documentTitle) [contenteditable="true"]',
-    'span.__se-node[id^="SE-"]',
-    '.se-main-container .se-text-paragraph'
-  ];
-
-  for (const sel of selectors) {
-    const elements = document.querySelectorAll(sel);
-    for (const el of elements) {
-      if (!el.closest('.se-documentTitle')) {
-        console.log('[닥터보이스] 본문 영역 발견:', sel);
-        return el;
+  // 2. iframe 내부에서 찾기
+  const iframes = document.querySelectorAll('iframe');
+  for (const iframe of iframes) {
+    try {
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (iframeDoc && iframeDoc.body) {
+        // contenteditable body 찾기
+        if (iframeDoc.body.contentEditable === 'true' || iframeDoc.body.getAttribute('contenteditable') === 'true') {
+          console.log('[닥터보이스] 본문 영역 발견: iframe body');
+          return iframeDoc.body;
+        }
       }
+    } catch (e) {
+      // cross-origin 무시
     }
   }
 
+  // 3. 플레이스홀더의 형제 요소
+  const placeholder = document.querySelector('.se-placeholder:not(.se-fs32)');
+  if (placeholder) {
+    const parent = placeholder.parentElement;
+    const sibling = parent?.querySelector('span[id^="SE-"]');
+    if (sibling) {
+      console.log('[닥터보이스] 본문 영역 발견: placeholder sibling');
+      return sibling;
+    }
+    // 부모 p 태그 반환
+    if (parent?.tagName === 'P') {
+      console.log('[닥터보이스] 본문 영역 발견: placeholder parent P');
+      return parent;
+    }
+  }
+
+  console.log('[닥터보이스] 본문 영역 찾기 실패');
   return null;
 }
 
@@ -972,89 +1046,118 @@ async function insertContent(content, options) {
   }
 }
 
-// 본문 + 이미지 URL 함께 삽입 (DOM 직접 조작 - 5MB 제한 우회)
-async function insertContentWithImages(content, imageUrls, options) {
-  console.log('[닥터보이스] 본문 + 이미지 URL 삽입 시작 (DOM 직접 조작)');
-  console.log('[닥터보이스] 이미지 URL 개수:', imageUrls.length);
+// 직접 HTML 삽입 (iframe body에 직접)
+async function insertContentDirectly(bodyEl, content, imageUrls) {
+  console.log('[닥터보이스] 본문 직접 삽입 시작');
 
-  const bodyArea = await findBodyArea();
-  if (!bodyArea) {
-    console.error('[닥터보이스] 본문 영역 찾기 실패');
-    return;
-  }
-
-  bodyArea.click();
-  await sleep(300);
-  bodyArea.focus();
+  bodyEl.focus();
   await sleep(300);
 
   // 본문을 문단으로 분리
   const paragraphs = content.split('\n\n').filter(p => p.trim());
-  const totalParagraphs = paragraphs.length;
   const totalImages = imageUrls?.length || 0;
 
-  // 이미지 균등 배치 위치 계산
+  // 이미지 균등 배치
   const imagePositions = [];
   if (totalImages > 0) {
-    const interval = Math.max(1, Math.floor(totalParagraphs / (totalImages + 1)));
+    const interval = Math.max(1, Math.floor(paragraphs.length / (totalImages + 1)));
     for (let i = 0; i < totalImages; i++) {
-      const position = Math.min((i + 1) * interval, totalParagraphs);
-      imagePositions.push(position);
+      imagePositions.push(Math.min((i + 1) * interval, paragraphs.length));
     }
   }
 
-  console.log('[닥터보이스] 이미지 삽입 위치:', imagePositions);
-
-  // 문단별로 순차 입력 (DOM 직접 조작)
+  let html = '';
   let imageIndex = 0;
 
   for (let i = 0; i < paragraphs.length; i++) {
     const para = paragraphs[i].trim();
     if (!para) continue;
 
-    // 텍스트 입력 (insertHTML 사용)
-    const paraHtml = `<p>${para.replace(/\n/g, '<br>')}</p>`;
-    document.execCommand('insertHTML', false, paraHtml);
-    await sleep(100);
+    html += `<p>${para.replace(/\n/g, '<br>')}</p>`;
 
-    // 이미지 삽입 위치인 경우
+    // 이미지 삽입 위치
+    if (imageIndex < totalImages && imagePositions[imageIndex] === i + 1) {
+      const imgUrl = imageUrls[imageIndex];
+      html += `<p><img src="${imgUrl}" style="max-width:100%"></p>`;
+      imageIndex++;
+    }
+  }
+
+  // 남은 이미지
+  while (imageIndex < totalImages) {
+    html += `<p><img src="${imageUrls[imageIndex]}" style="max-width:100%"></p>`;
+    imageIndex++;
+  }
+
+  // HTML 삽입
+  bodyEl.innerHTML = html;
+  console.log('[닥터보이스] 본문 직접 삽입 완료');
+}
+
+// 본문 + 이미지 URL 함께 삽입 (DOM 직접 조작 - 5MB 제한 우회)
+async function insertContentWithImages(content, imageUrls, options) {
+  console.log('[닥터보이스] 본문 + 이미지 URL 삽입 시작 (DOM 직접 조작)');
+  console.log('[닥터보이스] 이미지 URL 개수:', imageUrls.length);
+
+  const bodyArea = await findBodyArea();
+
+  if (!bodyArea) {
+    console.error('[닥터보이스] 본문 영역 찾기 실패');
+    return;
+  }
+
+  // 본문 영역 클릭하여 활성화
+  bodyArea.click();
+  await sleep(300);
+
+  // 본문을 HTML로 변환
+  const paragraphs = content.split('\n\n').filter(p => p.trim());
+  const totalImages = imageUrls?.length || 0;
+
+  // 이미지 균등 배치 계산
+  const imagePositions = [];
+  if (totalImages > 0) {
+    const interval = Math.max(1, Math.floor(paragraphs.length / (totalImages + 1)));
+    for (let i = 0; i < totalImages; i++) {
+      imagePositions.push(Math.min((i + 1) * interval, paragraphs.length));
+    }
+  }
+
+  // HTML 생성
+  let html = '';
+  let imageIndex = 0;
+
+  for (let i = 0; i < paragraphs.length; i++) {
+    const para = paragraphs[i].trim();
+    if (!para) continue;
+
+    html += para.replace(/\n/g, '<br>');
+
+    // 이미지 삽입 위치
     if (imageIndex < totalImages && imagePositions[imageIndex] === i + 1) {
       const imgUrl = imageUrls[imageIndex];
       console.log(`[닥터보이스] 이미지 ${imageIndex + 1} 삽입: ${imgUrl.substring(0, 50)}...`);
-
-      // 줄바꿈 후 이미지 삽입
-      document.execCommand('insertHTML', false, '<br>');
-      await sleep(50);
-
-      // 이미지 태그 삽입
-      const imgHtml = `<img src="${imgUrl}" alt="이미지" style="max-width:100%;display:block;margin:16px auto;"><br>`;
-      document.execCommand('insertHTML', false, imgHtml);
-
+      html += `<br><br><img src="${imgUrl}" style="max-width:100%"><br><br>`;
       imageIndex++;
-      await sleep(300); // 이미지 로딩 대기
-    }
-
-    // 진행률 표시
-    if (i % 5 === 0) {
-      const progress = Math.round(((i + 1) / totalParagraphs) * 60) + 20;
-      showProgressNotification(`📝 본문 입력 중... (${i + 1}/${totalParagraphs})`, progress);
+    } else {
+      html += '<br><br>';
     }
   }
 
-  // 남은 이미지 처리
+  // 남은 이미지 추가
   while (imageIndex < totalImages) {
-    const imgUrl = imageUrls[imageIndex];
-    console.log(`[닥터보이스] 남은 이미지 ${imageIndex + 1} 삽입`);
-
-    document.execCommand('insertHTML', false, '<br>');
-    const imgHtml = `<img src="${imgUrl}" alt="이미지" style="max-width:100%;display:block;margin:16px auto;"><br>`;
-    document.execCommand('insertHTML', false, imgHtml);
-
+    html += `<img src="${imageUrls[imageIndex]}" style="max-width:100%"><br><br>`;
     imageIndex++;
-    await sleep(300);
   }
 
-  console.log('[닥터보이스] 본문 + 이미지 입력 완료 (DOM 직접 조작)');
+  // 직접 innerHTML 설정
+  bodyArea.innerHTML = html;
+
+  // 입력 이벤트 발생
+  bodyArea.dispatchEvent(new Event('input', { bubbles: true }));
+  bodyArea.dispatchEvent(new Event('change', { bubbles: true }));
+
+  console.log('[닥터보이스] 본문 + 이미지 입력 완료 (직접 삽입)');
 }
 
 // 네이버 블로그용 HTML 변환
@@ -1430,4 +1533,4 @@ function showBigSuccessNotification(title = '✅ 포스팅 준비 완료!', desc
   }, 5000);
 }
 
-console.log('[닥터보이스] v10.0 imgBB URL 이미지 지원 초기화 완료');
+console.log('[닥터보이스] v11.0 초기화 완료');

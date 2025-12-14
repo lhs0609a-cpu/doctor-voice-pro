@@ -1,4 +1,4 @@
-// 팝업 스크립트 - 닥터보이스 프로 v10.0 - 초간단 버전
+// 팝업 스크립트 - 닥터보이스 프로 v11.0 - 단순화 버전
 document.addEventListener('DOMContentLoaded', async () => {
   const statusIcon = document.getElementById('statusIcon');
   const statusTitle = document.getElementById('statusTitle');
