@@ -1,5 +1,5 @@
-// 네이버 블로그 스마트에디터 v13.6 - 텍스트 + 이미지 자동 삽입
-console.log('[닥터보이스] v13.6 로드 - 텍스트 + 이미지 자동 삽입');
+// 네이버 블로그 스마트에디터 v13.7 - React 호환 입력 + 드래그앤드롭 이미지
+console.log('[닥터보이스] v13.7 로드 - React 호환 입력');
 
 // 페이지 로드 시 가이드 오버레이 표시
 function showGuideOverlay() {
@@ -366,12 +366,24 @@ async function handleInsertPost(postData, options) {
   }
 }
 
-// 이미지 직접 삽입 (URL을 fetch해서 업로드)
+// 이미지 직접 삽입 (드래그 앤 드롭 방식 - 파일 대화상자 없이)
 async function insertImagesDirectly(editorInfo, imageUrls) {
   const { doc } = editorInfo;
   const results = [];
 
-  console.log('[닥터보이스] 이미지 삽입 시작:', imageUrls.length, '개');
+  console.log('[닥터보이스] 이미지 삽입 시작 (드래그앤드롭):', imageUrls.length, '개');
+
+  // 드롭 영역 찾기
+  const dropZone = doc.querySelector('.se-content') ||
+                   doc.querySelector('.se-component.se-text:not(.se-documentTitle)') ||
+                   doc.querySelector('[contenteditable="true"]');
+
+  if (!dropZone) {
+    console.error('[닥터보이스] 드롭 영역을 찾을 수 없습니다');
+    return { results: [], successCount: 0, error: 'No drop zone found' };
+  }
+
+  console.log('[닥터보이스] 드롭 영역 찾음:', dropZone.className);
 
   for (let i = 0; i < imageUrls.length; i++) {
     const url = imageUrls[i];
@@ -379,64 +391,54 @@ async function insertImagesDirectly(editorInfo, imageUrls) {
 
     try {
       // 1. 이미지 URL에서 blob 가져오기
-      const response = await fetch(url);
+      const response = await fetch(url, { mode: 'cors' });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
       const blob = await response.blob();
 
       // 2. File 객체 생성
-      const fileName = `image_${i + 1}.${blob.type.split('/')[1] || 'jpg'}`;
+      const ext = blob.type.split('/')[1] || 'jpg';
+      const fileName = `image_${Date.now()}_${i + 1}.${ext}`;
       const file = new File([blob], fileName, { type: blob.type });
 
       console.log(`[닥터보이스] 이미지 파일 생성:`, fileName, file.size, 'bytes');
 
-      // 3. 사진 버튼 찾기 및 클릭
-      const photoBtn = findPhotoButton(doc);
-      if (photoBtn) {
-        photoBtn.click();
-        await sleep(500);
-      }
+      // 3. 드래그 앤 드롭 이벤트 시뮬레이션
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(file);
 
-      // 4. file input 찾기
-      const fileInput = findFileInput(doc);
-      if (fileInput) {
-        // DataTransfer로 파일 설정
-        const dataTransfer = new DataTransfer();
-        dataTransfer.items.add(file);
-        fileInput.files = dataTransfer.files;
+      // dragenter
+      const dragEnterEvent = new DragEvent('dragenter', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: dataTransfer
+      });
+      dropZone.dispatchEvent(dragEnterEvent);
 
-        // change 이벤트 발생
-        const changeEvent = new Event('change', { bubbles: true });
-        fileInput.dispatchEvent(changeEvent);
+      // dragover
+      const dragOverEvent = new DragEvent('dragover', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: dataTransfer
+      });
+      dropZone.dispatchEvent(dragOverEvent);
 
-        console.log(`[닥터보이스] 이미지 ${i + 1} 업로드 요청됨`);
-        results.push({ success: true, index: i });
+      await sleep(100);
 
-        // 업로드 완료 대기
-        await sleep(2000);
-      } else {
-        // file input 없으면 드래그 앤 드롭 방식 시도
-        console.log('[닥터보이스] file input 없음, 드래그 앤 드롭 시도');
+      // drop
+      const dropEvent = new DragEvent('drop', {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: dataTransfer
+      });
+      dropZone.dispatchEvent(dropEvent);
 
-        const dropZone = doc.querySelector('.se-content') ||
-                         doc.querySelector('.se-component.se-text') ||
-                         doc.querySelector('[contenteditable="true"]');
+      console.log(`[닥터보이스] 이미지 ${i + 1} 드롭 이벤트 발생`);
+      results.push({ success: true, index: i, method: 'drop' });
 
-        if (dropZone) {
-          const dropEvent = new DragEvent('drop', {
-            bubbles: true,
-            cancelable: true,
-            dataTransfer: (() => {
-              const dt = new DataTransfer();
-              dt.items.add(file);
-              return dt;
-            })()
-          });
-          dropZone.dispatchEvent(dropEvent);
-          results.push({ success: true, index: i, method: 'drop' });
-          await sleep(2000);
-        } else {
-          results.push({ success: false, index: i, error: 'No drop zone' });
-        }
-      }
+      // 업로드 처리 대기
+      await sleep(1500);
 
     } catch (error) {
       console.error(`[닥터보이스] 이미지 ${i + 1} 실패:`, error);
@@ -500,7 +502,7 @@ function findFileInput(doc) {
   return null;
 }
 
-// DOM 직접 조작으로 텍스트 입력 (content script에서 직접 실행)
+// DOM 직접 조작으로 텍스트 입력 (React 호환 - 키보드 이벤트 시뮬레이션)
 async function insertTextDirectly(editorInfo, type, text) {
   const { doc } = editorInfo;
 
@@ -526,50 +528,74 @@ async function insertTextDirectly(editorInfo, type, text) {
 
     console.log(`[닥터보이스] ${type} 요소 찾음:`, targetEl);
 
-    // 1. 요소에 포커스
+    // 1. 요소 클릭 (마우스 이벤트)
+    targetEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    targetEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+    targetEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+    // 2. 포커스
     targetEl.focus();
+    targetEl.dispatchEvent(new FocusEvent('focus', { bubbles: true }));
     await sleep(100);
 
-    // 2. 기존 내용 전체 선택
+    // 3. 기존 내용 전체 선택 (Ctrl+A)
     const selection = doc.getSelection();
     const range = doc.createRange();
     range.selectNodeContents(targetEl);
     selection.removeAllRanges();
     selection.addRange(range);
+
+    // 4. 기존 내용 삭제 (Delete 키)
+    targetEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', code: 'Delete', bubbles: true }));
+    doc.execCommand('delete', false, null);
     await sleep(50);
 
-    // 3. 방법 1: execCommand 시도
-    let success = doc.execCommand('insertText', false, text);
+    // 5. 텍스트 입력 - 여러 방법 시도
+    let success = false;
+
+    // 방법 1: execCommand insertText
+    success = doc.execCommand('insertText', false, text);
     console.log(`[닥터보이스] execCommand 결과: ${success}`);
 
-    if (!success) {
-      // 4. 방법 2: textContent 직접 설정 + 이벤트 트리거
-      console.log('[닥터보이스] execCommand 실패, textContent 방식 시도');
+    if (!success || targetEl.textContent.trim() === '') {
+      console.log('[닥터보이스] execCommand 실패, 직접 입력 시도');
 
-      // span 요소 찾기 또는 생성
-      let spanEl = targetEl.querySelector('span');
-      if (!spanEl) {
-        spanEl = doc.createElement('span');
-        targetEl.appendChild(spanEl);
-      }
-      spanEl.textContent = text;
+      // 방법 2: 직접 span 생성 및 이벤트
+      targetEl.innerHTML = '';
+      const span = doc.createElement('span');
+      span.textContent = text;
+      targetEl.appendChild(span);
 
-      // React 이벤트 트리거
-      const inputEvent = new InputEvent('input', {
+      // beforeinput 이벤트 (React에서 중요)
+      targetEl.dispatchEvent(new InputEvent('beforeinput', {
         bubbles: true,
         cancelable: true,
         inputType: 'insertText',
         data: text
-      });
-      targetEl.dispatchEvent(inputEvent);
-      spanEl.dispatchEvent(inputEvent);
+      }));
+
+      // input 이벤트
+      targetEl.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertText',
+        data: text
+      }));
+
+      success = true;
     }
 
-    // 5. blur 이벤트로 저장 트리거
+    // 6. 변경 확정 이벤트
     await sleep(100);
-    targetEl.dispatchEvent(new Event('blur', { bubbles: true }));
+    targetEl.dispatchEvent(new Event('change', { bubbles: true }));
+    targetEl.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
 
-    return { success: true, method: success ? 'execCommand' : 'textContent' };
+    // 7. 다른 곳 클릭하여 변경 확정
+    const otherEl = doc.querySelector('.se-toolbar') || doc.body;
+    otherEl.click();
+
+    console.log(`[닥터보이스] ${type} 입력 완료, 내용:`, targetEl.textContent.substring(0, 50));
+    return { success: true, method: 'combined' };
 
   } catch (error) {
     console.error(`[닥터보이스] ${type} 입력 오류:`, error);
