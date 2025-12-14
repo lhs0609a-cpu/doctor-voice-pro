@@ -79,8 +79,10 @@ interface AnalysisJob {
   target_count: number
   status: string
   progress: number
-  keywords_collected: number
+  keywords_collected?: number
+  keywords_total?: number
   posts_analyzed: number
+  posts_failed?: number
   created_at: string
   completed_at?: string
 }
