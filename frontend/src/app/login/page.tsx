@@ -10,7 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { useAuthStore } from '@/store/auth'
 import {
   Sparkles, Mail, Lock, Loader2, CheckCircle2, XCircle,
-  Wand2, Image, Clock, TrendingUp, FileText, Zap, ArrowRight,
+  Image, Clock, TrendingUp, FileText, Zap, ArrowRight,
   Bot, PenTool, BarChart3
 } from 'lucide-react'
 
@@ -360,20 +360,8 @@ export default function LoginPage() {
             <div className="flex-1 h-px bg-gray-200" />
           </div>
 
-          {/* 데모/관리자 버튼 */}
+          {/* 관리자 버튼 */}
           <div className="space-y-3">
-            <Button
-              onClick={() => {
-                setEmail('test@example.com')
-                setPassword('password123')
-              }}
-              variant="outline"
-              className="w-full h-11"
-            >
-              <Wand2 className="mr-2 h-4 w-4" />
-              데모 계정으로 체험하기
-            </Button>
-
             <Button
               onClick={handleAdminLogin}
               variant="ghost"
