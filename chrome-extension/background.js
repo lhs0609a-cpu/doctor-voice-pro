@@ -1,5 +1,5 @@
-// 백그라운드 서비스 워커 v13.0 - 완전자동 debugger API
-console.log('[닥터보이스] 백그라운드 v13.0 시작 - debugger API');
+// 백그라운드 서비스 워커 v13.1 - Input.insertText 방식
+console.log('[닥터보이스] 백그라운드 v13.1 시작 - insertText API');
 
 // 전역 변수
 let pendingPostData = null;
@@ -10,7 +10,7 @@ chrome.runtime.onMessageExternal.addListener(async (message, sender, sendRespons
   console.log('[닥터보이스] 외부 메시지:', message.action);
 
   if (message.action === 'PING') {
-    sendResponse({ success: true, version: '13.0.0' });
+    sendResponse({ success: true, version: '13.1.0' });
     return true;
   }
 
@@ -75,9 +75,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-// 완전자동 입력 (클립보드 + Ctrl+V 방식 - 빠름!)
+// 완전자동 입력 (Input.insertText 방식 - 클립보드 불필요, 즉시 삽입!)
 async function autoTypeWithDebugger(tabId, title, content, titlePos, bodyPos) {
-  console.log('[닥터보이스] === 완전자동 입력 시작 (Ctrl+V 방식) ===');
+  console.log('[닥터보이스] === 완전자동 입력 시작 (insertText 방식) ===');
 
   try {
     // 1. debugger 연결
@@ -89,17 +89,17 @@ async function autoTypeWithDebugger(tabId, title, content, titlePos, bodyPos) {
     await clickAt(tabId, titlePos.x, titlePos.y);
     await sleep(300);
 
-    console.log('[닥터보이스] 3단계: 제목 Ctrl+V');
-    await pasteFromClipboard(tabId, title);
+    console.log('[닥터보이스] 3단계: 제목 입력');
+    await insertText(tabId, title);
     await sleep(200);
 
-    // 3. 본문 입력: 클릭 → 클립보드 복사 → Ctrl+V
+    // 3. 본문 입력: 클릭 → 직접 삽입
     console.log('[닥터보이스] 4단계: 본문 클릭');
     await clickAt(tabId, bodyPos.x, bodyPos.y);
     await sleep(300);
 
-    console.log('[닥터보이스] 5단계: 본문 Ctrl+V');
-    await pasteFromClipboard(tabId, content);
+    console.log('[닥터보이스] 5단계: 본문 입력');
+    await insertText(tabId, content);
     await sleep(200);
 
     // 4. debugger 연결 해제
@@ -116,53 +116,15 @@ async function autoTypeWithDebugger(tabId, title, content, titlePos, bodyPos) {
   }
 }
 
-// 클립보드에 복사 후 Ctrl+V
-async function pasteFromClipboard(tabId, text) {
-  // 클립보드에 텍스트 설정 (scripting API 사용)
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    func: (text) => navigator.clipboard.writeText(text),
-    args: [text]
+// 직접 텍스트 삽입 (Input.insertText 사용 - 클립보드 불필요)
+async function insertText(tabId, text) {
+  console.log('[닥터보이스] 텍스트 삽입 시작, 길이:', text.length);
+
+  await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', {
+    text: text
   });
 
-  await sleep(100);
-
-  // Ctrl+V 키 입력
-  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
-    type: 'keyDown',
-    key: 'Control',
-    code: 'ControlLeft',
-    windowsVirtualKeyCode: 17,
-    modifiers: 2
-  });
-
-  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
-    type: 'keyDown',
-    key: 'v',
-    code: 'KeyV',
-    windowsVirtualKeyCode: 86,
-    modifiers: 2
-  });
-
-  await sleep(50);
-
-  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
-    type: 'keyUp',
-    key: 'v',
-    code: 'KeyV',
-    windowsVirtualKeyCode: 86,
-    modifiers: 2
-  });
-
-  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
-    type: 'keyUp',
-    key: 'Control',
-    code: 'ControlLeft',
-    windowsVirtualKeyCode: 17,
-    modifiers: 0
-  });
-
-  console.log('[닥터보이스] Ctrl+V 완료');
+  console.log('[닥터보이스] 텍스트 삽입 완료');
 }
 
 // 클릭
