@@ -126,8 +126,9 @@ export default function ROIPage() {
     setIsSubmitting(true)
     try {
       await roiAPI.createEvent({
-        keyword: eventForm.keyword,
         event_type: eventForm.event_type,
+        event_date: new Date().toISOString().split('T')[0],
+        keyword: eventForm.keyword,
         source: eventForm.source,
         channel: eventForm.channel,
         revenue: eventForm.revenue ? parseInt(eventForm.revenue) : undefined,
