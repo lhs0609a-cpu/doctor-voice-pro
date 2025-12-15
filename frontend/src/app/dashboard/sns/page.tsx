@@ -40,7 +40,7 @@ import { ko } from 'date-fns/locale'
 
 interface BlogPost {
   id: string
-  title: string
+  title: string | null
   created_at: string
 }
 
@@ -565,7 +565,7 @@ export default function SNSPage() {
                 <SelectContent>
                   {blogPosts.map((post) => (
                     <SelectItem key={post.id} value={post.id}>
-                      {post.title}
+                      {post.title || '(제목 없음)'}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -678,7 +678,7 @@ export default function SNSPage() {
                 <SelectContent>
                   {blogPosts.map((post) => (
                     <SelectItem key={post.id} value={post.id}>
-                      {post.title}
+                      {post.title || '(제목 없음)'}
                     </SelectItem>
                   ))}
                 </SelectContent>
