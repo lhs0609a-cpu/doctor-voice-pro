@@ -28,26 +28,10 @@ import {
   AlertCircle,
   Trash2
 } from 'lucide-react'
-import { reportAPI } from '@/lib/api'
+import { reportAPI, Report } from '@/lib/api'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 import { ko } from 'date-fns/locale'
-
-interface Report {
-  id: string
-  report_type: string
-  title: string
-  period_start: string
-  period_end: string
-  status: string
-  total_posts: number
-  avg_persuasion_score: number | null
-  total_views: number | null
-  top_keywords: string[] | null
-  recommendations: string[] | null
-  file_path: string | null
-  created_at: string
-}
 
 interface ReportSubscription {
   id: string

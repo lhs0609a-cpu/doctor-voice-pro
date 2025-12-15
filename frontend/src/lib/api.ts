@@ -988,17 +988,24 @@ export type ReportStatus = 'pending' | 'generating' | 'completed' | 'failed'
 
 export interface Report {
   id: string
-  report_type: ReportType
+  report_type: ReportType | string
   title: string
   period_start: string
   period_end: string
-  status: ReportStatus
-  generated_at: string | null
-  pdf_url: string | null
-  excel_url: string | null
-  email_sent: boolean
+  status: ReportStatus | string
+  generated_at?: string | null
+  pdf_url?: string | null
+  excel_url?: string | null
+  email_sent?: boolean
   created_at: string
   report_data?: ReportData
+  // 직접 접근 가능한 요약 필드들
+  total_posts?: number
+  avg_persuasion_score?: number | null
+  total_views?: number | null
+  top_keywords?: string[] | null
+  recommendations?: string[] | null
+  file_path?: string | null
 }
 
 export interface ReportData {
