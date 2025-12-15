@@ -27,14 +27,14 @@ import {
   Target,
   Percent
 } from 'lucide-react'
-import { roiAPI, ROIDashboard, KeywordROI } from '@/lib/api'
+import { roiAPI, ROIDashboard, KeywordROI, EventType } from '@/lib/api'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 import { ko } from 'date-fns/locale'
 
 interface EventFormData {
   keyword: string
-  event_type: string
+  event_type: EventType
   source: string
   channel: string
   revenue: string
@@ -240,7 +240,7 @@ export default function ROIPage() {
                     <Label htmlFor="event_type">이벤트 유형</Label>
                     <Select
                       value={eventForm.event_type}
-                      onValueChange={(value) => setEventForm({ ...eventForm, event_type: value })}
+                      onValueChange={(value) => setEventForm({ ...eventForm, event_type: value as EventType })}
                     >
                       <SelectTrigger>
                         <SelectValue />
