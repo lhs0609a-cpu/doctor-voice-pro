@@ -106,7 +106,8 @@ export default function ROIPage() {
   const handleRefresh = async () => {
     setIsRefreshing(true)
     try {
-      await roiAPI.calculateMonthly()
+      const now = new Date()
+      await roiAPI.calculateMonthly(now.getFullYear(), now.getMonth() + 1)
       await loadData()
       toast.success('데이터 새로고침 완료')
     } catch (error) {
