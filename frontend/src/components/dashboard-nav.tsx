@@ -22,7 +22,8 @@ import {
   FileBarChart,
   Share2,
   CircleDollarSign,
-  MapPin
+  MapPin,
+  MessageCircleQuestion
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -81,6 +82,11 @@ export function DashboardNav() {
       href: '/dashboard/place',
       label: '플레이스',
       icon: MapPin,
+    },
+    {
+      href: '/dashboard/knowledge',
+      label: '지식인',
+      icon: MessageCircleQuestion,
     },
     {
       href: '/dashboard/subscription',

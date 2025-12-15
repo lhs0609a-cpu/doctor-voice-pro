@@ -2089,4 +2089,185 @@ export const campaignsAPI = {
   },
 }
 
+// ==================== Knowledge API ====================
+
+export type QuestionStatus = 'new' | 'reviewing' | 'answered' | 'skipped'
+export type AnswerStatus = 'draft' | 'approved' | 'posted' | 'rejected'
+export type AnswerTone = 'professional' | 'friendly' | 'empathetic' | 'formal'
+
+export interface KnowledgeKeyword {
+  id: string
+  keyword: string
+  category: string | null
+  priority: number
+  question_count: number
+  is_active: boolean
+  last_checked_at: string | null
+  created_at: string
+}
+
+export interface KnowledgeQuestion {
+  id: string
+  question_id: string
+  title: string
+  content: string | null
+  url: string | null
+  category: string | null
+  status: QuestionStatus
+  view_count: number
+  answer_count: number
+  reward_points: number
+  relevance_score: number
+  urgency: string
+  matched_keywords: string[] | null
+  collected_at: string
+  created_at: string
+}
+
+export interface KnowledgeAnswer {
+  id: string
+  question_id: string
+  content: string
+  final_content: string | null
+  tone: AnswerTone
+  quality_score: number | null
+  promotion_text: string | null
+  blog_link: string | null
+  place_link: string | null
+  status: AnswerStatus
+  is_chosen: boolean
+  posted_at: string | null
+  created_at: string
+}
+
+export interface KnowledgeTemplate {
+  id: string
+  name: string
+  template_content: string
+  category: string | null
+  tone: AnswerTone
+  usage_count: number
+  is_active: boolean
+  created_at: string
+}
+
+export interface KnowledgeDashboard {
+  today_collected: number
+  pending_questions: number
+  draft_answers: number
+  week_answered: number
+  total_keywords: number
+  total_questions: number
+  total_answers: number
+}
+
+export const knowledgeAPI = {
+  // 대시보드
+  getDashboard: async (): Promise<KnowledgeDashboard> => {
+    const response = await api.get('/api/v1/knowledge/dashboard')
+    return response.data
+  },
+
+  // 키워드 목록
+  getKeywords: async (params?: { is_active?: boolean }): Promise<KnowledgeKeyword[]> => {
+    const response = await api.get('/api/v1/knowledge/keywords', { params })
+    return response.data
+  },
+
+  // 키워드 추가
+  createKeyword: async (data: {
+    keyword: string
+    category?: string
+    priority?: number
+  }): Promise<KnowledgeKeyword> => {
+    const response = await api.post('/api/v1/knowledge/keywords', data)
+    return response.data
+  },
+
+  // 키워드 삭제
+  deleteKeyword: async (keywordId: string): Promise<void> => {
+    await api.delete(`/api/v1/knowledge/keywords/${keywordId}`)
+  },
+
+  // 질문 목록
+  getQuestions: async (params?: {
+    status?: QuestionStatus
+    keyword_id?: string
+    limit?: number
+    offset?: number
+  }): Promise<KnowledgeQuestion[]> => {
+    const response = await api.get('/api/v1/knowledge/questions', { params })
+    return response.data
+  },
+
+  // 상위 질문 조회
+  getTopQuestions: async (limit: number = 5): Promise<KnowledgeQuestion[]> => {
+    const response = await api.get('/api/v1/knowledge/questions/top', { params: { limit } })
+    return response.data
+  },
+
+  // 질문 수집
+  collectQuestions: async (): Promise<{ message: string; collected: number }> => {
+    const response = await api.post('/api/v1/knowledge/collect')
+    return response.data
+  },
+
+  // 답변 목록
+  getAnswers: async (params?: {
+    status?: AnswerStatus
+    limit?: number
+    offset?: number
+  }): Promise<KnowledgeAnswer[]> => {
+    const response = await api.get('/api/v1/knowledge/answers', { params })
+    return response.data
+  },
+
+  // 답변 생성
+  generateAnswer: async (data: {
+    question_id: string
+    tone?: AnswerTone
+    include_promotion?: boolean
+    blog_link?: string
+    place_link?: string
+    template_id?: string
+  }): Promise<KnowledgeAnswer> => {
+    const response = await api.post('/api/v1/knowledge/generate-answer', data)
+    return response.data
+  },
+
+  // 답변 승인
+  approveAnswer: async (answerId: string): Promise<KnowledgeAnswer> => {
+    const response = await api.post(`/api/v1/knowledge/answers/${answerId}/approve`)
+    return response.data
+  },
+
+  // 답변 등록 완료 처리
+  markAsPosted: async (answerId: string): Promise<KnowledgeAnswer> => {
+    const response = await api.post(`/api/v1/knowledge/answers/${answerId}/posted`)
+    return response.data
+  },
+
+  // 템플릿 목록
+  getTemplates: async (params?: { category?: string }): Promise<KnowledgeTemplate[]> => {
+    const response = await api.get('/api/v1/knowledge/templates', { params })
+    return response.data
+  },
+
+  // 템플릿 생성
+  createTemplate: async (data: {
+    name: string
+    template_content: string
+    category?: string
+    tone?: AnswerTone
+  }): Promise<KnowledgeTemplate> => {
+    const response = await api.post('/api/v1/knowledge/templates', data)
+    return response.data
+  },
+
+  // 템플릿 삭제
+  deleteTemplate: async (templateId: string): Promise<void> => {
+    await api.delete(`/api/v1/knowledge/templates/${templateId}`)
+  },
+}
+
 export default api
