@@ -1329,19 +1329,11 @@ export interface ROIDashboard {
     conversion_rate_visit: number
     conversion_rate_reservation: number
   }
-  channel_breakdown: Record<string, { views: number; inquiries: number; visits: number; revenue: number }> | { channel: string; views: number; inquiries: number; visits: number; reservations?: number; revenue: number }[]
+  channel_breakdown: Record<string, { views: number; inquiries: number; visits: number; revenue: number }>
   source_breakdown?: { source: string; count: number; revenue: number }[]
   daily_trend?: { date: string; views: number; inquiries: number; visits: number; reservations?: number }[]
   trends?: Array<{ date: string; views: number; inquiries: number; visits: number; revenue: number }>
-  funnel: Array<{ stage?: string; name?: string; count: number; rate: number }> | {
-    stages: { name: string; count: number; rate: number }[]
-    conversion_rates: {
-      view_to_inquiry: number
-      inquiry_to_visit: number
-      visit_to_reservation: number
-      overall: number
-    }
-  }
+  funnel: Array<{ stage?: string; name?: string; count: number; rate: number }>
   top_keywords: { keyword: string; views?: number; inquiries?: number; revenue: number; roi?: number; total_events?: number; conversions?: number }[]
   roi_percentage?: number
 }
