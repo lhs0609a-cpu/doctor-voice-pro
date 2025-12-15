@@ -33,39 +33,10 @@ import {
   Clock,
   RefreshCw
 } from 'lucide-react'
-import { snsAPI, postsAPI, type SNSPlatform, type SNSContentType } from '@/lib/api'
+import { snsAPI, postsAPI, type SNSPlatform, type SNSContentType, type SNSConnection, type SNSPost } from '@/lib/api'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 import { ko } from 'date-fns/locale'
-
-interface SNSConnection {
-  id: string
-  platform: string
-  platform_username: string | null
-  profile_image_url: string | null
-  page_name: string | null
-  is_active: boolean
-  connection_status: string
-  created_at: string
-}
-
-interface SNSPost {
-  id: string
-  platform: string
-  content_type: string
-  caption: string | null
-  hashtags: string[] | null
-  media_urls: string[] | null
-  script: string | null
-  script_duration: number | null
-  status: string
-  scheduled_at: string | null
-  published_at: string | null
-  platform_post_url: string | null
-  error_message: string | null
-  original_post_id: string | null
-  created_at: string
-}
 
 interface BlogPost {
   id: string
