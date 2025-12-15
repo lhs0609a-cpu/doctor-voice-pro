@@ -27,39 +27,10 @@ import {
   Target,
   Percent
 } from 'lucide-react'
-import { roiAPI } from '@/lib/api'
+import { roiAPI, ROIDashboard, KeywordROI } from '@/lib/api'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 import { ko } from 'date-fns/locale'
-
-interface DashboardData {
-  period: { start: string; end: string }
-  summary: {
-    total_views: number
-    total_inquiries: number
-    total_visits: number
-    total_reservations: number
-    total_revenue: number
-    conversion_rate_inquiry: number
-    conversion_rate_visit: number
-    conversion_rate_reservation: number
-  }
-  funnel: Array<{ stage: string; count: number; rate: number }>
-  channel_breakdown: Record<string, { views: number; inquiries: number; visits: number; revenue: number }>
-  top_keywords: Array<{ keyword: string; views: number; inquiries: number; revenue: number; roi: number }>
-  trends: Array<{ date: string; views: number; inquiries: number; visits: number; revenue: number }>
-}
-
-interface KeywordROI {
-  keyword: string
-  views: number
-  inquiries: number
-  visits: number
-  revenue: number
-  cost: number
-  roi_percentage: number
-  conversion_rate: number
-}
 
 interface EventFormData {
   keyword: string
@@ -94,7 +65,7 @@ const SOURCES = [
 ]
 
 export default function ROIPage() {
-  const [dashboard, setDashboard] = useState<DashboardData | null>(null)
+  const [dashboard, setDashboard] = useState<ROIDashboard | null>(null)
   const [keywordROIs, setKeywordROIs] = useState<KeywordROI[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
