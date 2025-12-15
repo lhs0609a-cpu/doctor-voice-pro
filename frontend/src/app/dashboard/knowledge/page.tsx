@@ -13,7 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
 import {
-  MessageCircleQuestion,
+  HelpCircle,
   Search,
   Plus,
   RefreshCw,
@@ -325,7 +325,7 @@ export default function KnowledgePage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
           <div>
             <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-              <MessageCircleQuestion className="h-8 w-8 text-green-600" />
+              <HelpCircle className="h-8 w-8 text-green-600" />
               지식인 답변 도우미
             </h1>
             <p className="text-gray-600 mt-1">
@@ -617,7 +617,7 @@ export default function KnowledgePage() {
               <CardContent>
                 {questions.length === 0 ? (
                   <div className="text-center py-12">
-                    <MessageCircleQuestion className="h-12 w-12 mx-auto text-gray-300 mb-4" />
+                    <HelpCircle className="h-12 w-12 mx-auto text-gray-300 mb-4" />
                     <p className="text-gray-500">수집된 질문이 없습니다</p>
                     <Button className="mt-4" onClick={handleCollect} disabled={isCollecting}>
                       질문 수집하기

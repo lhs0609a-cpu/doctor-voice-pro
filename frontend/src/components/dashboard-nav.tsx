@@ -23,7 +23,7 @@ import {
   Share2,
   CircleDollarSign,
   MapPin,
-  MessageCircleQuestion
+  HelpCircle
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -86,7 +86,7 @@ export function DashboardNav() {
     {
       href: '/dashboard/knowledge',
       label: '지식인',
-      icon: MessageCircleQuestion,
+      icon: HelpCircle,
     },
     {
       href: '/dashboard/subscription',
