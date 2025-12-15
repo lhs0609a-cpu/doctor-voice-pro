@@ -16,7 +16,8 @@ import {
   BarChart3,
   Tags,
   Save,
-  TrendingUp
+  TrendingUp,
+  CreditCard
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -55,6 +56,11 @@ export function DashboardNav() {
       href: '/dashboard/top-post-analysis',
       label: '상위노출',
       icon: TrendingUp,
+    },
+    {
+      href: '/dashboard/subscription',
+      label: '구독',
+      icon: CreditCard,
     },
     {
       href: '/dashboard/profile',

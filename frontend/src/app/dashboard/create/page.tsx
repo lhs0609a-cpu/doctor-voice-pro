@@ -573,43 +573,6 @@ export default function CreatePostPage() {
 
         <TabsContent value="blog" className="space-y-6 mt-6">{/* Blog content starts here */}
 
-      {/* Claude API Status */}
-      {checkingApi ? (
-        <Card className="bg-blue-50 border-blue-200">
-          <CardContent className="flex items-center gap-3 py-4">
-            <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
-            <div>
-              <p className="font-medium text-blue-900">Claude AI 연결 확인 중...</p>
-              <p className="text-sm text-blue-700">잠시만 기다려주세요</p>
-            </div>
-          </CardContent>
-        </Card>
-      ) : claudeApiStatus?.connected ? (
-        <Card className="bg-green-50 border-green-200">
-          <CardContent className="flex items-center gap-3 py-4">
-            <CheckCircle2 className="h-5 w-5 text-green-600" />
-            <div className="flex-1">
-              <p className="font-medium text-green-900">Claude AI 연결됨</p>
-              <p className="text-sm text-green-700">
-                API 키: {claudeApiStatus.api_key_prefix} | 모델: {claudeApiStatus.model}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      ) : (
-        <Card className="bg-red-50 border-red-200">
-          <CardContent className="flex items-center gap-3 py-4">
-            <AlertCircle className="h-5 w-5 text-red-600" />
-            <div className="flex-1">
-              <p className="font-medium text-red-900">Claude AI 연결 실패</p>
-              <p className="text-sm text-red-700">
-                {claudeApiStatus?.error || 'API 키를 확인해주세요'}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       {/* GPT API Status */}
       {checkingGptApi ? (
         <Card className="bg-blue-50 border-blue-200">
@@ -737,20 +700,7 @@ export default function CreatePostPage() {
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label>AI 제공자</Label>
-            <div className="grid grid-cols-3 gap-2">
-              <Button
-                variant={config.ai_provider === 'claude' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => {
-                  setConfig({
-                    ...config,
-                    ai_provider: 'claude',
-                    ai_model: 'claude-sonnet-4-5-20250929'
-                  })
-                }}
-              >
-                Claude AI
-              </Button>
+            <div className="grid grid-cols-2 gap-2">
               <Button
                 variant={config.ai_provider === 'gpt' ? 'default' : 'outline'}
                 size="sm"
@@ -762,7 +712,7 @@ export default function CreatePostPage() {
                   })
                 }}
               >
-                GPT
+                GPT (OpenAI)
               </Button>
               <Button
                 variant={config.ai_provider === 'gemini' ? 'default' : 'outline'}
@@ -771,42 +721,15 @@ export default function CreatePostPage() {
                   setConfig({
                     ...config,
                     ai_provider: 'gemini',
-                    ai_model: 'gemini-2.5-flash-preview-05-20'
+                    ai_model: 'gemini-2.0-flash'
                   })
                 }}
                 disabled={!geminiApiStatus?.connected}
               >
-                Gemini {!geminiApiStatus?.connected && '(미연결)'}
+                Gemini (Google) {!geminiApiStatus?.connected && '(미연결)'}
               </Button>
             </div>
           </div>
-
-          {/* Claude 모델 선택 */}
-          {config.ai_provider === 'claude' && (
-            <div className="space-y-2">
-              <Label>Claude 모델 (1건당 예상 비용)</Label>
-              <div className="grid grid-cols-1 gap-2">
-                <Button
-                  variant={config.ai_model === 'claude-sonnet-4-5-20250929' ? 'default' : 'outline'}
-                  size="sm"
-                  className="justify-between"
-                  onClick={() => setConfig({ ...config, ai_model: 'claude-sonnet-4-5-20250929' })}
-                >
-                  <span>Claude Sonnet 4.5 (최신)</span>
-                  <span className="text-xs opacity-70">₩{aiPricing?.pricing?.find((p: any) => p.model_id === 'claude-sonnet-4-5-20250929')?.estimated_cost_per_post_krw?.toLocaleString() || '...'}</span>
-                </Button>
-                <Button
-                  variant={config.ai_model === 'claude-3-5-sonnet-20241022' ? 'default' : 'outline'}
-                  size="sm"
-                  className="justify-between"
-                  onClick={() => setConfig({ ...config, ai_model: 'claude-3-5-sonnet-20241022' })}
-                >
-                  <span>Claude 3.5 Sonnet (안정적)</span>
-                  <span className="text-xs opacity-70">₩{aiPricing?.pricing?.find((p: any) => p.model_id === 'claude-3-5-sonnet-20241022')?.estimated_cost_per_post_krw?.toLocaleString() || '...'}</span>
-                </Button>
-              </div>
-            </div>
-          )}
 
           {/* GPT 모델 선택 */}
           {config.ai_provider === 'gpt' && (
@@ -832,21 +755,12 @@ export default function CreatePostPage() {
               <Label>Gemini 모델 (1건당 예상 비용)</Label>
               <div className="grid grid-cols-1 gap-2">
                 <Button
-                  variant={config.ai_model === 'gemini-2.5-flash-preview-05-20' ? 'default' : 'outline'}
-                  size="sm"
-                  className="justify-between"
-                  onClick={() => setConfig({ ...config, ai_model: 'gemini-2.5-flash-preview-05-20' })}
-                >
-                  <span>Gemini 2.5 Flash (고성능, 빠름)</span>
-                  <span className="text-xs opacity-70">₩{aiPricing?.pricing?.find((p: any) => p.model_id === 'gemini-2.5-flash-preview-05-20')?.estimated_cost_per_post_krw?.toLocaleString() || '...'}</span>
-                </Button>
-                <Button
                   variant={config.ai_model === 'gemini-2.0-flash' ? 'default' : 'outline'}
                   size="sm"
                   className="justify-between"
                   onClick={() => setConfig({ ...config, ai_model: 'gemini-2.0-flash' })}
                 >
-                  <span>Gemini 2.0 Flash (빠름)</span>
+                  <span>Gemini 2.0 Flash (추천, 빠름/저렴)</span>
                   <span className="text-xs opacity-70">₩{aiPricing?.pricing?.find((p: any) => p.model_id === 'gemini-2.0-flash')?.estimated_cost_per_post_krw?.toLocaleString() || '...'}</span>
                 </Button>
                 <Button

@@ -631,4 +631,215 @@ export const topPostsAPI = {
   }
 }
 
+// ==================== Subscription API ====================
+
+export interface Plan {
+  id: string
+  name: string
+  description: string | null
+  price_monthly: number
+  price_yearly: number
+  posts_per_month: number
+  analysis_per_month: number
+  keywords_per_month: number
+  has_api_access: boolean
+  has_priority_support: boolean
+  has_advanced_analytics: boolean
+  has_team_features: boolean
+  extra_post_price: number
+  extra_analysis_price: number
+}
+
+export interface Subscription {
+  id: string
+  plan_id: string
+  status: 'active' | 'cancelled' | 'expired' | 'past_due' | 'trialing'
+  current_period_start: string
+  current_period_end: string
+  cancel_at_period_end: boolean
+  trial_end: string | null
+  plan?: Plan
+}
+
+export interface UsageSummary {
+  posts_used: number
+  posts_limit: number
+  analysis_used: number
+  analysis_limit: number
+  keywords_used: number
+  keywords_limit: number
+  extra_posts: number
+  extra_analysis: number
+  extra_cost: number
+}
+
+export interface UserCredit {
+  post_credits: number
+  analysis_credits: number
+}
+
+export const subscriptionAPI = {
+  // 플랜 목록 조회
+  getPlans: async (): Promise<Plan[]> => {
+    const response = await api.get('/api/v1/subscriptions/plans')
+    return response.data
+  },
+
+  // 현재 구독 조회
+  getCurrentSubscription: async (): Promise<Subscription | null> => {
+    const response = await api.get('/api/v1/subscriptions/current')
+    return response.data
+  },
+
+  // 사용량 조회
+  getUsage: async (): Promise<UsageSummary> => {
+    const response = await api.get('/api/v1/subscriptions/usage')
+    return response.data
+  },
+
+  // 크레딧 잔액 조회
+  getCredits: async (): Promise<UserCredit> => {
+    const response = await api.get('/api/v1/subscriptions/credits')
+    return response.data
+  },
+
+  // 구독 시작
+  subscribe: async (planId: string, paymentMethod?: string): Promise<Subscription> => {
+    const response = await api.post('/api/v1/subscriptions/subscribe', {
+      plan_id: planId,
+      payment_method: paymentMethod
+    })
+    return response.data
+  },
+
+  // 구독 취소
+  cancel: async (): Promise<{ message: string; period_end: string }> => {
+    const response = await api.post('/api/v1/subscriptions/cancel')
+    return response.data
+  },
+
+  // 플랜 변경
+  changePlan: async (newPlanId: string): Promise<Subscription> => {
+    const response = await api.post('/api/v1/subscriptions/change-plan', {
+      new_plan_id: newPlanId
+    })
+    return response.data
+  },
+
+  // 구독 내역
+  getHistory: async (limit: number = 10, offset: number = 0) => {
+    const response = await api.get('/api/v1/subscriptions/history', {
+      params: { limit, offset }
+    })
+    return response.data
+  },
+
+  // 사용량 로그
+  getUsageLogs: async (usageType?: string, limit: number = 50, offset: number = 0) => {
+    const response = await api.get('/api/v1/subscriptions/usage-logs', {
+      params: { usage_type: usageType, limit, offset }
+    })
+    return response.data
+  }
+}
+
+// ==================== Payment API ====================
+
+export interface PaymentConfig {
+  client_key: string
+  success_url: string
+  fail_url: string
+}
+
+export interface PaymentIntent {
+  payment_id: string
+  order_id: string
+  amount: number
+  order_name: string
+  client_key: string
+}
+
+export interface Payment {
+  id: string
+  amount: number
+  status: 'pending' | 'completed' | 'failed' | 'cancelled' | 'refunded'
+  payment_method: string | null
+  payment_method_detail: string | null
+  description: string | null
+  receipt_url: string | null
+  paid_at: string | null
+  created_at: string
+}
+
+export const paymentAPI = {
+  // 결제 설정 조회
+  getConfig: async (): Promise<PaymentConfig> => {
+    const response = await api.get('/api/v1/payments/config')
+    return response.data
+  },
+
+  // 결제 의도 생성
+  createIntent: async (data: {
+    amount: number
+    order_name: string
+    subscription_id?: string
+    metadata?: Record<string, unknown>
+  }): Promise<PaymentIntent> => {
+    const response = await api.post('/api/v1/payments/intent', data)
+    return response.data
+  },
+
+  // 결제 승인
+  confirm: async (data: {
+    payment_key: string
+    order_id: string
+    amount: number
+  }): Promise<Payment> => {
+    const response = await api.post('/api/v1/payments/confirm', data)
+    return response.data
+  },
+
+  // 결제 취소
+  cancel: async (paymentId: string, cancelReason: string, refundAmount?: number): Promise<Payment> => {
+    const response = await api.post(`/api/v1/payments/${paymentId}/cancel`, {
+      cancel_reason: cancelReason,
+      refund_amount: refundAmount
+    })
+    return response.data
+  },
+
+  // 결제 내역 조회
+  getHistory: async (status?: string, limit: number = 20, offset: number = 0): Promise<Payment[]> => {
+    const response = await api.get('/api/v1/payments/history', {
+      params: { status_filter: status, limit, offset }
+    })
+    return response.data
+  },
+
+  // 결제 상세 조회
+  getPayment: async (paymentId: string): Promise<Payment> => {
+    const response = await api.get(`/api/v1/payments/${paymentId}`)
+    return response.data
+  },
+
+  // 크레딧 구매 정보 생성
+  purchaseCredits: async (creditType: string, amount: number) => {
+    const response = await api.post('/api/v1/payments/credits/purchase', {
+      credit_type: creditType,
+      amount
+    })
+    return response.data
+  },
+
+  // 크레딧 구매 결제 승인
+  confirmCreditPurchase: async (data: {
+    payment_key: string
+    order_id: string
+    amount: number
+  }) => {
+    const response = await api.post('/api/v1/payments/credits/confirm', data)
+    return response.data
+  }
+}
+
 export default api
