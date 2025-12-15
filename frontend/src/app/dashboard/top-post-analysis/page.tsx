@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
@@ -12,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   TrendingUp,
   Search,
@@ -34,6 +35,11 @@ import {
   BarChart3,
   Target,
   X,
+  ExternalLink,
+  Lightbulb,
+  Eye,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { topPostsAPI } from '@/lib/api'
@@ -102,6 +108,44 @@ interface Dashboard {
   recent_jobs: AnalysisJob[]
 }
 
+interface AnalyzedPost {
+  id: number
+  keyword: string
+  rank: number
+  title: string
+  post_url: string
+  blog_id: string
+  category: string
+  category_name: string
+  content_length: number
+  image_count: number
+  video_count: number
+  heading_count: number
+  keyword_count: number
+  keyword_density: number
+  title_has_keyword: boolean
+  has_map: boolean
+  data_quality: string
+  analyzed_at: string
+}
+
+interface PatternInsight {
+  category: string
+  finding: string
+  recommendation: string
+  confidence: number
+}
+
+interface PatternsSummary {
+  status: string
+  category: string
+  category_name: string
+  sample_count: number
+  confidence: number
+  summary: string | null
+  insights: PatternInsight[]
+}
+
 export default function TopPostAnalysisPage() {
   const [categories, setCategories] = useState<CategoryWithStats[]>([])
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
@@ -110,7 +154,15 @@ export default function TopPostAnalysisPage() {
   const [loading, setLoading] = useState(true)
   const [analyzing, setAnalyzing] = useState(false)
   const [currentJob, setCurrentJob] = useState<AnalysisJob | null>(null)
-  const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null)
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  // 분석 결과 탭 상태
+  const [activeTab, setActiveTab] = useState('analysis')
+  const [analyzedPosts, setAnalyzedPosts] = useState<AnalyzedPost[]>([])
+  const [patternsSummary, setPatternsSummary] = useState<PatternsSummary | null>(null)
+  const [resultsCategory, setResultsCategory] = useState<string>('')
+  const [loadingResults, setLoadingResults] = useState(false)
+  const [expandedKeywords, setExpandedKeywords] = useState<Set<string>>(new Set())
 
   // 데이터 로드
   const loadData = useCallback(async () => {
@@ -133,32 +185,44 @@ export default function TopPostAnalysisPage() {
     loadData()
   }, [loadData])
 
-  // 작업 상태 폴링
-  const pollJobStatus = useCallback(async (jobId: string) => {
-    try {
-      const job = await topPostsAPI.getJobStatus(jobId)
-      setCurrentJob(job)
-
-      if (job.status === 'completed') {
-        toast.success(`분석 완료! ${job.posts_analyzed}개 글 분석됨`)
-        setAnalyzing(false)
-        if (pollingInterval) {
-          clearInterval(pollingInterval)
-          setPollingInterval(null)
-        }
-        loadData() // 데이터 새로고침
-      } else if (job.status === 'failed') {
-        toast.error(`분석 실패: ${job.error_message || '알 수 없는 오류'}`)
-        setAnalyzing(false)
-        if (pollingInterval) {
-          clearInterval(pollingInterval)
-          setPollingInterval(null)
-        }
-      }
-    } catch (error) {
-      console.error('작업 상태 조회 실패:', error)
+  // 폴링 중지 함수
+  const stopPolling = useCallback(() => {
+    if (pollingIntervalRef.current) {
+      clearTimeout(pollingIntervalRef.current)
+      pollingIntervalRef.current = null
     }
-  }, [pollingInterval, loadData])
+  }, [])
+
+  // 작업 상태 폴링 (setTimeout 재귀 방식)
+  const startPolling = useCallback((jobId: string) => {
+    const poll = async () => {
+      try {
+        const job = await topPostsAPI.getJobStatus(jobId)
+        setCurrentJob(job)
+
+        if (job.status === 'completed') {
+          toast.success(`분석 완료! ${job.posts_analyzed}개 글 분석됨`)
+          setAnalyzing(false)
+          pollingIntervalRef.current = null
+          loadData() // 데이터 새로고침
+        } else if (job.status === 'failed') {
+          toast.error(`분석 실패: ${job.error_message || '알 수 없는 오류'}`)
+          setAnalyzing(false)
+          pollingIntervalRef.current = null
+        } else {
+          // 계속 폴링
+          pollingIntervalRef.current = setTimeout(poll, 3000)
+        }
+      } catch (error) {
+        console.error('작업 상태 조회 실패:', error)
+        // 에러 시에도 폴링 계속
+        pollingIntervalRef.current = setTimeout(poll, 3000)
+      }
+    }
+
+    // 즉시 첫 번째 폴링 시작
+    poll()
+  }, [loadData])
 
   // 분석 시작
   const handleStartAnalysis = async () => {
@@ -179,10 +243,7 @@ export default function TopPostAnalysisPage() {
       toast.success('분석 작업이 시작되었습니다', { id: loadingToast })
 
       // 폴링 시작
-      const jobId = response.job_id
-      pollJobStatus(jobId)
-      const interval = setInterval(() => pollJobStatus(jobId), 3000)
-      setPollingInterval(interval)
+      startPolling(response.job_id)
     } catch (error: any) {
       toast.error(error.message || '분석 시작 실패', { id: loadingToast })
       setAnalyzing(false)
@@ -198,23 +259,69 @@ export default function TopPostAnalysisPage() {
       toast.success('분석이 취소되었습니다')
       setAnalyzing(false)
       setCurrentJob(null)
-      if (pollingInterval) {
-        clearInterval(pollingInterval)
-        setPollingInterval(null)
-      }
+      stopPolling()
     } catch (error) {
       toast.error('취소 실패')
     }
   }
 
-  // 정리
+  // 컴포넌트 언마운트 시 정리
   useEffect(() => {
     return () => {
-      if (pollingInterval) {
-        clearInterval(pollingInterval)
+      if (pollingIntervalRef.current) {
+        clearTimeout(pollingIntervalRef.current)
       }
     }
-  }, [pollingInterval])
+  }, [])
+
+  // 분석 결과 로드
+  const loadAnalysisResults = useCallback(async (category: string) => {
+    if (!category) return
+
+    setLoadingResults(true)
+    try {
+      const [postsRes, summaryRes] = await Promise.all([
+        topPostsAPI.getAnalyzedPosts({ category, limit: 100 }),
+        topPostsAPI.getPatternsSummary(category)
+      ])
+      setAnalyzedPosts(postsRes.posts || [])
+      setPatternsSummary(summaryRes)
+    } catch (error) {
+      console.error('분석 결과 로드 실패:', error)
+      toast.error('분석 결과를 불러오는데 실패했습니다')
+    } finally {
+      setLoadingResults(false)
+    }
+  }, [])
+
+  // 결과 카테고리 변경 시 로드
+  useEffect(() => {
+    if (activeTab === 'results' && resultsCategory) {
+      loadAnalysisResults(resultsCategory)
+    }
+  }, [activeTab, resultsCategory, loadAnalysisResults])
+
+  // 키워드 접기/펼치기 토글
+  const toggleKeyword = (keyword: string) => {
+    setExpandedKeywords(prev => {
+      const next = new Set(prev)
+      if (next.has(keyword)) {
+        next.delete(keyword)
+      } else {
+        next.add(keyword)
+      }
+      return next
+    })
+  }
+
+  // 키워드별 그룹화
+  const postsByKeyword = analyzedPosts.reduce((acc, post) => {
+    if (!acc[post.keyword]) {
+      acc[post.keyword] = []
+    }
+    acc[post.keyword].push(post)
+    return acc
+  }, {} as Record<string, AnalyzedPost[]>)
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -299,7 +406,22 @@ export default function TopPostAnalysisPage() {
         </Card>
       </div>
 
-      {/* 분석 설정 */}
+      {/* 탭 네비게이션 */}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+        <TabsList className="grid w-full grid-cols-2 max-w-md">
+          <TabsTrigger value="analysis" className="flex items-center gap-2">
+            <Target className="h-4 w-4" />
+            분석 실행
+          </TabsTrigger>
+          <TabsTrigger value="results" className="flex items-center gap-2">
+            <Eye className="h-4 w-4" />
+            분석 결과
+          </TabsTrigger>
+        </TabsList>
+
+        {/* 분석 실행 탭 */}
+        <TabsContent value="analysis" className="space-y-6">
+          {/* 분석 설정 */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -510,6 +632,242 @@ export default function TopPostAnalysisPage() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+
+        {/* 분석 결과 탭 */}
+        <TabsContent value="results" className="space-y-6">
+          {/* 카테고리 선택 */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Eye className="h-5 w-5" />
+                분석 결과 조회
+              </CardTitle>
+              <CardDescription>
+                카테고리를 선택하여 분석된 글과 발견된 공통점을 확인하세요
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-4">
+                <div className="flex-1">
+                  <Select
+                    value={resultsCategory}
+                    onValueChange={setResultsCategory}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="카테고리 선택" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {categories.map((cat) => (
+                        <SelectItem key={cat.id} value={cat.id}>
+                          {cat.name} ({cat.posts_count}개 분석됨)
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={() => resultsCategory && loadAnalysisResults(resultsCategory)}
+                  disabled={!resultsCategory || loadingResults}
+                >
+                  {loadingResults ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 공통점 요약 */}
+          {patternsSummary && patternsSummary.status === 'data_driven' && (
+            <Card className="border-indigo-200 bg-indigo-50/30">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Lightbulb className="h-5 w-5 text-yellow-500" />
+                  발견된 공통점
+                  <Badge variant="outline" className="ml-2">
+                    {patternsSummary.sample_count}개 글 분석
+                  </Badge>
+                </CardTitle>
+                <CardDescription>
+                  신뢰도 {Math.round(patternsSummary.confidence * 100)}%
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* 요약 텍스트 */}
+                {patternsSummary.summary && (
+                  <div className="p-4 bg-white rounded-lg border whitespace-pre-line text-sm">
+                    {patternsSummary.summary}
+                  </div>
+                )}
+
+                {/* 인사이트 목록 */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {patternsSummary.insights.map((insight, idx) => (
+                    <div key={idx} className="p-3 bg-white rounded-lg border">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Badge variant="outline" className="text-xs">
+                          {insight.category}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">
+                          신뢰도 {Math.round(insight.confidence * 100)}%
+                        </span>
+                      </div>
+                      <p className="text-sm font-medium text-gray-800 mb-1">
+                        {insight.finding}
+                      </p>
+                      <p className="text-xs text-indigo-600">
+                        💡 {insight.recommendation}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* 분석된 글 목록 */}
+          {resultsCategory && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Database className="h-5 w-5" />
+                  분석된 글 목록
+                  <Badge variant="secondary" className="ml-2">
+                    {analyzedPosts.length}개
+                  </Badge>
+                </CardTitle>
+                <CardDescription>
+                  키워드별로 상위 1~3위 글의 분석 결과를 확인하세요
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {loadingResults ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                  </div>
+                ) : Object.keys(postsByKeyword).length === 0 ? (
+                  <p className="text-center text-muted-foreground py-8">
+                    분석된 글이 없습니다
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {Object.entries(postsByKeyword).map(([keyword, posts]) => (
+                      <div key={keyword} className="border rounded-lg">
+                        {/* 키워드 헤더 */}
+                        <button
+                          onClick={() => toggleKeyword(keyword)}
+                          className="w-full p-3 flex items-center justify-between hover:bg-gray-50 transition-colors"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Search className="h-4 w-4 text-indigo-500" />
+                            <span className="font-medium">{keyword}</span>
+                            <Badge variant="outline" className="text-xs">
+                              {posts.length}개 글
+                            </Badge>
+                          </div>
+                          <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                            <span>
+                              평균 {Math.round(posts.reduce((sum, p) => sum + p.content_length, 0) / posts.length)}자
+                            </span>
+                            <span>
+                              이미지 {Math.round(posts.reduce((sum, p) => sum + p.image_count, 0) / posts.length * 10) / 10}장
+                            </span>
+                            {expandedKeywords.has(keyword) ? (
+                              <ChevronUp className="h-4 w-4" />
+                            ) : (
+                              <ChevronDown className="h-4 w-4" />
+                            )}
+                          </div>
+                        </button>
+
+                        {/* 글 목록 (펼친 경우) */}
+                        {expandedKeywords.has(keyword) && (
+                          <div className="border-t p-3 space-y-2 bg-gray-50">
+                            {posts.sort((a, b) => a.rank - b.rank).map((post) => (
+                              <div
+                                key={post.id}
+                                className="p-3 bg-white rounded-lg border flex items-start gap-3"
+                              >
+                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
+                                  post.rank === 1 ? 'bg-yellow-100 text-yellow-700' :
+                                  post.rank === 2 ? 'bg-gray-100 text-gray-700' :
+                                  'bg-orange-100 text-orange-700'
+                                }`}>
+                                  {post.rank}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <a
+                                      href={post.post_url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="font-medium text-blue-600 hover:underline truncate"
+                                    >
+                                      {post.title || '(제목 없음)'}
+                                    </a>
+                                    <ExternalLink className="h-3 w-3 text-gray-400 flex-shrink-0" />
+                                  </div>
+                                  <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                    <span className="flex items-center gap-1">
+                                      📝 {post.content_length.toLocaleString()}자
+                                    </span>
+                                    <span className="flex items-center gap-1">
+                                      🖼️ {post.image_count}장
+                                    </span>
+                                    <span className="flex items-center gap-1">
+                                      📑 {post.heading_count}개 소제목
+                                    </span>
+                                    <span className="flex items-center gap-1">
+                                      🔑 {post.keyword_count}회 키워드
+                                    </span>
+                                    {post.title_has_keyword && (
+                                      <Badge variant="outline" className="text-green-600 border-green-300">
+                                        제목에 키워드 포함
+                                      </Badge>
+                                    )}
+                                    {post.has_map && (
+                                      <Badge variant="outline" className="text-blue-600 border-blue-300">
+                                        지도 포함
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
+                                <Badge
+                                  variant="outline"
+                                  className={
+                                    post.data_quality === 'high' ? 'text-green-600 border-green-300' :
+                                    post.data_quality === 'medium' ? 'text-yellow-600 border-yellow-300' :
+                                    'text-red-600 border-red-300'
+                                  }
+                                >
+                                  {post.data_quality === 'high' ? '고품질' :
+                                   post.data_quality === 'medium' ? '중품질' : '저품질'}
+                                </Badge>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* 카테고리 미선택 안내 */}
+          {!resultsCategory && (
+            <div className="text-center py-12 text-muted-foreground">
+              <Eye className="h-12 w-12 mx-auto mb-4 opacity-30" />
+              <p>카테고리를 선택하여 분석 결과를 확인하세요</p>
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

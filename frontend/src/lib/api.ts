@@ -611,6 +611,23 @@ export const topPostsAPI = {
   getStats: async () => {
     const response = await api.get('/api/v1/top-posts/stats')
     return response.data
+  },
+
+  // 분석된 글 목록 조회
+  getAnalyzedPosts: async (params?: {
+    category?: string
+    keyword?: string
+    limit?: number
+    offset?: number
+  }) => {
+    const response = await api.get('/api/v1/top-posts/analyzed-posts', { params })
+    return response.data
+  },
+
+  // 카테고리별 공통점 요약
+  getPatternsSummary: async (category: string) => {
+    const response = await api.get(`/api/v1/top-posts/patterns-summary/${category}`)
+    return response.data
   }
 }
 
