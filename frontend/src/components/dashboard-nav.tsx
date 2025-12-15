@@ -17,7 +17,12 @@ import {
   Tags,
   Save,
   TrendingUp,
-  CreditCard
+  CreditCard,
+  Calendar,
+  FileBarChart,
+  Share2,
+  CircleDollarSign,
+  MapPin
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -48,14 +53,34 @@ export function DashboardNav() {
       icon: Save,
     },
     {
-      href: '/dashboard/analytics',
-      label: '분석',
-      icon: BarChart3,
+      href: '/dashboard/schedule',
+      label: '예약발행',
+      icon: Calendar,
+    },
+    {
+      href: '/dashboard/reports',
+      label: '리포트',
+      icon: FileBarChart,
+    },
+    {
+      href: '/dashboard/sns',
+      label: 'SNS',
+      icon: Share2,
     },
     {
       href: '/dashboard/top-post-analysis',
       label: '상위노출',
       icon: TrendingUp,
+    },
+    {
+      href: '/dashboard/roi',
+      label: 'ROI',
+      icon: CircleDollarSign,
+    },
+    {
+      href: '/dashboard/place',
+      label: '플레이스',
+      icon: MapPin,
     },
     {
       href: '/dashboard/subscription',

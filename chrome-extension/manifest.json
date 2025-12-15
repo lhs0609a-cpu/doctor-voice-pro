@@ -46,7 +46,7 @@
       "all_frames": true
     },
     {
-      "matches": ["https://nid.naver.com/*", "https://www.naver.com/*", "https://naver.com/*"],
+      "matches": ["https://nid.naver.com/*"],
       "js": ["content-login.js"],
       "run_at": "document_idle"
     },

@@ -842,4 +842,1241 @@ export const paymentAPI = {
   }
 }
 
+// ==================== Schedule API ====================
+
+export type ScheduleType = 'one_time' | 'recurring'
+export type RecurrencePattern = 'daily' | 'weekly' | 'monthly'
+export type ScheduleStatus = 'active' | 'paused' | 'completed' | 'cancelled'
+
+export interface Schedule {
+  id: string
+  name: string | null
+  schedule_type: ScheduleType
+  scheduled_time: string
+  scheduled_date: string | null
+  post_id: string | null
+  post_title: string | null
+  recurrence_pattern: RecurrencePattern | null
+  days_of_week: number[] | null
+  day_of_month: number | null
+  category_no: string | null
+  open_type: string
+  auto_hashtags: boolean
+  status: ScheduleStatus
+  last_executed_at: string | null
+  next_execution_at: string | null
+  execution_count: number
+  max_executions: number | null
+  created_at: string
+}
+
+export interface ScheduleExecution {
+  id: string
+  schedule_id: string
+  post_id: string | null
+  status: 'pending' | 'success' | 'failed'
+  executed_at: string
+  completed_at: string | null
+  naver_post_url: string | null
+  error_message: string | null
+}
+
+export interface OptimalTime {
+  day_of_week: number
+  day_name: string
+  recommended_hour: number
+  recommended_minute: number
+  engagement_score: number
+  confidence_score: number
+}
+
+export interface UpcomingPost {
+  schedule_id: string
+  schedule_name: string | null
+  next_execution_at: string
+  post_id: string | null
+  post_title: string | null
+  schedule_type: string
+  recurrence_pattern: string | null
+}
+
+export const scheduleAPI = {
+  // 예약 생성
+  create: async (data: {
+    name?: string
+    schedule_type: ScheduleType
+    scheduled_time: string
+    scheduled_date?: string
+    post_id?: string
+    recurrence_pattern?: RecurrencePattern
+    days_of_week?: number[]
+    day_of_month?: number
+    category_no?: string
+    open_type?: string
+    auto_hashtags?: boolean
+    max_executions?: number
+  }): Promise<Schedule> => {
+    const response = await api.post('/api/v1/schedules/', data)
+    return response.data
+  },
+
+  // 예약 목록 조회
+  getList: async (params?: {
+    status?: ScheduleStatus
+    limit?: number
+    offset?: number
+  }): Promise<Schedule[]> => {
+    const response = await api.get('/api/v1/schedules/', { params })
+    return response.data
+  },
+
+  // 예약 상세 조회
+  get: async (scheduleId: string): Promise<Schedule> => {
+    const response = await api.get(`/api/v1/schedules/${scheduleId}`)
+    return response.data
+  },
+
+  // 예약 수정
+  update: async (scheduleId: string, data: Partial<Schedule>): Promise<Schedule> => {
+    const response = await api.put(`/api/v1/schedules/${scheduleId}`, data)
+    return response.data
+  },
+
+  // 예약 삭제
+  delete: async (scheduleId: string): Promise<void> => {
+    await api.delete(`/api/v1/schedules/${scheduleId}`)
+  },
+
+  // 예약 토글 (활성화/비활성화)
+  toggle: async (scheduleId: string): Promise<Schedule> => {
+    const response = await api.post(`/api/v1/schedules/${scheduleId}/toggle`)
+    return response.data
+  },
+
+  // 실행 이력 조회
+  getExecutions: async (scheduleId: string, params?: {
+    limit?: number
+    offset?: number
+  }): Promise<ScheduleExecution[]> => {
+    const response = await api.get(`/api/v1/schedules/${scheduleId}/executions`, { params })
+    return response.data
+  },
+
+  // 예정된 발행 목록
+  getUpcoming: async (params?: {
+    days?: number
+    limit?: number
+  }): Promise<UpcomingPost[]> => {
+    const response = await api.get('/api/v1/schedules/upcoming', { params })
+    return response.data
+  },
+
+  // 최적 시간 추천
+  getOptimalTimes: async (category?: string): Promise<OptimalTime[]> => {
+    const response = await api.get('/api/v1/schedules/optimal-times', {
+      params: { category }
+    })
+    return response.data
+  },
+}
+
+// ==================== Report API ====================
+
+export type ReportType = 'monthly' | 'weekly' | 'custom'
+export type ReportFormat = 'pdf' | 'excel' | 'html'
+export type ReportStatus = 'pending' | 'generating' | 'completed' | 'failed'
+
+export interface Report {
+  id: string
+  report_type: ReportType
+  title: string
+  period_start: string
+  period_end: string
+  status: ReportStatus
+  generated_at: string | null
+  pdf_url: string | null
+  excel_url: string | null
+  email_sent: boolean
+  created_at: string
+  report_data?: ReportData
+}
+
+export interface ReportData {
+  summary: {
+    total_posts: number
+    published_posts: number
+    draft_posts: number
+    publish_rate: number
+    avg_persuasion_score: number
+    total_views: number
+    total_inquiries: number
+    avg_views_per_post: number
+  }
+  persuasion_trend: {
+    date: string
+    score: number
+    count: number
+  }[]
+  keyword_analysis: {
+    total_unique_keywords: number
+    top_keywords: { keyword: string; count: number }[]
+  }
+  top_posts: {
+    id: string
+    title: string
+    persuasion_score: number
+    status: string
+    views: number
+    created_at: string
+  }[]
+  recommendations: {
+    type: string
+    priority: string
+    title: string
+    description: string
+    action: string
+  }[]
+}
+
+export interface ReportSubscriptionSettings {
+  auto_monthly: boolean
+  auto_weekly: boolean
+  email_enabled: boolean
+  email_recipients: string[] | null
+  preferred_format: ReportFormat
+}
+
+export const reportAPI = {
+  // 리포트 생성
+  generate: async (data: {
+    report_type: ReportType
+    period_start: string
+    period_end: string
+    title?: string
+  }): Promise<Report> => {
+    const response = await api.post('/api/v1/reports/generate', data)
+    return response.data
+  },
+
+  // 월간 리포트 생성
+  generateMonthly: async (year: number, month: number): Promise<Report> => {
+    const response = await api.post('/api/v1/reports/generate/monthly', { year, month })
+    return response.data
+  },
+
+  // 주간 리포트 생성
+  generateWeekly: async (weekStart?: string): Promise<Report> => {
+    const response = await api.post('/api/v1/reports/generate/weekly', null, {
+      params: { week_start: weekStart }
+    })
+    return response.data
+  },
+
+  // 리포트 목록 조회
+  getList: async (params?: {
+    report_type?: ReportType
+    limit?: number
+    offset?: number
+  }): Promise<Report[]> => {
+    const response = await api.get('/api/v1/reports/', { params })
+    return response.data
+  },
+
+  // 리포트 상세 조회
+  get: async (reportId: string): Promise<Report> => {
+    const response = await api.get(`/api/v1/reports/${reportId}`)
+    return response.data
+  },
+
+  // 리포트 삭제
+  delete: async (reportId: string): Promise<void> => {
+    await api.delete(`/api/v1/reports/${reportId}`)
+  },
+
+  // Excel 다운로드
+  downloadExcel: async (reportId: string): Promise<Blob> => {
+    const response = await api.get(`/api/v1/reports/${reportId}/download/excel`, {
+      responseType: 'blob'
+    })
+    return response.data
+  },
+
+  // 구독 설정 조회
+  getSubscription: async (): Promise<ReportSubscriptionSettings> => {
+    const response = await api.get('/api/v1/reports/subscription')
+    return response.data
+  },
+
+  // 구독 설정 업데이트
+  updateSubscription: async (data: Partial<ReportSubscriptionSettings>): Promise<ReportSubscriptionSettings> => {
+    const response = await api.put('/api/v1/reports/subscription', data)
+    return response.data
+  },
+}
+
+// ==================== SNS API ====================
+
+export type SNSPlatform = 'instagram' | 'facebook' | 'threads' | 'twitter'
+export type SNSPostStatus = 'draft' | 'scheduled' | 'publishing' | 'published' | 'failed'
+export type SNSContentType = 'post' | 'reel' | 'story' | 'short'
+
+export interface SNSConnection {
+  id: string
+  platform: SNSPlatform
+  platform_username: string | null
+  profile_image_url: string | null
+  page_name: string | null
+  is_active: boolean
+  connection_status: string
+  created_at: string
+}
+
+export interface SNSPost {
+  id: string
+  platform: SNSPlatform
+  content_type: SNSContentType
+  caption: string | null
+  hashtags: string[] | null
+  media_urls: string[] | null
+  script: string | null
+  script_duration: number | null
+  status: SNSPostStatus
+  scheduled_at: string | null
+  published_at: string | null
+  platform_post_url: string | null
+  error_message: string | null
+  original_post_id: string | null
+  created_at: string
+}
+
+export interface SNSConvertResult {
+  caption: string
+  hashtags: string[]
+  original_post_id: string
+  original_title: string
+  platform: string
+  content_type: string
+}
+
+export interface ShortformScript {
+  script: string
+  duration: number
+  sections: {
+    time: string
+    type: string
+    text: string
+  }[]
+  hooks: string[]
+  cta: string[]
+  original_post_id: string
+}
+
+export interface HashtagRecommendation {
+  hashtag: string
+  category: string
+  popularity_score: number
+  engagement_rate: number
+  priority: number
+}
+
+export const snsAPI = {
+  // OAuth 인증 URL 생성
+  getAuthUrl: async (platform: SNSPlatform, redirectUri: string): Promise<{ auth_url: string; state: string }> => {
+    const response = await api.get(`/api/v1/sns/${platform}/auth/url`, {
+      params: { redirect_uri: redirectUri }
+    })
+    return response.data
+  },
+
+  // OAuth 콜백 처리
+  authCallback: async (platform: SNSPlatform, data: {
+    code: string
+    state: string
+    redirect_uri: string
+  }): Promise<SNSConnection> => {
+    const response = await api.post(`/api/v1/sns/${platform}/auth/callback`, data)
+    return response.data
+  },
+
+  // 연동 목록 조회
+  getConnections: async (): Promise<SNSConnection[]> => {
+    const response = await api.get('/api/v1/sns/connections')
+    return response.data
+  },
+
+  // 연동 해제
+  disconnect: async (platform: SNSPlatform): Promise<void> => {
+    await api.delete(`/api/v1/sns/connections/${platform}`)
+  },
+
+  // 블로그 → SNS 변환
+  convert: async (data: {
+    post_id: string
+    platform: SNSPlatform
+    content_type?: SNSContentType
+  }): Promise<SNSConvertResult> => {
+    const response = await api.post('/api/v1/sns/convert', data)
+    return response.data
+  },
+
+  // 숏폼 스크립트 생성
+  generateScript: async (data: {
+    post_id: string
+    duration?: number
+  }): Promise<ShortformScript> => {
+    const response = await api.post('/api/v1/sns/generate-script', data)
+    return response.data
+  },
+
+  // 해시태그 추천
+  getHashtagRecommendations: async (category: string, platform?: SNSPlatform): Promise<HashtagRecommendation[]> => {
+    const response = await api.get('/api/v1/sns/hashtag-recommendations', {
+      params: { category, platform }
+    })
+    return response.data
+  },
+
+  // SNS 포스트 생성
+  createPost: async (data: {
+    platform: SNSPlatform
+    caption: string
+    content_type?: SNSContentType
+    hashtags?: string[]
+    media_urls?: string[]
+    original_post_id?: string
+    script?: string
+    script_duration?: number
+  }): Promise<SNSPost> => {
+    const response = await api.post('/api/v1/sns/posts', data)
+    return response.data
+  },
+
+  // SNS 포스트 목록 조회
+  getPosts: async (params?: {
+    platform?: SNSPlatform
+    status?: SNSPostStatus
+    limit?: number
+    offset?: number
+  }): Promise<SNSPost[]> => {
+    const response = await api.get('/api/v1/sns/posts', { params })
+    return response.data
+  },
+
+  // SNS 포스트 상세 조회
+  getPost: async (snsPostId: string): Promise<SNSPost> => {
+    const response = await api.get(`/api/v1/sns/posts/${snsPostId}`)
+    return response.data
+  },
+
+  // SNS 포스트 수정
+  updatePost: async (snsPostId: string, data: Partial<SNSPost>): Promise<SNSPost> => {
+    const response = await api.put(`/api/v1/sns/posts/${snsPostId}`, data)
+    return response.data
+  },
+
+  // SNS 포스트 삭제
+  deletePost: async (snsPostId: string): Promise<void> => {
+    await api.delete(`/api/v1/sns/posts/${snsPostId}`)
+  },
+
+  // SNS 포스트 발행
+  publishPost: async (snsPostId: string): Promise<{ success: boolean; platform_post_url?: string; error?: string }> => {
+    const response = await api.post(`/api/v1/sns/posts/${snsPostId}/publish`)
+    return response.data
+  },
+}
+
+// ==================== ROI API ====================
+
+export type EventType = 'view' | 'inquiry' | 'visit' | 'reservation'
+
+export interface ConversionEvent {
+  id: string
+  event_type: EventType
+  event_date: string
+  keyword: string | null
+  source: string | null
+  channel: string | null
+  revenue: number | null
+  cost: number | null
+  created_at: string
+}
+
+export interface ROIDashboard {
+  period: { start_date: string; end_date: string }
+  stats: {
+    total_views: number
+    total_inquiries: number
+    total_visits: number
+    total_reservations: number
+    total_revenue: number
+    total_cost: number
+  }
+  channel_breakdown: { channel: string; views: number; inquiries: number; visits: number; reservations: number; revenue: number }[]
+  source_breakdown: { source: string; count: number; revenue: number }[]
+  daily_trend: { date: string; views: number; inquiries: number; visits: number; reservations: number }[]
+  funnel: {
+    stages: { name: string; count: number; rate: number }[]
+    conversion_rates: {
+      view_to_inquiry: number
+      inquiry_to_visit: number
+      visit_to_reservation: number
+      overall: number
+    }
+  }
+  top_keywords: { keyword: string; total_events: number; conversions: number; revenue: number }[]
+  roi_percentage: number
+}
+
+export interface KeywordROI {
+  keyword: string
+  views: number
+  inquiries: number
+  visits: number
+  reservations: number
+  revenue: number
+  cost: number
+  roi_percentage: number
+  conversion_rate: number
+}
+
+export interface MarketingCost {
+  id: string
+  date: string
+  channel: string
+  cost: number
+  description: string | null
+  cost_type: string | null
+  campaign_name: string | null
+}
+
+export const roiAPI = {
+  // 전환 이벤트 기록
+  createEvent: async (data: {
+    event_type: EventType
+    event_date: string
+    keyword?: string
+    post_id?: string
+    source?: string
+    channel?: string
+    revenue?: number
+    cost?: number
+    customer_id?: string
+    notes?: string
+  }) => {
+    const response = await api.post('/api/v1/roi/events', data)
+    return response.data
+  },
+
+  // 대량 이벤트 기록
+  createBulkEvents: async (events: any[]) => {
+    const response = await api.post('/api/v1/roi/events/bulk', { events })
+    return response.data
+  },
+
+  // 이벤트 조회
+  getEvents: async (params?: {
+    start_date?: string
+    end_date?: string
+    event_type?: EventType
+    source?: string
+    channel?: string
+    keyword?: string
+    limit?: number
+    offset?: number
+  }): Promise<ConversionEvent[]> => {
+    const response = await api.get('/api/v1/roi/events', { params })
+    return response.data
+  },
+
+  // 대시보드
+  getDashboard: async (params?: { start_date?: string; end_date?: string }): Promise<ROIDashboard> => {
+    const response = await api.get('/api/v1/roi/dashboard', { params })
+    return response.data
+  },
+
+  // 키워드별 ROI
+  getKeywordROI: async (params?: { start_date?: string; end_date?: string; limit?: number }): Promise<KeywordROI[]> => {
+    const response = await api.get('/api/v1/roi/keywords', { params })
+    return response.data
+  },
+
+  // 전환 퍼널
+  getFunnel: async (params?: { start_date?: string; end_date?: string }) => {
+    const response = await api.get('/api/v1/roi/funnel', { params })
+    return response.data
+  },
+
+  // 트렌드
+  getTrends: async (months: number = 6) => {
+    const response = await api.get('/api/v1/roi/trends', { params: { months } })
+    return response.data
+  },
+
+  // 마케팅 비용 추가
+  addCost: async (data: {
+    date: string
+    channel: string
+    cost: number
+    description?: string
+    cost_type?: string
+    campaign_name?: string
+  }) => {
+    const response = await api.post('/api/v1/roi/costs', data)
+    return response.data
+  },
+
+  // 마케팅 비용 조회
+  getCosts: async (params?: { start_date?: string; end_date?: string }): Promise<MarketingCost[]> => {
+    const response = await api.get('/api/v1/roi/costs', { params })
+    return response.data
+  },
+
+  // 월별 요약 계산
+  calculateMonthly: async (year: number, month: number) => {
+    const response = await api.post('/api/v1/roi/calculate', null, { params: { year, month } })
+    return response.data
+  },
+}
+
+// ==================== Place API ====================
+
+export type OptimizationStatus = 'pass' | 'fail' | 'warning'
+
+export interface NaverPlace {
+  id: string
+  place_id: string
+  place_name: string
+  place_url: string | null
+  category: string | null
+  sub_category: string | null
+  address: string | null
+  road_address: string | null
+  phone: string | null
+  business_hours: Record<string, string> | null
+  description: string | null
+  tags: string[]
+  images: string[]
+  review_count: number
+  visitor_review_count: number
+  blog_review_count: number
+  avg_rating: number
+  save_count: number
+  optimization_score: number
+  optimization_details: Record<string, any>
+  is_connected: boolean
+  last_synced_at: string | null
+  created_at: string
+}
+
+export interface OptimizationCheck {
+  type: string
+  name: string
+  status: OptimizationStatus
+  score: number
+  message: string | null
+  suggestion: string | null
+  priority: number
+}
+
+export interface PlaceDescription {
+  id: string
+  description: string
+  tone: string
+  keywords_used: string[]
+}
+
+export const placeAPI = {
+  // 플레이스 연동
+  connect: async (data: {
+    place_id: string
+    place_name: string
+    place_url?: string
+    category?: string
+    sub_category?: string
+    address?: string
+    road_address?: string
+    phone?: string
+    business_hours?: Record<string, string>
+    description?: string
+    tags?: string[]
+  }) => {
+    const response = await api.post('/api/v1/place/connect', data)
+    return response.data
+  },
+
+  // 플레이스 목록
+  getList: async (): Promise<NaverPlace[]> => {
+    const response = await api.get('/api/v1/place/')
+    return response.data
+  },
+
+  // 플레이스 정보
+  getInfo: async (place_db_id?: string): Promise<NaverPlace> => {
+    const response = await api.get('/api/v1/place/info', { params: { place_db_id } })
+    return response.data
+  },
+
+  // 플레이스 수정
+  update: async (place_db_id: string, data: Partial<NaverPlace>) => {
+    const response = await api.put(`/api/v1/place/info/${place_db_id}`, data)
+    return response.data
+  },
+
+  // 최적화 점수
+  getOptimization: async (place_db_id: string): Promise<{ optimization_score: number; checks: OptimizationCheck[] }> => {
+    const response = await api.get('/api/v1/place/optimization', { params: { place_db_id } })
+    return response.data
+  },
+
+  // 최적화 재계산
+  refreshOptimization: async (place_db_id: string) => {
+    const response = await api.post('/api/v1/place/optimization/refresh', null, { params: { place_db_id } })
+    return response.data
+  },
+
+  // AI 소개글 생성
+  generateDescription: async (place_db_id: string, data?: { tone?: string; keywords?: string[]; specialty_focus?: string }): Promise<PlaceDescription> => {
+    const response = await api.post('/api/v1/place/generate-description', data || {}, { params: { place_db_id } })
+    return response.data
+  },
+
+  // 태그 추천
+  getTagRecommendations: async (place_db_id: string) => {
+    const response = await api.get('/api/v1/place/tag-recommendations', { params: { place_db_id } })
+    return response.data
+  },
+}
+
+// ==================== Reviews API ====================
+
+export type Sentiment = 'positive' | 'negative' | 'neutral'
+
+export interface PlaceReview {
+  id: string
+  review_id: string
+  author_name: string | null
+  rating: number | null
+  content: string | null
+  images: string[]
+  sentiment: Sentiment | null
+  sentiment_score: number
+  keywords: string[]
+  is_replied: boolean
+  reply_content: string | null
+  replied_at: string | null
+  is_urgent: boolean
+  needs_attention: boolean
+  review_type: string
+  visit_date: string | null
+  written_at: string | null
+  created_at: string
+}
+
+export interface ReviewAnalytics {
+  period: { start_date: string; end_date: string }
+  summary: {
+    total_reviews: number
+    avg_rating: number
+    replied_count: number
+    reply_rate: number
+  }
+  sentiment_breakdown: { positive: number; negative: number; neutral: number }
+  rating_breakdown: Record<number, number>
+  daily_trend: { date: string; count: number; avg_rating: number }[]
+}
+
+export interface ReviewTemplate {
+  id: string
+  name: string
+  sentiment_type: Sentiment | null
+  category: string | null
+  template_content: string
+  variables: string[]
+  usage_count: number
+  is_default: boolean
+}
+
+export const reviewsAPI = {
+  // 리뷰 목록
+  getList: async (place_db_id: string, params?: {
+    sentiment?: Sentiment
+    is_replied?: boolean
+    is_urgent?: boolean
+    min_rating?: number
+    max_rating?: number
+    start_date?: string
+    end_date?: string
+    search?: string
+    limit?: number
+    offset?: number
+  }): Promise<PlaceReview[]> => {
+    const response = await api.get('/api/v1/reviews/', { params: { place_db_id, ...params } })
+    return response.data
+  },
+
+  // 리뷰 상세
+  get: async (review_db_id: string): Promise<PlaceReview> => {
+    const response = await api.get(`/api/v1/reviews/${review_db_id}`)
+    return response.data
+  },
+
+  // 리뷰 답변
+  reply: async (review_db_id: string, reply_content: string) => {
+    const response = await api.post(`/api/v1/reviews/${review_db_id}/reply`, { reply_content })
+    return response.data
+  },
+
+  // AI 답변 생성
+  generateReply: async (review_db_id: string, tone?: string) => {
+    const response = await api.post(`/api/v1/reviews/${review_db_id}/generate-reply`, { tone })
+    return response.data
+  },
+
+  // 리뷰 분석
+  getAnalytics: async (place_db_id: string, params?: { start_date?: string; end_date?: string }): Promise<ReviewAnalytics> => {
+    const response = await api.get('/api/v1/reviews/analytics/summary', { params: { place_db_id, ...params } })
+    return response.data
+  },
+
+  // 알림 설정 조회
+  getAlertSettings: async (place_db_id?: string) => {
+    const response = await api.get('/api/v1/reviews/alerts/settings', { params: { place_db_id } })
+    return response.data
+  },
+
+  // 알림 설정 수정
+  updateAlertSettings: async (data: {
+    place_db_id: string
+    alert_type: string
+    is_active?: boolean
+    channels?: string[]
+    keywords?: string[]
+    rating_threshold?: number
+  }) => {
+    const response = await api.put('/api/v1/reviews/alerts/settings', data)
+    return response.data
+  },
+
+  // 템플릿 조회
+  getTemplates: async (sentiment_type?: Sentiment): Promise<ReviewTemplate[]> => {
+    const response = await api.get('/api/v1/reviews/templates/list', { params: { sentiment_type } })
+    return response.data
+  },
+
+  // 템플릿 생성
+  createTemplate: async (data: {
+    name: string
+    template_content: string
+    sentiment_type?: Sentiment
+    category?: string
+    variables?: string[]
+  }) => {
+    const response = await api.post('/api/v1/reviews/templates', data)
+    return response.data
+  },
+}
+
+// ==================== Competitors API ====================
+
+export interface Competitor {
+  id: string
+  place_id: string
+  place_name: string
+  place_url: string | null
+  category: string | null
+  address: string | null
+  distance_km: number | null
+  review_count: number
+  avg_rating: number
+  visitor_review_count: number
+  blog_review_count: number
+  is_active: boolean
+  priority: number
+  is_auto_detected: boolean
+  similarity_score: number
+  strengths: string[]
+  weaknesses: string[]
+  notes: string | null
+  last_synced_at: string | null
+  created_at: string
+}
+
+export interface CompetitorComparison {
+  my_stats: Record<string, any>
+  competitor_stats: Record<string, any>[]
+  ranking: { total_compared: number; rating_rank: number; review_rank: number }
+  comparison: { rating_vs_avg: number; reviews_vs_avg: number }
+  analysis_date: string
+}
+
+export interface CompetitorAlert {
+  id: string
+  competitor_id: string
+  alert_type: string
+  title: string
+  message: string
+  data: Record<string, any>
+  severity: string
+  is_read: boolean
+  created_at: string
+}
+
+export const competitorsAPI = {
+  // 경쟁사 목록
+  getList: async (is_active?: boolean): Promise<Competitor[]> => {
+    const response = await api.get('/api/v1/competitors/', { params: { is_active } })
+    return response.data
+  },
+
+  // 경쟁사 추가
+  add: async (data: {
+    place_id: string
+    place_name: string
+    place_url?: string
+    category?: string
+    address?: string
+    phone?: string
+    distance_km?: number
+    priority?: number
+    notes?: string
+  }) => {
+    const response = await api.post('/api/v1/competitors/', data)
+    return response.data
+  },
+
+  // 경쟁사 제거
+  remove: async (competitor_id: string) => {
+    const response = await api.delete(`/api/v1/competitors/${competitor_id}`)
+    return response.data
+  },
+
+  // 경쟁사 상세
+  get: async (competitor_id: string): Promise<Competitor> => {
+    const response = await api.get(`/api/v1/competitors/${competitor_id}`)
+    return response.data
+  },
+
+  // 경쟁사 자동 탐지
+  autoDetect: async (place_db_id: string, radius_km?: number, limit?: number) => {
+    const response = await api.post('/api/v1/competitors/auto-detect', null, {
+      params: { place_db_id, radius_km, limit }
+    })
+    return response.data
+  },
+
+  // 비교 분석
+  getComparison: async (my_place_db_id: string, competitor_ids?: string[]): Promise<CompetitorComparison> => {
+    const response = await api.get('/api/v1/competitors/comparison/summary', {
+      params: { my_place_db_id, competitor_ids: competitor_ids?.join(',') }
+    })
+    return response.data
+  },
+
+  // 경쟁사 리뷰 분석
+  getReviews: async (competitor_id: string) => {
+    const response = await api.get(`/api/v1/competitors/${competitor_id}/reviews`)
+    return response.data
+  },
+
+  // 주간 리포트
+  getWeeklyReport: async (week_start?: string) => {
+    const response = await api.get('/api/v1/competitors/report/weekly', { params: { week_start } })
+    return response.data
+  },
+
+  // 주간 리포트 생성
+  generateWeeklyReport: async (place_db_id: string) => {
+    const response = await api.post('/api/v1/competitors/report/generate', null, { params: { place_db_id } })
+    return response.data
+  },
+
+  // 알림 조회
+  getAlerts: async (unread_only?: boolean, limit?: number): Promise<CompetitorAlert[]> => {
+    const response = await api.get('/api/v1/competitors/alerts/list', { params: { unread_only, limit } })
+    return response.data
+  },
+
+  // 알림 읽음 처리
+  markAlertRead: async (alert_id: string) => {
+    const response = await api.post(`/api/v1/competitors/alerts/${alert_id}/read`)
+    return response.data
+  },
+}
+
+// ==================== Rankings API ====================
+
+export interface PlaceKeyword {
+  id: string
+  keyword: string
+  category: string | null
+  priority: number
+  current_rank: number | null
+  rank_change: number
+  trend: 'up' | 'down' | 'stable' | 'new'
+  best_rank: number | null
+  worst_rank: number | null
+  estimated_search_volume: number
+  competition_level: string | null
+  is_active: boolean
+  check_frequency: string
+  last_checked_at: string | null
+  created_at: string
+}
+
+export interface RankingHistory {
+  id: string
+  rank: number | null
+  total_results: number
+  top_competitors: any[]
+  checked_at: string
+}
+
+export interface RankingSummary {
+  summary_date: string
+  total_keywords: number
+  keywords_in_top10: number
+  keywords_in_top30: number
+  keywords_out_of_rank: number
+  avg_rank: number | null
+  best_rank: number | null
+  worst_rank: number | null
+  improved_count: number
+  declined_count: number
+  stable_count: number
+  keywords: { keyword: string; rank: number | null; change: number | null; trend: string | null }[]
+}
+
+export interface RankingAlert {
+  id: string
+  keyword_id: string
+  alert_type: string
+  previous_rank: number | null
+  current_rank: number | null
+  change: number
+  message: string
+  is_read: boolean
+  created_at: string
+}
+
+export const rankingsAPI = {
+  // 키워드 목록
+  getKeywords: async (place_db_id?: string, is_active?: boolean): Promise<PlaceKeyword[]> => {
+    const response = await api.get('/api/v1/rankings/keywords', { params: { place_db_id, is_active } })
+    return response.data
+  },
+
+  // 키워드 추가
+  addKeyword: async (data: { place_db_id: string; keyword: string; category?: string; priority?: number }) => {
+    const response = await api.post('/api/v1/rankings/keywords', data)
+    return response.data
+  },
+
+  // 키워드 제거
+  removeKeyword: async (keyword_id: string) => {
+    const response = await api.delete(`/api/v1/rankings/keywords/${keyword_id}`)
+    return response.data
+  },
+
+  // 순위 히스토리
+  getHistory: async (keyword_id: string, days?: number): Promise<RankingHistory[]> => {
+    const response = await api.get(`/api/v1/rankings/history/${keyword_id}`, { params: { days } })
+    return response.data
+  },
+
+  // 현재 순위
+  getCurrent: async (place_db_id?: string) => {
+    const response = await api.get('/api/v1/rankings/current', { params: { place_db_id } })
+    return response.data
+  },
+
+  // 순위 체크
+  check: async (data: { keyword_id: string; rank?: number; total_results?: number; top_competitors?: any[] }) => {
+    const response = await api.post('/api/v1/rankings/check', data)
+    return response.data
+  },
+
+  // 키워드 추천
+  getRecommendations: async (place_db_id: string, limit?: number) => {
+    const response = await api.get('/api/v1/rankings/recommendations', { params: { place_db_id, limit } })
+    return response.data
+  },
+
+  // 요약
+  getSummary: async (place_db_id: string): Promise<RankingSummary> => {
+    const response = await api.get('/api/v1/rankings/summary', { params: { place_db_id } })
+    return response.data
+  },
+
+  // 알림 조회
+  getAlerts: async (unread_only?: boolean, limit?: number): Promise<RankingAlert[]> => {
+    const response = await api.get('/api/v1/rankings/alerts', { params: { unread_only, limit } })
+    return response.data
+  },
+}
+
+// ==================== Campaigns API ====================
+
+export type CampaignStatus = 'draft' | 'active' | 'paused' | 'ended'
+export type RewardType = 'discount' | 'gift' | 'point' | 'cash' | 'coupon'
+
+export interface ReviewCampaign {
+  id: string
+  name: string
+  description: string | null
+  terms: string | null
+  reward_type: RewardType
+  reward_description: string
+  reward_value: number | null
+  start_date: string
+  end_date: string
+  status: CampaignStatus
+  target_count: number
+  current_count: number
+  verified_count: number
+  min_rating: number
+  min_content_length: number
+  require_photo: boolean
+  short_url: string | null
+  qr_code_url: string | null
+  landing_page_url: string | null
+  total_budget: number
+  spent_budget: number
+  total_views: number
+  total_clicks: number
+  created_at: string
+  updated_at: string
+}
+
+export interface CampaignParticipation {
+  id: string
+  participation_code: string
+  customer_name: string | null
+  source: string
+  review_url: string | null
+  review_rating: number | null
+  is_verified: boolean
+  verified_at: string | null
+  reward_given: boolean
+  reward_given_at: string | null
+  status: string
+  participated_at: string
+}
+
+export interface CampaignStats {
+  campaign: { id: string; name: string; status: string; start_date: string; end_date: string }
+  participation: { total: number; verified: number; rewarded: number; pending: number; verification_rate: number }
+  progress: { target_count: number; current_count: number; progress_percentage: number }
+  budget: { total: number; spent: number; remaining: number; usage_percentage: number }
+  reviews: { avg_rating: number }
+  source_breakdown: Record<string, number>
+  traffic: { views: number; clicks: number; conversion_rate: number }
+}
+
+export const campaignsAPI = {
+  // 캠페인 목록
+  getList: async (status?: CampaignStatus, place_db_id?: string): Promise<ReviewCampaign[]> => {
+    const response = await api.get('/api/v1/campaigns/', { params: { status, place_db_id } })
+    return response.data
+  },
+
+  // 캠페인 생성
+  create: async (data: {
+    name: string
+    reward_type: RewardType
+    reward_description: string
+    start_date: string
+    end_date: string
+    place_db_id?: string
+    description?: string
+    terms?: string
+    reward_value?: number
+    target_count?: number
+    min_rating?: number
+    min_content_length?: number
+    require_photo?: boolean
+    total_budget?: number
+  }) => {
+    const response = await api.post('/api/v1/campaigns/', data)
+    return response.data
+  },
+
+  // 캠페인 상세
+  get: async (campaign_id: string): Promise<ReviewCampaign> => {
+    const response = await api.get(`/api/v1/campaigns/${campaign_id}`)
+    return response.data
+  },
+
+  // 캠페인 수정
+  update: async (campaign_id: string, data: Partial<ReviewCampaign>) => {
+    const response = await api.put(`/api/v1/campaigns/${campaign_id}`, data)
+    return response.data
+  },
+
+  // 캠페인 활성화
+  activate: async (campaign_id: string) => {
+    const response = await api.post(`/api/v1/campaigns/${campaign_id}/activate`)
+    return response.data
+  },
+
+  // 캠페인 일시정지
+  pause: async (campaign_id: string) => {
+    const response = await api.post(`/api/v1/campaigns/${campaign_id}/pause`)
+    return response.data
+  },
+
+  // 캠페인 종료
+  end: async (campaign_id: string) => {
+    const response = await api.post(`/api/v1/campaigns/${campaign_id}/end`)
+    return response.data
+  },
+
+  // 캠페인 삭제
+  delete: async (campaign_id: string) => {
+    const response = await api.delete(`/api/v1/campaigns/${campaign_id}`)
+    return response.data
+  },
+
+  // QR 코드 생성
+  generateQR: async (campaign_id: string) => {
+    const response = await api.get(`/api/v1/campaigns/${campaign_id}/qr`)
+    return response.data
+  },
+
+  // 캠페인 통계
+  getStats: async (campaign_id: string): Promise<CampaignStats> => {
+    const response = await api.get(`/api/v1/campaigns/${campaign_id}/stats`)
+    return response.data
+  },
+
+  // 참여 목록
+  getParticipations: async (campaign_id: string, status?: string, limit?: number, offset?: number): Promise<CampaignParticipation[]> => {
+    const response = await api.get(`/api/v1/campaigns/${campaign_id}/participations`, { params: { status, limit, offset } })
+    return response.data
+  },
+
+  // 참여 검증
+  verifyParticipation: async (participation_id: string, data: {
+    review_url?: string
+    review_content?: string
+    review_rating?: number
+    verification_method?: string
+  }) => {
+    const response = await api.post(`/api/v1/campaigns/participations/${participation_id}/verify`, data)
+    return response.data
+  },
+
+  // 보상 지급
+  giveReward: async (participation_id: string, reward_amount?: number, notes?: string) => {
+    const response = await api.post(`/api/v1/campaigns/participations/${participation_id}/reward`, { reward_amount, notes })
+    return response.data
+  },
+
+  // 템플릿 조회
+  getTemplates: async () => {
+    const response = await api.get('/api/v1/campaigns/templates/list')
+    return response.data
+  },
+}
+
 export default api

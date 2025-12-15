@@ -219,7 +219,7 @@ export default function CreditsPurchasePage() {
                   <Label className="mb-3 block">크레딧 종류</Label>
                   <RadioGroup
                     value={creditType}
-                    onValueChange={(v) => {
+                    onValueChange={(v: string) => {
                       setCreditType(v as 'post' | 'analysis')
                       setSelectedPackage(0)
                       setCustomAmount('')
