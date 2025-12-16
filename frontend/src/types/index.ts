@@ -227,6 +227,7 @@ export interface DoctorProfile {
   user_id: string
   writing_style: WritingStyle | null
   signature_phrases: string[]
+  sample_posts: string[]
   target_audience: TargetAudience | null
   preferred_structure: string
   learned_at: string | null
