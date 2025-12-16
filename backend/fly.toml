@@ -1,0 +1,51 @@
+# fly.toml app configuration file generated for doctor-voice-pro-backend on 2025-11-02T12:34:11+09:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'doctor-voice-pro-backend'
+primary_region = 'nrt'
+
+[build]
+  dockerfile = './Dockerfile'
+
+[env]
+  ALLOWED_ORIGINS = '*'
+  DATABASE_URL = 'sqlite+aiosqlite:////data/doctorvoice.db'
+  DATABASE_URL_SYNC = 'sqlite:////data/doctorvoice.db'
+
+[[mounts]]
+  source = 'doctorvoice_data'
+  destination = '/data'
+  initial_size = '1gb'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false  # AI 생성 중 머신 중지 방지
+  auto_start_machines = true
+  min_machines_running = 1  # 항상 최소 1개 머신 실행
+  processes = ['app']
+
+  # HTTP 타임아웃 설정 (AI 생성 시간 고려 - 5분)
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 50
+    soft_limit = 40
+
+  [http_service.http_options]
+    idle_timeout = 300  # 5분 유휴 타임아웃
+    response_header_timeout = 300  # 5분 응답 헤더 타임아웃
+
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '10s'
+    grace_period = '30s'
+    method = 'GET'
+    path = '/health'
+    protocol = 'http'
+
+[[vm]]
+  cpu_kind = 'shared'
+  cpus = 2
+  memory_mb = 1024

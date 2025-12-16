@@ -1,1 +1,8 @@
 .vercel
+nul
+
+# Sensitive files
+backend/.env.production
+backend/api_key.txt
+*.env.local
+.env
