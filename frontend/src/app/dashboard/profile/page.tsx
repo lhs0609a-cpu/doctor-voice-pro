@@ -14,7 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
-import axios from 'axios'
+import { profileAPI } from '@/lib/api'
 import {
   Save,
   Sliders,
@@ -89,15 +89,7 @@ export default function ProfilePage() {
 
   const loadProfile = async () => {
     try {
-      const token = localStorage.getItem('token')
-      const response = await axios.get(
-        'http://localhost:8000/api/v1/profiles/me',
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      )
-
-      const data: Profile = response.data
+      const data = await profileAPI.get() as Profile
       setProfile(data)
 
       // Load writing style
@@ -112,7 +104,7 @@ export default function ProfilePage() {
       // Load other fields
       setSignaturePhrases(data.signature_phrases || [])
       setSamplePosts(data.sample_posts || [])
-      setPreferredStructure(data.preferred_structure)
+      setPreferredStructure(data.preferred_structure || 'story_problem_solution')
 
       // Load target audience
       if (data.target_audience) {
@@ -131,30 +123,23 @@ export default function ProfilePage() {
   const handleSave = async () => {
     setSaving(true)
     try {
-      const token = localStorage.getItem('token')
-      await axios.put(
-        'http://localhost:8000/api/v1/profiles/me',
-        {
-          writing_style: {
-            formality,
-            friendliness,
-            technical_depth: technicalDepth,
-            storytelling,
-            emotion,
-          },
-          signature_phrases: signaturePhrases,
-          sample_posts: samplePosts,
-          target_audience: {
-            age_range: ageRange || undefined,
-            gender: gender || undefined,
-            concerns,
-          },
-          preferred_structure: preferredStructure,
+      await profileAPI.update({
+        writing_style: {
+          formality,
+          friendliness,
+          technical_depth: technicalDepth,
+          storytelling,
+          emotion,
         },
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      )
+        signature_phrases: signaturePhrases,
+        sample_posts: samplePosts,
+        target_audience: {
+          age_range: ageRange || undefined,
+          gender: gender || undefined,
+          concerns,
+        },
+        preferred_structure: preferredStructure,
+      })
 
       alert('프로필이 저장되었습니다.')
       loadProfile()
@@ -414,12 +399,12 @@ export default function ProfilePage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="gender">성별</Label>
-              <Select value={gender} onValueChange={setGender}>
+              <Select value={gender || 'all'} onValueChange={(val) => setGender(val === 'all' ? '' : val)}>
                 <SelectTrigger>
                   <SelectValue placeholder="선택" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">전체</SelectItem>
+                  <SelectItem value="all">전체</SelectItem>
                   <SelectItem value="male">남성</SelectItem>
                   <SelectItem value="female">여성</SelectItem>
                 </SelectContent>
