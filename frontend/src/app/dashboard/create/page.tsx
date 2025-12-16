@@ -7,8 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { postsAPI } from '@/lib/api'
-import type { Post, WritingStyle, RequestRequirements } from '@/types'
+import { postsAPI, authAPI } from '@/lib/api'
+import type { Post, WritingStyle, RequestRequirements, User } from '@/types'
 import { useAutoSave } from '@/hooks/useAutoSave'
 import { toast } from 'sonner'
 import {
@@ -94,6 +94,7 @@ export default function CreatePostPage() {
     to: '',
   })
   const [topPostRules, setTopPostRules] = useState<any>(null)
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [selectedPostIndex, setSelectedPostIndex] = useState(0)
   const [generationProgress, setGenerationProgress] = useState<{
     total: number
@@ -109,6 +110,19 @@ export default function CreatePostPage() {
     delay: 3000,
     enabled: !generatedPost, // Only auto-save before generation
   })
+
+  // Fetch current user
+  useEffect(() => {
+    const fetchUser = async () => {
+      try {
+        const user = await authAPI.getMe()
+        setCurrentUser(user)
+      } catch (error) {
+        console.error('Failed to fetch user:', error)
+      }
+    }
+    fetchUser()
+  }, [])
 
   // Check Claude API status
   useEffect(() => {
@@ -573,8 +587,8 @@ export default function CreatePostPage() {
 
         <TabsContent value="blog" className="space-y-6 mt-6">{/* Blog content starts here */}
 
-      {/* GPT API Status */}
-      {checkingGptApi ? (
+      {/* GPT API Status - 관리자만 표시 */}
+      {currentUser?.is_admin && (checkingGptApi ? (
         <Card className="bg-blue-50 border-blue-200">
           <CardContent className="flex items-center gap-3 py-4">
             <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
@@ -608,10 +622,10 @@ export default function CreatePostPage() {
             </div>
           </CardContent>
         </Card>
-      )}
+      ))}
 
-      {/* Gemini API Status */}
-      {checkingGeminiApi ? (
+      {/* Gemini API Status - 관리자만 표시 */}
+      {currentUser?.is_admin && (checkingGeminiApi ? (
         <Card className="bg-blue-50 border-blue-200">
           <CardContent className="flex items-center gap-3 py-4">
             <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
@@ -645,10 +659,10 @@ export default function CreatePostPage() {
             </div>
           </CardContent>
         </Card>
-      )}
+      ))}
 
-      {/* AI 사용량 및 비용 현황 */}
-      {aiUsageStats && (
+      {/* AI 사용량 및 비용 현황 - 관리자만 표시 */}
+      {currentUser?.is_admin && aiUsageStats && (
         <Card className="bg-gradient-to-r from-purple-50 to-blue-50 border-purple-200">
           <CardContent className="py-4">
             <div className="flex flex-wrap items-center justify-between gap-4">
@@ -734,16 +748,14 @@ export default function CreatePostPage() {
           {/* GPT 모델 선택 */}
           {config.ai_provider === 'gpt' && (
             <div className="space-y-2">
-              <Label>GPT 모델 (1건당 예상 비용)</Label>
+              <Label>GPT 모델</Label>
               <div className="grid grid-cols-1 gap-2">
                 <Button
                   variant={config.ai_model === 'gpt-4o-mini' ? 'default' : 'outline'}
                   size="sm"
-                  className="justify-between"
                   onClick={() => setConfig({ ...config, ai_model: 'gpt-4o-mini' })}
                 >
-                  <span>GPT-4o Mini (빠름/저렴)</span>
-                  <span className="text-xs opacity-70">₩{aiPricing?.pricing?.find((p: any) => p.model_id === 'gpt-4o-mini')?.estimated_cost_per_post_krw?.toLocaleString() || '...'}</span>
+                  GPT-4o Mini (빠름)
                 </Button>
               </div>
             </div>
@@ -752,25 +764,21 @@ export default function CreatePostPage() {
           {/* Gemini 모델 선택 */}
           {config.ai_provider === 'gemini' && (
             <div className="space-y-2">
-              <Label>Gemini 모델 (1건당 예상 비용)</Label>
+              <Label>Gemini 모델</Label>
               <div className="grid grid-cols-1 gap-2">
                 <Button
                   variant={config.ai_model === 'gemini-2.0-flash' ? 'default' : 'outline'}
                   size="sm"
-                  className="justify-between"
                   onClick={() => setConfig({ ...config, ai_model: 'gemini-2.0-flash' })}
                 >
-                  <span>Gemini 2.0 Flash (추천, 빠름/저렴)</span>
-                  <span className="text-xs opacity-70">₩{aiPricing?.pricing?.find((p: any) => p.model_id === 'gemini-2.0-flash')?.estimated_cost_per_post_krw?.toLocaleString() || '...'}</span>
+                  Gemini 2.0 Flash (추천)
                 </Button>
                 <Button
                   variant={config.ai_model === 'gemini-1.5-pro' ? 'default' : 'outline'}
                   size="sm"
-                  className="justify-between"
                   onClick={() => setConfig({ ...config, ai_model: 'gemini-1.5-pro' })}
                 >
-                  <span>Gemini 1.5 Pro (고성능)</span>
-                  <span className="text-xs opacity-70">₩{aiPricing?.pricing?.find((p: any) => p.model_id === 'gemini-1.5-pro')?.estimated_cost_per_post_krw?.toLocaleString() || '...'}</span>
+                  Gemini 1.5 Pro (고성능)
                 </Button>
               </div>
             </div>
