@@ -6,15 +6,18 @@ import { useAuthStore } from '@/store/auth'
 import { Button } from '@/components/ui/button'
 import { ThemeToggle } from '@/components/theme-toggle'
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
   Sparkles,
   LayoutDashboard,
-  FileText,
   User,
   LogOut,
   PenTool,
   Shield,
-  BarChart3,
-  Tags,
   Save,
   TrendingUp,
   CreditCard,
@@ -23,7 +26,11 @@ import {
   Share2,
   CircleDollarSign,
   MapPin,
-  HelpCircle
+  HelpCircle,
+  ChevronDown,
+  BarChart3,
+  Store,
+  Settings,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -37,7 +44,8 @@ export function DashboardNav() {
     router.push('/login')
   }
 
-  const links = [
+  // 개별 메뉴 (드롭다운 없이)
+  const mainLinks = [
     {
       href: '/dashboard',
       label: '대시보드',
@@ -58,39 +66,51 @@ export function DashboardNav() {
       label: '예약발행',
       icon: Calendar,
     },
+  ]
+
+  // 마케팅 분석 탭
+  const analyticsLinks = [
     {
       href: '/dashboard/reports',
       label: '리포트',
       icon: FileBarChart,
     },
     {
-      href: '/dashboard/sns',
-      label: 'SNS',
-      icon: Share2,
-    },
-    {
       href: '/dashboard/top-post-analysis',
-      label: '상위노출',
+      label: '상위노출 분석',
       icon: TrendingUp,
     },
     {
       href: '/dashboard/roi',
-      label: 'ROI',
+      label: 'ROI 추적',
       icon: CircleDollarSign,
+    },
+  ]
+
+  // 채널 관리 탭
+  const channelLinks = [
+    {
+      href: '/dashboard/sns',
+      label: 'SNS 관리',
+      icon: Share2,
     },
     {
       href: '/dashboard/place',
-      label: '플레이스',
+      label: '플레이스 관리',
       icon: MapPin,
     },
     {
       href: '/dashboard/knowledge',
-      label: '지식인',
+      label: '지식인 답변',
       icon: HelpCircle,
     },
+  ]
+
+  // 설정 탭
+  const settingsLinks = [
     {
       href: '/dashboard/subscription',
-      label: '구독',
+      label: '구독 관리',
       icon: CreditCard,
     },
     {
@@ -100,19 +120,24 @@ export function DashboardNav() {
     },
   ]
 
-  // 관리자 링크
+  // 관리자 메뉴
   if (user?.is_admin) {
-    links.push({
+    settingsLinks.push({
       href: '/admin',
       label: '관리자',
       icon: Shield,
     })
   }
 
+  // 드롭다운 탭이 활성화되어 있는지 확인
+  const isAnalyticsActive = analyticsLinks.some(link => pathname === link.href || pathname.startsWith(link.href + '/'))
+  const isChannelActive = channelLinks.some(link => pathname === link.href || pathname.startsWith(link.href + '/'))
+  const isSettingsActive = settingsLinks.some(link => pathname === link.href || pathname.startsWith(link.href + '/'))
+
   return (
     <div className="border-b bg-white/80 backdrop-blur-sm sticky top-0 z-50">
       <div className="container mx-auto px-4 h-16 flex items-center justify-between">
-        <div className="flex items-center gap-8">
+        <div className="flex items-center gap-6">
           <Link href="/dashboard" className="flex items-center gap-2">
             <Sparkles className="h-6 w-6 text-blue-600" />
             <div className="flex flex-col">
@@ -121,16 +146,18 @@ export function DashboardNav() {
             </div>
           </Link>
 
-          <nav className="hidden md:flex gap-1">
-            {links.map((link) => {
+          <nav className="hidden md:flex items-center gap-1">
+            {/* 개별 메뉴 */}
+            {mainLinks.map((link) => {
               const Icon = link.icon
               const isActive = pathname === link.href
               return (
                 <Link key={link.href} href={link.href}>
                   <Button
                     variant={isActive ? 'secondary' : 'ghost'}
+                    size="sm"
                     className={cn(
-                      'gap-2',
+                      'gap-1.5',
                       isActive && 'bg-blue-50 text-blue-700 hover:bg-blue-100'
                     )}
                   >
@@ -140,6 +167,117 @@ export function DashboardNav() {
                 </Link>
               )
             })}
+
+            {/* 마케팅 분석 드롭다운 */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant={isAnalyticsActive ? 'secondary' : 'ghost'}
+                  size="sm"
+                  className={cn(
+                    'gap-1.5',
+                    isAnalyticsActive && 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                  )}
+                >
+                  <BarChart3 className="h-4 w-4" />
+                  마케팅 분석
+                  <ChevronDown className="h-3 w-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-48">
+                {analyticsLinks.map((link) => {
+                  const Icon = link.icon
+                  const isActive = pathname === link.href || pathname.startsWith(link.href + '/')
+                  return (
+                    <DropdownMenuItem
+                      key={link.href}
+                      className={cn(
+                        'gap-2 cursor-pointer',
+                        isActive && 'bg-blue-50 text-blue-700'
+                      )}
+                      onClick={() => router.push(link.href)}
+                    >
+                      <Icon className="h-4 w-4" />
+                      {link.label}
+                    </DropdownMenuItem>
+                  )
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* 채널 관리 드롭다운 */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant={isChannelActive ? 'secondary' : 'ghost'}
+                  size="sm"
+                  className={cn(
+                    'gap-1.5',
+                    isChannelActive && 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                  )}
+                >
+                  <Store className="h-4 w-4" />
+                  채널 관리
+                  <ChevronDown className="h-3 w-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-48">
+                {channelLinks.map((link) => {
+                  const Icon = link.icon
+                  const isActive = pathname === link.href || pathname.startsWith(link.href + '/')
+                  return (
+                    <DropdownMenuItem
+                      key={link.href}
+                      className={cn(
+                        'gap-2 cursor-pointer',
+                        isActive && 'bg-blue-50 text-blue-700'
+                      )}
+                      onClick={() => router.push(link.href)}
+                    >
+                      <Icon className="h-4 w-4" />
+                      {link.label}
+                    </DropdownMenuItem>
+                  )
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* 설정 드롭다운 */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant={isSettingsActive ? 'secondary' : 'ghost'}
+                  size="sm"
+                  className={cn(
+                    'gap-1.5',
+                    isSettingsActive && 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                  )}
+                >
+                  <Settings className="h-4 w-4" />
+                  설정
+                  <ChevronDown className="h-3 w-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-48">
+                {settingsLinks.map((link) => {
+                  const Icon = link.icon
+                  const isActive = pathname === link.href || pathname.startsWith(link.href + '/')
+                  return (
+                    <DropdownMenuItem
+                      key={link.href}
+                      className={cn(
+                        'gap-2 cursor-pointer',
+                        isActive && 'bg-blue-50 text-blue-700'
+                      )}
+                      onClick={() => router.push(link.href)}
+                    >
+                      <Icon className="h-4 w-4" />
+                      {link.label}
+                    </DropdownMenuItem>
+                  )
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </nav>
         </div>
 
