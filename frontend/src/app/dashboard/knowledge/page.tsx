@@ -381,7 +381,7 @@ export default function KnowledgePage() {
       return
     }
     try {
-      await knowledgeAPI.posterLogin(loginForm.username, loginForm.password)
+      await knowledgeAPI.posterLogin({ username: loginForm.username, password: loginForm.password })
       toast.success('네이버 로그인 성공')
       setIsLoginDialogOpen(false)
       setLoginForm({ username: '', password: '' })
