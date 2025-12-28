@@ -197,7 +197,11 @@
       "Bash(\"C:\\\\Users\\\\이아랑\\\\.fly\\\\bin\\\\flyctl.exe\" logs -a doctor-voice-pro-backend --limit 100)",
       "Bash(\"C:\\\\Users\\\\이아랑\\\\.fly\\\\bin\\\\flyctl.exe\" logs -a doctor-voice-pro-backend --no-tail)",
       "Bash(\"C:\\\\Users\\\\이아랑\\\\AppData\\\\Roaming\\\\npm\\\\vercel.cmd\" login)",
-      "Bash(\"C:\\\\Users\\\\이아랑\\\\.fly\\\\bin\\\\flyctl.exe\" status:*)"
+      "Bash(\"C:\\\\Users\\\\이아랑\\\\.fly\\\\bin\\\\flyctl.exe\" status:*)",
+      "Bash(set \"VERCEL_ORG_ID=\")",
+      "Bash(set \"VERCEL_PROJECT_ID=\")",
+      "Bash(\"C:\\\\Users\\\\이아랑\\\\AppData\\\\Roaming\\\\npm\\\\vercel.cmd\" --prod --yes --token xV1BBksAEnNuGvK0CNEUUiJs)",
+      "Bash(\"C:\\\\Users\\\\이아랑\\\\AppData\\\\Roaming\\\\npm\\\\vercel.cmd\" link --yes --token xV1BBksAEnNuGvK0CNEUUiJs)"
     ],
     "deny": [],
     "ask": []

@@ -687,8 +687,8 @@ export default function CreatePostPage() {
         url: blogUrl,
         ai_provider: 'gpt',
         ai_model: 'gpt-4o-mini',
-        target_length: writingStyle.targetLength || 1800,
-        framework: writingStyle.framework || '관심유도형',
+        target_length: 1800,
+        framework: '관심유도형',
         persuasion_level: 4
       })
 
