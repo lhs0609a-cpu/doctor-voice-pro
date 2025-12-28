@@ -425,7 +425,7 @@ export default function KnowledgePage() {
   const handleBulkPost = async () => {
     setIsPosting(true)
     try {
-      const result = await knowledgeAPI.postMultipleAnswers(5, 30)
+      const result = await knowledgeAPI.postMultipleAnswers({ limit: 5, delay_between: 30 })
       toast.success(`${result.posted || 0}개 등록 완료, ${result.failed || 0}개 실패`)
       loadAnswers()
       loadData()
