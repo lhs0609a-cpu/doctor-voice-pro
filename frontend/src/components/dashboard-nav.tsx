@@ -31,6 +31,7 @@ import {
   BarChart3,
   Store,
   Settings,
+  Coffee,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -103,6 +104,11 @@ export function DashboardNav() {
       href: '/dashboard/knowledge',
       label: '지식인 답변',
       icon: HelpCircle,
+    },
+    {
+      href: '/dashboard/cafe',
+      label: '카페 바이럴',
+      icon: Coffee,
     },
   ]
 

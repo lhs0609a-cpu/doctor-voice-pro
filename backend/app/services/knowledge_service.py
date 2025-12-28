@@ -16,6 +16,7 @@ from app.models.knowledge import (
 )
 from app.models.doctor_profile import DoctorProfile
 from app.services.ai_service import AIService
+from app.services.kin_crawler import kin_crawler
 
 
 class KnowledgeService:
@@ -104,9 +105,23 @@ class KnowledgeService:
         self,
         user_id: str,
         keywords: Optional[List[str]] = None,
-        limit: int = 50
+        limit: int = 50,
+        use_crawler: bool = True,
+        min_reward_points: int = 0,
     ) -> Dict[str, Any]:
-        """질문 수집 (시뮬레이션 - 실제로는 크롤링 필요)"""
+        """
+        질문 수집
+
+        Args:
+            user_id: 사용자 ID
+            keywords: 검색 키워드 (없으면 등록된 키워드 사용)
+            limit: 최대 수집 개수
+            use_crawler: 실제 크롤링 사용 여부 (False면 시뮬레이션)
+            min_reward_points: 최소 내공 점수 필터
+
+        Returns:
+            수집 결과
+        """
         # 사용자의 활성 키워드 가져오기
         if not keywords:
             kw_list = await self.get_keywords(user_id, is_active=True)
@@ -115,52 +130,99 @@ class KnowledgeService:
         if not keywords:
             return {"collected": 0, "message": "모니터링 키워드가 없습니다."}
 
-        # 실제 구현에서는 여기서 네이버 지식인 API/크롤링 수행
-        # 현재는 시뮬레이션 데이터 반환
         collected = 0
-        simulated_questions = self._generate_simulated_questions(keywords, limit)
+        skipped = 0
+        errors = []
 
-        for q_data in simulated_questions:
-            # 중복 체크
-            existing = await self.db.execute(
-                select(KnowledgeQuestion).where(
-                    KnowledgeQuestion.naver_question_id == q_data["naver_question_id"]
+        # 실제 크롤링 또는 시뮬레이션
+        if use_crawler:
+            try:
+                crawled_questions = await kin_crawler.search_and_collect(
+                    keywords=keywords,
+                    limit_per_keyword=limit // len(keywords) + 1,
+                    total_limit=limit,
+                    filter_answerable=True,
+                    min_reward_points=min_reward_points,
                 )
-            )
-            if existing.scalar_one_or_none():
+            except Exception as e:
+                errors.append(f"크롤링 오류: {str(e)}")
+                crawled_questions = []
+        else:
+            # 시뮬레이션 모드 (테스트용)
+            crawled_questions = self._generate_simulated_questions(keywords, limit)
+
+        for q_data in crawled_questions:
+            try:
+                # 중복 체크
+                existing = await self.db.execute(
+                    select(KnowledgeQuestion).where(
+                        KnowledgeQuestion.naver_question_id == q_data["naver_question_id"]
+                    )
+                )
+                if existing.scalar_one_or_none():
+                    skipped += 1
+                    continue
+
+                # 관련성 분석
+                analysis = await self._analyze_question(q_data, keywords)
+
+                # 키워드 ID 찾기
+                keyword_id = None
+                matched_kw = q_data.get("matched_keyword")
+                if matched_kw:
+                    kw_result = await self.db.execute(
+                        select(KnowledgeKeyword).where(
+                            KnowledgeKeyword.user_id == user_id,
+                            KnowledgeKeyword.keyword == matched_kw
+                        )
+                    )
+                    kw_obj = kw_result.scalar_one_or_none()
+                    if kw_obj:
+                        keyword_id = kw_obj.id
+                        # 키워드 통계 업데이트
+                        kw_obj.question_count += 1
+
+                question = KnowledgeQuestion(
+                    user_id=user_id,
+                    keyword_id=keyword_id,
+                    naver_question_id=q_data["naver_question_id"],
+                    title=q_data["title"],
+                    content=q_data.get("content", ""),
+                    category=q_data.get("category"),
+                    url=q_data.get("url"),
+                    author_name=q_data.get("author_name"),
+                    view_count=q_data.get("view_count", 0),
+                    answer_count=q_data.get("answer_count", 0),
+                    reward_points=q_data.get("reward_points", 0),
+                    is_chosen=q_data.get("is_chosen", False),
+                    matched_keywords=analysis["matched_keywords"],
+                    relevance_score=analysis["relevance_score"],
+                    urgency=analysis["urgency"],
+                    key_points=analysis.get("key_points"),
+                    question_date=q_data.get("question_date"),
+                    collected_at=datetime.utcnow()
+                )
+                self.db.add(question)
+                collected += 1
+
+            except Exception as e:
+                errors.append(f"질문 저장 오류: {str(e)}")
                 continue
-
-            # 관련성 분석
-            analysis = await self._analyze_question(q_data, keywords)
-
-            question = KnowledgeQuestion(
-                user_id=user_id,
-                naver_question_id=q_data["naver_question_id"],
-                title=q_data["title"],
-                content=q_data["content"],
-                category=q_data.get("category"),
-                url=q_data.get("url"),
-                author_name=q_data.get("author_name"),
-                view_count=q_data.get("view_count", 0),
-                answer_count=q_data.get("answer_count", 0),
-                reward_points=q_data.get("reward_points", 0),
-                matched_keywords=analysis["matched_keywords"],
-                relevance_score=analysis["relevance_score"],
-                urgency=analysis["urgency"],
-                key_points=analysis.get("key_points"),
-                question_date=q_data.get("question_date"),
-                collected_at=datetime.utcnow()
-            )
-            self.db.add(question)
-            collected += 1
 
         await self.db.commit()
 
-        return {
+        result = {
             "collected": collected,
+            "skipped": skipped,
             "keywords_used": keywords,
-            "message": f"{collected}개의 새로운 질문을 수집했습니다."
+            "message": f"{collected}개의 새로운 질문을 수집했습니다.",
+            "mode": "crawler" if use_crawler else "simulation"
         }
+
+        if errors:
+            result["errors"] = errors[:5]  # 최대 5개 에러만 반환
+
+        return result
 
     def _generate_simulated_questions(
         self,

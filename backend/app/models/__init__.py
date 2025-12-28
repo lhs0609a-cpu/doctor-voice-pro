@@ -53,6 +53,26 @@ from app.models.knowledge import (
     AutoAnswerSetting, KnowledgeStats,
     QuestionStatus, AnswerStatus, AnswerTone, Urgency
 )
+from app.models.cafe import (
+    CafeCommunity, CafeKeyword, CafePost, CafeContent,
+    CafeAutoSetting, CafeStats, CafeTemplate,
+    CafePostStatus, ContentType, ContentStatus, CafeTone, CafeCategory
+)
+from app.models.viral_common import (
+    NaverAccount, ProxyServer, PerformanceEvent, PerformanceDaily,
+    NotificationChannel, NotificationLog, ABTest, ABTestResult, DailyReport,
+    AccountStatus, NotificationType, ProxyType, ABTestStatus, PerformanceEventType
+)
+from app.models.knowledge_extended import (
+    AnswerAdoption, CompetitorAnswer, AnswerStrategy, AnswerImage,
+    ImageTemplate, QuestionerProfile, RewardPriorityRule, AnswerPerformance,
+    AdoptionStatus, QuestionerType
+)
+from app.models.cafe_extended import (
+    CafeBoard, CommentReply, ReplyTemplate, CafePostImage, ImageLibrary,
+    PopularPost, PopularPostPattern, EngagementActivity, EngagementSchedule,
+    ContentPerformance, ReplyStatus, EngagementType, PopularPostCategory
+)
 
 __all__ = [
     "User",
@@ -157,4 +177,57 @@ __all__ = [
     "AnswerStatus",
     "AnswerTone",
     "Urgency",
+    # Cafe models
+    "CafeCommunity",
+    "CafeKeyword",
+    "CafePost",
+    "CafeContent",
+    "CafeAutoSetting",
+    "CafeStats",
+    "CafeTemplate",
+    "CafePostStatus",
+    "ContentType",
+    "ContentStatus",
+    "CafeTone",
+    "CafeCategory",
+    # Viral Common models (다중 계정, 성과 추적, 알림 등)
+    "NaverAccount",
+    "ProxyServer",
+    "PerformanceEvent",
+    "PerformanceDaily",
+    "NotificationChannel",
+    "NotificationLog",
+    "ABTest",
+    "ABTestResult",
+    "DailyReport",
+    "AccountStatus",
+    "NotificationType",
+    "ProxyType",
+    "ABTestStatus",
+    "PerformanceEventType",
+    # Knowledge Extended models (채택 추적, 경쟁 분석 등)
+    "AnswerAdoption",
+    "CompetitorAnswer",
+    "AnswerStrategy",
+    "AnswerImage",
+    "ImageTemplate",
+    "QuestionerProfile",
+    "RewardPriorityRule",
+    "AnswerPerformance",
+    "AdoptionStatus",
+    "QuestionerType",
+    # Cafe Extended models (대댓글, 게시판 타겟팅 등)
+    "CafeBoard",
+    "CommentReply",
+    "ReplyTemplate",
+    "CafePostImage",
+    "ImageLibrary",
+    "PopularPost",
+    "PopularPostPattern",
+    "EngagementActivity",
+    "EngagementSchedule",
+    "ContentPerformance",
+    "ReplyStatus",
+    "EngagementType",
+    "PopularPostCategory",
 ]

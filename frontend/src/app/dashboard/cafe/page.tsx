@@ -7,13 +7,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
 import {
-  HelpCircle,
+  Coffee,
   Search,
   Plus,
   RefreshCw,
@@ -29,9 +28,7 @@ import {
   Settings,
   TrendingUp,
   Clock,
-  Award,
   Trash2,
-  Edit,
   Copy,
   Play,
   Square,
@@ -39,88 +36,100 @@ import {
   LogIn,
   LogOut,
   Upload,
-  Bot
+  Bot,
+  Users,
+  Heart,
+  Hash
 } from 'lucide-react'
 import {
-  knowledgeAPI,
-  KnowledgeKeyword,
-  KnowledgeQuestion,
-  KnowledgeAnswer,
-  KnowledgeTemplate,
-  KnowledgeDashboard,
-  QuestionStatus,
-  AnswerStatus,
-  AnswerTone
+  cafeAPI,
+  CafeCommunity,
+  CafeKeyword,
+  CafePost,
+  CafeContent,
+  CafeDashboard,
+  CafePostStatus,
+  CafeContentStatus,
+  CafeTone,
+  CafeCategory
 } from '@/lib/api'
 import { toast } from 'sonner'
 
 const TONE_OPTIONS = [
-  { value: 'professional', label: '전문적' },
   { value: 'friendly', label: '친근한' },
+  { value: 'casual', label: '캐주얼' },
+  { value: 'professional', label: '전문적' },
   { value: 'empathetic', label: '공감하는' },
-  { value: 'formal', label: '격식있는' },
+  { value: 'humorous', label: '유머러스' },
 ]
 
 const CATEGORY_OPTIONS = [
-  { value: '의료', label: '의료/건강' },
-  { value: '뷰티', label: '뷰티/미용' },
-  { value: '피부과', label: '피부과' },
-  { value: '성형외과', label: '성형외과' },
-  { value: '치과', label: '치과' },
-  { value: '한의원', label: '한의원' },
+  { value: 'mom', label: '맘카페' },
+  { value: 'beauty', label: '뷰티/미용' },
+  { value: 'health', label: '건강/의료' },
+  { value: 'regional', label: '지역' },
+  { value: 'hobby', label: '취미/관심사' },
+  { value: 'general', label: '일반' },
 ]
 
-export default function KnowledgePage() {
+export default function CafePage() {
   const [activeTab, setActiveTab] = useState('overview')
   const [isLoading, setIsLoading] = useState(true)
 
   // Data states
-  const [dashboard, setDashboard] = useState<KnowledgeDashboard | null>(null)
-  const [keywords, setKeywords] = useState<KnowledgeKeyword[]>([])
-  const [questions, setQuestions] = useState<KnowledgeQuestion[]>([])
-  const [answers, setAnswers] = useState<KnowledgeAnswer[]>([])
-  const [templates, setTemplates] = useState<KnowledgeTemplate[]>([])
-  const [topQuestions, setTopQuestions] = useState<KnowledgeQuestion[]>([])
+  const [dashboard, setDashboard] = useState<CafeDashboard | null>(null)
+  const [cafes, setCafes] = useState<CafeCommunity[]>([])
+  const [keywords, setKeywords] = useState<CafeKeyword[]>([])
+  const [posts, setPosts] = useState<CafePost[]>([])
+  const [contents, setContents] = useState<CafeContent[]>([])
+  const [topPosts, setTopPosts] = useState<CafePost[]>([])
 
   // UI states
   const [isCollecting, setIsCollecting] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
-  const [selectedQuestion, setSelectedQuestion] = useState<KnowledgeQuestion | null>(null)
-  const [selectedAnswer, setSelectedAnswer] = useState<KnowledgeAnswer | null>(null)
+  const [selectedPost, setSelectedPost] = useState<CafePost | null>(null)
+  const [selectedContent, setSelectedContent] = useState<CafeContent | null>(null)
 
-  // 자동화 상태
+  // Automation states
   const [schedulerStatus, setSchedulerStatus] = useState<{
     is_running: boolean
     is_enabled: boolean
     is_working_hours: boolean
-    today: { collected: number; generated: number; collect_limit: number; answer_limit: number }
-    pending: { questions: number; draft_answers: number }
+    today: { collected: number; generated: number; posted: number; collect_limit: number; post_limit: number }
+    pending: { posts: number; contents: number }
   } | null>(null)
   const [posterStatus, setPosterStatus] = useState<{ initialized: boolean; logged_in: boolean } | null>(null)
   const [isPosting, setIsPosting] = useState(false)
 
   // Dialog states
+  const [isCafeDialogOpen, setIsCafeDialogOpen] = useState(false)
   const [isKeywordDialogOpen, setIsKeywordDialogOpen] = useState(false)
-  const [isTemplateDialogOpen, setIsTemplateDialogOpen] = useState(false)
-  const [isAnswerDialogOpen, setIsAnswerDialogOpen] = useState(false)
+  const [isContentDialogOpen, setIsContentDialogOpen] = useState(false)
   const [isLoginDialogOpen, setIsLoginDialogOpen] = useState(false)
 
-  // 로그인 폼
+  // Login form
   const [loginForm, setLoginForm] = useState({ username: '', password: '' })
 
   // Form states
+  const [newCafe, setNewCafe] = useState({
+    cafe_id: '',
+    cafe_name: '',
+    cafe_url: '',
+    category: 'general' as CafeCategory,
+    posting_enabled: false,
+    commenting_enabled: true
+  })
   const [newKeyword, setNewKeyword] = useState({ keyword: '', category: '', priority: 1 })
-  const [newTemplate, setNewTemplate] = useState({ name: '', template_content: '', category: '', tone: 'professional' as AnswerTone })
-  const [answerSettings, setAnswerSettings] = useState({
-    tone: 'professional' as AnswerTone,
+  const [contentSettings, setContentSettings] = useState({
+    tone: 'friendly' as CafeTone,
     include_promotion: true,
     blog_link: '',
     place_link: ''
   })
 
   // Filters
-  const [questionFilter, setQuestionFilter] = useState<QuestionStatus | ''>('')
-  const [answerFilter, setAnswerFilter] = useState<AnswerStatus | ''>('')
+  const [postFilter, setPostFilter] = useState<CafePostStatus | ''>('')
+  const [contentFilter, setContentFilter] = useState<CafeContentStatus | ''>('')
 
   useEffect(() => {
     loadData()
@@ -129,14 +138,16 @@ export default function KnowledgePage() {
   const loadData = async () => {
     setIsLoading(true)
     try {
-      const [dashboardData, keywordsData, topQuestionsData] = await Promise.all([
-        knowledgeAPI.getDashboard(),
-        knowledgeAPI.getKeywords(),
-        knowledgeAPI.getTopQuestions(5)
+      const [dashboardData, cafesData, keywordsData, topPostsData] = await Promise.all([
+        cafeAPI.getDashboard(),
+        cafeAPI.getCafes(),
+        cafeAPI.getKeywords(),
+        cafeAPI.getTopPosts(5)
       ])
       setDashboard(dashboardData)
+      setCafes(cafesData)
       setKeywords(keywordsData)
-      setTopQuestions(topQuestionsData)
+      setTopPosts(topPostsData)
     } catch (error) {
       console.error('Failed to load data:', error)
       toast.error('데이터 로딩 실패')
@@ -145,83 +156,108 @@ export default function KnowledgePage() {
     }
   }
 
-  const loadQuestions = async () => {
+  const loadPosts = async () => {
     try {
-      const data = await knowledgeAPI.getQuestions({
-        status: questionFilter || undefined,
+      const data = await cafeAPI.getPosts({
+        status: postFilter || undefined,
         limit: 50
       })
-      setQuestions(data)
+      setPosts(data)
     } catch (error) {
-      toast.error('질문 로딩 실패')
+      toast.error('게시글 로딩 실패')
     }
   }
 
-  const loadAnswers = async () => {
+  const loadContents = async () => {
     try {
-      const data = await knowledgeAPI.getAnswers({
-        status: answerFilter || undefined,
+      const data = await cafeAPI.getContents({
+        status: contentFilter || undefined,
         limit: 50
       })
-      setAnswers(data)
+      setContents(data)
     } catch (error) {
-      toast.error('답변 로딩 실패')
-    }
-  }
-
-  const loadTemplates = async () => {
-    try {
-      const data = await knowledgeAPI.getTemplates()
-      setTemplates(data)
-    } catch (error) {
-      toast.error('템플릿 로딩 실패')
+      toast.error('콘텐츠 로딩 실패')
     }
   }
 
   useEffect(() => {
-    if (activeTab === 'questions') loadQuestions()
-    if (activeTab === 'answers') {
-      loadAnswers()
-      loadAutomationStatus()  // 포스터 상태도 로드 (자동 등록 버튼용)
+    if (activeTab === 'posts') loadPosts()
+    if (activeTab === 'contents') {
+      loadContents()
+      loadAutomationStatus()
     }
-    if (activeTab === 'templates') loadTemplates()
     if (activeTab === 'automation') loadAutomationStatus()
-  }, [activeTab, questionFilter, answerFilter])
+  }, [activeTab, postFilter, contentFilter])
 
-  // 질문 수집
+  // 게시글 수집
   const handleCollect = async () => {
     setIsCollecting(true)
     try {
-      const result = await knowledgeAPI.collectQuestions()
+      const result = await cafeAPI.collectPosts()
       toast.success(result.message)
       loadData()
-      if (activeTab === 'questions') loadQuestions()
+      if (activeTab === 'posts') loadPosts()
     } catch (error) {
-      toast.error('질문 수집 실패')
+      toast.error('게시글 수집 실패')
     } finally {
       setIsCollecting(false)
     }
   }
 
-  // 답변 생성
-  const handleGenerateAnswer = async (questionId: string) => {
+  // 콘텐츠 생성
+  const handleGenerateContent = async (postId: string) => {
     setIsGenerating(true)
     try {
-      const answer = await knowledgeAPI.generateAnswer({
-        question_id: questionId,
-        tone: answerSettings.tone,
-        include_promotion: answerSettings.include_promotion,
-        blog_link: answerSettings.blog_link || undefined,
-        place_link: answerSettings.place_link || undefined
+      const content = await cafeAPI.generateContent({
+        post_id: postId,
+        tone: contentSettings.tone,
+        include_promotion: contentSettings.include_promotion,
+        blog_link: contentSettings.blog_link || undefined,
+        place_link: contentSettings.place_link || undefined
       })
-      toast.success('답변이 생성되었습니다')
-      setSelectedAnswer(answer)
-      setIsAnswerDialogOpen(true)
-      loadQuestions()
+      toast.success('콘텐츠가 생성되었습니다')
+      setSelectedContent(content)
+      setIsContentDialogOpen(true)
+      loadPosts()
     } catch (error) {
-      toast.error('답변 생성 실패')
+      toast.error('콘텐츠 생성 실패')
     } finally {
       setIsGenerating(false)
+    }
+  }
+
+  // 카페 추가
+  const handleAddCafe = async () => {
+    if (!newCafe.cafe_id || !newCafe.cafe_name) {
+      toast.error('카페 ID와 이름을 입력해주세요')
+      return
+    }
+    try {
+      await cafeAPI.createCafe(newCafe)
+      toast.success('카페가 추가되었습니다')
+      setIsCafeDialogOpen(false)
+      setNewCafe({
+        cafe_id: '',
+        cafe_name: '',
+        cafe_url: '',
+        category: 'general',
+        posting_enabled: false,
+        commenting_enabled: true
+      })
+      loadData()
+    } catch (error) {
+      toast.error('카페 추가 실패')
+    }
+  }
+
+  // 카페 삭제
+  const handleDeleteCafe = async (cafeId: string) => {
+    try {
+      await cafeAPI.deleteCafe(cafeId)
+      toast.success('카페가 삭제되었습니다')
+      loadData()
+    } catch (error) {
+      toast.error('카페 삭제 실패')
     }
   }
 
@@ -232,7 +268,7 @@ export default function KnowledgePage() {
       return
     }
     try {
-      await knowledgeAPI.createKeyword({
+      await cafeAPI.createKeyword({
         keyword: newKeyword.keyword,
         category: newKeyword.category || undefined,
         priority: newKeyword.priority
@@ -249,7 +285,7 @@ export default function KnowledgePage() {
   // 키워드 삭제
   const handleDeleteKeyword = async (keywordId: string) => {
     try {
-      await knowledgeAPI.deleteKeyword(keywordId)
+      await cafeAPI.deleteKeyword(keywordId)
       toast.success('키워드가 삭제되었습니다')
       loadData()
     } catch (error) {
@@ -257,48 +293,25 @@ export default function KnowledgePage() {
     }
   }
 
-  // 답변 승인
-  const handleApproveAnswer = async (answerId: string) => {
+  // 콘텐츠 승인
+  const handleApproveContent = async (contentId: string) => {
     try {
-      await knowledgeAPI.approveAnswer(answerId)
-      toast.success('답변이 승인되었습니다')
-      loadAnswers()
+      await cafeAPI.approveContent(contentId)
+      toast.success('콘텐츠가 승인되었습니다')
+      loadContents()
     } catch (error) {
       toast.error('승인 실패')
     }
   }
 
-  // 답변 등록 완료
-  const handleMarkPosted = async (answerId: string) => {
+  // 콘텐츠 반려
+  const handleRejectContent = async (contentId: string) => {
     try {
-      await knowledgeAPI.markAsPosted(answerId)
-      toast.success('등록 완료 처리되었습니다')
-      loadAnswers()
-      loadData()
+      await cafeAPI.rejectContent(contentId)
+      toast.success('콘텐츠가 반려되었습니다')
+      loadContents()
     } catch (error) {
-      toast.error('처리 실패')
-    }
-  }
-
-  // 템플릿 추가
-  const handleAddTemplate = async () => {
-    if (!newTemplate.name || !newTemplate.template_content) {
-      toast.error('이름과 내용을 입력해주세요')
-      return
-    }
-    try {
-      await knowledgeAPI.createTemplate({
-        name: newTemplate.name,
-        template_content: newTemplate.template_content,
-        category: newTemplate.category || undefined,
-        tone: newTemplate.tone
-      })
-      toast.success('템플릿이 추가되었습니다')
-      setIsTemplateDialogOpen(false)
-      setNewTemplate({ name: '', template_content: '', category: '', tone: 'professional' })
-      loadTemplates()
-    } catch (error) {
-      toast.error('템플릿 추가 실패')
+      toast.error('반려 실패')
     }
   }
 
@@ -312,8 +325,8 @@ export default function KnowledgePage() {
   const loadAutomationStatus = async () => {
     try {
       const [schedulerData, posterData] = await Promise.all([
-        knowledgeAPI.getSchedulerStatus(),
-        knowledgeAPI.getPosterStatus()
+        cafeAPI.getSchedulerStatus(),
+        cafeAPI.getPosterStatus()
       ])
       setSchedulerStatus(schedulerData)
       setPosterStatus(posterData)
@@ -325,7 +338,7 @@ export default function KnowledgePage() {
   // 스케줄러 시작
   const handleStartScheduler = async () => {
     try {
-      await knowledgeAPI.startScheduler()
+      await cafeAPI.startScheduler()
       toast.success('스케줄러가 시작되었습니다')
       loadAutomationStatus()
     } catch (error) {
@@ -336,7 +349,7 @@ export default function KnowledgePage() {
   // 스케줄러 중지
   const handleStopScheduler = async () => {
     try {
-      await knowledgeAPI.stopScheduler()
+      await cafeAPI.stopScheduler()
       toast.success('스케줄러가 중지되었습니다')
       loadAutomationStatus()
     } catch (error) {
@@ -348,8 +361,8 @@ export default function KnowledgePage() {
   const handleRunCollection = async () => {
     setIsCollecting(true)
     try {
-      const result = await knowledgeAPI.runCollectionJob()
-      toast.success(`${result.collected || 0}개 질문 수집 완료`)
+      const result = await cafeAPI.runCollectionJob()
+      toast.success(`${result.collected || 0}개 게시글 수집 완료`)
       loadData()
       loadAutomationStatus()
     } catch (error) {
@@ -359,16 +372,16 @@ export default function KnowledgePage() {
     }
   }
 
-  // 수동 답변 생성 실행
+  // 수동 콘텐츠 생성 실행
   const handleRunGeneration = async () => {
     setIsGenerating(true)
     try {
-      const result = await knowledgeAPI.runGenerationJob()
-      toast.success(`${result.generated || 0}개 답변 생성 완료`)
+      const result = await cafeAPI.runGenerationJob()
+      toast.success(`${result.generated || 0}개 콘텐츠 생성 완료`)
       loadData()
       loadAutomationStatus()
     } catch (error) {
-      toast.error('답변 생성 작업 실패')
+      toast.error('콘텐츠 생성 작업 실패')
     } finally {
       setIsGenerating(false)
     }
@@ -381,7 +394,7 @@ export default function KnowledgePage() {
       return
     }
     try {
-      await knowledgeAPI.posterLogin(loginForm.username, loginForm.password)
+      await cafeAPI.posterLogin(loginForm)
       toast.success('네이버 로그인 성공')
       setIsLoginDialogOpen(false)
       setLoginForm({ username: '', password: '' })
@@ -394,7 +407,7 @@ export default function KnowledgePage() {
   // 포스터 로그아웃
   const handlePosterLogout = async () => {
     try {
-      await knowledgeAPI.posterLogout()
+      await cafeAPI.posterLogout()
       toast.success('로그아웃되었습니다')
       loadAutomationStatus()
     } catch (error) {
@@ -402,32 +415,32 @@ export default function KnowledgePage() {
     }
   }
 
-  // 자동 답변 등록
-  const handleAutoPost = async (answerId: string) => {
+  // 자동 콘텐츠 등록
+  const handleAutoPost = async (contentId: string) => {
     setIsPosting(true)
     try {
-      const result = await knowledgeAPI.postAnswer(answerId)
+      const result = await cafeAPI.postContent(contentId)
       if (result.success) {
-        toast.success('답변이 등록되었습니다')
-        loadAnswers()
+        toast.success('콘텐츠가 등록되었습니다')
+        loadContents()
         loadData()
       } else {
-        toast.error(result.error || '등록 실패')
+        toast.error(result.message || '등록 실패')
       }
     } catch (error: any) {
-      toast.error(error.response?.data?.detail || '답변 등록 실패')
+      toast.error(error.response?.data?.detail || '콘텐츠 등록 실패')
     } finally {
       setIsPosting(false)
     }
   }
 
-  // 일괄 답변 등록
+  // 일괄 콘텐츠 등록
   const handleBulkPost = async () => {
     setIsPosting(true)
     try {
-      const result = await knowledgeAPI.postMultipleAnswers(5, 30)
+      const result = await cafeAPI.postMultipleContents({ limit: 5, delay_between: 30 })
       toast.success(`${result.posted || 0}개 등록 완료, ${result.failed || 0}개 실패`)
-      loadAnswers()
+      loadContents()
       loadData()
     } catch (error: any) {
       toast.error(error.response?.data?.detail || '일괄 등록 실패')
@@ -436,34 +449,51 @@ export default function KnowledgePage() {
     }
   }
 
-  const getStatusBadge = (status: QuestionStatus | AnswerStatus) => {
+  const getStatusBadge = (status: CafePostStatus | CafeContentStatus) => {
     const statusConfig: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
       new: { label: '신규', variant: 'default' },
-      reviewing: { label: '검토중', variant: 'secondary' },
-      answered: { label: '답변완료', variant: 'outline' },
+      analyzed: { label: '분석됨', variant: 'secondary' },
+      commented: { label: '댓글완료', variant: 'outline' },
       skipped: { label: '건너뜀', variant: 'destructive' },
       draft: { label: '초안', variant: 'secondary' },
       approved: { label: '승인됨', variant: 'default' },
       posted: { label: '등록됨', variant: 'outline' },
       rejected: { label: '반려됨', variant: 'destructive' },
+      failed: { label: '실패', variant: 'destructive' },
     }
     const config = statusConfig[status] || { label: status, variant: 'secondary' as const }
     return <Badge variant={config.variant}>{config.label}</Badge>
   }
 
-  const getUrgencyBadge = (urgency: string) => {
-    if (urgency === 'high') return <Badge variant="destructive">긴급</Badge>
-    if (urgency === 'medium') return <Badge variant="secondary">보통</Badge>
-    return <Badge variant="outline">낮음</Badge>
+  const getCategoryBadge = (category: CafeCategory) => {
+    const categoryConfig: Record<string, string> = {
+      mom: '맘카페',
+      beauty: '뷰티',
+      health: '건강',
+      regional: '지역',
+      hobby: '취미',
+      general: '일반',
+    }
+    return <Badge variant="outline">{categoryConfig[category] || category}</Badge>
+  }
+
+  const getContentTypeBadge = (type: string) => {
+    const typeConfig: Record<string, { label: string; color: string }> = {
+      comment: { label: '댓글', color: 'bg-blue-100 text-blue-800' },
+      reply: { label: '대댓글', color: 'bg-purple-100 text-purple-800' },
+      post: { label: '새 글', color: 'bg-green-100 text-green-800' },
+    }
+    const config = typeConfig[type] || { label: type, color: 'bg-gray-100 text-gray-800' }
+    return <Badge className={config.color}>{config.label}</Badge>
   }
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-orange-50">
         <DashboardNav />
         <main className="container mx-auto px-4 py-8">
           <div className="flex items-center justify-center h-64">
-            <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+            <Loader2 className="h-8 w-8 animate-spin text-orange-600" />
           </div>
         </main>
       </div>
@@ -471,7 +501,7 @@ export default function KnowledgePage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-orange-50">
       <DashboardNav />
 
       <main className="container mx-auto px-4 py-8">
@@ -479,11 +509,11 @@ export default function KnowledgePage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
           <div>
             <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-              <HelpCircle className="h-8 w-8 text-green-600" />
-              지식인 답변 도우미
+              <Coffee className="h-8 w-8 text-orange-600" />
+              카페 바이럴 자동화
             </h1>
             <p className="text-gray-600 mt-1">
-              네이버 지식인 질문을 모니터링하고 AI로 답변을 생성하세요
+              네이버 카페에 자동으로 글과 댓글을 등록하세요
             </p>
           </div>
 
@@ -498,7 +528,7 @@ export default function KnowledgePage() {
               ) : (
                 <Search className="h-4 w-4 mr-2" />
               )}
-              질문 수집
+              게시글 수집
             </Button>
           </div>
         </div>
@@ -509,9 +539,23 @@ export default function KnowledgePage() {
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
+                  <p className="text-sm font-medium text-gray-500">활성 카페</p>
+                  <p className="text-2xl font-bold text-orange-600">
+                    {dashboard?.active_cafes || 0}
+                  </p>
+                </div>
+                <Users className="h-8 w-8 text-orange-200" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
                   <p className="text-sm font-medium text-gray-500">오늘 수집</p>
                   <p className="text-2xl font-bold text-blue-600">
-                    {dashboard?.today_collected || 0}
+                    {dashboard?.posts_collected_today || 0}
                   </p>
                 </div>
                 <Search className="h-8 w-8 text-blue-200" />
@@ -523,23 +567,9 @@ export default function KnowledgePage() {
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-500">답변 대기</p>
-                  <p className="text-2xl font-bold text-orange-600">
-                    {dashboard?.pending_questions || 0}
-                  </p>
-                </div>
-                <Clock className="h-8 w-8 text-orange-200" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-500">초안 답변</p>
+                  <p className="text-sm font-medium text-gray-500">대기 콘텐츠</p>
                   <p className="text-2xl font-bold text-purple-600">
-                    {dashboard?.draft_answers || 0}
+                    {dashboard?.pending_contents || 0}
                   </p>
                 </div>
                 <FileText className="h-8 w-8 text-purple-200" />
@@ -551,9 +581,9 @@ export default function KnowledgePage() {
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-500">이번 주 답변</p>
+                  <p className="text-sm font-medium text-gray-500">오늘 등록</p>
                   <p className="text-2xl font-bold text-green-600">
-                    {dashboard?.week_answered || 0}
+                    {(dashboard?.posts_published_today || 0) + (dashboard?.comments_published_today || 0)}
                   </p>
                 </div>
                 <TrendingUp className="h-8 w-8 text-green-200" />
@@ -565,25 +595,142 @@ export default function KnowledgePage() {
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="mb-6">
             <TabsTrigger value="overview">개요</TabsTrigger>
-            <TabsTrigger value="questions">질문 모니터링</TabsTrigger>
-            <TabsTrigger value="answers">답변 관리</TabsTrigger>
+            <TabsTrigger value="posts">게시글 모니터링</TabsTrigger>
+            <TabsTrigger value="contents">콘텐츠 관리</TabsTrigger>
             <TabsTrigger value="automation">
               <Bot className="h-4 w-4 mr-1" />
               자동화
             </TabsTrigger>
-            <TabsTrigger value="templates">템플릿</TabsTrigger>
             <TabsTrigger value="settings">설정</TabsTrigger>
           </TabsList>
 
           {/* 개요 탭 */}
           <TabsContent value="overview">
             <div className="grid md:grid-cols-2 gap-6">
+              {/* 타겟 카페 */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="flex items-center gap-2">
+                      <Coffee className="h-5 w-5" />
+                      타겟 카페
+                    </CardTitle>
+                    <Dialog open={isCafeDialogOpen} onOpenChange={setIsCafeDialogOpen}>
+                      <DialogTrigger asChild>
+                        <Button size="sm">
+                          <Plus className="h-4 w-4 mr-1" />
+                          추가
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>카페 추가</DialogTitle>
+                          <DialogDescription>
+                            바이럴 대상 카페를 추가하세요
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="grid gap-4 py-4">
+                          <div className="grid gap-2">
+                            <Label>카페 ID</Label>
+                            <Input
+                              placeholder="예: imsanbu"
+                              value={newCafe.cafe_id}
+                              onChange={(e) => setNewCafe({ ...newCafe, cafe_id: e.target.value })}
+                            />
+                          </div>
+                          <div className="grid gap-2">
+                            <Label>카페 이름</Label>
+                            <Input
+                              placeholder="예: 맘스홀릭 베이비"
+                              value={newCafe.cafe_name}
+                              onChange={(e) => setNewCafe({ ...newCafe, cafe_name: e.target.value })}
+                            />
+                          </div>
+                          <div className="grid gap-2">
+                            <Label>카테고리</Label>
+                            <Select
+                              value={newCafe.category}
+                              onValueChange={(v) => setNewCafe({ ...newCafe, category: v as CafeCategory })}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="선택하세요" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {CATEGORY_OPTIONS.map((opt) => (
+                                  <SelectItem key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <Label>댓글 허용</Label>
+                            <Switch
+                              checked={newCafe.commenting_enabled}
+                              onCheckedChange={(v) => setNewCafe({ ...newCafe, commenting_enabled: v })}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <Label>글 작성 허용</Label>
+                            <Switch
+                              checked={newCafe.posting_enabled}
+                              onCheckedChange={(v) => setNewCafe({ ...newCafe, posting_enabled: v })}
+                            />
+                          </div>
+                        </div>
+                        <DialogFooter>
+                          <Button variant="outline" onClick={() => setIsCafeDialogOpen(false)}>
+                            취소
+                          </Button>
+                          <Button onClick={handleAddCafe}>추가</Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {cafes.length === 0 ? (
+                    <p className="text-center text-gray-500 py-8">
+                      등록된 카페가 없습니다
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {cafes.map((cafe) => (
+                        <div
+                          key={cafe.id}
+                          className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className={`w-2 h-2 rounded-full ${cafe.is_active ? 'bg-green-500' : 'bg-gray-400'}`} />
+                            <span className="font-medium">{cafe.cafe_name}</span>
+                            {getCategoryBadge(cafe.category)}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-gray-500">
+                              {cafe.total_comments}개 댓글
+                            </span>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDeleteCafe(cafe.id)}
+                            >
+                              <Trash2 className="h-4 w-4 text-red-500" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
               {/* 모니터링 키워드 */}
               <Card>
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <CardTitle className="flex items-center gap-2">
-                      <Search className="h-5 w-5" />
+                      <Hash className="h-5 w-5" />
                       모니터링 키워드
                     </CardTitle>
                     <Dialog open={isKeywordDialogOpen} onOpenChange={setIsKeywordDialogOpen}>
@@ -604,7 +751,7 @@ export default function KnowledgePage() {
                           <div className="grid gap-2">
                             <Label>키워드</Label>
                             <Input
-                              placeholder="예: 보톡스 효과"
+                              placeholder="예: 피부과 추천"
                               value={newKeyword.keyword}
                               onChange={(e) => setNewKeyword({ ...newKeyword, keyword: e.target.value })}
                             />
@@ -669,7 +816,7 @@ export default function KnowledgePage() {
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="text-sm text-gray-500">
-                              {kw.question_count}개 발견
+                              {kw.matched_count}개 발견
                             </span>
                             <Button
                               variant="ghost"
@@ -685,79 +832,76 @@ export default function KnowledgePage() {
                   )}
                 </CardContent>
               </Card>
-
-              {/* 추천 질문 */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Star className="h-5 w-5 text-yellow-500" />
-                    고관련성 질문 TOP 5
-                  </CardTitle>
-                  <CardDescription>
-                    답변하면 효과적인 질문들입니다
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {topQuestions.length === 0 ? (
-                    <p className="text-center text-gray-500 py-8">
-                      수집된 질문이 없습니다
-                    </p>
-                  ) : (
-                    <div className="space-y-3">
-                      {topQuestions.map((q) => (
-                        <div
-                          key={q.id}
-                          className="p-3 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer"
-                          onClick={() => {
-                            setSelectedQuestion(q)
-                            setActiveTab('questions')
-                          }}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex-1 min-w-0">
-                              <p className="font-medium text-sm truncate">{q.title}</p>
-                              <div className="flex items-center gap-2 mt-1">
-                                <Badge variant="outline" className="text-xs">
-                                  관련성 {q.relevance_score}%
-                                </Badge>
-                                {q.reward_points > 0 && (
-                                  <Badge variant="secondary" className="text-xs">
-                                    내공 {q.reward_points}
-                                  </Badge>
-                                )}
-                                {getUrgencyBadge(q.urgency)}
-                              </div>
-                            </div>
-                            <Button
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleGenerateAnswer(q.id)
-                              }}
-                              disabled={isGenerating}
-                            >
-                              <Sparkles className="h-3 w-3 mr-1" />
-                              답변
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
             </div>
+
+            {/* 추천 게시글 */}
+            <Card className="mt-6">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Star className="h-5 w-5 text-yellow-500" />
+                  고관련성 게시글 TOP 5
+                </CardTitle>
+                <CardDescription>
+                  댓글을 달면 효과적인 게시글들입니다
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {topPosts.length === 0 ? (
+                  <p className="text-center text-gray-500 py-8">
+                    수집된 게시글이 없습니다
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {topPosts.map((post) => (
+                      <div
+                        key={post.id}
+                        className="p-3 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer"
+                        onClick={() => {
+                          setSelectedPost(post)
+                          setActiveTab('posts')
+                        }}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-sm truncate">{post.title}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                              <Badge variant="outline" className="text-xs">
+                                관련성 {(post.relevance_score * 100).toFixed(0)}%
+                              </Badge>
+                              <span className="text-xs text-gray-500">
+                                조회 {post.view_count} / 댓글 {post.comment_count}
+                              </span>
+                            </div>
+                          </div>
+                          <Button
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleGenerateContent(post.id)
+                            }}
+                            disabled={isGenerating}
+                          >
+                            <Sparkles className="h-3 w-3 mr-1" />
+                            댓글
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
-          {/* 질문 모니터링 탭 */}
-          <TabsContent value="questions">
+          {/* 게시글 모니터링 탭 */}
+          <TabsContent value="posts">
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle>수집된 질문</CardTitle>
+                  <CardTitle>수집된 게시글</CardTitle>
                   <Select
-                    value={questionFilter}
-                    onValueChange={(v) => setQuestionFilter(v as QuestionStatus | '')}
+                    value={postFilter}
+                    onValueChange={(v) => setPostFilter(v as CafePostStatus | '')}
                   >
                     <SelectTrigger className="w-40">
                       <SelectValue placeholder="상태 필터" />
@@ -765,70 +909,70 @@ export default function KnowledgePage() {
                     <SelectContent>
                       <SelectItem value="">전체</SelectItem>
                       <SelectItem value="new">신규</SelectItem>
-                      <SelectItem value="reviewing">검토중</SelectItem>
-                      <SelectItem value="answered">답변완료</SelectItem>
+                      <SelectItem value="analyzed">분석됨</SelectItem>
+                      <SelectItem value="commented">댓글완료</SelectItem>
                       <SelectItem value="skipped">건너뜀</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               </CardHeader>
               <CardContent>
-                {questions.length === 0 ? (
+                {posts.length === 0 ? (
                   <div className="text-center py-12">
-                    <HelpCircle className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                    <p className="text-gray-500">수집된 질문이 없습니다</p>
+                    <Coffee className="h-12 w-12 mx-auto text-gray-300 mb-4" />
+                    <p className="text-gray-500">수집된 게시글이 없습니다</p>
                     <Button className="mt-4" onClick={handleCollect} disabled={isCollecting}>
-                      질문 수집하기
+                      게시글 수집하기
                     </Button>
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {questions.map((q) => (
+                    {posts.map((post) => (
                       <div
-                        key={q.id}
-                        className="p-4 border rounded-lg hover:border-blue-300 transition-colors"
+                        key={post.id}
+                        className="p-4 border rounded-lg hover:border-orange-300 transition-colors"
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-2">
-                              {getStatusBadge(q.status)}
-                              {getUrgencyBadge(q.urgency)}
-                              <Badge variant="outline">관련성 {q.relevance_score}%</Badge>
-                              {q.reward_points > 0 && (
-                                <Badge variant="secondary">내공 {q.reward_points}</Badge>
+                              {getStatusBadge(post.status)}
+                              <Badge variant="outline">관련성 {(post.relevance_score * 100).toFixed(0)}%</Badge>
+                              {post.sentiment && (
+                                <Badge variant="secondary">{post.sentiment}</Badge>
                               )}
                             </div>
-                            <h3 className="font-semibold mb-1">{q.title}</h3>
-                            {q.content && (
-                              <p className="text-sm text-gray-600 line-clamp-2">{q.content}</p>
+                            <h3 className="font-semibold mb-1">{post.title}</h3>
+                            {post.content && (
+                              <p className="text-sm text-gray-600 line-clamp-2">{post.content}</p>
                             )}
                             <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
-                              <span>조회 {q.view_count}</span>
-                              <span>답변 {q.answer_count}개</span>
-                              {q.matched_keywords && q.matched_keywords.length > 0 && (
-                                <span>키워드: {q.matched_keywords.join(', ')}</span>
+                              <span>조회 {post.view_count}</span>
+                              <span>댓글 {post.comment_count}개</span>
+                              <span>좋아요 {post.like_count}</span>
+                              {post.matched_keywords && post.matched_keywords.length > 0 && (
+                                <span>키워드: {post.matched_keywords.join(', ')}</span>
                               )}
                             </div>
                           </div>
                           <div className="flex flex-col gap-2">
-                            {q.url && (
+                            {post.url && (
                               <Button variant="outline" size="sm" asChild>
-                                <a href={q.url} target="_blank" rel="noopener noreferrer">
+                                <a href={post.url} target="_blank" rel="noopener noreferrer">
                                   <ExternalLink className="h-4 w-4" />
                                 </a>
                               </Button>
                             )}
                             <Button
                               size="sm"
-                              onClick={() => handleGenerateAnswer(q.id)}
-                              disabled={isGenerating || q.status === 'answered'}
+                              onClick={() => handleGenerateContent(post.id)}
+                              disabled={isGenerating || post.status === 'commented'}
                             >
                               {isGenerating ? (
                                 <Loader2 className="h-4 w-4 animate-spin" />
                               ) : (
                                 <>
                                   <Sparkles className="h-4 w-4 mr-1" />
-                                  답변 생성
+                                  댓글 생성
                                 </>
                               )}
                             </Button>
@@ -842,15 +986,15 @@ export default function KnowledgePage() {
             </Card>
           </TabsContent>
 
-          {/* 답변 관리 탭 */}
-          <TabsContent value="answers">
+          {/* 콘텐츠 관리 탭 */}
+          <TabsContent value="contents">
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle>생성된 답변</CardTitle>
+                  <CardTitle>생성된 콘텐츠</CardTitle>
                   <Select
-                    value={answerFilter}
-                    onValueChange={(v) => setAnswerFilter(v as AnswerStatus | '')}
+                    value={contentFilter}
+                    onValueChange={(v) => setContentFilter(v as CafeContentStatus | '')}
                   >
                     <SelectTrigger className="w-40">
                       <SelectValue placeholder="상태 필터" />
@@ -866,215 +1010,89 @@ export default function KnowledgePage() {
                 </div>
               </CardHeader>
               <CardContent>
-                {answers.length === 0 ? (
+                {contents.length === 0 ? (
                   <div className="text-center py-12">
                     <FileText className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                    <p className="text-gray-500">생성된 답변이 없습니다</p>
+                    <p className="text-gray-500">생성된 콘텐츠가 없습니다</p>
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {answers.map((answer) => (
+                    {contents.map((content) => (
                       <div
-                        key={answer.id}
+                        key={content.id}
                         className="p-4 border rounded-lg"
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-2">
-                              {getStatusBadge(answer.status)}
-                              {answer.quality_score && (
+                              {getContentTypeBadge(content.content_type)}
+                              {getStatusBadge(content.status)}
+                              {content.quality_score && (
                                 <Badge variant="outline">
-                                  품질 {answer.quality_score.toFixed(0)}점
-                                </Badge>
-                              )}
-                              {answer.is_chosen && (
-                                <Badge className="bg-yellow-100 text-yellow-800">
-                                  <Award className="h-3 w-3 mr-1" />
-                                  채택됨
+                                  품질 {(content.quality_score * 100).toFixed(0)}점
                                 </Badge>
                               )}
                             </div>
                             <p className="text-sm text-gray-700 whitespace-pre-wrap line-clamp-4">
-                              {answer.final_content || answer.content}
+                              {content.content}
                             </p>
-                            {answer.blog_link && (
+                            {content.blog_link && (
                               <p className="text-xs text-blue-600 mt-2">
-                                블로그: {answer.blog_link}
+                                블로그: {content.blog_link}
                               </p>
                             )}
+                            <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
+                              <span className="flex items-center gap-1">
+                                <Heart className="h-3 w-3" /> {content.likes_received}
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <MessageSquare className="h-3 w-3" /> {content.replies_received}
+                              </span>
+                            </div>
                           </div>
                           <div className="flex flex-col gap-2">
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => copyToClipboard(answer.final_content || answer.content)}
+                              onClick={() => copyToClipboard(content.content)}
                             >
                               <Copy className="h-4 w-4" />
                             </Button>
-                            {answer.status === 'draft' && (
+                            {content.status === 'draft' && (
                               <>
                                 <Button
                                   size="sm"
                                   variant="default"
-                                  onClick={() => handleApproveAnswer(answer.id)}
+                                  onClick={() => handleApproveContent(content.id)}
                                 >
                                   <CheckCircle className="h-4 w-4" />
                                 </Button>
-                              </>
-                            )}
-                            {answer.status === 'approved' && (
-                              <>
                                 <Button
                                   size="sm"
-                                  variant="default"
-                                  onClick={() => handleAutoPost(answer.id)}
-                                  disabled={!posterStatus?.logged_in || isPosting}
-                                  title={posterStatus?.logged_in ? '자동 등록' : '로그인 필요'}
+                                  variant="destructive"
+                                  onClick={() => handleRejectContent(content.id)}
                                 >
-                                  {isPosting ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <Upload className="h-4 w-4" />
-                                  )}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleMarkPosted(answer.id)}
-                                >
-                                  수동완료
+                                  <XCircle className="h-4 w-4" />
                                 </Button>
                               </>
                             )}
+                            {content.status === 'approved' && (
+                              <Button
+                                size="sm"
+                                variant="default"
+                                onClick={() => handleAutoPost(content.id)}
+                                disabled={!posterStatus?.logged_in || isPosting}
+                                title={posterStatus?.logged_in ? '자동 등록' : '로그인 필요'}
+                              >
+                                {isPosting ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Upload className="h-4 w-4" />
+                                )}
+                              </Button>
+                            )}
                           </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* 템플릿 탭 */}
-          <TabsContent value="templates">
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle>답변 템플릿</CardTitle>
-                  <Dialog open={isTemplateDialogOpen} onOpenChange={setIsTemplateDialogOpen}>
-                    <DialogTrigger asChild>
-                      <Button>
-                        <Plus className="h-4 w-4 mr-2" />
-                        템플릿 추가
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent className="max-w-2xl">
-                      <DialogHeader>
-                        <DialogTitle>템플릿 추가</DialogTitle>
-                        <DialogDescription>
-                          자주 사용하는 답변 형식을 템플릿으로 저장하세요
-                        </DialogDescription>
-                      </DialogHeader>
-                      <div className="grid gap-4 py-4">
-                        <div className="grid gap-2">
-                          <Label>템플릿 이름</Label>
-                          <Input
-                            placeholder="예: 시술 문의 기본 답변"
-                            value={newTemplate.name}
-                            onChange={(e) => setNewTemplate({ ...newTemplate, name: e.target.value })}
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="grid gap-2">
-                            <Label>카테고리</Label>
-                            <Select
-                              value={newTemplate.category}
-                              onValueChange={(v) => setNewTemplate({ ...newTemplate, category: v })}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="선택" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {CATEGORY_OPTIONS.map((opt) => (
-                                  <SelectItem key={opt.value} value={opt.value}>
-                                    {opt.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="grid gap-2">
-                            <Label>답변 톤</Label>
-                            <Select
-                              value={newTemplate.tone}
-                              onValueChange={(v) => setNewTemplate({ ...newTemplate, tone: v as AnswerTone })}
-                            >
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {TONE_OPTIONS.map((opt) => (
-                                  <SelectItem key={opt.value} value={opt.value}>
-                                    {opt.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
-                        <div className="grid gap-2">
-                          <Label>템플릿 내용</Label>
-                          <Textarea
-                            placeholder="답변 템플릿을 작성하세요. {병원명}, {시술명} 등의 변수를 사용할 수 있습니다."
-                            rows={8}
-                            value={newTemplate.template_content}
-                            onChange={(e) => setNewTemplate({ ...newTemplate, template_content: e.target.value })}
-                          />
-                        </div>
-                      </div>
-                      <DialogFooter>
-                        <Button variant="outline" onClick={() => setIsTemplateDialogOpen(false)}>
-                          취소
-                        </Button>
-                        <Button onClick={handleAddTemplate}>저장</Button>
-                      </DialogFooter>
-                    </DialogContent>
-                  </Dialog>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {templates.length === 0 ? (
-                  <div className="text-center py-12">
-                    <FileText className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                    <p className="text-gray-500">등록된 템플릿이 없습니다</p>
-                  </div>
-                ) : (
-                  <div className="grid md:grid-cols-2 gap-4">
-                    {templates.map((template) => (
-                      <div
-                        key={template.id}
-                        className="p-4 border rounded-lg"
-                      >
-                        <div className="flex items-start justify-between mb-2">
-                          <div>
-                            <h3 className="font-semibold">{template.name}</h3>
-                            <div className="flex items-center gap-2 mt-1">
-                              {template.category && (
-                                <Badge variant="secondary">{template.category}</Badge>
-                              )}
-                              <Badge variant="outline">
-                                {TONE_OPTIONS.find((t) => t.value === template.tone)?.label}
-                              </Badge>
-                              <span className="text-xs text-gray-500">
-                                {template.usage_count}회 사용
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                        <p className="text-sm text-gray-600 line-clamp-3">
-                          {template.template_content}
-                        </p>
                       </div>
                     ))}
                   </div>
@@ -1094,7 +1112,7 @@ export default function KnowledgePage() {
                     자동 수집 스케줄러
                   </CardTitle>
                   <CardDescription>
-                    주기적으로 질문을 수집하고 답변을 생성합니다
+                    주기적으로 게시글을 수집하고 콘텐츠를 생성합니다
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -1120,7 +1138,7 @@ export default function KnowledgePage() {
                         )}
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-3 gap-3">
                         <div className="p-3 bg-blue-50 rounded-lg text-center">
                           <p className="text-2xl font-bold text-blue-600">
                             {schedulerStatus.today?.collected || 0}
@@ -1133,11 +1151,17 @@ export default function KnowledgePage() {
                           </p>
                           <p className="text-xs text-gray-500">오늘 생성</p>
                         </div>
+                        <div className="p-3 bg-green-50 rounded-lg text-center">
+                          <p className="text-2xl font-bold text-green-600">
+                            {schedulerStatus.today?.posted || 0}
+                          </p>
+                          <p className="text-xs text-gray-500">오늘 등록</p>
+                        </div>
                       </div>
 
                       <div className="text-xs text-gray-500 space-y-1">
                         <p>일일 수집 한도: {schedulerStatus.today?.collect_limit || 100}개</p>
-                        <p>일일 생성 한도: {schedulerStatus.today?.answer_limit || 20}개</p>
+                        <p>일일 등록 한도: {schedulerStatus.today?.post_limit || 20}개</p>
                         <p className="flex items-center gap-1">
                           <Clock className="h-3 w-3" />
                           업무 시간: {schedulerStatus.is_working_hours ? '내 (활성)' : '외 (비활성)'}
@@ -1189,10 +1213,10 @@ export default function KnowledgePage() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Upload className="h-5 w-5 text-green-500" />
-                    자동 답변 등록
+                    자동 콘텐츠 등록
                   </CardTitle>
                   <CardDescription>
-                    승인된 답변을 자동으로 네이버 지식인에 등록합니다
+                    승인된 콘텐츠를 자동으로 네이버 카페에 등록합니다
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -1226,20 +1250,20 @@ export default function KnowledgePage() {
                     )}
                   </div>
 
-                  {/* 대기중인 답변 */}
+                  {/* 대기중인 콘텐츠 */}
                   {schedulerStatus?.pending && (
                     <div className="p-4 bg-orange-50 rounded-lg">
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="font-medium text-orange-800">등록 대기</p>
                           <p className="text-sm text-orange-600">
-                            승인된 답변 {schedulerStatus.pending.draft_answers}개
+                            승인된 콘텐츠 {schedulerStatus.pending.contents}개
                           </p>
                         </div>
                         <Button
                           size="sm"
                           onClick={handleBulkPost}
-                          disabled={!posterStatus?.logged_in || isPosting || schedulerStatus.pending.draft_answers === 0}
+                          disabled={!posterStatus?.logged_in || isPosting || schedulerStatus.pending.contents === 0}
                         >
                           {isPosting ? (
                             <Loader2 className="h-4 w-4 mr-1 animate-spin" />
@@ -1254,7 +1278,7 @@ export default function KnowledgePage() {
 
                   {!posterStatus?.logged_in && (
                     <p className="text-sm text-gray-500 text-center py-4">
-                      네이버 계정에 로그인하면 자동 답변 등록을 사용할 수 있습니다
+                      네이버 계정에 로그인하면 자동 콘텐츠 등록을 사용할 수 있습니다
                     </p>
                   )}
                 </CardContent>
@@ -1265,16 +1289,16 @@ export default function KnowledgePage() {
             <Card className="mt-6">
               <CardContent className="pt-6">
                 <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                    <Bot className="h-5 w-5 text-blue-600" />
+                  <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
+                    <Bot className="h-5 w-5 text-orange-600" />
                   </div>
                   <div>
                     <h3 className="font-semibold mb-1">자동화 작동 방식</h3>
                     <ul className="text-sm text-gray-600 space-y-1">
-                      <li>1. 스케줄러가 설정된 키워드로 지식인 질문을 자동 수집합니다</li>
-                      <li>2. 관련성 높은 질문에 대해 AI가 자동으로 답변을 생성합니다</li>
-                      <li>3. 생성된 답변을 검토하고 승인하면 자동 등록됩니다</li>
-                      <li>4. 업무 시간(09:00-18:00) 내에만 자동 작업이 실행됩니다</li>
+                      <li>1. 스케줄러가 설정된 카페에서 키워드로 게시글을 자동 수집합니다</li>
+                      <li>2. 관련성 높은 게시글에 대해 AI가 자동으로 댓글을 생성합니다</li>
+                      <li>3. 생성된 콘텐츠를 검토하고 승인하면 자동 등록됩니다</li>
+                      <li>4. 업무 시간(09:00-22:00) 내에만 자동 작업이 실행됩니다</li>
                     </ul>
                   </div>
                 </div>
@@ -1288,19 +1312,19 @@ export default function KnowledgePage() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Settings className="h-5 w-5" />
-                  답변 생성 설정
+                  콘텐츠 생성 설정
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="grid md:grid-cols-2 gap-6">
                   <div className="space-y-4">
-                    <h3 className="font-semibold">기본 답변 스타일</h3>
+                    <h3 className="font-semibold">기본 콘텐츠 스타일</h3>
                     <div className="grid gap-4">
                       <div className="grid gap-2">
-                        <Label>답변 톤</Label>
+                        <Label>댓글 톤</Label>
                         <Select
-                          value={answerSettings.tone}
-                          onValueChange={(v) => setAnswerSettings({ ...answerSettings, tone: v as AnswerTone })}
+                          value={contentSettings.tone}
+                          onValueChange={(v) => setContentSettings({ ...contentSettings, tone: v as CafeTone })}
                         >
                           <SelectTrigger>
                             <SelectValue />
@@ -1317,8 +1341,8 @@ export default function KnowledgePage() {
                       <div className="flex items-center justify-between">
                         <Label>홍보 문구 포함</Label>
                         <Switch
-                          checked={answerSettings.include_promotion}
-                          onCheckedChange={(v) => setAnswerSettings({ ...answerSettings, include_promotion: v })}
+                          checked={contentSettings.include_promotion}
+                          onCheckedChange={(v) => setContentSettings({ ...contentSettings, include_promotion: v })}
                         />
                       </div>
                     </div>
@@ -1331,16 +1355,16 @@ export default function KnowledgePage() {
                         <Label>블로그 링크</Label>
                         <Input
                           placeholder="https://blog.naver.com/..."
-                          value={answerSettings.blog_link}
-                          onChange={(e) => setAnswerSettings({ ...answerSettings, blog_link: e.target.value })}
+                          value={contentSettings.blog_link}
+                          onChange={(e) => setContentSettings({ ...contentSettings, blog_link: e.target.value })}
                         />
                       </div>
                       <div className="grid gap-2">
                         <Label>플레이스 링크</Label>
                         <Input
                           placeholder="https://place.naver.com/..."
-                          value={answerSettings.place_link}
-                          onChange={(e) => setAnswerSettings({ ...answerSettings, place_link: e.target.value })}
+                          value={contentSettings.place_link}
+                          onChange={(e) => setContentSettings({ ...contentSettings, place_link: e.target.value })}
                         />
                       </div>
                     </div>
@@ -1352,32 +1376,30 @@ export default function KnowledgePage() {
         </Tabs>
       </main>
 
-      {/* 답변 확인 다이얼로그 */}
-      <Dialog open={isAnswerDialogOpen} onOpenChange={setIsAnswerDialogOpen}>
+      {/* 콘텐츠 확인 다이얼로그 */}
+      <Dialog open={isContentDialogOpen} onOpenChange={setIsContentDialogOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>생성된 답변</DialogTitle>
+            <DialogTitle>생성된 콘텐츠</DialogTitle>
           </DialogHeader>
-          {selectedAnswer && (
+          {selectedContent && (
             <div className="space-y-4">
               <div className="flex items-center gap-2">
-                {selectedAnswer.quality_score && (
+                {getContentTypeBadge(selectedContent.content_type)}
+                {selectedContent.quality_score && (
                   <Badge variant="outline">
-                    품질 점수: {selectedAnswer.quality_score.toFixed(0)}
+                    품질 점수: {(selectedContent.quality_score * 100).toFixed(0)}
                   </Badge>
                 )}
-                <Badge variant="secondary">
-                  {TONE_OPTIONS.find((t) => t.value === selectedAnswer.tone)?.label}
-                </Badge>
               </div>
               <div className="p-4 bg-gray-50 rounded-lg">
                 <p className="whitespace-pre-wrap text-sm">
-                  {selectedAnswer.content}
+                  {selectedContent.content}
                 </p>
               </div>
-              {selectedAnswer.promotion_text && (
+              {selectedContent.promotion_text && (
                 <div className="p-3 bg-blue-50 rounded-lg">
-                  <p className="text-sm text-blue-800">{selectedAnswer.promotion_text}</p>
+                  <p className="text-sm text-blue-800">{selectedContent.promotion_text}</p>
                 </div>
               )}
             </div>
@@ -1385,15 +1407,15 @@ export default function KnowledgePage() {
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => selectedAnswer && copyToClipboard(selectedAnswer.content)}
+              onClick={() => selectedContent && copyToClipboard(selectedContent.content)}
             >
               <Copy className="h-4 w-4 mr-2" />
               복사
             </Button>
             <Button
               onClick={() => {
-                if (selectedAnswer) handleApproveAnswer(selectedAnswer.id)
-                setIsAnswerDialogOpen(false)
+                if (selectedContent) handleApproveContent(selectedContent.id)
+                setIsContentDialogOpen(false)
               }}
             >
               승인
@@ -1411,7 +1433,7 @@ export default function KnowledgePage() {
               네이버 로그인
             </DialogTitle>
             <DialogDescription>
-              자동 답변 등록을 위해 네이버 계정으로 로그인하세요
+              자동 콘텐츠 등록을 위해 네이버 계정으로 로그인하세요
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">

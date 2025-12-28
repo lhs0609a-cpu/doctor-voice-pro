@@ -18,6 +18,7 @@ from app.models import User
 from app.services.blog_exporter import blog_exporter
 from app.services.image_analyzer import image_analyzer
 from app.services.image_search import image_search_service
+from app.services.ai_service import AIService
 
 
 router = APIRouter()
@@ -148,10 +149,8 @@ async def auto_export_with_ai_analysis(
     5. DOCX 파일 생성
     """
     try:
-        # TODO: AI 분석 기능 추가
-        # 현재는 기본 키워드 추출로 대체
-        keywords = _extract_basic_keywords(content)
-        emphasis_phrases = _extract_emphasis_phrases(content)
+        # AI 분석으로 키워드 및 강조 문구 추출
+        keywords, emphasis_phrases = await _extract_with_ai(content, title)
 
         # DOCX 생성
         docx_file = blog_exporter.export_to_docx(
@@ -186,12 +185,75 @@ async def auto_export_with_ai_analysis(
         )
 
 
+async def _extract_with_ai(content: str, title: Optional[str] = "") -> tuple:
+    """
+    AI를 사용하여 콘텐츠에서 키워드와 강조 문구를 추출합니다.
+
+    Returns:
+        (keywords, emphasis_phrases) 튜플
+    """
+    import json
+
+    try:
+        ai_service = AIService()
+
+        prompt = f"""다음 블로그 글을 분석하여 JSON 형식으로 응답해주세요.
+
+제목: {title or '(제목 없음)'}
+
+본문:
+{content[:3000]}  # 토큰 제한을 위해 처음 3000자만 사용
+
+다음 형식으로 응답해주세요:
+{{
+    "keywords": ["키워드1", "키워드2", ...],  // 핵심 키워드 최대 10개 (SEO에 중요한 단어들)
+    "emphasis_phrases": ["강조문구1", "강조문구2", ...]  // 독자의 관심을 끌 핵심 문구 최대 5개
+}}
+
+규칙:
+1. keywords는 SEO에 중요한 핵심 용어들 (의료/건강 관련 전문용어 우선)
+2. emphasis_phrases는 독자가 꼭 기억해야 할 핵심 메시지나 숫자가 포함된 구체적 정보
+3. JSON 형식만 응답하고 다른 텍스트는 포함하지 마세요"""
+
+        system_prompt = """당신은 블로그 SEO 및 콘텐츠 분석 전문가입니다.
+블로그 글에서 핵심 키워드와 강조해야 할 문구를 정확하게 추출합니다.
+항상 유효한 JSON 형식으로만 응답합니다."""
+
+        response = await ai_service.generate_text(
+            prompt=prompt,
+            max_tokens=500,
+            temperature=0.3,
+            system_prompt=system_prompt
+        )
+
+        # JSON 파싱 시도
+        try:
+            # JSON 블록 추출 (```json ... ``` 형식 처리)
+            json_match = response
+            if "```json" in response:
+                json_match = response.split("```json")[1].split("```")[0]
+            elif "```" in response:
+                json_match = response.split("```")[1].split("```")[0]
+
+            data = json.loads(json_match.strip())
+            keywords = data.get("keywords", [])[:10]
+            emphasis_phrases = data.get("emphasis_phrases", [])[:5]
+            return keywords, emphasis_phrases
+
+        except json.JSONDecodeError:
+            # JSON 파싱 실패시 기본 추출 사용
+            print(f"⚠️ AI 응답 JSON 파싱 실패, 기본 추출 사용: {response[:200]}")
+            return _extract_basic_keywords(content), _extract_emphasis_phrases(content)
+
+    except Exception as e:
+        print(f"⚠️ AI 분석 실패, 기본 추출 사용: {e}")
+        return _extract_basic_keywords(content), _extract_emphasis_phrases(content)
+
+
 def _extract_basic_keywords(content: str) -> List[str]:
-    """기본 키워드 추출 (임시)"""
-    # 간단한 키워드 추출 로직
+    """기본 키워드 추출 (fallback)"""
     import re
 
-    # 한글 명사 패턴 (간단 버전)
     keywords = []
 
     # 의료 관련 중요 키워드
@@ -209,7 +271,7 @@ def _extract_basic_keywords(content: str) -> List[str]:
 
 
 def _extract_emphasis_phrases(content: str) -> List[str]:
-    """강조 문구 추출 (임시)"""
+    """강조 문구 추출 (fallback)"""
     phrases = []
 
     # 중요 표현 패턴

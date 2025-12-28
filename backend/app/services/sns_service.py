@@ -668,13 +668,20 @@ class SNSService:
             HashtagRecommendation.category == category
         ).order_by(HashtagRecommendation.priority.desc())
 
-        if platform:
-            # JSON 배열에서 플랫폼 필터링 (데이터베이스에 따라 다름)
-            pass
-
         query = query.limit(limit)
         result = await db.execute(query)
-        return result.scalars().all()
+        recommendations = result.scalars().all()
+
+        # 플랫폼 필터링 (Python에서 처리 - JSON 배열 필터링)
+        if platform:
+            platform_value = platform.value if hasattr(platform, 'value') else platform
+            filtered = [
+                r for r in recommendations
+                if not r.platforms or platform_value in r.platforms
+            ]
+            return filtered[:limit]
+
+        return recommendations
 
 
 # Import timedelta for token expiration

@@ -1,9 +1,197 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { adminAPI, APIKeyInfo, APIKeyStatus } from '@/lib/api'
+import { adminAPI, APIKeyInfo, APIKeyStatus, subscriptionAPI, type Plan } from '@/lib/api'
 import type { User } from '@/types'
 import { useRouter } from 'next/navigation'
+
+// 크레딧 팩 정보 (백엔드와 동일)
+const CREDIT_PACKS = {
+  post_10: { id: 'post_10', name: '글 생성 크레딧 10회', credit_type: 'post', amount: 10, price: 9900 },
+  post_50: { id: 'post_50', name: '글 생성 크레딧 50회', credit_type: 'post', amount: 50, price: 39900, discount_rate: 20 },
+  post_100: { id: 'post_100', name: '글 생성 크레딧 100회', credit_type: 'post', amount: 100, price: 69900, discount_rate: 30 },
+  analysis_50: { id: 'analysis_50', name: '분석 크레딧 50회', credit_type: 'analysis', amount: 50, price: 9900 },
+  analysis_200: { id: 'analysis_200', name: '분석 크레딧 200회', credit_type: 'analysis', amount: 200, price: 29900, discount_rate: 25 },
+}
+
+// 법적 리스크 가이드라인 데이터
+const LEGAL_RISKS = [
+  {
+    id: 'cafe_review',
+    name: '카페 리뷰 자동 생성',
+    severity: 'critical',
+    location: 'backend/app/services/review_service.py, frontend/src/components/cafe-review/',
+    description: '불특정 다수의 가짜 후기를 의도적으로 자연스럽게 작성하도록 설계됨. 오타, 이모티콘 등을 포함해 실제 사용자 후기로 위장.',
+    laws: [
+      '소비자기본법: 허위·과장 표시광고 금지',
+      '전자상거래법: 소비자 기만행위 금지',
+      '공정거래법: 부당한 표시·광고 금지',
+      '형법: 사기죄 (조직적인 가짜 리뷰 생성 시)',
+    ],
+    problems: [
+      '조직적인 가짜 후기 생성 시스템',
+      '실제 사용자 후기로 위장하는 기능',
+      '의도적 오타/비격식 표현으로 탐지 회피',
+      '병원에 대한 허위 평가 게시',
+    ],
+    solutions: [
+      '기능 완전 제거 또는 비활성화 권장',
+      '실제 환자 후기만 수집하는 시스템으로 전환',
+      '후기 작성 시 "AI 생성 콘텐츠" 명시 의무화',
+      '병원 관계자임을 명시하는 방식으로 변경',
+    ],
+    safeImplementation: '실제 환자가 직접 작성한 리뷰만 수집하고, 리뷰 작성 대가로 과도한 보상을 제공하지 않아야 함. AI 보조 시 반드시 표기 필요.',
+  },
+  {
+    id: 'review_campaign',
+    name: '리뷰 캠페인 (보상 제공)',
+    severity: 'critical',
+    location: 'backend/app/api/campaigns.py, backend/app/services/campaign_service.py',
+    description: '리뷰 작성 조건으로 현금, 할인, 사은품 등 보상 제공. 최소 별점, 최소 글자 수 등 조건 설정 가능.',
+    laws: [
+      '소비자기본법: 리뷰 조작 금지',
+      '경품법: 과도한 경품 제공 제한',
+      '의료법 제56조: 의료광고의 금지사항',
+      '공정거래법: 기만적 광고행위',
+    ],
+    problems: [
+      '보상을 조건으로 한 리뷰 유도 = 리뷰 조작',
+      '최소 별점 요구 = 긍정 리뷰 강요',
+      '의료기관의 경품/할인 제공 제한 위반',
+      '소비자의 공정한 판단 방해',
+    ],
+    solutions: [
+      '보상 조건부 리뷰 요청 기능 제거',
+      '최소 별점/내용 조건 설정 기능 제거',
+      '리뷰 작성 자체에 대한 보상은 허용, 내용 조건 금지',
+      '보상 제공 시 "광고" 또는 "협찬" 명시 의무화',
+    ],
+    safeImplementation: '리뷰 작성에 대한 소정의 감사 표시는 가능하나, 특정 내용이나 평점을 조건으로 하면 안 됨. 보상 리뷰는 반드시 표기.',
+  },
+  {
+    id: 'knowledge_answer',
+    name: '네이버 지식인 자동 답변',
+    severity: 'high',
+    location: 'backend/app/api/knowledge.py, backend/app/services/knowledge_service.py',
+    description: '네이버 지식인 질문을 수집하고 AI로 답변을 자동 생성하여 게시. 90점 이상 자동 승인 기능.',
+    laws: [
+      '의료법 제27조: 무면허 의료행위 금지',
+      '의료법 제56조: 의료광고 금지사항',
+      '네이버 이용약관: 자동화된 글 작성 금지',
+      '개인정보보호법: 질문자 정보 무단 수집',
+    ],
+    problems: [
+      '비등록 의료인이 의료 조언을 제공하는 것처럼 보임',
+      '의사 자격 없이 의료 상담 제공',
+      '자동화된 답변으로 플랫폼 약관 위반',
+      '답변의 의학적 정확성 검증 불가',
+    ],
+    solutions: [
+      '의료 관련 답변 자동 게시 기능 비활성화',
+      '답변 시 "AI 생성 참고 자료"임을 명시',
+      '반드시 의료인 검토 후 수동 게시 절차 추가',
+      '"전문의 상담을 권장합니다" 문구 필수 포함',
+    ],
+    safeImplementation: 'AI는 답변 초안 생성만 지원하고, 의료 전문가가 검토 후 게시. 일반 건강정보 제공이라는 점을 명확히 하고 의료 상담이 아님을 표기.',
+  },
+  {
+    id: 'naver_blog',
+    name: '네이버 블로그 자동 발행',
+    severity: 'high',
+    location: 'backend/app/api/naver.py, backend/app/services/naver_blog_service.py',
+    description: 'OAuth를 통해 사용자 네이버 블로그에 AI 생성 콘텐츠를 자동 발행.',
+    laws: [
+      '네이버 이용약관: 자동화된 콘텐츠 생성/게시 제한',
+      '의료법 제56조: 의료광고 금지사항',
+      '저작권법: AI 생성 콘텐츠의 저작권 문제',
+    ],
+    problems: [
+      'AI 생성 콘텐츠 대량 발행 시 스팸으로 분류 가능',
+      '의료 광고 심의 없는 의료 정보 게시',
+      '계정 정지/제재 위험',
+      '콘텐츠 품질 보장 어려움',
+    ],
+    solutions: [
+      'AI 생성 콘텐츠임을 명시적으로 표기',
+      '의료 정보 게시 시 의료법 검사 강제화',
+      '발행 빈도 제한 설정',
+      '사용자 최종 검토 후 발행하는 프로세스 추가',
+    ],
+    safeImplementation: '사용자가 AI 초안을 검토하고 수정 후 직접 발행 버튼을 누르는 방식. 완전 자동화보다는 반자동화 권장.',
+  },
+  {
+    id: 'sns_auto_post',
+    name: 'SNS 자동 포스팅',
+    severity: 'medium',
+    location: 'backend/app/api/sns.py, backend/app/services/sns_service.py',
+    description: 'Instagram, Facebook에 블로그 글을 SNS 포맷으로 자동 변환하여 발행.',
+    laws: [
+      'Instagram/Facebook 이용약관: 자동화된 콘텐츠 게시 제한',
+      '의료법 제56조: 의료광고 금지사항',
+      '표시광고법: 광고의 명확한 표시',
+    ],
+    problems: [
+      '의료인 표시 없는 의료 관련 광고 가능성',
+      '플랫폼 API 이용약관 위반 가능성',
+      '계정 정지 위험',
+    ],
+    solutions: [
+      '광고성 게시물임을 명시 (#광고 #협찬)',
+      '의료인/병원 정보 명확히 표기',
+      'Meta Business Suite 공식 API 사용',
+      '발행 전 미리보기 및 사용자 승인 절차',
+    ],
+    safeImplementation: '공식 API를 통한 연동, 광고 표기 의무화, 사용자 승인 후 발행.',
+  },
+  {
+    id: 'medical_content',
+    name: '의료 콘텐츠 AI 생성',
+    severity: 'medium',
+    location: 'backend/app/services/medical_law_checker.py, backend/app/api/posts.py',
+    description: 'AI로 의료 정보/광고 콘텐츠 생성. 의료법 검사 기능은 있으나 강제가 아님.',
+    laws: [
+      '의료법 제56조: 의료광고 금지사항',
+      '의료법 제57조: 의료광고 심의',
+      '소비자기본법: 허위·과장 광고 금지',
+    ],
+    problems: [
+      '의료법 검사를 건너뛸 수 있음',
+      '의료광고 심의 없이 게시 가능',
+      '치료 효과 과장, 비교 광고 등 위반 가능',
+    ],
+    solutions: [
+      '의료법 검사를 발행 전 필수 단계로 설정',
+      '검사 통과 전 발행 버튼 비활성화',
+      '의료광고 심의 절차 안내 추가',
+      '위반 표현 자동 수정 후에만 발행 허용',
+    ],
+    safeImplementation: '모든 의료 관련 콘텐츠는 의료법 검사 통과 필수. 검사 우회 불가능하게 설계.',
+  },
+  {
+    id: 'crawling',
+    name: '크롤링/스크래핑',
+    severity: 'low',
+    location: 'backend/app/services/knowledge_service.py',
+    description: '네이버 지식인 질문 수집 (현재 시뮬레이션, 실제 크롤링 구현 예정)',
+    laws: [
+      '정보통신망법: 부정한 접근 금지',
+      '저작권법: 무단 복제 금지',
+      '네이버 이용약관: 자동 크롤링 금지',
+    ],
+    problems: [
+      '플랫폼 이용약관 위반',
+      '서버에 과도한 부하 시 업무방해죄 가능',
+      '수집 데이터의 저작권 문제',
+    ],
+    solutions: [
+      '공식 API가 있다면 해당 API 사용',
+      'robots.txt 준수',
+      '수집 빈도 제한 (rate limiting)',
+      '수집 데이터 상업적 이용 시 법적 검토',
+    ],
+    safeImplementation: '가능한 공식 API 사용. 불가피한 크롤링 시 robots.txt 준수, 최소한의 데이터만 수집, 서버 부하 최소화.',
+  },
+]
 
 export default function AdminPage() {
   const router = useRouter()
@@ -15,7 +203,8 @@ export default function AdminPage() {
   const [subscriptionEndDate, setSubscriptionEndDate] = useState('')
 
   // API 키 관리 상태
-  const [activeTab, setActiveTab] = useState<'users' | 'apikeys'>('users')
+  const [activeTab, setActiveTab] = useState<'users' | 'apikeys' | 'system' | 'legal'>('users')
+  const [expandedRisk, setExpandedRisk] = useState<string | null>(null)
   const [apiKeyStatus, setApiKeyStatus] = useState<Record<string, APIKeyStatus>>({})
   const [apiKeyInputs, setApiKeyInputs] = useState<Record<string, string>>({
     claude: '',
@@ -25,11 +214,50 @@ export default function AdminPage() {
   const [testingProvider, setTestingProvider] = useState<string | null>(null)
   const [savingProvider, setSavingProvider] = useState<string | null>(null)
 
+  // 시스템 정보 상태
+  const [plans, setPlans] = useState<Plan[]>([])
+  const [aiPricing, setAiPricing] = useState<any>(null)
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking')
+  const [backendUrl, setBackendUrl] = useState('')
+
   useEffect(() => {
     loadUsers()
     checkAdminAccess()
     loadAPIKeyStatus()
+    loadSystemInfo()
   }, [filter])
+
+  const loadSystemInfo = async () => {
+    // 백엔드 연결 상태 확인
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8010'
+    setBackendUrl(apiUrl)
+
+    try {
+      const response = await fetch(`${apiUrl}/health`)
+      setBackendStatus(response.ok ? 'connected' : 'disconnected')
+    } catch {
+      setBackendStatus('disconnected')
+    }
+
+    // 플랜 정보 로드
+    try {
+      const plansData = await subscriptionAPI.getPlans()
+      setPlans(plansData)
+    } catch (error) {
+      console.error('플랜 정보 로드 실패:', error)
+    }
+
+    // AI 비용 정보 로드
+    try {
+      const response = await fetch(`${apiUrl}/api/v1/system/ai-pricing`)
+      if (response.ok) {
+        const data = await response.json()
+        setAiPricing(data)
+      }
+    } catch (error) {
+      console.error('AI 비용 정보 로드 실패:', error)
+    }
+  }
 
   const loadAPIKeyStatus = async () => {
     try {
@@ -249,6 +477,26 @@ export default function AdminPage() {
             >
               API 키 관리
             </button>
+            <button
+              onClick={() => setActiveTab('system')}
+              className={`px-4 py-2 rounded-md font-medium ${
+                activeTab === 'system'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              시스템 정보
+            </button>
+            <button
+              onClick={() => setActiveTab('legal')}
+              className={`px-4 py-2 rounded-md font-medium ${
+                activeTab === 'legal'
+                  ? 'bg-red-600 text-white'
+                  : 'bg-red-50 text-red-700 hover:bg-red-100'
+              }`}
+            >
+              법적 리스크
+            </button>
           </div>
 
           {/* 사용자 관리 탭 - 필터 */}
@@ -376,6 +624,389 @@ export default function AdminPage() {
                 <li>- Gemini API 키는 Google AI Studio에서 발급받을 수 있습니다.</li>
                 <li>- API 키는 서버에 암호화되어 저장되며, 서버 재시작 후에도 유지됩니다.</li>
               </ul>
+            </div>
+          </div>
+        )}
+
+        {/* 시스템 정보 탭 */}
+        {activeTab === 'system' && (
+          <div className="space-y-6">
+            {/* 백엔드 연결 상태 */}
+            <div className="bg-white rounded-lg shadow-sm p-6">
+              <h3 className="text-lg font-semibold mb-4">백엔드 연결 상태</h3>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <div className={`w-3 h-3 rounded-full ${
+                    backendStatus === 'connected' ? 'bg-green-500 animate-pulse' :
+                    backendStatus === 'disconnected' ? 'bg-red-500' : 'bg-yellow-500 animate-pulse'
+                  }`}></div>
+                  <span className={`font-medium ${
+                    backendStatus === 'connected' ? 'text-green-600' :
+                    backendStatus === 'disconnected' ? 'text-red-600' : 'text-yellow-600'
+                  }`}>
+                    {backendStatus === 'connected' ? '연결됨' :
+                     backendStatus === 'disconnected' ? '연결 안됨' : '확인 중...'}
+                  </span>
+                </div>
+                <span className="text-gray-500">|</span>
+                <span className="text-sm text-gray-600 font-mono">{backendUrl}</span>
+                <button
+                  onClick={loadSystemInfo}
+                  className="ml-auto px-3 py-1 bg-gray-100 hover:bg-gray-200 rounded text-sm"
+                >
+                  새로고침
+                </button>
+              </div>
+            </div>
+
+            {/* AI 모델별 비용 */}
+            <div className="bg-white rounded-lg shadow-sm p-6">
+              <h3 className="text-lg font-semibold mb-4">AI 모델별 비용 (1건당 예상)</h3>
+              {aiPricing?.pricing ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-gray-50 border-b">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">모델</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">제공사</th>
+                        <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">입력 (100만 토큰)</th>
+                        <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">출력 (100만 토큰)</th>
+                        <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">글 1건 예상 비용</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {aiPricing.pricing.map((model: any) => (
+                        <tr key={model.model_id} className="hover:bg-gray-50">
+                          <td className="px-4 py-3 text-sm font-medium">{model.model_id}</td>
+                          <td className="px-4 py-3 text-sm text-gray-600">{model.provider}</td>
+                          <td className="px-4 py-3 text-sm text-right">${model.input_price_per_1m}</td>
+                          <td className="px-4 py-3 text-sm text-right">${model.output_price_per_1m}</td>
+                          <td className="px-4 py-3 text-sm text-right font-semibold text-blue-600">
+                            ₩{model.estimated_cost_per_post_krw?.toLocaleString()}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-gray-500">AI 비용 정보를 불러오는 중...</p>
+              )}
+            </div>
+
+            {/* 구독 플랜 정보 */}
+            <div className="bg-white rounded-lg shadow-sm p-6">
+              <h3 className="text-lg font-semibold mb-4">구독 플랜 가격</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-50 border-b">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">플랜</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">월간 가격</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">연간 가격</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">글 생성/월</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">분석/월</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">추가 글 단가</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">추가 분석 단가</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {plans.map((plan) => (
+                      <tr key={plan.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 text-sm font-medium">
+                          {plan.name}
+                          {plan.id === 'pro' && (
+                            <span className="ml-2 px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">추천</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-right">
+                          {plan.price_monthly === 0 ? '무료' : `₩${plan.price_monthly.toLocaleString()}`}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-right">
+                          {plan.price_yearly === 0 ? '-' : `₩${plan.price_yearly.toLocaleString()}`}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-right">
+                          {plan.posts_per_month === -1 ? '무제한' : plan.posts_per_month}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-right">
+                          {plan.analysis_per_month === -1 ? '무제한' : plan.analysis_per_month}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-right text-orange-600">
+                          ₩{plan.extra_post_price?.toLocaleString() || '-'}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-right text-orange-600">
+                          ₩{plan.extra_analysis_price?.toLocaleString() || '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* 크레딧 팩 가격 */}
+            <div className="bg-white rounded-lg shadow-sm p-6">
+              <h3 className="text-lg font-semibold mb-4">크레딧 팩 가격</h3>
+              <div className="grid md:grid-cols-2 gap-6">
+                {/* 글 생성 크레딧 */}
+                <div>
+                  <h4 className="font-medium text-gray-700 mb-3">글 생성 크레딧</h4>
+                  <div className="space-y-2">
+                    {Object.values(CREDIT_PACKS)
+                      .filter(pack => pack.credit_type === 'post')
+                      .map(pack => (
+                        <div key={pack.id} className="flex justify-between items-center p-3 bg-gray-50 rounded">
+                          <div>
+                            <span className="font-medium">{pack.amount}개</span>
+                            {(pack as any).discount_rate && (
+                              <span className="ml-2 text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded">
+                                {(pack as any).discount_rate}% 할인
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-right">
+                            <span className="font-semibold">₩{pack.price.toLocaleString()}</span>
+                            <span className="text-xs text-gray-500 ml-2">
+                              (개당 ₩{Math.round(pack.price / pack.amount).toLocaleString()})
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+
+                {/* 분석 크레딧 */}
+                <div>
+                  <h4 className="font-medium text-gray-700 mb-3">분석 크레딧</h4>
+                  <div className="space-y-2">
+                    {Object.values(CREDIT_PACKS)
+                      .filter(pack => pack.credit_type === 'analysis')
+                      .map(pack => (
+                        <div key={pack.id} className="flex justify-between items-center p-3 bg-gray-50 rounded">
+                          <div>
+                            <span className="font-medium">{pack.amount}개</span>
+                            {(pack as any).discount_rate && (
+                              <span className="ml-2 text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded">
+                                {(pack as any).discount_rate}% 할인
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-right">
+                            <span className="font-semibold">₩{pack.price.toLocaleString()}</span>
+                            <span className="text-xs text-gray-500 ml-2">
+                              (개당 ₩{Math.round(pack.price / pack.amount).toLocaleString()})
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 환경 정보 */}
+            <div className="bg-white rounded-lg shadow-sm p-6">
+              <h3 className="text-lg font-semibold mb-4">환경 정보</h3>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className="p-3 bg-gray-50 rounded">
+                  <span className="text-gray-500">프론트엔드:</span>
+                  <span className="ml-2 font-mono">{typeof window !== 'undefined' ? window.location.origin : '-'}</span>
+                </div>
+                <div className="p-3 bg-gray-50 rounded">
+                  <span className="text-gray-500">백엔드:</span>
+                  <span className="ml-2 font-mono">{backendUrl}</span>
+                </div>
+                <div className="p-3 bg-gray-50 rounded">
+                  <span className="text-gray-500">NEXT_PUBLIC_API_URL:</span>
+                  <span className="ml-2 font-mono">{process.env.NEXT_PUBLIC_API_URL || '(미설정)'}</span>
+                </div>
+                <div className="p-3 bg-gray-50 rounded">
+                  <span className="text-gray-500">환경:</span>
+                  <span className="ml-2 font-mono">{process.env.NODE_ENV}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 법적 리스크 탭 */}
+        {activeTab === 'legal' && (
+          <div className="space-y-4">
+            {/* 경고 배너 */}
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <div className="flex-shrink-0">
+                  <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-red-800">법적 리스크 가이드라인</h3>
+                  <p className="text-sm text-red-700 mt-1">
+                    이 시스템에 구현된 기능 중 법적으로 문제가 될 수 있는 항목들입니다.
+                    서비스 운영 전 반드시 검토하고 필요한 조치를 취하세요.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* 위험도 요약 */}
+            <div className="grid grid-cols-4 gap-4">
+              <div className="bg-red-100 border border-red-300 rounded-lg p-4 text-center">
+                <div className="text-3xl font-bold text-red-700">
+                  {LEGAL_RISKS.filter(r => r.severity === 'critical').length}
+                </div>
+                <div className="text-sm text-red-600 font-medium">심각 (Critical)</div>
+              </div>
+              <div className="bg-orange-100 border border-orange-300 rounded-lg p-4 text-center">
+                <div className="text-3xl font-bold text-orange-700">
+                  {LEGAL_RISKS.filter(r => r.severity === 'high').length}
+                </div>
+                <div className="text-sm text-orange-600 font-medium">높음 (High)</div>
+              </div>
+              <div className="bg-yellow-100 border border-yellow-300 rounded-lg p-4 text-center">
+                <div className="text-3xl font-bold text-yellow-700">
+                  {LEGAL_RISKS.filter(r => r.severity === 'medium').length}
+                </div>
+                <div className="text-sm text-yellow-600 font-medium">보통 (Medium)</div>
+              </div>
+              <div className="bg-gray-100 border border-gray-300 rounded-lg p-4 text-center">
+                <div className="text-3xl font-bold text-gray-700">
+                  {LEGAL_RISKS.filter(r => r.severity === 'low').length}
+                </div>
+                <div className="text-sm text-gray-600 font-medium">낮음 (Low)</div>
+              </div>
+            </div>
+
+            {/* 리스크 목록 */}
+            <div className="space-y-3">
+              {LEGAL_RISKS.map((risk) => {
+                const isExpanded = expandedRisk === risk.id
+                const severityColors = {
+                  critical: { bg: 'bg-red-50', border: 'border-red-200', badge: 'bg-red-600 text-white', text: 'text-red-800' },
+                  high: { bg: 'bg-orange-50', border: 'border-orange-200', badge: 'bg-orange-500 text-white', text: 'text-orange-800' },
+                  medium: { bg: 'bg-yellow-50', border: 'border-yellow-200', badge: 'bg-yellow-500 text-white', text: 'text-yellow-800' },
+                  low: { bg: 'bg-gray-50', border: 'border-gray-200', badge: 'bg-gray-500 text-white', text: 'text-gray-800' },
+                }
+                const colors = severityColors[risk.severity as keyof typeof severityColors]
+                const severityLabel = {
+                  critical: '심각',
+                  high: '높음',
+                  medium: '보통',
+                  low: '낮음',
+                }
+
+                return (
+                  <div key={risk.id} className={`rounded-lg border ${colors.border} ${colors.bg} overflow-hidden`}>
+                    {/* 헤더 - 클릭 가능 */}
+                    <button
+                      onClick={() => setExpandedRisk(isExpanded ? null : risk.id)}
+                      className="w-full px-6 py-4 flex items-center justify-between hover:bg-white/50 transition-colors"
+                    >
+                      <div className="flex items-center gap-4">
+                        <span className={`px-3 py-1 rounded-full text-xs font-bold ${colors.badge}`}>
+                          {severityLabel[risk.severity as keyof typeof severityLabel]}
+                        </span>
+                        <span className={`font-semibold ${colors.text}`}>{risk.name}</span>
+                      </div>
+                      <svg
+                        className={`w-5 h-5 ${colors.text} transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+
+                    {/* 상세 내용 */}
+                    {isExpanded && (
+                      <div className="px-6 pb-6 space-y-4 border-t border-white/50">
+                        {/* 설명 */}
+                        <div className="pt-4">
+                          <p className="text-gray-700">{risk.description}</p>
+                          <p className="text-xs text-gray-500 mt-2 font-mono">위치: {risk.location}</p>
+                        </div>
+
+                        {/* 관련 법률 */}
+                        <div className="bg-white/70 rounded-lg p-4">
+                          <h4 className="font-semibold text-gray-800 mb-2 flex items-center gap-2">
+                            <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
+                            </svg>
+                            관련 법률
+                          </h4>
+                          <ul className="space-y-1">
+                            {risk.laws.map((law, idx) => (
+                              <li key={idx} className="text-sm text-gray-600 flex items-start gap-2">
+                                <span className="text-blue-500 mt-1">•</span>
+                                {law}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+
+                        {/* 문제점 */}
+                        <div className="bg-red-100/50 rounded-lg p-4">
+                          <h4 className="font-semibold text-red-800 mb-2 flex items-center gap-2">
+                            <svg className="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            현재 문제점
+                          </h4>
+                          <ul className="space-y-1">
+                            {risk.problems.map((problem, idx) => (
+                              <li key={idx} className="text-sm text-red-700 flex items-start gap-2">
+                                <span className="text-red-500 mt-1">•</span>
+                                {problem}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+
+                        {/* 해결 방안 */}
+                        <div className="bg-green-100/50 rounded-lg p-4">
+                          <h4 className="font-semibold text-green-800 mb-2 flex items-center gap-2">
+                            <svg className="w-5 h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            해결 방안
+                          </h4>
+                          <ul className="space-y-1">
+                            {risk.solutions.map((solution, idx) => (
+                              <li key={idx} className="text-sm text-green-700 flex items-start gap-2">
+                                <span className="text-green-500 mt-1">•</span>
+                                {solution}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+
+                        {/* 안전한 구현 방법 */}
+                        <div className="bg-blue-100/50 rounded-lg p-4">
+                          <h4 className="font-semibold text-blue-800 mb-2 flex items-center gap-2">
+                            <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                            </svg>
+                            안전한 구현 가이드
+                          </h4>
+                          <p className="text-sm text-blue-700">{risk.safeImplementation}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* 면책 조항 */}
+            <div className="bg-gray-100 border border-gray-300 rounded-lg p-4 mt-6">
+              <h4 className="font-semibold text-gray-700 mb-2">면책 조항</h4>
+              <p className="text-sm text-gray-600">
+                이 가이드라인은 참고용으로 제공되며, 법률 자문을 대체하지 않습니다.
+                실제 서비스 운영 전 반드시 법률 전문가와 상담하시기 바랍니다.
+                관련 법률은 변경될 수 있으며, 최신 법령을 확인하시기 바랍니다.
+              </p>
             </div>
           </div>
         )}

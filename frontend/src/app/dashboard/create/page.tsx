@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { postsAPI, authAPI } from '@/lib/api'
+import { postsAPI, authAPI, crawlAPI, type CrawlImage, type OneClickResponse } from '@/lib/api'
 import type { Post, WritingStyle, RequestRequirements, User } from '@/types'
 import { useAutoSave } from '@/hooks/useAutoSave'
 import { toast } from 'sonner'
@@ -25,6 +25,12 @@ import {
   FileText,
   PenTool,
   Coffee,
+  Link,
+  Download,
+  Image as ImageIcon,
+  X,
+  Zap,
+  ExternalLink,
 } from 'lucide-react'
 import { Document, Paragraph, TextRun, Packer } from 'docx'
 import { saveAs } from 'file-saver'
@@ -67,11 +73,17 @@ export default function CreatePostPage() {
   })
   const [seoOptimization, setSeoOptimization] = useState({
     enabled: false,
+    // 기존 DIA/CRANK 옵션
     experience_focus: true,      // 실제 경험 중심 작성 (DIA: 경험 정보)
     expertise: true,              // 전문성과 깊이 강화 (C-Rank: Content 품질)
     originality: true,            // 독창성 강조 (DIA: 독창성)
     timeliness: true,             // 적시성 반영 (DIA: 적시성)
     topic_concentration: true,    // 주제 집중도 향상 (C-Rank: Context)
+    // 2025년 9월 네이버 AI 검색 업데이트 반영
+    trustworthiness: true,        // 신뢰성 강화 (출처 명시, 의학적 근거)
+    source_authority: true,       // 출처 권위성 (공공기관, 학술기관 인용)
+    multi_perspective: true,      // 다각도 정보 제공 (편향 방지)
+    search_intent_match: true,    // 검색 의도 정확 충족 (뉴럴 매칭)
   })
   const [writingStyle, setWritingStyle] = useState<WritingStyle>({
     formality: 5,
@@ -96,6 +108,11 @@ export default function CreatePostPage() {
   const [topPostRules, setTopPostRules] = useState<any>(null)
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [selectedPostIndex, setSelectedPostIndex] = useState(0)
+  const [blogUrl, setBlogUrl] = useState('')
+  const [crawling, setCrawling] = useState(false)
+  const [crawledImages, setCrawledImages] = useState<CrawlImage[]>([])
+  const [oneClickProcessing, setOneClickProcessing] = useState(false)
+  const [oneClickResult, setOneClickResult] = useState<OneClickResponse | null>(null)
   const [generationProgress, setGenerationProgress] = useState<{
     total: number
     completed: number
@@ -555,6 +572,158 @@ export default function CreatePostPage() {
     return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
   }
 
+  // 블로그 URL에서 글 가져오기
+  const handleCrawlBlog = async () => {
+    if (!blogUrl.trim()) {
+      toast.error('블로그 URL을 입력해주세요')
+      return
+    }
+
+    setCrawling(true)
+    const loadingToast = toast.loading('블로그 글을 가져오는 중...', {
+      description: '잠시만 기다려주세요'
+    })
+
+    try {
+      const result = await crawlAPI.crawlBlog(blogUrl)
+
+      if (result.success && result.content) {
+        setOriginalContent(result.content)
+
+        // 이미지 저장
+        if (result.images && result.images.length > 0) {
+          setCrawledImages(result.images)
+          toast.success('블로그 글을 가져왔습니다', {
+            id: loadingToast,
+            description: `${result.platform} | ${result.content.length}자 | 이미지 ${result.images.length}개`
+          })
+        } else {
+          setCrawledImages([])
+          toast.success('블로그 글을 가져왔습니다', {
+            id: loadingToast,
+            description: `${result.platform} | ${result.content.length}자`
+          })
+        }
+
+        // 제목이 있으면 알려줌
+        if (result.title) {
+          toast.info(`제목: ${result.title}`, {
+            duration: 5000
+          })
+        }
+
+        // URL 초기화
+        setBlogUrl('')
+      } else {
+        throw new Error(result.error || '블로그 글을 가져오지 못했습니다')
+      }
+    } catch (error: any) {
+      console.error('Crawl error:', error)
+      toast.error('블로그 글 가져오기 실패', {
+        id: loadingToast,
+        description: error.response?.data?.detail || error.message || '알 수 없는 오류'
+      })
+    } finally {
+      setCrawling(false)
+    }
+  }
+
+  // 이미지 다운로드
+  const handleDownloadImage = async (imageUrl: string, index: number) => {
+    try {
+      const response = await fetch(imageUrl)
+      const blob = await response.blob()
+      const extension = imageUrl.split('.').pop()?.split('?')[0] || 'jpg'
+      const filename = `image_${index + 1}.${extension}`
+      saveAs(blob, filename)
+      toast.success(`이미지 ${index + 1} 다운로드 완료`)
+    } catch (error) {
+      toast.error('이미지 다운로드 실패')
+    }
+  }
+
+  // 모든 이미지 다운로드
+  const handleDownloadAllImages = async () => {
+    toast.loading('이미지 다운로드 중...')
+    for (let i = 0; i < crawledImages.length; i++) {
+      await handleDownloadImage(crawledImages[i].url, i)
+      // 연속 다운로드 시 딜레이
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
+    toast.success(`${crawledImages.length}개 이미지 다운로드 완료`)
+  }
+
+  // 원클릭 자동화: URL → 크롤링 → AI 리라이트 → 네이버 임시저장
+  const handleOneClickAutomation = async () => {
+    if (!blogUrl.trim()) {
+      toast.error('블로그 URL을 입력해주세요')
+      return
+    }
+
+    setOneClickProcessing(true)
+    setOneClickResult(null)
+
+    const loadingToast = toast.loading('원클릭 자동화 진행 중...', {
+      description: '1/3 블로그 글 크롤링 중...'
+    })
+
+    try {
+      // 진행 상태 업데이트
+      setTimeout(() => {
+        toast.loading('원클릭 자동화 진행 중...', {
+          id: loadingToast,
+          description: '2/3 AI 리라이트 중...'
+        })
+      }, 3000)
+
+      setTimeout(() => {
+        toast.loading('원클릭 자동화 진행 중...', {
+          id: loadingToast,
+          description: '3/3 네이버 블로그 임시저장 중...'
+        })
+      }, 8000)
+
+      const result = await crawlAPI.oneClick({
+        url: blogUrl,
+        ai_provider: 'gpt',
+        ai_model: 'gpt-4o-mini',
+        target_length: writingStyle.targetLength || 1800,
+        framework: writingStyle.framework || '관심유도형',
+        persuasion_level: 4
+      })
+
+      setOneClickResult(result)
+
+      if (result.success) {
+        toast.success('원클릭 자동화 완료!', {
+          id: loadingToast,
+          description: '네이버 블로그에 임시저장되었습니다'
+        })
+
+        // 이미지가 있으면 표시
+        if (result.images && result.images.length > 0) {
+          setCrawledImages(result.images)
+        }
+
+        // URL 초기화
+        setBlogUrl('')
+      } else {
+        toast.error('원클릭 자동화 실패', {
+          id: loadingToast,
+          description: result.error || '알 수 없는 오류'
+        })
+      }
+    } catch (error: any) {
+      console.error('One-click error:', error)
+      toast.error('원클릭 자동화 실패', {
+        id: loadingToast,
+        description: error.response?.data?.detail || error.message || '알 수 없는 오류'
+      })
+    } finally {
+      setOneClickProcessing(false)
+    }
+  }
+
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       {/* Header */}
@@ -792,9 +961,190 @@ export default function CreatePostPage() {
           <Card>
             <CardHeader>
               <CardTitle>원본 의료 정보</CardTitle>
-              <CardDescription>변환할 의료 정보를 입력하세요 (최소 50자)</CardDescription>
+              <CardDescription>변환할 의료 정보를 입력하거나 블로그 URL에서 가져오세요</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* 블로그 URL 가져오기 */}
+              <div className="space-y-2 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg">
+                <div className="flex items-center gap-2 text-sm font-medium text-blue-900">
+                  <Link className="h-4 w-4" />
+                  블로그 글 가져오기
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="블로그 URL 입력 (네이버, 티스토리 등)"
+                    value={blogUrl}
+                    onChange={(e) => setBlogUrl(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !crawling) {
+                        handleCrawlBlog()
+                      }
+                    }}
+                    disabled={crawling}
+                    className="flex-1"
+                  />
+                  <Button
+                    onClick={handleCrawlBlog}
+                    disabled={crawling || !blogUrl.trim()}
+                    variant="default"
+                    size="default"
+                  >
+                    {crawling ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        가져오는 중...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="h-4 w-4 mr-2" />
+                        가져오기
+                      </>
+                    )}
+                  </Button>
+                </div>
+                <div className="flex gap-2 pt-2">
+                  <Button
+                    onClick={handleOneClickAutomation}
+                    disabled={oneClickProcessing || crawling || !blogUrl.trim()}
+                    className="flex-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
+                  >
+                    {oneClickProcessing ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        처리 중...
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="h-4 w-4 mr-2" />
+                        원클릭 자동화
+                      </>
+                    )}
+                  </Button>
+                </div>
+                <p className="text-xs text-blue-700">
+                  <strong>원클릭 자동화:</strong> URL 입력 → 글+이미지 크롤링 → AI 리라이트 → 네이버 블로그 임시저장까지 한번에!
+                </p>
+              </div>
+
+              {/* 원클릭 결과 표시 */}
+              {oneClickResult && oneClickResult.success && (
+                <div className="space-y-3 p-4 bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-sm font-medium text-purple-900">
+                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                      원클릭 자동화 완료
+                    </div>
+                    <Button
+                      onClick={() => setOneClickResult(null)}
+                      variant="ghost"
+                      size="sm"
+                      className="text-gray-500 hover:text-gray-700"
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="bg-white p-2 rounded border">
+                      <div className="text-gray-500 text-xs">원본</div>
+                      <div className="font-medium truncate">{oneClickResult.original_title}</div>
+                      <div className="text-xs text-gray-400">{oneClickResult.original_content_length}자</div>
+                    </div>
+                    <div className="bg-white p-2 rounded border">
+                      <div className="text-gray-500 text-xs">리라이트</div>
+                      <div className="font-medium truncate">{oneClickResult.rewritten_title}</div>
+                      <div className="text-xs text-gray-400">{oneClickResult.rewritten_content_length}자</div>
+                    </div>
+                  </div>
+
+                  {oneClickResult.naver_post_url && (
+                    <a
+                      href={oneClickResult.naver_post_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 p-3 bg-green-100 text-green-800 rounded-lg hover:bg-green-200 transition-colors"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                      <span className="font-medium">네이버 블로그에서 확인하기 (임시저장됨)</span>
+                    </a>
+                  )}
+
+                  {oneClickResult.images_count && oneClickResult.images_count > 0 && (
+                    <p className="text-xs text-purple-700">
+                      이미지 {oneClickResult.images_count}개가 추출되었습니다. 아래에서 다운로드 후 블로그에 수동 첨부해주세요.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* 가져온 이미지 표시 */}
+              {crawledImages.length > 0 && (
+                <div className="space-y-3 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-sm font-medium text-green-900">
+                      <ImageIcon className="h-4 w-4" />
+                      가져온 이미지 ({crawledImages.length}개)
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={handleDownloadAllImages}
+                        variant="outline"
+                        size="sm"
+                        className="text-green-700 border-green-300 hover:bg-green-100"
+                      >
+                        <Download className="h-3 w-3 mr-1" />
+                        전체 다운로드
+                      </Button>
+                      <Button
+                        onClick={() => setCrawledImages([])}
+                        variant="ghost"
+                        size="sm"
+                        className="text-gray-500 hover:text-gray-700"
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2 max-h-48 overflow-y-auto">
+                    {crawledImages.map((img, index) => (
+                      <div
+                        key={index}
+                        className="relative group cursor-pointer rounded-lg overflow-hidden border border-green-200 bg-white"
+                        onClick={() => handleDownloadImage(img.url, index)}
+                      >
+                        <img
+                          src={img.url}
+                          alt={img.alt || `이미지 ${index + 1}`}
+                          className="w-full h-20 object-cover"
+                          onError={(e) => {
+                            // 이미지 로드 실패 시 플레이스홀더
+                            (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect fill="%23f3f4f6" width="100" height="100"/><text x="50%" y="50%" text-anchor="middle" dy=".3em" fill="%239ca3af" font-size="12">No Image</text></svg>'
+                          }}
+                        />
+                        <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center">
+                          <Download className="h-5 w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </div>
+                        <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white text-xs p-1 text-center truncate">
+                          {img.caption || `이미지 ${index + 1}`}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-green-700">
+                    이미지를 클릭하면 개별 다운로드됩니다. 이미지는 블로그 발행 시 별도로 첨부해주세요.
+                  </p>
+                </div>
+              )}
+
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-gray-200" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-white px-2 text-muted-foreground">또는 직접 입력</span>
+                </div>
+              </div>
+
               <Textarea
                 placeholder="예시: 퇴행성 관절염은 관절 연골의 손상으로 발생합니다. 주요 증상은 통증, 부종, 관절 운동 제한입니다..."
                 className="min-h-[300px] resize-none"
@@ -1075,6 +1425,67 @@ export default function CreatePostPage() {
                         <Label htmlFor="topic_concentration" className="cursor-pointer text-sm">
                           주제 집중도 향상 <span className="text-xs text-muted-foreground">(C-Rank: Context)</span>
                         </Label>
+                      </div>
+                    </div>
+
+                    {/* 2025년 9월 네이버 AI 검색 업데이트 반영 */}
+                    <div className="mt-4 pt-4 border-t border-dashed">
+                      <p className="text-xs font-semibold text-blue-700 mb-3 flex items-center gap-1">
+                        🆕 2025 네이버 AI 검색 업데이트 반영 (HyperClova X 기반)
+                      </p>
+
+                      <div className="grid grid-cols-1 gap-2">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id="trustworthiness"
+                            checked={seoOptimization.trustworthiness}
+                            onChange={(e) => setSeoOptimization({ ...seoOptimization, trustworthiness: e.target.checked })}
+                            className="rounded"
+                          />
+                          <Label htmlFor="trustworthiness" className="cursor-pointer text-sm">
+                            신뢰성 강화 <span className="text-xs text-muted-foreground">(출처 명시, 의학적 근거)</span>
+                          </Label>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id="source_authority"
+                            checked={seoOptimization.source_authority}
+                            onChange={(e) => setSeoOptimization({ ...seoOptimization, source_authority: e.target.checked })}
+                            className="rounded"
+                          />
+                          <Label htmlFor="source_authority" className="cursor-pointer text-sm">
+                            출처 권위성 <span className="text-xs text-muted-foreground">(공공기관 77%↑, 학술기관 30%↑)</span>
+                          </Label>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id="multi_perspective"
+                            checked={seoOptimization.multi_perspective}
+                            onChange={(e) => setSeoOptimization({ ...seoOptimization, multi_perspective: e.target.checked })}
+                            className="rounded"
+                          />
+                          <Label htmlFor="multi_perspective" className="cursor-pointer text-sm">
+                            다각도 정보 제공 <span className="text-xs text-muted-foreground">(AI 편향/환각 방지)</span>
+                          </Label>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id="search_intent_match"
+                            checked={seoOptimization.search_intent_match}
+                            onChange={(e) => setSeoOptimization({ ...seoOptimization, search_intent_match: e.target.checked })}
+                            className="rounded"
+                          />
+                          <Label htmlFor="search_intent_match" className="cursor-pointer text-sm">
+                            검색 의도 충족 <span className="text-xs text-muted-foreground">(뉴럴 매칭 최적화)</span>
+                          </Label>
+                        </div>
                       </div>
                     </div>
                   </div>

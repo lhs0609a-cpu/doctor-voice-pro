@@ -4,7 +4,8 @@ from app.api import (
     system, export, images, top_posts, subscriptions, payments,
     schedules, reports, sns,
     roi, place, reviews, competitors, rankings, campaigns,
-    knowledge
+    knowledge, crawl, cafe, viral,
+    knowledge_extended, cafe_extended
 )
 
 api_router = APIRouter()
@@ -35,3 +36,13 @@ api_router.include_router(rankings.router, prefix="/rankings", tags=["rankings"]
 api_router.include_router(campaigns.router, prefix="/campaigns", tags=["campaigns"])
 # Knowledge (지식인)
 api_router.include_router(knowledge.router, prefix="/knowledge", tags=["knowledge"])
+# Blog Crawl (블로그 글 가져오기)
+api_router.include_router(crawl.router, prefix="/crawl", tags=["crawl"])
+# Cafe Viral (카페 바이럴)
+api_router.include_router(cafe.router, prefix="/cafe", tags=["cafe"])
+# Viral Extended (확장 기능: 다중계정, 알림, 프록시, A/B테스트, 리포트)
+api_router.include_router(viral.router, prefix="/viral", tags=["viral"])
+# Knowledge Extended (채택추적, 경쟁분석, 질문자분석, 내공우선순위)
+api_router.include_router(knowledge_extended.router, prefix="/knowledge-ext", tags=["knowledge-extended"])
+# Cafe Extended (대댓글, 게시판타겟팅, 인기글분석, 팔로우/좋아요)
+api_router.include_router(cafe_extended.router, prefix="/cafe-ext", tags=["cafe-extended"])

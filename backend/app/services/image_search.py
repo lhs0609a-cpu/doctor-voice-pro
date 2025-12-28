@@ -50,8 +50,9 @@ class ImageSearchService:
             except Exception as e:
                 print(f"Pexels 검색 실패: {e}")
 
-        # API 키가 없으면 플레이스홀더 이미지 반환
-        return self._get_placeholder_images(count)
+        # API 키가 없으면 키워드 기반 플레이스홀더 이미지 반환
+        print(f"⚠️ 이미지 API 키 미설정. 키워드 기반 placeholder 이미지 사용: {keywords}")
+        return self._get_placeholder_images(count, keywords)
 
     async def _search_unsplash(
         self,
@@ -131,21 +132,44 @@ class ImageSearchService:
 
             return images
 
-    def _get_placeholder_images(self, count: int) -> List[Dict]:
+    def _get_placeholder_images(self, count: int, keywords: Optional[List[str]] = None) -> List[Dict]:
         """
         API 키가 없을 때 플레이스홀더 이미지 반환
-        (picsum.photos 사용 - API 키 불필요)
+
+        키워드에 따라 적절한 카테고리의 이미지를 제공합니다.
+        (loremflickr.com 사용 - API 키 불필요, 카테고리 지원)
         """
         images = []
+
+        # 키워드에 따른 카테고리 매핑
+        category = "medical,health,clinic"
+        if keywords:
+            keyword_str = " ".join(keywords).lower()
+            if any(k in keyword_str for k in ["치과", "dental", "이빨", "치아"]):
+                category = "dental,teeth,smile"
+            elif any(k in keyword_str for k in ["피부", "skin", "피부과", "derma"]):
+                category = "skin,skincare,beauty"
+            elif any(k in keyword_str for k in ["성형", "plastic", "수술"]):
+                category = "surgery,hospital,medical"
+            elif any(k in keyword_str for k in ["한의", "한방", "침"]):
+                category = "acupuncture,herb,traditional"
+            elif any(k in keyword_str for k in ["정형", "척추", "관절"]):
+                category = "spine,orthopedic,bone"
+            elif any(k in keyword_str for k in ["안과", "눈", "eye"]):
+                category = "eye,vision,ophthalmology"
+
         for i in range(count):
-            seed = 1000 + i  # 다른 이미지를 위한 시드
+            # loremflickr.com - 키워드 기반 무료 이미지
+            # 각 이미지마다 다른 lock 값을 사용하여 다양한 이미지 확보
+            lock_value = 1000 + i
             images.append({
-                "url": f"https://picsum.photos/seed/{seed}/800/600",
-                "thumb_url": f"https://picsum.photos/seed/{seed}/200/150",
-                "caption": f"이미지 {i + 1}",
-                "photographer": "Lorem Picsum",
-                "photographer_url": "https://picsum.photos",
-                "source": "placeholder"
+                "url": f"https://loremflickr.com/800/600/{category}?lock={lock_value}",
+                "thumb_url": f"https://loremflickr.com/200/150/{category}?lock={lock_value}",
+                "caption": f"의료 관련 이미지 {i + 1}",
+                "photographer": "LoremFlickr",
+                "photographer_url": "https://loremflickr.com",
+                "source": "placeholder",
+                "notice": "API 키를 설정하면 더 정확한 이미지를 검색할 수 있습니다."
             })
 
         return images

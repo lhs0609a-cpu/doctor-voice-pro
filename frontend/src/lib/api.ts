@@ -2202,13 +2202,18 @@ export const knowledgeAPI = {
 
   // 상위 질문 조회
   getTopQuestions: async (limit: number = 5): Promise<KnowledgeQuestion[]> => {
-    const response = await api.get('/api/v1/knowledge/questions/top', { params: { limit } })
+    const response = await api.get('/api/v1/knowledge/dashboard/top-questions', { params: { limit } })
     return response.data
   },
 
   // 질문 수집
-  collectQuestions: async (): Promise<{ message: string; collected: number }> => {
-    const response = await api.post('/api/v1/knowledge/collect')
+  collectQuestions: async (params?: {
+    keywords?: string[]
+    limit?: number
+    use_crawler?: boolean
+    min_reward_points?: number
+  }): Promise<{ message: string; collected: number; skipped?: number; mode?: string }> => {
+    const response = await api.post('/api/v1/knowledge/questions/collect', params || {})
     return response.data
   },
 
@@ -2231,7 +2236,7 @@ export const knowledgeAPI = {
     place_link?: string
     template_id?: string
   }): Promise<KnowledgeAnswer> => {
-    const response = await api.post('/api/v1/knowledge/generate-answer', data)
+    const response = await api.post('/api/v1/knowledge/answers/generate', data)
     return response.data
   },
 
@@ -2243,7 +2248,7 @@ export const knowledgeAPI = {
 
   // 답변 등록 완료 처리
   markAsPosted: async (answerId: string): Promise<KnowledgeAnswer> => {
-    const response = await api.post(`/api/v1/knowledge/answers/${answerId}/posted`)
+    const response = await api.post(`/api/v1/knowledge/answers/${answerId}/mark-posted`)
     return response.data
   },
 
@@ -2267,6 +2272,579 @@ export const knowledgeAPI = {
   // 템플릿 삭제
   deleteTemplate: async (templateId: string): Promise<void> => {
     await api.delete(`/api/v1/knowledge/templates/${templateId}`)
+  },
+
+  // ==================== 스케줄러 API ====================
+
+  // 스케줄러 시작
+  startScheduler: async (): Promise<{ message: string }> => {
+    const response = await api.post('/api/v1/knowledge/scheduler/start')
+    return response.data
+  },
+
+  // 스케줄러 중지
+  stopScheduler: async (): Promise<{ message: string }> => {
+    const response = await api.post('/api/v1/knowledge/scheduler/stop')
+    return response.data
+  },
+
+  // 스케줄러 상태
+  getSchedulerStatus: async (): Promise<{
+    is_running: boolean
+    is_enabled: boolean
+    is_working_hours: boolean
+    today: {
+      collected: number
+      generated: number
+      collect_limit: number
+      answer_limit: number
+    }
+    pending: {
+      questions: number
+      draft_answers: number
+    }
+    tasks: string[]
+  }> => {
+    const response = await api.get('/api/v1/knowledge/scheduler/status')
+    return response.data
+  },
+
+  // 수동 질문 수집
+  runCollectionJob: async (): Promise<{
+    success: boolean
+    collected?: number
+    message: string
+  }> => {
+    const response = await api.post('/api/v1/knowledge/scheduler/run-collect')
+    return response.data
+  },
+
+  // 수동 답변 생성
+  runGenerationJob: async (): Promise<{
+    success: boolean
+    generated?: number
+    message: string
+  }> => {
+    const response = await api.post('/api/v1/knowledge/scheduler/run-generate')
+    return response.data
+  },
+
+  // ==================== 자동 등록 API ====================
+
+  // 네이버 로그인
+  posterLogin: async (data: {
+    username: string
+    password: string
+  }): Promise<{ success: boolean; message: string }> => {
+    const response = await api.post('/api/v1/knowledge/poster/login', data)
+    return response.data
+  },
+
+  // 네이버 로그아웃
+  posterLogout: async (): Promise<{ message: string }> => {
+    const response = await api.post('/api/v1/knowledge/poster/logout')
+    return response.data
+  },
+
+  // 포스터 상태
+  getPosterStatus: async (): Promise<{
+    initialized: boolean
+    logged_in: boolean
+  }> => {
+    const response = await api.get('/api/v1/knowledge/poster/status')
+    return response.data
+  },
+
+  // 단일 답변 등록
+  postAnswer: async (answerId: string): Promise<{
+    success: boolean
+    answer_id: string
+    question_id?: string
+    url?: string
+    message: string
+  }> => {
+    const response = await api.post('/api/v1/knowledge/poster/post-answer', {
+      answer_id: answerId
+    })
+    return response.data
+  },
+
+  // 다중 답변 등록
+  postMultipleAnswers: async (params?: {
+    limit?: number
+    delay_between?: number
+  }): Promise<{
+    success: boolean
+    posted: number
+    failed: number
+    results: Array<{
+      success: boolean
+      answer_id: string
+      url?: string
+      error?: string
+    }>
+    message: string
+  }> => {
+    const response = await api.post('/api/v1/knowledge/poster/post-multiple', params || {})
+    return response.data
+  },
+}
+
+// Blog Crawl API
+export interface CrawlImage {
+  url: string
+  alt?: string
+  caption?: string
+  width?: string
+  height?: string
+}
+
+export interface CrawlResponse {
+  success: boolean
+  title?: string
+  content?: string
+  platform?: string
+  author?: string
+  date?: string
+  url?: string
+  images?: CrawlImage[]
+  error?: string
+}
+
+export const crawlAPI = {
+  // 블로그 글 가져오기
+  crawlBlog: async (url: string): Promise<CrawlResponse> => {
+    const response = await api.post('/api/v1/crawl/blog', { url })
+    return response.data
+  },
+
+  // 지원 플랫폼 목록
+  getSupportedPlatforms: async (): Promise<{
+    platforms: Array<{
+      name: string
+      domain: string
+      support_level: string
+      description: string
+    }>
+  }> => {
+    const response = await api.get('/api/v1/crawl/supported-platforms')
+    return response.data
+  },
+
+  // 원클릭 자동화
+  oneClick: async (params: {
+    url: string
+    category_no?: string
+    ai_provider?: string
+    ai_model?: string
+    target_length?: number
+    framework?: string
+    persuasion_level?: number
+  }): Promise<OneClickResponse> => {
+    const response = await api.post('/api/v1/crawl/one-click', params)
+    return response.data
+  },
+}
+
+export interface OneClickResponse {
+  success: boolean
+  message: string
+  original_title?: string
+  original_content_length?: number
+  images_count?: number
+  rewritten_title?: string
+  rewritten_content?: string
+  rewritten_content_length?: number
+  naver_post_id?: string
+  naver_post_url?: string
+  images?: CrawlImage[]
+  error?: string
+}
+
+// ==================== Cafe Viral API ====================
+
+export type CafePostStatus = 'new' | 'analyzed' | 'commented' | 'skipped'
+export type CafeContentType = 'post' | 'comment' | 'reply'
+export type CafeContentStatus = 'draft' | 'approved' | 'posted' | 'rejected' | 'failed'
+export type CafeTone = 'friendly' | 'casual' | 'professional' | 'empathetic' | 'humorous'
+export type CafeCategory = 'mom' | 'beauty' | 'health' | 'regional' | 'hobby' | 'general'
+
+export interface CafeCommunity {
+  id: string
+  cafe_id: string
+  cafe_name: string
+  cafe_url: string | null
+  category: CafeCategory
+  member_count: number
+  is_active: boolean
+  priority: number
+  posting_enabled: boolean
+  commenting_enabled: boolean
+  daily_post_limit: number
+  daily_comment_limit: number
+  min_interval_minutes: number
+  total_posts: number
+  total_comments: number
+  total_likes: number
+  created_at: string
+  updated_at: string
+}
+
+export interface CafeKeyword {
+  id: string
+  keyword: string
+  category: string | null
+  is_active: boolean
+  priority: number
+  matched_count: number
+  created_at: string
+}
+
+export interface CafePost {
+  id: string
+  cafe_id: string
+  post_id: string
+  article_id: string
+  board_id: string | null
+  title: string
+  content: string | null
+  url: string | null
+  author_name: string | null
+  author_id: string | null
+  view_count: number
+  comment_count: number
+  like_count: number
+  posted_at: string | null
+  matched_keywords: string[] | null
+  relevance_score: number
+  sentiment: string | null
+  topic_tags: string[] | null
+  status: CafePostStatus
+  created_at: string
+}
+
+export interface CafeContent {
+  id: string
+  target_post_id: string | null
+  target_comment_id: string | null
+  content_type: CafeContentType
+  content: string
+  prompt_used: string | null
+  generation_model: string | null
+  quality_score: number
+  naturalness_score: number
+  relevance_score: number
+  include_promotion: boolean
+  promotion_text: string | null
+  blog_link: string | null
+  place_link: string | null
+  status: CafeContentStatus
+  posted_at: string | null
+  posted_url: string | null
+  likes_received: number
+  replies_received: number
+  created_at: string
+}
+
+export interface CafeAutoSetting {
+  id: string
+  is_enabled: boolean
+  auto_collect: boolean
+  auto_generate: boolean
+  auto_post: boolean
+  collect_interval_minutes: number
+  posts_per_collect: number
+  min_relevance_score: number
+  default_tone: CafeTone
+  max_content_length: number
+  include_emoji: boolean
+  auto_approve_threshold: number
+  posting_delay_seconds: number
+  daily_post_limit: number
+  daily_comment_limit: number
+  working_hours: { start: string; end: string } | null
+  working_days: number[] | null
+  default_blog_link: string | null
+  default_place_link: string | null
+  promotion_frequency: number
+  created_at: string
+  updated_at: string
+}
+
+export interface CafeDashboard {
+  total_cafes: number
+  active_cafes: number
+  total_keywords: number
+  posts_collected_today: number
+  contents_generated_today: number
+  posts_published_today: number
+  comments_published_today: number
+  pending_contents: number
+  total_likes: number
+  scheduler_running: boolean
+}
+
+export const cafeAPI = {
+  // 대시보드
+  getDashboard: async (): Promise<CafeDashboard> => {
+    const response = await api.get('/api/v1/cafe/dashboard')
+    return response.data
+  },
+
+  // 카페 목록
+  getCafes: async (params?: { is_active?: boolean }): Promise<CafeCommunity[]> => {
+    const response = await api.get('/api/v1/cafe/cafes', { params })
+    return response.data
+  },
+
+  // 카페 추가
+  createCafe: async (data: {
+    cafe_id: string
+    cafe_name: string
+    cafe_url?: string
+    category?: CafeCategory
+    posting_enabled?: boolean
+    commenting_enabled?: boolean
+    daily_post_limit?: number
+    daily_comment_limit?: number
+  }): Promise<CafeCommunity> => {
+    const response = await api.post('/api/v1/cafe/cafes', data)
+    return response.data
+  },
+
+  // 카페 수정
+  updateCafe: async (cafeId: string, data: Partial<CafeCommunity>): Promise<CafeCommunity> => {
+    const response = await api.put(`/api/v1/cafe/cafes/${cafeId}`, data)
+    return response.data
+  },
+
+  // 카페 삭제
+  deleteCafe: async (cafeId: string): Promise<void> => {
+    await api.delete(`/api/v1/cafe/cafes/${cafeId}`)
+  },
+
+  // 키워드 목록
+  getKeywords: async (params?: { is_active?: boolean }): Promise<CafeKeyword[]> => {
+    const response = await api.get('/api/v1/cafe/keywords', { params })
+    return response.data
+  },
+
+  // 키워드 추가
+  createKeyword: async (data: {
+    keyword: string
+    category?: string
+    priority?: number
+  }): Promise<CafeKeyword> => {
+    const response = await api.post('/api/v1/cafe/keywords', data)
+    return response.data
+  },
+
+  // 키워드 삭제
+  deleteKeyword: async (keywordId: string): Promise<void> => {
+    await api.delete(`/api/v1/cafe/keywords/${keywordId}`)
+  },
+
+  // 게시글 목록
+  getPosts: async (params?: {
+    cafe_id?: string
+    status?: CafePostStatus
+    limit?: number
+    offset?: number
+  }): Promise<CafePost[]> => {
+    const response = await api.get('/api/v1/cafe/posts', { params })
+    return response.data
+  },
+
+  // 게시글 수집
+  collectPosts: async (): Promise<{ message: string; collected: number }> => {
+    const response = await api.post('/api/v1/cafe/posts/collect')
+    return response.data
+  },
+
+  // 게시글 건너뛰기
+  skipPost: async (postId: string): Promise<CafePost> => {
+    const response = await api.put(`/api/v1/cafe/posts/${postId}/skip`)
+    return response.data
+  },
+
+  // 콘텐츠 목록
+  getContents: async (params?: {
+    content_type?: CafeContentType
+    status?: CafeContentStatus
+    limit?: number
+    offset?: number
+  }): Promise<CafeContent[]> => {
+    const response = await api.get('/api/v1/cafe/contents', { params })
+    return response.data
+  },
+
+  // 콘텐츠 생성
+  generateContent: async (data: {
+    post_id: string
+    content_type?: CafeContentType
+    tone?: CafeTone
+    include_promotion?: boolean
+    blog_link?: string
+    place_link?: string
+  }): Promise<CafeContent> => {
+    const response = await api.post('/api/v1/cafe/contents/generate', data)
+    return response.data
+  },
+
+  // 콘텐츠 승인
+  approveContent: async (contentId: string): Promise<CafeContent> => {
+    const response = await api.put(`/api/v1/cafe/contents/${contentId}/approve`)
+    return response.data
+  },
+
+  // 콘텐츠 반려
+  rejectContent: async (contentId: string): Promise<CafeContent> => {
+    const response = await api.put(`/api/v1/cafe/contents/${contentId}/reject`)
+    return response.data
+  },
+
+  // 콘텐츠 등록
+  postContent: async (contentId: string): Promise<{
+    success: boolean
+    content_id: string
+    url?: string
+    message: string
+  }> => {
+    const response = await api.post(`/api/v1/cafe/contents/${contentId}/post`)
+    return response.data
+  },
+
+  // 설정 조회
+  getSettings: async (): Promise<CafeAutoSetting> => {
+    const response = await api.get('/api/v1/cafe/settings')
+    return response.data
+  },
+
+  // 설정 수정
+  updateSettings: async (data: Partial<CafeAutoSetting>): Promise<CafeAutoSetting> => {
+    const response = await api.put('/api/v1/cafe/settings', data)
+    return response.data
+  },
+
+  // 스케줄러 시작
+  startScheduler: async (): Promise<{ message: string }> => {
+    const response = await api.post('/api/v1/cafe/scheduler/start')
+    return response.data
+  },
+
+  // 스케줄러 중지
+  stopScheduler: async (): Promise<{ message: string }> => {
+    const response = await api.post('/api/v1/cafe/scheduler/stop')
+    return response.data
+  },
+
+  // 스케줄러 상태
+  getSchedulerStatus: async (): Promise<{
+    is_running: boolean
+    is_enabled: boolean
+    is_working_hours: boolean
+    today: {
+      collected: number
+      generated: number
+      posted: number
+      collect_limit: number
+      post_limit: number
+    }
+    pending: {
+      posts: number
+      contents: number
+    }
+  }> => {
+    const response = await api.get('/api/v1/cafe/scheduler/status')
+    return response.data
+  },
+
+  // 수동 수집
+  runCollectionJob: async (): Promise<{
+    success: boolean
+    collected?: number
+    message: string
+  }> => {
+    const response = await api.post('/api/v1/cafe/scheduler/run-collect')
+    return response.data
+  },
+
+  // 수동 생성
+  runGenerationJob: async (): Promise<{
+    success: boolean
+    generated?: number
+    message: string
+  }> => {
+    const response = await api.post('/api/v1/cafe/scheduler/run-generate')
+    return response.data
+  },
+
+  // 포스터 로그인
+  posterLogin: async (data: {
+    username: string
+    password: string
+  }): Promise<{ success: boolean; message: string }> => {
+    const response = await api.post('/api/v1/cafe/poster/login', data)
+    return response.data
+  },
+
+  // 포스터 로그아웃
+  posterLogout: async (): Promise<{ message: string }> => {
+    const response = await api.post('/api/v1/cafe/poster/logout')
+    return response.data
+  },
+
+  // 포스터 상태
+  getPosterStatus: async (): Promise<{
+    initialized: boolean
+    logged_in: boolean
+  }> => {
+    const response = await api.get('/api/v1/cafe/poster/status')
+    return response.data
+  },
+
+  // 일괄 콘텐츠 등록
+  postMultipleContents: async (params?: {
+    limit?: number
+    delay_between?: number
+  }): Promise<{
+    success: boolean
+    posted: number
+    failed: number
+    results: Array<{
+      success: boolean
+      content_id: string
+      url?: string
+      error?: string
+    }>
+    message: string
+  }> => {
+    const response = await api.post('/api/v1/cafe/poster/post-multiple', params || {})
+    return response.data
+  },
+
+  // 통계
+  getStats: async (params?: {
+    start_date?: string
+    end_date?: string
+  }): Promise<{
+    posts_collected: number
+    contents_generated: number
+    posts_published: number
+    comments_published: number
+    total_likes: number
+    total_replies: number
+    cafe_breakdown: Record<string, any>
+    keyword_breakdown: Record<string, any>
+  }> => {
+    const response = await api.get('/api/v1/cafe/stats', { params })
+    return response.data
+  },
+
+  // 상위 게시글 조회
+  getTopPosts: async (limit: number = 5): Promise<CafePost[]> => {
+    const response = await api.get('/api/v1/cafe/dashboard/top-posts', { params: { limit } })
+    return response.data
   },
 }
 

@@ -1,17 +1,16 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAuthStore } from '@/store/auth'
 import {
-  Sparkles, Mail, Lock, Loader2, CheckCircle2, XCircle,
-  Image, Clock, TrendingUp, FileText, Zap, ArrowRight,
-  Bot, PenTool, BarChart3
+  Sparkles, Mail, Lock, Loader2,
+  Image, Zap, ArrowRight,
+  Bot, BarChart3
 } from 'lucide-react'
 
 export default function LoginPage() {
@@ -19,40 +18,6 @@ export default function LoginPage() {
   const { login, isLoading, error } = useAuthStore()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking')
-  const [backendUrl, setBackendUrl] = useState('')
-  const [customUrl, setCustomUrl] = useState('')
-  const [isSyncing, setIsSyncing] = useState(false)
-  const [showUrlInput, setShowUrlInput] = useState(false)
-  const [syncMessage, setSyncMessage] = useState('')
-
-  // 백엔드 연결 확인
-  useEffect(() => {
-    const checkBackend = async () => {
-      const storedUrl = localStorage.getItem('BACKEND_URL')
-      const apiUrl = storedUrl || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8010'
-      setBackendUrl(apiUrl)
-
-      try {
-        const response = await fetch(`${apiUrl}/health`, {
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' },
-        })
-
-        if (response.ok) {
-          setBackendStatus('connected')
-        } else {
-          setBackendStatus('disconnected')
-        }
-      } catch (error) {
-        setBackendStatus('disconnected')
-      }
-    }
-
-    checkBackend()
-    const interval = setInterval(checkBackend, 5000)
-    return () => clearInterval(interval)
-  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -80,53 +45,6 @@ export default function LoginPage() {
     } catch (error) {
       alert('로그인에 실패했습니다.')
     }
-  }
-
-  const testBackendConnection = async (url: string): Promise<boolean> => {
-    try {
-      const response = await fetch(`${url}/health`, { method: 'GET' })
-      return response.ok
-    } catch {
-      return false
-    }
-  }
-
-  const handleAutoSync = async () => {
-    setIsSyncing(true)
-    setSyncMessage('백엔드 서버 검색 중...')
-    const commonPorts = [8010, 8000, 8001, 8002, 8003, 8011, 8012, 8020, 9000, 9001, 5000, 5001]
-
-    for (const port of commonPorts) {
-      const testUrl = `http://localhost:${port}`
-      setSyncMessage(`포트 ${port} 확인 중...`)
-      const isConnected = await testBackendConnection(testUrl)
-      if (isConnected) {
-        localStorage.setItem('BACKEND_URL', testUrl)
-        setBackendUrl(testUrl)
-        setBackendStatus('connected')
-        setSyncMessage(`연결 성공: ${testUrl}`)
-        setIsSyncing(false)
-        setTimeout(() => setSyncMessage(''), 3000)
-        return
-      }
-      await new Promise(resolve => setTimeout(resolve, 200))
-    }
-
-    setSyncMessage('백엔드 서버를 찾을 수 없습니다')
-    setIsSyncing(false)
-  }
-
-  const handleManualSync = async () => {
-    if (!customUrl.trim()) return
-    setIsSyncing(true)
-    const isConnected = await testBackendConnection(customUrl)
-    if (isConnected) {
-      localStorage.setItem('BACKEND_URL', customUrl)
-      setBackendUrl(customUrl)
-      setBackendStatus('connected')
-      setShowUrlInput(false)
-    }
-    setIsSyncing(false)
   }
 
   const features = [
@@ -249,37 +167,6 @@ export default function LoginPage() {
             <span className="text-xs text-gray-400">by 플라톤마케팅</span>
           </div>
 
-          {/* 백엔드 상태 (축소) */}
-          <div className="mb-6 p-3 rounded-lg border bg-gray-50 text-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-gray-600">서버 상태</span>
-              <div className="flex items-center gap-2">
-                {backendStatus === 'connected' ? (
-                  <>
-                    <CheckCircle2 className="h-4 w-4 text-green-500" />
-                    <span className="text-green-600 font-medium">연결됨</span>
-                  </>
-                ) : backendStatus === 'disconnected' ? (
-                  <>
-                    <XCircle className="h-4 w-4 text-red-500" />
-                    <span className="text-red-600 font-medium">연결 안됨</span>
-                    <Button size="sm" variant="ghost" onClick={handleAutoSync} disabled={isSyncing}>
-                      {isSyncing ? <Loader2 className="h-3 w-3 animate-spin" /> : '재연결'}
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin text-gray-500" />
-                    <span className="text-gray-500">확인 중...</span>
-                  </>
-                )}
-              </div>
-            </div>
-            {syncMessage && (
-              <div className="mt-2 text-xs text-gray-500">{syncMessage}</div>
-            )}
-          </div>
-
           {/* 로그인 폼 */}
           <div className="mb-8">
             <h2 className="text-3xl font-bold text-gray-900 mb-2">로그인</h2>
@@ -375,8 +262,25 @@ export default function LoginPage() {
           {/* 하단 정보 */}
           <div className="mt-8 pt-6 border-t border-gray-100">
             <p className="text-center text-xs text-gray-400 mb-3">
-              로그인하면 서비스 이용약관 및 개인정보처리방침에 동의하게 됩니다.
+              로그인하면{' '}
+              <Link href="/legal" className="text-blue-600 hover:underline">서비스 이용약관</Link>
+              {' '}및{' '}
+              <Link href="/legal" className="text-blue-600 hover:underline">개인정보처리방침</Link>
+              에 동의하게 됩니다.
             </p>
+            <div className="flex items-center justify-center gap-3 mb-3">
+              <Link href="/legal" className="text-xs text-gray-400 hover:text-blue-600">
+                이용약관
+              </Link>
+              <span className="text-gray-300">|</span>
+              <Link href="/legal" className="text-xs text-gray-400 hover:text-blue-600">
+                개인정보처리방침
+              </Link>
+              <span className="text-gray-300">|</span>
+              <Link href="/legal" className="text-xs text-gray-400 hover:text-blue-600">
+                면책조항
+              </Link>
+            </div>
             <p className="text-center text-xs text-gray-500 mb-2">
               닥터보이스 프로는 <span className="font-semibold text-purple-600">플라톤마케팅</span>에서 개발했습니다.
             </p>

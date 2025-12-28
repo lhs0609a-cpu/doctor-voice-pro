@@ -3,13 +3,15 @@
 네이버 블로그 연동 및 자동 발행
 """
 
-from typing import List
+from typing import List, Dict
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import datetime, timedelta
 import secrets
+import time
+from threading import Lock
 
 from app.db.database import get_db
 from app.schemas.naver import (
@@ -26,6 +28,53 @@ from app.services.naver_blog_service import naver_blog_service
 router = APIRouter()
 
 
+# ==================== CSRF State Storage ====================
+# Simple in-memory TTL cache for CSRF state validation
+# State expires after 10 minutes
+
+class CSRFStateStore:
+    """Thread-safe CSRF state storage with TTL"""
+
+    def __init__(self, ttl_seconds: int = 600):  # 10 minutes default
+        self._store: Dict[str, tuple] = {}  # state -> (user_id, created_at)
+        self._ttl = ttl_seconds
+        self._lock = Lock()
+
+    def set(self, state: str, user_id: str) -> None:
+        """Store a state with user_id"""
+        with self._lock:
+            # Clean up expired entries
+            self._cleanup()
+            self._store[state] = (user_id, time.time())
+
+    def validate_and_remove(self, state: str, user_id: str) -> bool:
+        """Validate state and remove it (one-time use)"""
+        with self._lock:
+            self._cleanup()
+            if state not in self._store:
+                return False
+            stored_user_id, created_at = self._store[state]
+            if stored_user_id != user_id:
+                return False
+            # Remove after validation (one-time use)
+            del self._store[state]
+            return True
+
+    def _cleanup(self) -> None:
+        """Remove expired entries"""
+        now = time.time()
+        expired = [
+            state for state, (_, created_at) in self._store.items()
+            if now - created_at > self._ttl
+        ]
+        for state in expired:
+            del self._store[state]
+
+
+# Global CSRF state store
+csrf_state_store = CSRFStateStore(ttl_seconds=600)  # 10 minutes
+
+
 @router.get("/auth/url")
 async def get_naver_auth_url(
     current_user: User = Depends(get_current_user),
@@ -38,8 +87,8 @@ async def get_naver_auth_url(
     # Generate state for CSRF protection
     state = secrets.token_urlsafe(32)
 
-    # TODO: Store state in session or cache for validation
-    # For now, we'll just generate it
+    # Store state in CSRF state store for validation
+    csrf_state_store.set(state, str(current_user.id))
 
     redirect_uri = "http://localhost:3000/dashboard/settings/naver/callback"
     auth_url = naver_blog_service.get_authorization_url(redirect_uri, state)
@@ -60,7 +109,12 @@ async def naver_auth_callback(
     """
     redirect_uri = "http://localhost:3000/dashboard/settings/naver/callback"
 
-    # TODO: Validate state to prevent CSRF
+    # Validate state to prevent CSRF attacks
+    if not csrf_state_store.validate_and_remove(callback_data.state, str(current_user.id)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="유효하지 않거나 만료된 인증 요청입니다. 다시 시도해주세요.",
+        )
 
     # Get access token
     token_response = await naver_blog_service.get_access_token(

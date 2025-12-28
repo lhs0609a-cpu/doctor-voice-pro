@@ -234,7 +234,6 @@ export default function CreditsPurchasePage() {
                       >
                         <FileText className="h-6 w-6 mb-2" />
                         <span>글 생성</span>
-                        <span className="text-xs text-muted-foreground">500원/건</span>
                       </Label>
                     </div>
                     <div>
@@ -245,7 +244,6 @@ export default function CreditsPurchasePage() {
                       >
                         <Search className="h-6 w-6 mb-2" />
                         <span>분석</span>
-                        <span className="text-xs text-muted-foreground">100원/건</span>
                       </Label>
                     </div>
                   </RadioGroup>

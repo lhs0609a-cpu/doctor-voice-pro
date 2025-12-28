@@ -303,20 +303,45 @@ async def get_question(
     return question
 
 
+class CollectRequest(BaseModel):
+    """질문 수집 요청"""
+    keywords: Optional[List[str]] = None
+    limit: int = Field(default=50, ge=1, le=100)
+    use_crawler: bool = Field(default=True, description="실제 크롤링 사용 여부")
+    min_reward_points: int = Field(default=0, ge=0, description="최소 내공 점수")
+
+
 @router.post("/questions/collect")
 async def collect_questions(
-    keywords: Optional[List[str]] = None,
-    limit: int = Query(50, ge=1, le=100),
+    request: Optional[CollectRequest] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """질문 수집 실행"""
+    """
+    질문 수집 실행
+
+    네이버 지식인에서 등록된 키워드로 질문을 검색하여 수집합니다.
+
+    - **keywords**: 검색할 키워드 목록 (없으면 등록된 키워드 사용)
+    - **limit**: 최대 수집 개수 (기본 50)
+    - **use_crawler**: 실제 크롤링 사용 여부 (False면 테스트용 시뮬레이션)
+    - **min_reward_points**: 최소 내공 점수 필터
+    """
     service = KnowledgeService(db)
-    result = await service.collect_questions(
-        user_id=str(current_user.id),
-        keywords=keywords,
-        limit=limit
-    )
+
+    if request:
+        result = await service.collect_questions(
+            user_id=str(current_user.id),
+            keywords=request.keywords,
+            limit=request.limit,
+            use_crawler=request.use_crawler,
+            min_reward_points=request.min_reward_points,
+        )
+    else:
+        result = await service.collect_questions(
+            user_id=str(current_user.id),
+        )
+
     return result
 
 
@@ -594,3 +619,235 @@ async def get_top_questions(
     service = KnowledgeService(db)
     questions = await service.get_top_questions(str(current_user.id), limit)
     return questions
+
+
+# ==================== 자동화 API ====================
+
+class SchedulerStartRequest(BaseModel):
+    """스케줄러 시작 요청"""
+    pass
+
+
+class LoginRequest(BaseModel):
+    """네이버 로그인 요청"""
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+
+
+class PostAnswerRequest(BaseModel):
+    """답변 등록 요청"""
+    answer_id: str
+
+
+class PostMultipleRequest(BaseModel):
+    """다중 답변 등록 요청"""
+    limit: int = Field(default=5, ge=1, le=10)
+    delay_between: int = Field(default=30, ge=10, le=120)
+
+
+@router.post("/scheduler/start")
+async def start_scheduler(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    자동화 스케줄러 시작
+
+    설정에 따라 질문 수집, 답변 생성을 자동으로 실행합니다.
+    """
+    from app.services.kin_scheduler import get_scheduler
+
+    scheduler = await get_scheduler(db, str(current_user.id))
+    await scheduler.start(str(current_user.id))
+
+    return {"message": "스케줄러가 시작되었습니다"}
+
+
+@router.post("/scheduler/stop")
+async def stop_scheduler(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """자동화 스케줄러 중지"""
+    from app.services.kin_scheduler import get_scheduler
+
+    scheduler = await get_scheduler(db, str(current_user.id))
+    await scheduler.stop()
+
+    return {"message": "스케줄러가 중지되었습니다"}
+
+
+@router.get("/scheduler/status")
+async def get_scheduler_status(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """스케줄러 상태 조회"""
+    from app.services.kin_scheduler import get_scheduler
+
+    scheduler = await get_scheduler(db, str(current_user.id))
+    status = await scheduler.get_job_status(str(current_user.id))
+
+    return status
+
+
+@router.post("/scheduler/run-collect")
+async def run_collection_job(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """질문 수집 작업 수동 실행"""
+    from app.services.kin_scheduler import get_scheduler
+
+    scheduler = await get_scheduler(db, str(current_user.id))
+    result = await scheduler.run_collection_job(str(current_user.id))
+
+    return result
+
+
+@router.post("/scheduler/run-generate")
+async def run_generation_job(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """답변 생성 작업 수동 실행"""
+    from app.services.kin_scheduler import get_scheduler
+
+    scheduler = await get_scheduler(db, str(current_user.id))
+    result = await scheduler.run_generation_job(str(current_user.id))
+
+    return result
+
+
+# ==================== 자동 등록 API ====================
+
+@router.post("/poster/login")
+async def poster_login(
+    request: LoginRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    네이버 로그인 (Playwright)
+
+    답변 자동 등록을 위해 네이버에 로그인합니다.
+    """
+    from app.services.kin_poster import poster_manager
+
+    try:
+        poster = await poster_manager.get_poster(db, str(current_user.id))
+        await poster.initialize()
+        success = await poster.login(request.username, request.password)
+
+        if success:
+            await poster.save_cookies()
+            return {"success": True, "message": "로그인 성공"}
+        else:
+            return {"success": False, "message": "로그인 실패"}
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/poster/logout")
+async def poster_logout(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """네이버 로그아웃 (브라우저 종료)"""
+    from app.services.kin_poster import poster_manager
+
+    poster = await poster_manager.get_poster(db, str(current_user.id))
+    await poster.close()
+
+    return {"message": "로그아웃 완료"}
+
+
+@router.post("/poster/post-answer")
+async def post_single_answer(
+    request: PostAnswerRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    단일 답변 등록
+
+    승인된 답변을 네이버 지식인에 등록합니다.
+    """
+    from app.services.kin_poster import poster_manager
+
+    try:
+        poster = await poster_manager.get_poster(db, str(current_user.id))
+
+        # 쿠키로 로그인 시도
+        if not poster._logged_in:
+            await poster.initialize()
+            if not await poster.load_cookies():
+                raise HTTPException(
+                    status_code=401,
+                    detail="로그인이 필요합니다. /poster/login을 먼저 호출하세요."
+                )
+
+        result = await poster.post_answer(request.answer_id, str(current_user.id))
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/poster/post-multiple")
+async def post_multiple_answers(
+    request: PostMultipleRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    다중 답변 등록
+
+    승인된 답변들을 순차적으로 네이버 지식인에 등록합니다.
+    """
+    from app.services.kin_poster import poster_manager
+
+    try:
+        poster = await poster_manager.get_poster(db, str(current_user.id))
+
+        # 쿠키로 로그인 시도
+        if not poster._logged_in:
+            await poster.initialize()
+            if not await poster.load_cookies():
+                raise HTTPException(
+                    status_code=401,
+                    detail="로그인이 필요합니다. /poster/login을 먼저 호출하세요."
+                )
+
+        result = await poster.post_multiple_answers(
+            user_id=str(current_user.id),
+            limit=request.limit,
+            delay_between=request.delay_between
+        )
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/poster/status")
+async def get_poster_status(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """포스터 상태 조회"""
+    from app.services.kin_poster import poster_manager
+
+    try:
+        poster = await poster_manager.get_poster(db, str(current_user.id))
+
+        return {
+            "initialized": poster._browser is not None,
+            "logged_in": poster._logged_in,
+        }
+    except:
+        return {
+            "initialized": False,
+            "logged_in": False,
+        }

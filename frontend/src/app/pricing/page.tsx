@@ -191,14 +191,6 @@ export default function PricingPage() {
                     )}
                   </ul>
 
-                  {plan.price_monthly > 0 && (
-                    <div className="mt-4 pt-4 border-t">
-                      <p className="text-sm text-muted-foreground">
-                        추가 사용 시: 글 ₩{formatPrice(plan.extra_post_price)}/건,
-                        분석 ₩{formatPrice(plan.extra_analysis_price)}/건
-                      </p>
-                    </div>
-                  )}
                 </CardContent>
 
                 <CardFooter>
