@@ -195,7 +195,9 @@
       "Bash(\"C:\\\\Users\\\\이아랑\\\\.fly\\\\bin\\\\flyctl.exe\" deploy -a doctor-voice-pro-backend)",
       "Bash(\"C:\\\\Users\\\\이아랑\\\\AppData\\\\Roaming\\\\npm\\\\vercel.cmd\" --prod --yes)",
       "Bash(\"C:\\\\Users\\\\이아랑\\\\.fly\\\\bin\\\\flyctl.exe\" logs -a doctor-voice-pro-backend --limit 100)",
-      "Bash(\"C:\\\\Users\\\\이아랑\\\\.fly\\\\bin\\\\flyctl.exe\" logs -a doctor-voice-pro-backend --no-tail)"
+      "Bash(\"C:\\\\Users\\\\이아랑\\\\.fly\\\\bin\\\\flyctl.exe\" logs -a doctor-voice-pro-backend --no-tail)",
+      "Bash(\"C:\\\\Users\\\\이아랑\\\\AppData\\\\Roaming\\\\npm\\\\vercel.cmd\" login)",
+      "Bash(\"C:\\\\Users\\\\이아랑\\\\.fly\\\\bin\\\\flyctl.exe\" status:*)"
     ],
     "deny": [],
     "ask": []
