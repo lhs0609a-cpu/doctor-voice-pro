@@ -412,7 +412,7 @@ export default function KnowledgePage() {
         loadAnswers()
         loadData()
       } else {
-        toast.error(result.error || '등록 실패')
+        toast.error(result.message || '등록 실패')
       }
     } catch (error: any) {
       toast.error(error.response?.data?.detail || '답변 등록 실패')
