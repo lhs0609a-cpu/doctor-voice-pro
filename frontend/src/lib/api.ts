@@ -2848,4 +2848,100 @@ export const cafeAPI = {
   },
 }
 
+// ==================== 빌링(정기결제) API ====================
+
+export interface CardInfo {
+  has_card: boolean
+  card_company: string | null
+  card_number_last4: string | null
+  registered_at: string | null
+}
+
+export interface SubscriptionManage {
+  id: string
+  plan_name: string
+  plan_price: number
+  status: string
+  current_period_start: string
+  current_period_end: string
+  next_billing_date: string | null
+  cancel_at_period_end: boolean
+  has_card: boolean
+  card_company: string | null
+  card_number_last4: string | null
+  trial_end: string | null
+  is_trialing: boolean
+}
+
+export interface CancelResponse {
+  success: boolean
+  message: string
+  refund_amount: number | null
+  cancel_at: string | null
+}
+
+export const billingAPI = {
+  // 카드 등록 (빌링키 발급)
+  setupCard: async (authKey: string, subscriptionId?: string): Promise<{
+    success: boolean
+    billing_key?: string
+    card_company?: string
+    card_number?: string
+    message?: string
+  }> => {
+    const response = await api.post('/api/v1/billing/setup-card', {
+      auth_key: authKey,
+      subscription_id: subscriptionId,
+    })
+    return response.data
+  },
+
+  // 등록된 카드 조회
+  getCard: async (): Promise<CardInfo> => {
+    const response = await api.get('/api/v1/billing/card')
+    return response.data
+  },
+
+  // 카드 삭제
+  deleteCard: async (): Promise<{ success: boolean; message: string }> => {
+    const response = await api.delete('/api/v1/billing/card')
+    return response.data
+  },
+
+  // 카드 변경
+  changeCard: async (authKey: string): Promise<{
+    success: boolean
+    billing_key?: string
+    card_company?: string
+    card_number?: string
+    message?: string
+  }> => {
+    const response = await api.post('/api/v1/billing/change-card', {
+      auth_key: authKey,
+    })
+    return response.data
+  },
+
+  // 구독 관리 정보 조회
+  getSubscriptionManage: async (): Promise<SubscriptionManage> => {
+    const response = await api.get('/api/v1/billing/subscription')
+    return response.data
+  },
+
+  // 구독 해지
+  cancelSubscription: async (reason?: string, immediate: boolean = false): Promise<CancelResponse> => {
+    const response = await api.post('/api/v1/billing/subscription/cancel', {
+      reason,
+      immediate,
+    })
+    return response.data
+  },
+
+  // 해지 예정 구독 재활성화
+  reactivateSubscription: async (): Promise<{ success: boolean; message: string }> => {
+    const response = await api.post('/api/v1/billing/subscription/reactivate')
+    return response.data
+  },
+}
+
 export default api

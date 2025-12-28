@@ -833,11 +833,55 @@ function EcommerceContent() {
         <li>결제 수단: 신용카드, 체크카드, 계좌이체, 가상계좌 등</li>
       </ul>
 
-      <h3 className="text-lg font-bold text-gray-900 mb-4 mt-6">2. 구독 서비스</h3>
+      <h3 className="text-lg font-bold text-gray-900 mb-4 mt-6">2. 구독 서비스 및 자동결제</h3>
+      <div className="bg-emerald-50 border border-emerald-300 rounded-lg p-4 my-4">
+        <p className="font-bold text-emerald-800 mb-2">자동결제(정기결제) 안내</p>
+        <ul className="list-disc pl-5 space-y-2 text-emerald-800">
+          <li>구독 서비스는 월간 또는 연간 단위로 <strong>자동 갱신</strong>됩니다.</li>
+          <li>등록된 결제수단으로 매 결제일에 자동 결제됩니다.</li>
+          <li>결제 <strong>7일 전</strong> 이메일로 결제 예정 안내를 발송합니다.</li>
+          <li>결제 안내에는 해지 방법 및 링크가 포함됩니다.</li>
+        </ul>
+      </div>
+
+      <h4 className="text-md font-bold text-gray-800 mb-3 mt-4">2-1. 자동결제 동의</h4>
       <ul className="list-disc pl-5 space-y-2">
-        <li>구독 서비스는 월간 또는 연간 단위로 자동 갱신됩니다.</li>
-        <li>자동 갱신을 원하지 않는 경우, 갱신일 24시간 전까지 해지해야 합니다.</li>
-        <li>구독 기간 중 요금제 변경 시, 변경된 요금제는 다음 결제일부터 적용됩니다.</li>
+        <li>유료 구독 신청 시 자동결제에 대한 명시적 동의를 받습니다.</li>
+        <li>결제수단 등록 시 빌링키가 발급되며, 이후 자동결제에 사용됩니다.</li>
+        <li>빌링키는 안전하게 암호화되어 저장됩니다.</li>
+      </ul>
+
+      <h4 className="text-md font-bold text-gray-800 mb-3 mt-4">2-2. 결제 금액 변경</h4>
+      <ul className="list-disc pl-5 space-y-2">
+        <li>결제 금액이 증액되는 경우, <strong>30일 전</strong>에 사전 동의를 받습니다.</li>
+        <li>무료 서비스가 유료로 전환되는 경우, <strong>14일 전</strong>에 사전 동의를 받습니다.</li>
+        <li>동의하지 않는 경우 기존 조건으로 유지되거나 해지할 수 있습니다.</li>
+      </ul>
+
+      <h4 className="text-md font-bold text-gray-800 mb-3 mt-4">2-3. 결제 실패 시 처리</h4>
+      <ul className="list-disc pl-5 space-y-2">
+        <li>결제 실패 시 3일 간격으로 최대 3회 재시도합니다.</li>
+        <li>3회 모두 실패 시 구독이 자동 해지되며, 서비스 이용이 제한됩니다.</li>
+        <li>결제 실패 시 이메일로 안내드립니다.</li>
+      </ul>
+
+      <h4 className="text-md font-bold text-gray-800 mb-3 mt-4">2-4. 구독 해지</h4>
+      <div className="bg-blue-50 border border-blue-300 rounded-lg p-4 my-4">
+        <p className="font-bold text-blue-800 mb-2">간편한 해지 절차</p>
+        <ul className="list-disc pl-5 space-y-2 text-blue-800">
+          <li><strong>[대시보드] → [구독 관리] → [해지]</strong> 버튼으로 언제든 해지 가능합니다.</li>
+          <li>해지 시 현재 결제 기간 종료일까지 서비스 이용 가능합니다.</li>
+          <li>즉시 해지를 원하는 경우, 미사용 기간에 대해 일할 계산하여 환불합니다.</li>
+          <li>해지 후에도 계정과 데이터는 30일간 보관됩니다.</li>
+        </ul>
+      </div>
+
+      <h4 className="text-md font-bold text-gray-800 mb-3 mt-4">2-5. 무료체험(트라이얼)</h4>
+      <ul className="list-disc pl-5 space-y-2">
+        <li>신규 가입자에게 7일 무료체험 기간이 제공될 수 있습니다.</li>
+        <li>무료체험 종료 후 자동으로 유료 구독으로 전환됩니다.</li>
+        <li>무료체험 종료 <strong>7일 전</strong> 유료 전환 안내를 발송합니다.</li>
+        <li>유료 전환을 원하지 않는 경우, 무료체험 기간 내 해지하시면 됩니다.</li>
       </ul>
 
       <h3 className="text-lg font-bold text-gray-900 mb-4 mt-6">3. 청약 철회 및 환불</h3>

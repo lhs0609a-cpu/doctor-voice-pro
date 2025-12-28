@@ -100,6 +100,11 @@ class Subscription(Base):
     # 결제 정보
     payment_method = Column(String(50))  # card, bank_transfer, etc.
     billing_key = Column(String(255))  # 정기결제용 빌링키
+    customer_key = Column(String(255))  # 토스페이먼츠 고객키
+
+    # 카드 정보 (표시용)
+    card_company = Column(String(50))  # 카드사
+    card_number_last4 = Column(String(4))  # 카드 끝 4자리
 
     # 취소 관련
     cancel_at_period_end = Column(Boolean, default=False)
@@ -108,6 +113,14 @@ class Subscription(Base):
     # 트라이얼
     trial_start = Column(DateTime)
     trial_end = Column(DateTime)
+
+    # 정기결제 재시도
+    retry_count = Column(Integer, default=0)  # 결제 재시도 횟수
+    last_retry_at = Column(DateTime)  # 마지막 재시도 시간
+
+    # 결제 예정 알림
+    renewal_notice_sent = Column(Boolean, default=False)
+    renewal_notice_sent_at = Column(DateTime)
 
     # 메타데이터
     extra_data = Column(JSON)

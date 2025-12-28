@@ -115,7 +115,7 @@ export function DashboardNav() {
   // 설정 탭
   const settingsLinks = [
     {
-      href: '/dashboard/subscription',
+      href: '/subscription/manage',
       label: '구독 관리',
       icon: CreditCard,
     },

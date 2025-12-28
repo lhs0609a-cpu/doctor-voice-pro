@@ -5,7 +5,8 @@ from app.api import (
     schedules, reports, sns,
     roi, place, reviews, competitors, rankings, campaigns,
     knowledge, crawl, cafe, viral,
-    knowledge_extended, cafe_extended
+    knowledge_extended, cafe_extended,
+    billing
 )
 
 api_router = APIRouter()
@@ -46,3 +47,5 @@ api_router.include_router(viral.router, prefix="/viral", tags=["viral"])
 api_router.include_router(knowledge_extended.router, prefix="/knowledge-ext", tags=["knowledge-extended"])
 # Cafe Extended (대댓글, 게시판타겟팅, 인기글분석, 팔로우/좋아요)
 api_router.include_router(cafe_extended.router, prefix="/cafe-ext", tags=["cafe-extended"])
+# Billing (정기결제)
+api_router.include_router(billing.router)
