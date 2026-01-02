@@ -151,7 +151,7 @@ export default function BlogDetailPage() {
         setSelectedTemplateId('')
         loadBlogDetail()
       } else {
-        toast.error(result.error || '발송 실패')
+        toast.error(result.message || '발송 실패')
       }
     } catch (error) {
       toast.error('이메일 발송 실패')
@@ -179,7 +179,7 @@ export default function BlogDetailPage() {
         toast.success(`연락처 추출 완료: ${result.contacts_found || 0}개 발견`)
         loadBlogDetail()
       } else {
-        toast.error(result.error || '연락처 추출 실패')
+        toast.error(result.message || '연락처 추출 실패')
       }
     } catch (error) {
       toast.error('연락처 추출 실패')
