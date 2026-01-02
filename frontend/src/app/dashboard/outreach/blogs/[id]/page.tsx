@@ -151,7 +151,7 @@ export default function BlogDetailPage() {
         setSelectedTemplateId('')
         loadBlogDetail()
       } else {
-        toast.error(result.message || '발송 실패')
+        toast.error(result.error || '발송 실패')
       }
     } catch (error) {
       toast.error('이메일 발송 실패')

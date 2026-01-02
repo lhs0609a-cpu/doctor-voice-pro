@@ -125,7 +125,7 @@ export default function CampaignDetailPage() {
         setSendDialogOpen(false)
         loadCampaignDetail()
       } else {
-        toast.error(result.message || '발송 실패')
+        toast.error('발송 실패')
       }
     } catch (error) {
       toast.error('배치 발송 실패')

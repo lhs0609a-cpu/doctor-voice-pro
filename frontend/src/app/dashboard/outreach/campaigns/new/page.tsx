@@ -206,7 +206,7 @@ export default function NewCampaignPage() {
         toast.success('캠페인이 생성되었습니다')
         router.push('/dashboard/outreach?tab=campaigns')
       } else {
-        toast.error(result.message || '캠페인 생성 실패')
+        toast.error('캠페인 생성 실패')
       }
     } catch (error) {
       toast.error('캠페인 생성 실패')
