@@ -163,7 +163,7 @@ export default function BlogDetailPage() {
   const handleSaveNotes = async () => {
     setSavingNotes(true)
     try {
-      await outreachAPI.updateBlogStatus(blogId, blog?.status || 'new', notes)
+      await outreachAPI.updateBlogNotes(blogId, notes)
       toast.success('메모가 저장되었습니다')
     } catch (error) {
       toast.error('메모 저장 실패')

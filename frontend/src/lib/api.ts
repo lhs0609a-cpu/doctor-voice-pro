@@ -3503,6 +3503,11 @@ export const outreachAPI = {
     return response.data
   },
 
+  updateBlogNotes: async (blogId: string, notes: string): Promise<{ success: boolean }> => {
+    const response = await api.put(`/api/v1/outreach/blogs/${blogId}/notes`, { notes })
+    return response.data
+  },
+
   // ======== 연락처 추출 ========
   extractContacts: async (blogId: string): Promise<{
     success: boolean
