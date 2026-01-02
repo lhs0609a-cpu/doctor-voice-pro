@@ -5,6 +5,7 @@
 
 import asyncio
 import logging
+import random
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from enum import Enum
@@ -37,7 +38,7 @@ class KinSchedulerService:
         self._running = False
         self._tasks: Dict[str, asyncio.Task] = {}
 
-    async def start(self, user_id: str):
+    async def start(self, user_id: str, include_posting: bool = False):
         """스케줄러 시작"""
         if self._running:
             logger.warning("스케줄러가 이미 실행 중입니다")
@@ -60,6 +61,12 @@ class KinSchedulerService:
         if settings.auto_generate:
             self._tasks["generate"] = asyncio.create_task(
                 self._generation_loop(user_id, settings)
+            )
+
+        # 자동 게시 (옵션)
+        if include_posting:
+            self._tasks["posting"] = asyncio.create_task(
+                self._posting_loop(user_id, settings)
             )
 
     async def stop(self):
@@ -423,6 +430,104 @@ class KinSchedulerService:
             "checked": len(answers),
             "chosen": chosen_count
         }
+
+    # ==================== 자동 게시 ====================
+
+    async def _posting_loop(self, user_id: str, settings: AutoAnswerSetting):
+        """자동 게시 루프 (15분 간격)"""
+        interval = 15 * 60  # 15분
+
+        while self._running:
+            try:
+                if self._is_working_hours(settings):
+                    await self.run_posting_job(user_id, settings)
+
+                await asyncio.sleep(interval)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"게시 루프 오류: {e}")
+                await asyncio.sleep(60)
+
+    async def run_posting_job(
+        self,
+        user_id: str,
+        settings: Optional[AutoAnswerSetting] = None,
+        limit: int = 5
+    ) -> Dict[str, Any]:
+        """답변 자동 게시 작업 (다중 계정 로테이션)"""
+        if not settings:
+            settings = await self._get_settings(user_id)
+
+        logger.info(f"답변 자동 게시 시작: user_id={user_id}")
+
+        # kin_poster 가져오기
+        from app.services.kin_poster import KinPosterService
+        poster = KinPosterService(self.db)
+
+        try:
+            await poster.initialize()
+
+            # 다중 계정 로테이션으로 게시
+            result = await poster.post_multiple_answers_rotated(
+                user_id=user_id,
+                limit=limit,
+                delay_range=(30, 120)
+            )
+
+            # 통계 업데이트
+            if result.get("posted", 0) > 0:
+                await self._update_stats(user_id, answers_posted=result["posted"])
+
+            logger.info(f"자동 게시 완료: {result.get('posted', 0)}개 성공")
+            return result
+
+        except Exception as e:
+            logger.error(f"자동 게시 오류: {e}")
+            return {"success": False, "message": str(e)}
+        finally:
+            await poster.close()
+
+    async def start_posting_scheduler(self, user_id: str):
+        """자동 게시 스케줄러만 시작"""
+        if "posting" in self._tasks:
+            logger.warning("자동 게시 스케줄러가 이미 실행 중입니다")
+            return
+
+        settings = await self._get_settings(user_id)
+        if not settings:
+            logger.warning("설정을 찾을 수 없습니다")
+            return
+
+        self._running = True
+        self._tasks["posting"] = asyncio.create_task(
+            self._posting_loop(user_id, settings)
+        )
+        logger.info(f"자동 게시 스케줄러 시작: user_id={user_id}")
+
+    async def stop_posting_scheduler(self):
+        """자동 게시 스케줄러만 중지"""
+        if "posting" in self._tasks:
+            self._tasks["posting"].cancel()
+            try:
+                await self._tasks["posting"]
+            except asyncio.CancelledError:
+                pass
+            del self._tasks["posting"]
+            logger.info("자동 게시 스케줄러 중지됨")
+
+    async def start_full_automation(self, user_id: str):
+        """
+        풀 자동화 시작 (수집 + 생성 + 게시)
+
+        풀 사이클:
+        1. 질문 수집 (30분 간격)
+        2. AI 답변 생성 (10분 간격)
+        3. 자동 게시 (15분 간격, 다중 계정 로테이션)
+        """
+        await self.start(user_id, include_posting=True)
+        logger.info(f"풀 자동화 시작: user_id={user_id}")
 
     # ==================== 통계 ====================
 

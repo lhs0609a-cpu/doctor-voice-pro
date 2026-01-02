@@ -18,6 +18,8 @@ from app.models.cafe import (
     CafeContent, CafePost, CafeCommunity,
     ContentType, ContentStatus, CafePostStatus
 )
+from app.models.viral_common import NaverAccount, AccountStatus
+from app.services.account_manager import account_manager
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,7 @@ class CafePosterService:
         self._context: Optional[BrowserContext] = None
         self._page: Optional[Page] = None
         self._logged_in = False
+        self._current_account: Optional[NaverAccount] = None  # 현재 로그인된 계정
 
         # 설정
         self.headless = True  # 프로덕션에서는 True
@@ -561,6 +564,251 @@ class CafePosterService:
     def is_logged_in(self) -> bool:
         """로그인 상태 반환"""
         return self._logged_in
+
+    # ========== 다중 계정 로테이션 메서드 ==========
+
+    async def login_with_account(self, account: NaverAccount) -> bool:
+        """
+        특정 계정으로 로그인 (세션 쿠키 재사용)
+
+        Args:
+            account: 네이버 계정 객체
+
+        Returns:
+            로그인 성공 여부
+        """
+        if not self._page:
+            await self.initialize()
+
+        try:
+            # 1. 저장된 세션 쿠키 확인
+            session_cookies = await account_manager.get_session(self.db, account.id)
+            if session_cookies:
+                logger.info(f"세션 쿠키로 로그인 시도: {account.account_id}")
+                await self._context.add_cookies(session_cookies)
+
+                if await self._check_logged_in():
+                    self._logged_in = True
+                    self._current_account = account
+                    logger.info(f"세션 쿠키로 로그인 성공: {account.account_id}")
+                    return True
+                else:
+                    logger.info("세션 만료, ID/PW 로그인 시도")
+
+            # 2. 세션 없거나 만료 시 ID/PW 로그인
+            password = account_manager._decrypt(account.encrypted_password)
+            if await self.login(account.account_id, password):
+                # 새 세션 저장
+                cookies = await self._context.cookies()
+                await account_manager.save_session(self.db, account.id, cookies)
+                self._current_account = account
+                logger.info(f"ID/PW 로그인 성공, 세션 저장됨: {account.account_id}")
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"계정 로그인 실패 ({account.account_id}): {e}")
+            return False
+
+    async def post_comment_rotated(
+        self,
+        content_id: str,
+        user_id: str
+    ) -> Dict[str, Any]:
+        """
+        다중 계정 로테이션으로 댓글 등록
+
+        Args:
+            content_id: 콘텐츠 ID
+            user_id: 사용자 ID
+
+        Returns:
+            등록 결과
+        """
+        # 사용 가능한 계정 가져오기
+        account = await account_manager.get_next_available_account(
+            self.db, user_id, platform="cafe", activity_type="comment"
+        )
+
+        if not account:
+            return {
+                "success": False,
+                "message": "사용 가능한 계정이 없습니다. 모든 계정이 일일 한도에 도달했거나 휴식 중입니다."
+            }
+
+        try:
+            # 계정으로 로그인
+            if not await self.login_with_account(account):
+                await account_manager.update_account_status(
+                    self.db, account.id, AccountStatus.ERROR, "로그인 실패"
+                )
+                return {"success": False, "message": f"계정 로그인 실패: {account.account_id}"}
+
+            # 댓글 등록
+            result = await self.post_comment(content_id, user_id)
+
+            if result.get("success"):
+                # 활동 기록
+                await account_manager.record_activity(
+                    self.db, account.id, "comment"
+                )
+                result["account_id"] = account.id
+                result["account_name"] = account.account_id
+
+                # 콘텐츠에 계정 ID 저장
+                content_result = await self.db.execute(
+                    select(CafeContent).where(CafeContent.id == content_id)
+                )
+                content = content_result.scalar_one_or_none()
+                if content:
+                    content.posted_account_id = account.id
+                    await self.db.commit()
+
+            return result
+
+        except Exception as e:
+            logger.error(f"로테이션 댓글 등록 실패: {e}")
+            return {"success": False, "message": str(e)}
+
+    async def create_post_rotated(
+        self,
+        content_id: str,
+        user_id: str
+    ) -> Dict[str, Any]:
+        """
+        다중 계정 로테이션으로 새 글 작성
+
+        Args:
+            content_id: 콘텐츠 ID
+            user_id: 사용자 ID
+
+        Returns:
+            등록 결과
+        """
+        # 사용 가능한 계정 가져오기
+        account = await account_manager.get_next_available_account(
+            self.db, user_id, platform="cafe", activity_type="post"
+        )
+
+        if not account:
+            return {
+                "success": False,
+                "message": "사용 가능한 계정이 없습니다. 모든 계정이 일일 한도에 도달했거나 휴식 중입니다."
+            }
+
+        try:
+            # 계정으로 로그인
+            if not await self.login_with_account(account):
+                await account_manager.update_account_status(
+                    self.db, account.id, AccountStatus.ERROR, "로그인 실패"
+                )
+                return {"success": False, "message": f"계정 로그인 실패: {account.account_id}"}
+
+            # 글 작성
+            result = await self.create_post(content_id, user_id)
+
+            if result.get("success"):
+                # 활동 기록
+                await account_manager.record_activity(
+                    self.db, account.id, "post"
+                )
+                result["account_id"] = account.id
+                result["account_name"] = account.account_id
+
+                # 콘텐츠에 계정 ID 저장
+                content_result = await self.db.execute(
+                    select(CafeContent).where(CafeContent.id == content_id)
+                )
+                content = content_result.scalar_one_or_none()
+                if content:
+                    content.posted_account_id = account.id
+                    await self.db.commit()
+
+            return result
+
+        except Exception as e:
+            logger.error(f"로테이션 글 작성 실패: {e}")
+            return {"success": False, "message": str(e)}
+
+    async def post_multiple_contents_rotated(
+        self,
+        user_id: str,
+        limit: int = 5,
+        delay_range: tuple = (30, 120)  # 30~120초 랜덤 딜레이
+    ) -> Dict[str, Any]:
+        """
+        여러 콘텐츠를 다중 계정 로테이션으로 일괄 등록
+
+        Args:
+            user_id: 사용자 ID
+            limit: 최대 등록 개수
+            delay_range: 등록 간 딜레이 범위 (초)
+
+        Returns:
+            등록 결과
+        """
+        # 승인된 콘텐츠 조회
+        result = await self.db.execute(
+            select(CafeContent).where(
+                and_(
+                    CafeContent.user_id == user_id,
+                    CafeContent.status == ContentStatus.APPROVED
+                )
+            ).limit(limit)
+        )
+        contents = result.scalars().all()
+
+        if not contents:
+            return {
+                "success": True,
+                "posted": 0,
+                "failed": 0,
+                "message": "등록할 콘텐츠가 없습니다"
+            }
+
+        posted_count = 0
+        failed_count = 0
+        results = []
+
+        for idx, content in enumerate(contents):
+            try:
+                if content.content_type == ContentType.COMMENT:
+                    post_result = await self.post_comment_rotated(content.id, user_id)
+                elif content.content_type == ContentType.POST:
+                    post_result = await self.create_post_rotated(content.id, user_id)
+                else:
+                    continue
+
+                results.append(post_result)
+
+                if post_result.get("success"):
+                    posted_count += 1
+                else:
+                    failed_count += 1
+
+                # 다음 등록까지 랜덤 딜레이 (스팸 방지)
+                if idx < len(contents) - 1:
+                    delay = random.randint(delay_range[0], delay_range[1])
+                    logger.info(f"{delay}초 대기...")
+                    await asyncio.sleep(delay)
+
+            except Exception as e:
+                logger.error(f"콘텐츠 등록 실패: {e}")
+                failed_count += 1
+                results.append({
+                    "success": False,
+                    "content_id": content.id,
+                    "error": str(e)
+                })
+
+        return {
+            "success": True,
+            "posted": posted_count,
+            "failed": failed_count,
+            "results": results,
+            "message": f"{posted_count}개 등록 완료, {failed_count}개 실패"
+        }
 
 
 class CafePosterManager:

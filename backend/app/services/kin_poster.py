@@ -17,6 +17,8 @@ from app.models.knowledge import (
     KnowledgeQuestion, KnowledgeAnswer,
     QuestionStatus, AnswerStatus
 )
+from app.models.viral_common import NaverAccount, AccountStatus
+from app.services.account_manager import account_manager
 
 logger = logging.getLogger(__name__)
 
@@ -416,6 +418,206 @@ class KinPosterService:
                 logger.info("쿠키로 로그인 복원됨")
                 return True
         return False
+
+    # ==================== 다중 계정 통합 ====================
+
+    async def login_with_account(self, account: NaverAccount) -> bool:
+        """
+        계정별 로그인 (세션 쿠키 재사용)
+
+        Args:
+            account: NaverAccount 객체
+
+        Returns:
+            로그인 성공 여부
+        """
+        if not self._page:
+            await self.initialize()
+
+        try:
+            # 1. 저장된 세션 쿠키 확인
+            session_cookies = await account_manager.get_session(self.db, account.id)
+
+            if session_cookies:
+                # 쿠키로 로그인 시도
+                await self._context.add_cookies(session_cookies)
+
+                if await self._check_logged_in():
+                    self._logged_in = True
+                    self._current_account = account
+                    logger.info(f"세션 쿠키로 로그인 성공: {account.account_id}")
+                    return True
+
+            # 2. 세션 없거나 만료 시 ID/PW 로그인
+            password = account_manager._decrypt(account.encrypted_password)
+
+            if await self.login(account.account_id, password):
+                # 새 세션 저장
+                cookies = await self._context.cookies()
+                await account_manager.save_session(self.db, account.id, cookies)
+                self._current_account = account
+                logger.info(f"ID/PW로 로그인 성공: {account.account_id}")
+                return True
+
+            # 로그인 실패
+            await account_manager.record_login_failure(self.db, account.id)
+            return False
+
+        except NaverLoginError as e:
+            logger.error(f"계정 로그인 실패: {account.account_id} - {e}")
+            await account_manager.record_login_failure(self.db, account.id)
+            return False
+        except Exception as e:
+            logger.error(f"로그인 중 오류: {e}")
+            return False
+
+    async def post_answer_rotated(
+        self,
+        answer_id: str,
+        user_id: str
+    ) -> Dict[str, Any]:
+        """
+        다중 계정 로테이션으로 답변 게시
+
+        Args:
+            answer_id: 답변 ID
+            user_id: 사용자 ID
+
+        Returns:
+            게시 결과
+        """
+        # 1. 가용 계정 선택
+        account = await account_manager.get_next_available_account(
+            self.db, user_id, platform="knowledge", activity_type="answer"
+        )
+
+        if not account:
+            return {
+                "success": False,
+                "message": "사용 가능한 계정이 없습니다. (일일 한도 도달 또는 모든 계정 휴식 중)"
+            }
+
+        logger.info(f"게시 계정 선택: {account.account_id} (오늘 {account.today_answers}/{account.daily_answer_limit})")
+
+        # 2. 계정으로 로그인
+        if not await self.login_with_account(account):
+            return {
+                "success": False,
+                "message": f"계정 로그인 실패: {account.account_id}",
+                "account_id": account.id
+            }
+
+        # 3. 답변 게시
+        try:
+            result = await self.post_answer(answer_id, user_id)
+
+            # 4. 활동 기록
+            await account_manager.record_activity(
+                self.db, account.id, "answer", success=result.get("success", False)
+            )
+
+            # 답변에 계정 ID 기록
+            if result.get("success"):
+                answer_result = await self.db.execute(
+                    select(KnowledgeAnswer).where(KnowledgeAnswer.id == answer_id)
+                )
+                answer = answer_result.scalar_one_or_none()
+                if answer:
+                    answer.posted_account_id = account.id
+                    await self.db.commit()
+
+            result["account_id"] = account.id
+            result["account_name"] = account.account_name or account.account_id
+            return result
+
+        except AnswerPostError as e:
+            error_msg = str(e)
+
+            # 차단 감지
+            if "차단" in error_msg or "제한" in error_msg:
+                await account_manager.update_status(
+                    self.db, account.id, AccountStatus.BLOCKED, reason=error_msg
+                )
+                logger.warning(f"계정 차단 감지: {account.account_id}")
+
+            await account_manager.record_activity(self.db, account.id, "answer", success=False)
+
+            return {
+                "success": False,
+                "message": error_msg,
+                "account_id": account.id
+            }
+
+    async def post_multiple_answers_rotated(
+        self,
+        user_id: str,
+        limit: int = 5,
+        delay_range: tuple = (30, 120)
+    ) -> Dict[str, Any]:
+        """
+        여러 답변을 다중 계정 로테이션으로 일괄 게시
+
+        Args:
+            user_id: 사용자 ID
+            limit: 최대 게시 개수
+            delay_range: 게시 간 딜레이 범위 (초)
+
+        Returns:
+            게시 결과
+        """
+        import random
+
+        # 승인된 답변 조회
+        result = await self.db.execute(
+            select(KnowledgeAnswer).where(
+                and_(
+                    KnowledgeAnswer.user_id == user_id,
+                    KnowledgeAnswer.status == AnswerStatus.APPROVED
+                )
+            ).limit(limit)
+        )
+        answers = result.scalars().all()
+
+        if not answers:
+            return {
+                "success": True,
+                "posted": 0,
+                "failed": 0,
+                "message": "게시할 답변이 없습니다"
+            }
+
+        posted_count = 0
+        failed_count = 0
+        results = []
+
+        for answer in answers:
+            # 로테이션으로 게시
+            post_result = await self.post_answer_rotated(answer.id, user_id)
+            results.append(post_result)
+
+            if post_result.get("success"):
+                posted_count += 1
+            else:
+                failed_count += 1
+
+                # 모든 계정 한도 도달 시 중단
+                if "사용 가능한 계정이 없습니다" in post_result.get("message", ""):
+                    logger.info("모든 계정 한도 도달, 게시 중단")
+                    break
+
+            # 다음 답변까지 랜덤 딜레이 (패턴 회피)
+            if posted_count + failed_count < len(answers):
+                delay = random.randint(delay_range[0], delay_range[1])
+                logger.info(f"{delay}초 대기...")
+                await asyncio.sleep(delay)
+
+        return {
+            "success": True,
+            "posted": posted_count,
+            "failed": failed_count,
+            "results": results,
+            "message": f"{posted_count}개 게시 완료, {failed_count}개 실패"
+        }
 
 
 class KinPosterManager:

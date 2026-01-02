@@ -21,12 +21,12 @@ DEFAULT_PLANS = [
     {
         "id": "free",
         "name": "무료",
-        "description": "기본 기능을 무료로 체험하세요",
+        "description": "유료 플랜으로 업그레이드하여 모든 기능을 이용하세요",
         "price_monthly": 0,
         "price_yearly": 0,
-        "posts_per_month": 3,
-        "analysis_per_month": 10,
-        "keywords_per_month": 20,
+        "posts_per_month": 0,
+        "analysis_per_month": 0,
+        "keywords_per_month": 0,
         "has_api_access": False,
         "has_priority_support": False,
         "has_advanced_analytics": False,
@@ -38,7 +38,7 @@ DEFAULT_PLANS = [
     {
         "id": "starter",
         "name": "스타터",
-        "description": "개인 블로거를 위한 플랜",
+        "description": "소규모 병원에 적합한 플랜",
         "price_monthly": 9900,
         "price_yearly": 99000,
         "posts_per_month": 30,
@@ -55,7 +55,7 @@ DEFAULT_PLANS = [
     {
         "id": "pro",
         "name": "프로",
-        "description": "전업 블로거 및 마케터를 위한 플랜",
+        "description": "성장하는 병원을 위한 전문가 플랜",
         "price_monthly": 19900,
         "price_yearly": 199000,
         "posts_per_month": 100,
@@ -72,7 +72,7 @@ DEFAULT_PLANS = [
     {
         "id": "business",
         "name": "비즈니스",
-        "description": "마케팅 대행사 및 팀을 위한 플랜",
+        "description": "대형 병원 및 에이전시를 위한 엔터프라이즈 플랜",
         "price_monthly": 49900,
         "price_yearly": 499000,
         "posts_per_month": 300,

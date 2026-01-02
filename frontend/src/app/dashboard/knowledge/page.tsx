@@ -39,7 +39,13 @@ import {
   LogIn,
   LogOut,
   Upload,
-  Bot
+  Bot,
+  Users,
+  UserPlus,
+  Shield,
+  AlertCircle,
+  Pause,
+  RotateCcw
 } from 'lucide-react'
 import {
   knowledgeAPI,
@@ -50,7 +56,9 @@ import {
   KnowledgeDashboard,
   QuestionStatus,
   AnswerStatus,
-  AnswerTone
+  AnswerTone,
+  NaverAccount,
+  AccountStats
 } from '@/lib/api'
 import { toast } from 'sonner'
 
@@ -104,9 +112,21 @@ export default function KnowledgePage() {
   const [isTemplateDialogOpen, setIsTemplateDialogOpen] = useState(false)
   const [isAnswerDialogOpen, setIsAnswerDialogOpen] = useState(false)
   const [isLoginDialogOpen, setIsLoginDialogOpen] = useState(false)
+  const [isAccountDialogOpen, setIsAccountDialogOpen] = useState(false)
 
   // 로그인 폼
   const [loginForm, setLoginForm] = useState({ username: '', password: '' })
+
+  // 계정 관련 상태
+  const [accounts, setAccounts] = useState<NaverAccount[]>([])
+  const [accountStats, setAccountStats] = useState<AccountStats | null>(null)
+  const [newAccount, setNewAccount] = useState({
+    account_id: '',
+    password: '',
+    account_name: '',
+    use_for_knowledge: true,
+    use_for_cafe: true
+  })
 
   // Form states
   const [newKeyword, setNewKeyword] = useState({ keyword: '', category: '', priority: 1 })
@@ -186,7 +206,116 @@ export default function KnowledgePage() {
     }
     if (activeTab === 'templates') loadTemplates()
     if (activeTab === 'automation') loadAutomationStatus()
+    if (activeTab === 'accounts') loadAccounts()
   }, [activeTab, questionFilter, answerFilter])
+
+  // 계정 목록 로드
+  const loadAccounts = async () => {
+    try {
+      const [accountsData, statsData] = await Promise.all([
+        knowledgeAPI.getAccounts(),
+        knowledgeAPI.getAccountStats()
+      ])
+      setAccounts(accountsData)
+      setAccountStats(statsData)
+    } catch (error) {
+      console.error('Failed to load accounts:', error)
+    }
+  }
+
+  // 계정 추가
+  const handleAddAccount = async () => {
+    if (!newAccount.account_id || !newAccount.password) {
+      toast.error('아이디와 비밀번호를 입력해주세요')
+      return
+    }
+    try {
+      await knowledgeAPI.createAccount(newAccount)
+      toast.success('계정이 추가되었습니다')
+      setIsAccountDialogOpen(false)
+      setNewAccount({ account_id: '', password: '', account_name: '', use_for_knowledge: true, use_for_cafe: true })
+      loadAccounts()
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || '계정 추가 실패')
+    }
+  }
+
+  // 계정 삭제
+  const handleDeleteAccount = async (accountId: string) => {
+    if (!confirm('정말 이 계정을 삭제하시겠습니까?')) return
+    try {
+      await knowledgeAPI.deleteAccount(accountId)
+      toast.success('계정이 삭제되었습니다')
+      loadAccounts()
+    } catch (error) {
+      toast.error('계정 삭제 실패')
+    }
+  }
+
+  // 계정 상태 변경
+  const handleAccountStatusChange = async (accountId: string, status: string) => {
+    try {
+      await knowledgeAPI.updateAccountStatus(accountId, { status })
+      toast.success(`계정 상태가 ${status}(으)로 변경되었습니다`)
+      loadAccounts()
+    } catch (error) {
+      toast.error('상태 변경 실패')
+    }
+  }
+
+  // 워밍업 시작
+  const handleStartWarmup = async (accountId: string) => {
+    try {
+      await knowledgeAPI.startAccountWarmup(accountId)
+      toast.success('워밍업이 시작되었습니다')
+      loadAccounts()
+    } catch (error) {
+      toast.error('워밍업 시작 실패')
+    }
+  }
+
+  // 풀 자동화 시작
+  const handleStartFullAutomation = async () => {
+    try {
+      await knowledgeAPI.startFullAutomation()
+      toast.success('풀 자동화가 시작되었습니다')
+      loadAutomationStatus()
+    } catch (error) {
+      toast.error('풀 자동화 시작 실패')
+    }
+  }
+
+  // 로테이션 게시
+  const handlePostRotated = async (limit: number = 5) => {
+    setIsPosting(true)
+    try {
+      const result = await knowledgeAPI.postAnswerRotated({ limit })
+      if (result.success) {
+        toast.success(result.message)
+        loadAnswers()
+        loadData()
+      } else {
+        toast.error(result.message)
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || '로테이션 게시 실패')
+    } finally {
+      setIsPosting(false)
+    }
+  }
+
+  // 계정 상태 배지
+  const getAccountStatusBadge = (status: string) => {
+    const statusConfig: Record<string, { label: string; className: string }> = {
+      active: { label: '활성', className: 'bg-green-100 text-green-800' },
+      warming: { label: '워밍업', className: 'bg-yellow-100 text-yellow-800' },
+      resting: { label: '휴식', className: 'bg-gray-100 text-gray-800' },
+      blocked: { label: '차단', className: 'bg-red-100 text-red-800' },
+      disabled: { label: '비활성', className: 'bg-gray-200 text-gray-600' },
+    }
+    const config = statusConfig[status] || { label: status, className: 'bg-gray-100 text-gray-800' }
+    return <Badge className={config.className}>{config.label}</Badge>
+  }
 
   // 질문 수집
   const handleCollect = async () => {
@@ -567,6 +696,10 @@ export default function KnowledgePage() {
             <TabsTrigger value="overview">개요</TabsTrigger>
             <TabsTrigger value="questions">질문 모니터링</TabsTrigger>
             <TabsTrigger value="answers">답변 관리</TabsTrigger>
+            <TabsTrigger value="accounts">
+              <Users className="h-4 w-4 mr-1" />
+              계정
+            </TabsTrigger>
             <TabsTrigger value="automation">
               <Bot className="h-4 w-4 mr-1" />
               자동화
@@ -954,6 +1087,287 @@ export default function KnowledgePage() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* 계정 관리 탭 */}
+          <TabsContent value="accounts">
+            <div className="space-y-6">
+              {/* 계정 통계 */}
+              {accountStats && (
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                  <Card>
+                    <CardContent className="pt-6 text-center">
+                      <p className="text-2xl font-bold text-blue-600">{accountStats.total_accounts}</p>
+                      <p className="text-xs text-gray-500">전체 계정</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-6 text-center">
+                      <p className="text-2xl font-bold text-green-600">{accountStats.active}</p>
+                      <p className="text-xs text-gray-500">활성</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-6 text-center">
+                      <p className="text-2xl font-bold text-yellow-600">{accountStats.warming}</p>
+                      <p className="text-xs text-gray-500">워밍업</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-6 text-center">
+                      <p className="text-2xl font-bold text-gray-600">{accountStats.resting}</p>
+                      <p className="text-xs text-gray-500">휴식</p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-6 text-center">
+                      <p className="text-2xl font-bold text-purple-600">{accountStats.avg_adoption_rate.toFixed(1)}%</p>
+                      <p className="text-xs text-gray-500">평균 채택률</p>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              {/* 계정 목록 */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="flex items-center gap-2">
+                      <Users className="h-5 w-5" />
+                      네이버 계정
+                    </CardTitle>
+                    <Dialog open={isAccountDialogOpen} onOpenChange={setIsAccountDialogOpen}>
+                      <DialogTrigger asChild>
+                        <Button>
+                          <UserPlus className="h-4 w-4 mr-2" />
+                          계정 추가
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>네이버 계정 추가</DialogTitle>
+                          <DialogDescription>
+                            다중 계정 로테이션에 사용할 네이버 계정을 추가하세요.
+                            비밀번호는 암호화되어 저장됩니다.
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="grid gap-4 py-4">
+                          <div className="grid gap-2">
+                            <Label>네이버 아이디</Label>
+                            <Input
+                              placeholder="네이버 아이디"
+                              value={newAccount.account_id}
+                              onChange={(e) => setNewAccount({ ...newAccount, account_id: e.target.value })}
+                            />
+                          </div>
+                          <div className="grid gap-2">
+                            <Label>비밀번호</Label>
+                            <Input
+                              type="password"
+                              placeholder="비밀번호"
+                              value={newAccount.password}
+                              onChange={(e) => setNewAccount({ ...newAccount, password: e.target.value })}
+                            />
+                          </div>
+                          <div className="grid gap-2">
+                            <Label>계정 별칭 (선택)</Label>
+                            <Input
+                              placeholder="예: 메인 계정"
+                              value={newAccount.account_name}
+                              onChange={(e) => setNewAccount({ ...newAccount, account_name: e.target.value })}
+                            />
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-2">
+                              <Switch
+                                checked={newAccount.use_for_knowledge}
+                                onCheckedChange={(v) => setNewAccount({ ...newAccount, use_for_knowledge: v })}
+                              />
+                              <Label>지식인 사용</Label>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Switch
+                                checked={newAccount.use_for_cafe}
+                                onCheckedChange={(v) => setNewAccount({ ...newAccount, use_for_cafe: v })}
+                              />
+                              <Label>카페 사용</Label>
+                            </div>
+                          </div>
+                        </div>
+                        <DialogFooter>
+                          <Button variant="outline" onClick={() => setIsAccountDialogOpen(false)}>
+                            취소
+                          </Button>
+                          <Button onClick={handleAddAccount}>추가</Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {accounts.length === 0 ? (
+                    <div className="text-center py-12">
+                      <Users className="h-12 w-12 mx-auto text-gray-300 mb-4" />
+                      <p className="text-gray-500">등록된 계정이 없습니다</p>
+                      <p className="text-sm text-gray-400 mt-1">
+                        다중 계정을 등록하면 로테이션으로 게시하여 차단 위험을 줄일 수 있습니다
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {accounts.map((account) => (
+                        <div
+                          key={account.id}
+                          className="p-4 border rounded-lg hover:border-blue-300 transition-colors"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <div className={`w-3 h-3 rounded-full ${
+                                account.status === 'active' ? 'bg-green-500' :
+                                account.status === 'warming' ? 'bg-yellow-500 animate-pulse' :
+                                account.status === 'blocked' ? 'bg-red-500' : 'bg-gray-400'
+                              }`} />
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-medium">{account.account_name || account.account_id}</span>
+                                  {getAccountStatusBadge(account.status)}
+                                  {account.is_warming_up && (
+                                    <Badge variant="outline" className="text-xs">
+                                      워밍업 {account.warming_day}/7일
+                                    </Badge>
+                                  )}
+                                </div>
+                                <p className="text-sm text-gray-500">{account.account_id}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-4">
+                              {/* 오늘 활동량 */}
+                              <div className="text-center">
+                                <p className="text-lg font-semibold text-blue-600">
+                                  {account.today_answers}/{account.daily_answer_limit}
+                                </p>
+                                <p className="text-xs text-gray-500">오늘 답변</p>
+                              </div>
+                              {/* 채택률 */}
+                              <div className="text-center">
+                                <p className="text-lg font-semibold text-green-600">
+                                  {account.adoption_rate.toFixed(1)}%
+                                </p>
+                                <p className="text-xs text-gray-500">채택률</p>
+                              </div>
+                              {/* 액션 버튼 */}
+                              <div className="flex gap-1">
+                                {account.status === 'resting' && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleStartWarmup(account.id)}
+                                    title="워밍업 시작"
+                                  >
+                                    <RotateCcw className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                {account.status === 'active' && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleAccountStatusChange(account.id, 'resting')}
+                                    title="휴식"
+                                  >
+                                    <Pause className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                {account.status === 'warming' && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleAccountStatusChange(account.id, 'active')}
+                                    title="활성화"
+                                  >
+                                    <Play className="h-4 w-4" />
+                                  </Button>
+                                )}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleDeleteAccount(account.id)}
+                                  className="text-red-500 hover:text-red-700"
+                                  title="삭제"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                          {/* 추가 정보 */}
+                          <div className="mt-3 pt-3 border-t flex items-center justify-between text-xs text-gray-500">
+                            <div className="flex gap-4">
+                              <span>총 답변: {account.total_answers}</span>
+                              <span>총 채택: {account.total_adoptions}</span>
+                              {account.use_for_knowledge && <Badge variant="outline">지식인</Badge>}
+                              {account.use_for_cafe && <Badge variant="outline">카페</Badge>}
+                            </div>
+                            <span>
+                              마지막 활동: {account.last_activity_at
+                                ? new Date(account.last_activity_at).toLocaleString()
+                                : '없음'}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* 로테이션 게시 */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <RotateCcw className="h-5 w-5 text-blue-500" />
+                    로테이션 게시
+                  </CardTitle>
+                  <CardDescription>
+                    등록된 계정들을 순환하며 답변을 자동 게시합니다
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="p-4 bg-blue-50 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-medium text-blue-800">대기 중인 승인된 답변</p>
+                        <p className="text-sm text-blue-600">
+                          {schedulerStatus?.pending?.draft_answers || 0}개
+                        </p>
+                      </div>
+                      <Button
+                        onClick={() => handlePostRotated(5)}
+                        disabled={isPosting || accounts.length === 0}
+                      >
+                        {isPosting ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                          <Upload className="h-4 w-4 mr-2" />
+                        )}
+                        로테이션 게시 (5개)
+                      </Button>
+                    </div>
+                  </div>
+
+                  {accounts.length === 0 && (
+                    <div className="p-4 bg-yellow-50 rounded-lg flex items-start gap-3">
+                      <AlertCircle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-medium text-yellow-800">계정을 먼저 등록하세요</p>
+                        <p className="text-sm text-yellow-600">
+                          로테이션 게시를 사용하려면 최소 1개 이상의 네이버 계정이 필요합니다.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
           {/* 템플릿 탭 */}

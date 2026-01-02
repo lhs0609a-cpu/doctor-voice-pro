@@ -851,3 +851,306 @@ async def get_poster_status(
             "initialized": False,
             "logged_in": False,
         }
+
+
+# ==================== 계정 관리 API ====================
+
+class AccountCreate(BaseModel):
+    """계정 생성 요청"""
+    account_id: str = Field(..., min_length=1, max_length=100, description="네이버 아이디")
+    password: str = Field(..., min_length=1, description="비밀번호")
+    account_name: Optional[str] = Field(None, max_length=100, description="계정 별칭")
+    use_for_knowledge: bool = Field(default=True, description="지식인에 사용")
+    use_for_cafe: bool = Field(default=True, description="카페에 사용")
+
+
+class AccountStatusUpdate(BaseModel):
+    """계정 상태 변경 요청"""
+    status: str = Field(..., description="active, warming, resting, blocked, disabled")
+    reason: Optional[str] = None
+
+
+class AccountResponse(BaseModel):
+    """계정 응답"""
+    id: str
+    account_id: str
+    account_name: Optional[str]
+    status: str
+    last_login_at: Optional[datetime]
+    last_activity_at: Optional[datetime]
+    daily_answer_limit: int
+    daily_comment_limit: int
+    today_answers: int
+    today_comments: int
+    total_answers: int
+    total_adoptions: int
+    adoption_rate: float
+    is_warming_up: bool
+    warming_day: int
+    use_for_knowledge: bool
+    use_for_cafe: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AccountStatsResponse(BaseModel):
+    """계정 통계 응답"""
+    total_accounts: int
+    active: int
+    warming: int
+    resting: int
+    blocked: int
+    total_answers: int
+    total_adoptions: int
+    total_comments: int
+    total_likes: int
+    today_answers: int
+    today_comments: int
+    today_posts: int
+    avg_adoption_rate: float
+
+
+class PostRotatedRequest(BaseModel):
+    """로테이션 게시 요청"""
+    answer_id: Optional[str] = None
+    limit: int = Field(default=5, ge=1, le=20)
+    delay_min: int = Field(default=30, ge=10)
+    delay_max: int = Field(default=120, le=300)
+
+
+@router.get("/accounts", response_model=List[AccountResponse])
+async def get_accounts(
+    status: Optional[str] = None,
+    platform: Optional[str] = Query(None, description="knowledge 또는 cafe"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    네이버 계정 목록 조회
+
+    다중 계정 로테이션을 위해 등록된 네이버 계정들을 조회합니다.
+    """
+    from app.services.account_manager import account_manager
+    from app.models.viral_common import AccountStatus
+
+    status_enum = None
+    if status:
+        try:
+            status_enum = AccountStatus(status)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"잘못된 상태: {status}")
+
+    accounts = await account_manager.get_accounts(
+        db, str(current_user.id), status=status_enum, platform=platform
+    )
+    return accounts
+
+
+@router.post("/accounts", response_model=AccountResponse)
+async def create_account(
+    data: AccountCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    네이버 계정 추가
+
+    다중 계정 로테이션에 사용할 네이버 계정을 등록합니다.
+    비밀번호는 암호화되어 저장됩니다.
+    """
+    from app.services.account_manager import account_manager
+
+    account = await account_manager.create_account(
+        db=db,
+        user_id=str(current_user.id),
+        account_id=data.account_id,
+        password=data.password,
+        account_name=data.account_name,
+        use_for_knowledge=data.use_for_knowledge,
+        use_for_cafe=data.use_for_cafe
+    )
+    return account
+
+
+@router.delete("/accounts/{account_id}")
+async def delete_account(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """네이버 계정 삭제"""
+    from app.services.account_manager import account_manager
+
+    success = await account_manager.delete_account(db, account_id, str(current_user.id))
+    if not success:
+        raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다")
+    return {"message": "계정이 삭제되었습니다"}
+
+
+@router.put("/accounts/{account_id}/status")
+async def update_account_status(
+    account_id: str,
+    data: AccountStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    계정 상태 변경
+
+    - active: 활성 (답변 게시 가능)
+    - warming: 워밍업 중 (제한된 활동)
+    - resting: 휴식 중 (활동 중지)
+    - blocked: 차단됨
+    - disabled: 비활성화
+    """
+    from app.services.account_manager import account_manager
+    from app.models.viral_common import AccountStatus
+
+    try:
+        status_enum = AccountStatus(data.status)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"잘못된 상태: {data.status}")
+
+    await account_manager.update_status(db, account_id, status_enum, data.reason)
+    return {"message": f"계정 상태가 {data.status}(으)로 변경되었습니다"}
+
+
+@router.post("/accounts/{account_id}/warmup")
+async def start_account_warmup(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    계정 워밍업 시작
+
+    신규 계정 또는 휴식 후 복귀하는 계정의 워밍업을 시작합니다.
+    7일간 점진적으로 활동 한도가 증가합니다.
+    """
+    from app.services.account_manager import account_manager
+
+    await account_manager.start_warming_up(db, account_id)
+    return {"message": "워밍업이 시작되었습니다. 7일간 점진적으로 한도가 증가합니다."}
+
+
+@router.get("/accounts/stats", response_model=AccountStatsResponse)
+async def get_account_stats(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """계정 통계 조회"""
+    from app.services.account_manager import account_manager
+
+    stats = await account_manager.get_account_stats(db, str(current_user.id))
+    return stats
+
+
+# ==================== 로테이션 게시 API ====================
+
+@router.post("/poster/post-rotated")
+async def post_answer_rotated(
+    request: PostRotatedRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    다중 계정 로테이션으로 답변 게시
+
+    등록된 네이버 계정들을 로테이션하며 답변을 게시합니다.
+    각 계정의 일일 한도와 최소 활동 간격을 자동으로 관리합니다.
+    """
+    from app.services.kin_poster import KinPosterService
+
+    poster = KinPosterService(db)
+
+    try:
+        await poster.initialize()
+
+        if request.answer_id:
+            # 단일 답변 로테이션 게시
+            result = await poster.post_answer_rotated(
+                answer_id=request.answer_id,
+                user_id=str(current_user.id)
+            )
+        else:
+            # 다중 답변 로테이션 게시
+            result = await poster.post_multiple_answers_rotated(
+                user_id=str(current_user.id),
+                limit=request.limit,
+                delay_range=(request.delay_min, request.delay_max)
+            )
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        await poster.close()
+
+
+# ==================== 풀 자동화 API ====================
+
+@router.post("/scheduler/full-automation/start")
+async def start_full_automation(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    풀 자동화 시작 (수집 + 생성 + 게시)
+
+    질문 수집, AI 답변 생성, 다중 계정 로테이션 게시를 모두 자동으로 실행합니다.
+    - 질문 수집: 30분 간격
+    - 답변 생성: 10분 간격
+    - 답변 게시: 15분 간격 (다중 계정 로테이션)
+    """
+    from app.services.kin_scheduler import get_scheduler
+
+    scheduler = await get_scheduler(db, str(current_user.id))
+    await scheduler.start_full_automation(str(current_user.id))
+
+    return {"message": "풀 자동화가 시작되었습니다"}
+
+
+@router.post("/scheduler/posting/start")
+async def start_posting_scheduler(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """자동 게시 스케줄러 시작"""
+    from app.services.kin_scheduler import get_scheduler
+
+    scheduler = await get_scheduler(db, str(current_user.id))
+    await scheduler.start_posting_scheduler(str(current_user.id))
+
+    return {"message": "자동 게시 스케줄러가 시작되었습니다"}
+
+
+@router.post("/scheduler/posting/stop")
+async def stop_posting_scheduler(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """자동 게시 스케줄러 중지"""
+    from app.services.kin_scheduler import get_scheduler
+
+    scheduler = await get_scheduler(db, str(current_user.id))
+    await scheduler.stop_posting_scheduler()
+
+    return {"message": "자동 게시 스케줄러가 중지되었습니다"}
+
+
+@router.post("/scheduler/run-posting")
+async def run_posting_job(
+    limit: int = Query(5, ge=1, le=20),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """답변 게시 작업 수동 실행 (다중 계정 로테이션)"""
+    from app.services.kin_scheduler import get_scheduler
+
+    scheduler = await get_scheduler(db, str(current_user.id))
+    result = await scheduler.run_posting_job(str(current_user.id), limit=limit)
+
+    return result

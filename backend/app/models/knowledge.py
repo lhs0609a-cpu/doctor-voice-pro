@@ -119,6 +119,7 @@ class KnowledgeAnswer(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     question_id = Column(String(36), ForeignKey("knowledge_questions.id"), nullable=False)
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    posted_account_id = Column(String(36), ForeignKey("naver_accounts.id"), nullable=True)  # 게시에 사용된 계정
 
     # 답변 내용
     content = Column(Text, nullable=False)  # AI 생성 원본
@@ -159,6 +160,7 @@ class KnowledgeAnswer(Base):
     # Relationships
     question = relationship("KnowledgeQuestion", back_populates="answers")
     user = relationship("User", back_populates="knowledge_answers")
+    posted_account = relationship("NaverAccount", backref="knowledge_answers")
 
 
 class AnswerTemplate(Base):

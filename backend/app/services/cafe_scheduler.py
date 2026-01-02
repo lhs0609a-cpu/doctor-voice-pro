@@ -17,6 +17,7 @@ from app.models.cafe import (
 )
 from app.services.cafe_crawler import cafe_crawler
 from app.services.cafe_content_generator import cafe_content_generator
+from app.services.cafe_poster import CafePosterService
 
 logger = logging.getLogger(__name__)
 
@@ -27,16 +28,25 @@ class CafeSchedulerService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self._is_running = False
+        self._posting_running = False
         self._collection_task: Optional[asyncio.Task] = None
         self._generation_task: Optional[asyncio.Task] = None
+        self._posting_task: Optional[asyncio.Task] = None
         self._user_id: Optional[str] = None
 
         # 기본 주기 설정 (초)
         self.collection_interval = 30 * 60  # 30분
         self.generation_interval = 10 * 60  # 10분
+        self.posting_interval = 15 * 60  # 15분
 
-    async def start(self, user_id: str):
-        """스케줄러 시작"""
+    async def start(self, user_id: str, include_posting: bool = False):
+        """
+        스케줄러 시작
+
+        Args:
+            user_id: 사용자 ID
+            include_posting: 자동 게시 포함 여부
+        """
         if self._is_running:
             logger.warning("스케줄러가 이미 실행 중입니다")
             return
@@ -59,11 +69,16 @@ class CafeSchedulerService:
             self._generation_loop(user_id, settings)
         )
 
-        logger.info(f"카페 스케줄러 시작: user_id={user_id}")
+        # 게시 루프 시작 (옵션)
+        if include_posting:
+            await self.start_posting(user_id)
+
+        logger.info(f"카페 스케줄러 시작: user_id={user_id}, include_posting={include_posting}")
 
     async def stop(self):
         """스케줄러 중지"""
         self._is_running = False
+        self._posting_running = False
 
         if self._collection_task:
             self._collection_task.cancel()
@@ -79,7 +94,48 @@ class CafeSchedulerService:
             except asyncio.CancelledError:
                 pass
 
+        if self._posting_task:
+            self._posting_task.cancel()
+            try:
+                await self._posting_task
+            except asyncio.CancelledError:
+                pass
+
         logger.info("카페 스케줄러 중지")
+
+    async def start_posting(self, user_id: str):
+        """자동 게시만 시작"""
+        if self._posting_running:
+            logger.warning("게시 스케줄러가 이미 실행 중입니다")
+            return
+
+        self._user_id = user_id
+        self._posting_running = True
+
+        settings = await self._get_settings(user_id)
+
+        self._posting_task = asyncio.create_task(
+            self._posting_loop(user_id, settings)
+        )
+
+        logger.info(f"카페 게시 스케줄러 시작: user_id={user_id}")
+
+    async def stop_posting(self):
+        """자동 게시만 중지"""
+        self._posting_running = False
+
+        if self._posting_task:
+            self._posting_task.cancel()
+            try:
+                await self._posting_task
+            except asyncio.CancelledError:
+                pass
+
+        logger.info("카페 게시 스케줄러 중지")
+
+    async def start_full_automation(self, user_id: str):
+        """풀 자동화 시작 (수집 + 생성 + 게시)"""
+        await self.start(user_id, include_posting=True)
 
     async def _get_settings(self, user_id: str) -> Optional[CafeAutoSetting]:
         """사용자 설정 조회"""
@@ -148,6 +204,139 @@ class CafeSchedulerService:
             except Exception as e:
                 logger.error(f"생성 루프 오류: {e}")
                 await asyncio.sleep(60)
+
+    async def _posting_loop(self, user_id: str, settings: Optional[CafeAutoSetting]):
+        """
+        자동 게시 루프 (15분 간격)
+
+        승인된 콘텐츠를 다중 계정 로테이션으로 자동 게시
+        """
+        import random
+
+        while self._posting_running:
+            try:
+                # 업무 시간 확인
+                if not await self._is_working_hours(settings):
+                    logger.debug("업무 시간 외 - 게시 건너뜀")
+                    await asyncio.sleep(60)
+                    continue
+
+                # 일일 한도 확인
+                today_stats = await self._get_today_stats(user_id)
+                daily_limit = settings.daily_comment_limit if settings else 30
+
+                total_posted = (today_stats.comments_published + today_stats.posts_published) if today_stats else 0
+                if total_posted >= daily_limit:
+                    logger.info("일일 게시 한도 도달")
+                    await asyncio.sleep(60 * 60)  # 1시간 대기
+                    continue
+
+                # 게시 실행
+                result = await self.run_posting_job(user_id, settings)
+
+                if result.get("posted", 0) > 0:
+                    # 랜덤 딜레이 추가 (10~20분)
+                    delay = random.randint(600, 1200)
+                    logger.info(f"다음 게시까지 {delay}초 대기")
+                    await asyncio.sleep(delay)
+                else:
+                    # 게시할 콘텐츠 없으면 15분 대기
+                    await asyncio.sleep(self.posting_interval)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"게시 루프 오류: {e}")
+                await asyncio.sleep(60)
+
+    async def run_posting_job(
+        self,
+        user_id: str,
+        settings: Optional[CafeAutoSetting] = None
+    ) -> Dict[str, Any]:
+        """
+        게시 작업 실행 (다중 계정 로테이션)
+
+        Args:
+            user_id: 사용자 ID
+            settings: 자동화 설정
+
+        Returns:
+            게시 결과
+        """
+        import random
+
+        try:
+            if not settings:
+                settings = await self._get_settings(user_id)
+
+            # 승인된 콘텐츠 조회
+            contents_result = await self.db.execute(
+                select(CafeContent).where(
+                    and_(
+                        CafeContent.user_id == user_id,
+                        CafeContent.status == ContentStatus.APPROVED
+                    )
+                ).order_by(CafeContent.created_at.asc()).limit(5)
+            )
+            contents = contents_result.scalars().all()
+
+            if not contents:
+                return {"posted": 0, "failed": 0, "message": "게시할 콘텐츠가 없습니다"}
+
+            # 포스터 서비스 초기화
+            poster = CafePosterService(self.db)
+            await poster.initialize()
+
+            posted_count = 0
+            failed_count = 0
+            results = []
+
+            try:
+                for content in contents:
+                    try:
+                        if content.content_type == ContentType.COMMENT:
+                            result = await poster.post_comment_rotated(content.id, user_id)
+                        elif content.content_type == ContentType.POST:
+                            result = await poster.create_post_rotated(content.id, user_id)
+                        else:
+                            continue
+
+                        results.append(result)
+
+                        if result.get("success"):
+                            posted_count += 1
+                        else:
+                            failed_count += 1
+
+                        # 랜덤 딜레이 (30~120초)
+                        delay = random.randint(30, 120)
+                        logger.info(f"다음 콘텐츠까지 {delay}초 대기")
+                        await asyncio.sleep(delay)
+
+                    except Exception as e:
+                        logger.error(f"콘텐츠 게시 실패: {e}")
+                        failed_count += 1
+
+            finally:
+                await poster.close()
+
+            # 통계 업데이트
+            stats = await self._ensure_today_stats(user_id)
+            stats.comments_published += posted_count
+            await self.db.commit()
+
+            logger.info(f"게시 완료: {posted_count}개 성공, {failed_count}개 실패")
+            return {
+                "posted": posted_count,
+                "failed": failed_count,
+                "results": results,
+                "message": f"{posted_count}개 게시 완료"
+            }
+
+        except Exception as e:
+            logger.error(f"게시 작업 오류: {e}")
+            return {"posted": 0, "failed": 0, "error": str(e)}
 
     async def _is_working_hours(self, settings: Optional[CafeAutoSetting]) -> bool:
         """업무 시간 확인"""
@@ -486,8 +675,20 @@ class CafeSchedulerService:
         )
         new_posts_count = new_posts_result.scalar() or 0
 
+        # 승인된 콘텐츠 수 (게시 대기)
+        approved_result = await self.db.execute(
+            select(func.count(CafeContent.id)).where(
+                and_(
+                    CafeContent.user_id == user_id,
+                    CafeContent.status == ContentStatus.APPROVED
+                )
+            )
+        )
+        approved_count = approved_result.scalar() or 0
+
         return {
             "is_running": self._is_running and self._user_id == user_id,
+            "is_posting_running": self._posting_running and self._user_id == user_id,
             "is_enabled": settings.is_enabled if settings else False,
             "is_working_hours": await self._is_working_hours(settings),
             "today": {
@@ -500,6 +701,7 @@ class CafeSchedulerService:
             "pending": {
                 "new_posts": new_posts_count,
                 "contents": pending_count,
+                "approved": approved_count,
             }
         }
 

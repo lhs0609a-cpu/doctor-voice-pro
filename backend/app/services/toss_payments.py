@@ -319,17 +319,15 @@ PLANS = {
     "free": {
         "id": "free",
         "name": "무료",
-        "description": "기본 기능을 무료로 체험해보세요",
+        "description": "유료 플랜으로 업그레이드하여 모든 기능을 이용하세요",
         "price_monthly": 0,
         "price_yearly": 0,
-        "posts_per_month": 3,
-        "analysis_per_month": 10,
-        "keywords_per_month": 20,
+        "posts_per_month": 0,
+        "analysis_per_month": 0,
+        "keywords_per_month": 0,
         "features": [
-            "월 3회 글 생성",
-            "월 10회 상위노출 분석",
-            "월 20회 키워드 연구",
-            "기본 SEO 분석"
+            "기능 사용 불가",
+            "유료 플랜 업그레이드 필요"
         ],
         "has_api_access": False,
         "has_priority_support": False,
@@ -339,16 +337,16 @@ PLANS = {
     "starter": {
         "id": "starter",
         "name": "스타터",
-        "description": "개인 병원 마케팅에 적합한 플랜",
-        "price_monthly": 29000,
-        "price_yearly": 290000,
+        "description": "소규모 병원에 적합한 플랜",
+        "price_monthly": 9900,
+        "price_yearly": 99000,
         "posts_per_month": 30,
-        "analysis_per_month": 50,
-        "keywords_per_month": 100,
+        "analysis_per_month": 100,
+        "keywords_per_month": 200,
         "features": [
             "월 30회 글 생성",
-            "월 50회 상위노출 분석",
-            "월 100회 키워드 연구",
+            "월 100회 상위노출 분석",
+            "월 200회 키워드 연구",
             "SNS 연동",
             "예약 발행",
             "이메일 지원"
@@ -361,9 +359,9 @@ PLANS = {
     "pro": {
         "id": "pro",
         "name": "프로",
-        "description": "전문적인 마케팅이 필요한 병원에 추천",
-        "price_monthly": 79000,
-        "price_yearly": 790000,
+        "description": "성장하는 병원을 위한 전문가 플랜",
+        "price_monthly": 19900,
+        "price_yearly": 199000,
         "posts_per_month": 100,
         "analysis_per_month": -1,  # 무제한
         "keywords_per_month": -1,  # 무제한
@@ -383,24 +381,21 @@ PLANS = {
         "has_team_features": False,
         "recommended": True
     },
-    "enterprise": {
-        "id": "enterprise",
-        "name": "엔터프라이즈",
-        "description": "대형 병원 및 네트워크에 최적화",
-        "price_monthly": 199000,
-        "price_yearly": 1990000,
-        "posts_per_month": -1,  # 무제한
+    "business": {
+        "id": "business",
+        "name": "비즈니스",
+        "description": "대형 병원 및 에이전시를 위한 플랜",
+        "price_monthly": 49900,
+        "price_yearly": 499000,
+        "posts_per_month": 300,
         "analysis_per_month": -1,
         "keywords_per_month": -1,
         "features": [
-            "무제한 글 생성",
+            "월 300회 글 생성",
             "무제한 모든 분석",
             "API 연동",
-            "전담 매니저",
-            "커스텀 리포트",
             "팀 협업 기능",
-            "멀티 브랜드 관리",
-            "SLA 보장"
+            "우선 지원"
         ],
         "has_api_access": True,
         "has_priority_support": True,

@@ -2388,6 +2388,142 @@ export const knowledgeAPI = {
     const response = await api.post('/api/v1/knowledge/poster/post-multiple', params || {})
     return response.data
   },
+
+  // ==================== 다중 계정 관리 API ====================
+
+  // 계정 목록 조회
+  getAccounts: async (params?: {
+    status?: string
+    platform?: string
+  }): Promise<NaverAccount[]> => {
+    const response = await api.get('/api/v1/knowledge/accounts', { params })
+    return response.data
+  },
+
+  // 계정 추가
+  createAccount: async (data: {
+    account_id: string
+    password: string
+    account_name?: string
+    use_for_knowledge?: boolean
+    use_for_cafe?: boolean
+  }): Promise<NaverAccount> => {
+    const response = await api.post('/api/v1/knowledge/accounts', data)
+    return response.data
+  },
+
+  // 계정 삭제
+  deleteAccount: async (accountId: string): Promise<void> => {
+    await api.delete(`/api/v1/knowledge/accounts/${accountId}`)
+  },
+
+  // 계정 상태 변경
+  updateAccountStatus: async (accountId: string, data: {
+    status: string
+    reason?: string
+  }): Promise<void> => {
+    await api.put(`/api/v1/knowledge/accounts/${accountId}/status`, data)
+  },
+
+  // 계정 워밍업 시작
+  startAccountWarmup: async (accountId: string): Promise<{ message: string }> => {
+    const response = await api.post(`/api/v1/knowledge/accounts/${accountId}/warmup`)
+    return response.data
+  },
+
+  // 계정 통계
+  getAccountStats: async (): Promise<AccountStats> => {
+    const response = await api.get('/api/v1/knowledge/accounts/stats')
+    return response.data
+  },
+
+  // 로테이션 게시
+  postAnswerRotated: async (params: {
+    answer_id?: string
+    limit?: number
+    delay_min?: number
+    delay_max?: number
+  }): Promise<{
+    success: boolean
+    posted?: number
+    failed?: number
+    message: string
+    account_id?: string
+    account_name?: string
+  }> => {
+    const response = await api.post('/api/v1/knowledge/poster/post-rotated', params)
+    return response.data
+  },
+
+  // 풀 자동화 시작
+  startFullAutomation: async (): Promise<{ message: string }> => {
+    const response = await api.post('/api/v1/knowledge/scheduler/full-automation/start')
+    return response.data
+  },
+
+  // 자동 게시 스케줄러 시작
+  startPostingScheduler: async (): Promise<{ message: string }> => {
+    const response = await api.post('/api/v1/knowledge/scheduler/posting/start')
+    return response.data
+  },
+
+  // 자동 게시 스케줄러 중지
+  stopPostingScheduler: async (): Promise<{ message: string }> => {
+    const response = await api.post('/api/v1/knowledge/scheduler/posting/stop')
+    return response.data
+  },
+
+  // 수동 게시 작업 실행
+  runPostingJob: async (limit?: number): Promise<{
+    success: boolean
+    posted?: number
+    failed?: number
+    message: string
+  }> => {
+    const response = await api.post('/api/v1/knowledge/scheduler/run-posting', null, {
+      params: { limit }
+    })
+    return response.data
+  },
+}
+
+// 네이버 계정 타입
+export interface NaverAccount {
+  id: string
+  account_id: string
+  account_name?: string
+  status: string
+  last_login_at?: string
+  last_activity_at?: string
+  daily_answer_limit: number
+  daily_comment_limit: number
+  today_answers: number
+  today_comments: number
+  total_answers: number
+  total_adoptions: number
+  adoption_rate: number
+  is_warming_up: boolean
+  warming_day: number
+  use_for_knowledge: boolean
+  use_for_cafe: boolean
+  created_at: string
+}
+
+// 계정 통계 타입
+export interface AccountStats {
+  total_accounts: number
+  active: number
+  warming: number
+  resting: number
+  blocked: number
+  total_answers: number
+  total_adoptions: number
+  total_comments: number
+  total_likes: number
+  today_answers: number
+  today_comments: number
+  today_posts: number
+  avg_adoption_rate: number
 }
 
 // Blog Crawl API
@@ -2582,6 +2718,37 @@ export interface CafeDashboard {
   pending_contents: number
   total_likes: number
   scheduler_running: boolean
+}
+
+export interface CafeAccount {
+  id: string
+  account_id: string
+  account_name?: string
+  status: string
+  is_warming_up: boolean
+  warming_day: number
+  daily_comment_limit: number
+  daily_post_limit: number
+  today_comments: number
+  today_posts: number
+  total_comments: number
+  total_posts: number
+  last_comment_at?: string
+  last_post_at?: string
+  memo?: string
+  created_at: string
+}
+
+export interface CafeAccountStats {
+  total: number
+  active: number
+  warming_up: number
+  resting: number
+  error: number
+  today_comments: number
+  today_posts: number
+  total_comments: number
+  total_posts: number
 }
 
 export const cafeAPI = {
@@ -2846,6 +3013,120 @@ export const cafeAPI = {
     const response = await api.get('/api/v1/cafe/dashboard/top-posts', { params: { limit } })
     return response.data
   },
+
+  // ======== 계정 관리 (다중 계정 로테이션) ========
+
+  // 계정 목록
+  getAccounts: async (): Promise<CafeAccount[]> => {
+    const response = await api.get('/api/v1/cafe/accounts')
+    return response.data
+  },
+
+  // 계정 추가
+  createAccount: async (data: {
+    account_id: string
+    password: string
+    account_name?: string
+    daily_comment_limit?: number
+    daily_post_limit?: number
+    memo?: string
+  }): Promise<{ success: boolean; account: CafeAccount }> => {
+    const response = await api.post('/api/v1/cafe/accounts', data)
+    return response.data
+  },
+
+  // 계정 삭제
+  deleteAccount: async (accountId: string): Promise<{ success: boolean }> => {
+    const response = await api.delete(`/api/v1/cafe/accounts/${accountId}`)
+    return response.data
+  },
+
+  // 계정 상태 변경
+  updateAccountStatus: async (accountId: string, data: {
+    status: string
+    reason?: string
+  }): Promise<{ success: boolean }> => {
+    const response = await api.put(`/api/v1/cafe/accounts/${accountId}/status`, data)
+    return response.data
+  },
+
+  // 계정 워밍업 시작
+  startAccountWarmup: async (accountId: string): Promise<{ success: boolean; message: string }> => {
+    const response = await api.post(`/api/v1/cafe/accounts/${accountId}/warmup`)
+    return response.data
+  },
+
+  // 계정 통계
+  getAccountStats: async (): Promise<CafeAccountStats> => {
+    const response = await api.get('/api/v1/cafe/accounts/stats')
+    return response.data
+  },
+
+  // ======== 다중 계정 로테이션 게시 ========
+
+  // 로테이션 게시
+  postContentRotated: async (contentId: string): Promise<{
+    success: boolean
+    content_id?: string
+    account_id?: string
+    account_name?: string
+    message: string
+  }> => {
+    const response = await api.post('/api/v1/cafe/poster/post-rotated', null, {
+      params: { content_id: contentId }
+    })
+    return response.data
+  },
+
+  // 로테이션 일괄 게시
+  postMultipleRotated: async (limit: number = 5): Promise<{
+    success: boolean
+    posted: number
+    failed: number
+    results: Array<{
+      success: boolean
+      content_id: string
+      account_name?: string
+      error?: string
+    }>
+    message: string
+  }> => {
+    const response = await api.post('/api/v1/cafe/poster/post-multiple-rotated', null, {
+      params: { limit }
+    })
+    return response.data
+  },
+
+  // ======== 풀 자동화 스케줄러 ========
+
+  // 풀 자동화 시작
+  startFullAutomation: async (): Promise<{ success: boolean; message: string }> => {
+    const response = await api.post('/api/v1/cafe/scheduler/full-automation/start')
+    return response.data
+  },
+
+  // 자동 게시 시작
+  startPostingScheduler: async (): Promise<{ success: boolean; message: string }> => {
+    const response = await api.post('/api/v1/cafe/scheduler/posting/start')
+    return response.data
+  },
+
+  // 자동 게시 중지
+  stopPostingScheduler: async (): Promise<{ success: boolean; message: string }> => {
+    const response = await api.post('/api/v1/cafe/scheduler/posting/stop')
+    return response.data
+  },
+
+  // 수동 게시 작업 실행
+  runPostingJob: async (): Promise<{
+    posted: number
+    failed: number
+    results?: Array<any>
+    message: string
+  }> => {
+    const response = await api.post('/api/v1/cafe/scheduler/run-posting')
+    return response.data
+  },
 }
 
 // ==================== 빌링(정기결제) API ====================
@@ -2941,6 +3222,531 @@ export const billingAPI = {
   reactivateSubscription: async (): Promise<{ success: boolean; message: string }> => {
     const response = await api.post('/api/v1/billing/subscription/reactivate')
     return response.data
+  },
+}
+
+// ==================== Blog Outreach (블로그 영업 자동화) API ====================
+
+export type BlogCategory = 'beauty' | 'food' | 'travel' | 'parenting' | 'living' | 'health' | 'it' | 'finance' | 'lifestyle' | 'other'
+export type LeadGrade = 'A' | 'B' | 'C' | 'D'
+export type BlogStatus = 'new' | 'contact_found' | 'contacted' | 'responded' | 'converted' | 'not_interested' | 'invalid'
+export type OutreachCampaignStatus = 'draft' | 'active' | 'paused' | 'completed'
+export type OutreachEmailStatus = 'pending' | 'sent' | 'opened' | 'clicked' | 'replied' | 'bounced' | 'unsubscribed'
+
+export interface NaverBlogLead {
+  id: string
+  blog_id: string
+  blog_url: string
+  blog_name: string | null
+  owner_nickname: string | null
+  profile_image: string | null
+  introduction: string | null
+  category: BlogCategory | null
+  tags: string[] | null
+  keywords: string[] | null
+  visitor_daily: number
+  visitor_total: number
+  neighbor_count: number
+  post_count: number
+  last_post_date: string | null
+  last_post_title: string | null
+  lead_score: number
+  lead_grade: LeadGrade | null
+  influence_score: number
+  activity_score: number
+  relevance_score: number
+  status: BlogStatus
+  is_influencer: boolean
+  has_contact: boolean
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface BlogContact {
+  id: string
+  blog_id: string
+  email: string | null
+  phone: string | null
+  instagram: string | null
+  youtube: string | null
+  kakao_channel: string | null
+  source: string | null
+  is_primary: boolean
+  is_verified: boolean
+}
+
+export interface OutreachEmailTemplate {
+  id: string
+  name: string
+  description: string | null
+  template_type: string
+  subject: string
+  body: string
+  variables: any[] | null
+  is_active: boolean
+  usage_count: number
+  open_rate: number | null
+  reply_rate: number | null
+  created_at: string
+}
+
+export interface OutreachCampaign {
+  id: string
+  name: string
+  description: string | null
+  status: OutreachCampaignStatus
+  target_grades: string[] | null
+  target_categories: string[] | null
+  target_keywords: string[] | null
+  min_score: number
+  max_contacts: number | null
+  templates: any[] | null
+  daily_limit: number
+  sending_hours_start: number
+  sending_hours_end: number
+  sending_days: number[] | null
+  total_targets: number
+  total_sent: number
+  total_opened: number
+  total_clicked: number
+  total_replied: number
+  total_bounced: number
+  started_at: string | null
+  completed_at: string | null
+  created_at: string
+}
+
+export interface OutreachEmailLog {
+  id: string
+  to_email: string
+  to_name: string | null
+  subject: string
+  status: OutreachEmailStatus
+  sent_at: string | null
+  opened_at: string | null
+  clicked_at: string | null
+  replied_at: string | null
+  error_message: string | null
+  created_at: string
+}
+
+export interface OutreachSetting {
+  id: string
+  sender_name: string | null
+  sender_email: string | null
+  company_name: string | null
+  service_name: string | null
+  service_description: string | null
+  smtp_host: string | null
+  smtp_port: number
+  smtp_username: string | null
+  smtp_configured: boolean
+  smtp_use_tls: boolean
+  daily_limit: number
+  hourly_limit: number
+  min_interval_seconds: number
+  weight_influence: number
+  weight_activity: number
+  weight_relevance: number
+  auto_collect: boolean
+  auto_extract_contact: boolean
+  auto_score: boolean
+  track_opens: boolean
+  track_clicks: boolean
+  unsubscribe_text: string | null
+}
+
+export interface OutreachSearchKeyword {
+  id: string
+  keyword: string
+  category: BlogCategory | null
+  is_active: boolean
+  priority: number
+  total_collected: number
+  last_collected_at: string | null
+}
+
+export interface SchedulerStatus {
+  running: boolean
+  user_id: string | null
+  tasks: {
+    collection: boolean
+    extraction: boolean
+    scoring: boolean
+    campaign: boolean
+    stats: boolean
+  }
+  blogs_collected: number
+  contacts_extracted: number
+  emails_sent: number
+  started_at: string | null
+  last_collection: string | null
+  last_campaign_run: string | null
+}
+
+export interface OutreachDashboard {
+  blogs: {
+    total: number
+    with_contact: number
+    grades: Record<string, number>
+  }
+  campaigns: {
+    active: number
+  }
+  email: {
+    today: {
+      sent: number
+      opened: number
+      clicked: number
+      replied: number
+      bounced: number
+    }
+    total: {
+      total: number
+      sent: number
+      opened: number
+      clicked: number
+      replied: number
+      bounced: number
+      open_rate: number
+      click_rate: number
+      reply_rate: number
+    }
+    limits: {
+      daily: { daily_limit: number; sent_today: number; remaining: number; can_send: boolean }
+      hourly: { hourly_limit: number; sent_this_hour: number; remaining: number; can_send: boolean }
+    }
+  }
+}
+
+export interface ScoringStats {
+  total_blogs: number
+  scored_blogs: number
+  unscored_blogs: number
+  grades: Record<string, number>
+  with_contact: number
+  influencers: number
+  avg_lead_score: number
+  avg_influence_score: number
+  avg_activity_score: number
+  avg_relevance_score: number
+  categories: Record<string, number>
+}
+
+export const outreachAPI = {
+  // ======== 대시보드 ========
+  getDashboard: async (): Promise<OutreachDashboard> => {
+    const response = await api.get('/api/v1/outreach/dashboard')
+    return response.data
+  },
+
+  // ======== 블로그 수집 ========
+  searchBlogs: async (data: {
+    keyword: string
+    category?: string
+    max_results?: number
+  }): Promise<{ success: boolean; collected?: number; message?: string }> => {
+    const response = await api.post('/api/v1/outreach/blogs/search', data)
+    return response.data
+  },
+
+  collectByCategory: async (data: {
+    category: string
+    keywords?: string[]
+    max_per_keyword?: number
+  }): Promise<{ success: boolean; collected?: number; message?: string }> => {
+    const response = await api.post('/api/v1/outreach/blogs/collect/category', data)
+    return response.data
+  },
+
+  collectInfluencers: async (data: {
+    category?: string
+    min_visitors?: number
+    min_neighbors?: number
+  }): Promise<{ success: boolean; collected?: number; message?: string }> => {
+    const response = await api.post('/api/v1/outreach/blogs/collect/influencers', data)
+    return response.data
+  },
+
+  // ======== 블로그 목록/상세 ========
+  getBlogs: async (params?: {
+    category?: string
+    grade?: string
+    status?: string
+    has_contact?: boolean
+    min_score?: number
+    skip?: number
+    limit?: number
+  }): Promise<{ total: number; blogs: NaverBlogLead[] }> => {
+    const response = await api.get('/api/v1/outreach/blogs', { params })
+    return response.data
+  },
+
+  getBlog: async (blogId: string): Promise<NaverBlogLead & {
+    contacts: BlogContact[]
+    email_history: OutreachEmailLog[]
+  }> => {
+    const response = await api.get(`/api/v1/outreach/blogs/${blogId}`)
+    return response.data
+  },
+
+  deleteBlog: async (blogId: string): Promise<{ success: boolean }> => {
+    const response = await api.delete(`/api/v1/outreach/blogs/${blogId}`)
+    return response.data
+  },
+
+  updateBlogStatus: async (blogId: string, status: string): Promise<{ success: boolean }> => {
+    const response = await api.put(`/api/v1/outreach/blogs/${blogId}/status`, null, {
+      params: { status }
+    })
+    return response.data
+  },
+
+  // ======== 연락처 추출 ========
+  extractContacts: async (blogId: string): Promise<{
+    success: boolean
+    contacts_found?: number
+    contacts?: any[]
+    message?: string
+  }> => {
+    const response = await api.post(`/api/v1/outreach/contacts/extract/${blogId}`)
+    return response.data
+  },
+
+  extractContactsBatch: async (limit?: number): Promise<{
+    success: boolean
+    processed?: number
+    with_contacts?: number
+    message?: string
+  }> => {
+    const response = await api.post('/api/v1/outreach/contacts/extract-batch', null, {
+      params: { limit }
+    })
+    return response.data
+  },
+
+  // ======== 리드 스코어링 ========
+  scoreBlog: async (blogId: string, data?: {
+    target_categories?: string[]
+    target_keywords?: string[]
+  }): Promise<{ success: boolean; scores?: any }> => {
+    const response = await api.post(`/api/v1/outreach/scoring/score/${blogId}`, data || {})
+    return response.data
+  },
+
+  scoreBlogsBatch: async (data?: {
+    target_categories?: string[]
+    target_keywords?: string[]
+  }, limit?: number): Promise<{ success: boolean; results?: any }> => {
+    const response = await api.post('/api/v1/outreach/scoring/batch', data || {}, {
+      params: { limit }
+    })
+    return response.data
+  },
+
+  rescoreAll: async (data?: {
+    target_categories?: string[]
+    target_keywords?: string[]
+  }): Promise<{ success: boolean; results?: any }> => {
+    const response = await api.post('/api/v1/outreach/scoring/rescore-all', data || {})
+    return response.data
+  },
+
+  getTopLeads: async (params?: {
+    grade?: string
+    category?: string
+    has_contact?: boolean
+    limit?: number
+  }): Promise<{ leads: NaverBlogLead[] }> => {
+    const response = await api.get('/api/v1/outreach/scoring/top-leads', { params })
+    return response.data
+  },
+
+  getScoringStats: async (): Promise<ScoringStats> => {
+    const response = await api.get('/api/v1/outreach/scoring/stats')
+    return response.data
+  },
+
+  // ======== 이메일 템플릿 ========
+  createTemplate: async (data: {
+    name: string
+    description?: string
+    template_type?: string
+    subject: string
+    body: string
+    variables?: any[]
+  }): Promise<{ success: boolean; template_id?: string }> => {
+    const response = await api.post('/api/v1/outreach/templates', data)
+    return response.data
+  },
+
+  getTemplates: async (template_type?: string): Promise<{ templates: OutreachEmailTemplate[] }> => {
+    const response = await api.get('/api/v1/outreach/templates', { params: { template_type } })
+    return response.data
+  },
+
+  getTemplate: async (templateId: string): Promise<OutreachEmailTemplate> => {
+    const response = await api.get(`/api/v1/outreach/templates/${templateId}`)
+    return response.data
+  },
+
+  updateTemplate: async (templateId: string, data: Partial<OutreachEmailTemplate>): Promise<{ success: boolean }> => {
+    const response = await api.put(`/api/v1/outreach/templates/${templateId}`, data)
+    return response.data
+  },
+
+  deleteTemplate: async (templateId: string): Promise<{ success: boolean }> => {
+    const response = await api.delete(`/api/v1/outreach/templates/${templateId}`)
+    return response.data
+  },
+
+  // ======== 캠페인 ========
+  createCampaign: async (data: {
+    name: string
+    description?: string
+    target_grades?: string[]
+    target_categories?: string[]
+    target_keywords?: string[]
+    min_score?: number
+    max_contacts?: number
+    templates?: any[]
+    daily_limit?: number
+    sending_hours_start?: number
+    sending_hours_end?: number
+    sending_days?: number[]
+  }): Promise<{ success: boolean; campaign_id?: string }> => {
+    const response = await api.post('/api/v1/outreach/campaigns', data)
+    return response.data
+  },
+
+  getCampaigns: async (status?: string): Promise<{ campaigns: OutreachCampaign[] }> => {
+    const response = await api.get('/api/v1/outreach/campaigns', { params: { status } })
+    return response.data
+  },
+
+  getCampaign: async (campaignId: string): Promise<OutreachCampaign> => {
+    const response = await api.get(`/api/v1/outreach/campaigns/${campaignId}`)
+    return response.data
+  },
+
+  updateCampaign: async (campaignId: string, data: Partial<OutreachCampaign>): Promise<{ success: boolean }> => {
+    const response = await api.put(`/api/v1/outreach/campaigns/${campaignId}`, data)
+    return response.data
+  },
+
+  startCampaign: async (campaignId: string): Promise<{ success: boolean; message: string }> => {
+    const response = await api.post(`/api/v1/outreach/campaigns/${campaignId}/start`)
+    return response.data
+  },
+
+  pauseCampaign: async (campaignId: string): Promise<{ success: boolean; message: string }> => {
+    const response = await api.post(`/api/v1/outreach/campaigns/${campaignId}/pause`)
+    return response.data
+  },
+
+  sendCampaignBatch: async (campaignId: string, batch_size?: number): Promise<{
+    success: boolean
+    results?: { sent: number; failed: number; errors: any[] }
+  }> => {
+    const response = await api.post(`/api/v1/outreach/campaigns/${campaignId}/send-batch`, null, {
+      params: { batch_size }
+    })
+    return response.data
+  },
+
+  deleteCampaign: async (campaignId: string): Promise<{ success: boolean }> => {
+    const response = await api.delete(`/api/v1/outreach/campaigns/${campaignId}`)
+    return response.data
+  },
+
+  // ======== 이메일 발송 ========
+  sendEmail: async (data: {
+    blog_id: string
+    template_id: string
+    campaign_id?: string
+    custom_variables?: Record<string, string>
+  }): Promise<{ success: boolean; email_log_id?: string; tracking_id?: string; error?: string }> => {
+    const response = await api.post('/api/v1/outreach/email/send', data)
+    return response.data
+  },
+
+  getEmailStats: async (): Promise<any> => {
+    const response = await api.get('/api/v1/outreach/email/stats')
+    return response.data
+  },
+
+  getEmailLogs: async (params?: {
+    campaign_id?: string
+    status?: string
+    skip?: number
+    limit?: number
+  }): Promise<{ total: number; logs: OutreachEmailLog[] }> => {
+    const response = await api.get('/api/v1/outreach/email/logs', { params })
+    return response.data
+  },
+
+  markEmailReplied: async (logId: string): Promise<{ success: boolean }> => {
+    const response = await api.post(`/api/v1/outreach/email/logs/${logId}/mark-replied`)
+    return response.data
+  },
+
+  // ======== 설정 ========
+  getSettings: async (): Promise<{ settings: OutreachSetting | null }> => {
+    const response = await api.get('/api/v1/outreach/settings')
+    return response.data
+  },
+
+  updateSettings: async (data: Partial<OutreachSetting & { smtp_password?: string }>): Promise<{ success: boolean }> => {
+    const response = await api.put('/api/v1/outreach/settings', data)
+    return response.data
+  },
+
+  // ======== 키워드 ========
+  createKeyword: async (data: {
+    keyword: string
+    category?: string
+    priority?: number
+  }): Promise<{ success: boolean; keyword_id?: string }> => {
+    const response = await api.post('/api/v1/outreach/keywords', data)
+    return response.data
+  },
+
+  getKeywords: async (): Promise<{ keywords: OutreachSearchKeyword[] }> => {
+    const response = await api.get('/api/v1/outreach/keywords')
+    return response.data
+  },
+
+  deleteKeyword: async (keywordId: string): Promise<{ success: boolean }> => {
+    const response = await api.delete(`/api/v1/outreach/keywords/${keywordId}`)
+    return response.data
+  },
+
+  // Scheduler
+  startScheduler: async (): Promise<{ success: boolean; message: string }> => {
+    const response = await api.post('/api/v1/outreach/scheduler/start')
+    return response.data
+  },
+
+  stopScheduler: async (): Promise<{ success: boolean; message: string }> => {
+    const response = await api.post('/api/v1/outreach/scheduler/stop')
+    return response.data
+  },
+
+  getSchedulerStatus: async (): Promise<SchedulerStatus> => {
+    const response = await api.get('/api/v1/outreach/scheduler/status')
+    // Map backend response to frontend format
+    return {
+      running: response.data.is_running,
+      user_id: response.data.user_id,
+      tasks: response.data.tasks,
+      blogs_collected: response.data.blogs_collected || 0,
+      contacts_extracted: response.data.contacts_extracted || 0,
+      emails_sent: response.data.emails_sent || 0,
+      started_at: response.data.started_at || null,
+      last_collection: response.data.last_collection || null,
+      last_campaign_run: response.data.last_campaign_run || null,
+    }
   },
 }
 

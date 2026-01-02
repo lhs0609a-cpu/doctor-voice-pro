@@ -214,6 +214,7 @@ class CafeContent(Base):
     posted_at = Column(DateTime)
     posted_url = Column(String(500))  # 등록된 댓글/글 URL
     naver_content_id = Column(String(50))  # 등록된 콘텐츠 ID
+    posted_account_id = Column(String(36), ForeignKey("naver_accounts.id"), nullable=True)  # 게시에 사용된 계정
 
     # 성과 추적
     likes_received = Column(Integer, default=0)
@@ -226,6 +227,7 @@ class CafeContent(Base):
     user = relationship("User", back_populates="cafe_contents")
     target_post = relationship("CafePost", back_populates="contents")
     target_cafe = relationship("CafeCommunity")
+    posted_account = relationship("NaverAccount", backref="cafe_contents")
 
 
 class CafeAutoSetting(Base):

@@ -116,3 +116,12 @@ class User(Base):
     engagement_activities = relationship("EngagementActivity", back_populates="user")
     engagement_schedules = relationship("EngagementSchedule", back_populates="user")
     content_performances = relationship("ContentPerformance", back_populates="user")
+
+    # Blog Outreach relationships (블로그 영업 자동화)
+    naver_blogs = relationship("NaverBlog", back_populates="user")
+    email_templates = relationship("EmailTemplate", back_populates="user")
+    email_campaigns = relationship("EmailCampaign", back_populates="user")
+    email_logs = relationship("EmailLog", back_populates="user")
+    blog_search_keywords = relationship("BlogSearchKeyword", back_populates="user")
+    outreach_settings = relationship("OutreachSetting", back_populates="user", uselist=False)
+    outreach_stats = relationship("OutreachStats", back_populates="user")

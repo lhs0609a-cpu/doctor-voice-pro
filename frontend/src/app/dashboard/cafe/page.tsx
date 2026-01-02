@@ -51,7 +51,9 @@ import {
   CafePostStatus,
   CafeContentStatus,
   CafeTone,
-  CafeCategory
+  CafeCategory,
+  CafeAccount,
+  CafeAccountStats
 } from '@/lib/api'
 import { toast } from 'sonner'
 
@@ -100,6 +102,19 @@ export default function CafePage() {
   } | null>(null)
   const [posterStatus, setPosterStatus] = useState<{ initialized: boolean; logged_in: boolean } | null>(null)
   const [isPosting, setIsPosting] = useState(false)
+
+  // Account states
+  const [accounts, setAccounts] = useState<CafeAccount[]>([])
+  const [accountStats, setAccountStats] = useState<CafeAccountStats | null>(null)
+  const [isAccountDialogOpen, setIsAccountDialogOpen] = useState(false)
+  const [newAccount, setNewAccount] = useState({
+    account_id: '',
+    password: '',
+    account_name: '',
+    daily_comment_limit: 10,
+    daily_post_limit: 2,
+    memo: ''
+  })
 
   // Dialog states
   const [isCafeDialogOpen, setIsCafeDialogOpen] = useState(false)
@@ -187,6 +202,7 @@ export default function CafePage() {
       loadAutomationStatus()
     }
     if (activeTab === 'automation') loadAutomationStatus()
+    if (activeTab === 'accounts') loadAccounts()
   }, [activeTab, postFilter, contentFilter])
 
   // 게시글 수집
@@ -332,6 +348,123 @@ export default function CafePage() {
       setPosterStatus(posterData)
     } catch (error) {
       console.error('Failed to load automation status:', error)
+    }
+  }
+
+  // 계정 로드
+  const loadAccounts = async () => {
+    try {
+      const [accountsData, statsData] = await Promise.all([
+        cafeAPI.getAccounts(),
+        cafeAPI.getAccountStats()
+      ])
+      setAccounts(accountsData)
+      setAccountStats(statsData)
+    } catch (error) {
+      console.error('Failed to load accounts:', error)
+    }
+  }
+
+  // 계정 추가
+  const handleAddAccount = async () => {
+    if (!newAccount.account_id || !newAccount.password) {
+      toast.error('아이디와 비밀번호를 입력해주세요')
+      return
+    }
+    try {
+      await cafeAPI.createAccount(newAccount)
+      toast.success('계정이 추가되었습니다')
+      setIsAccountDialogOpen(false)
+      setNewAccount({
+        account_id: '',
+        password: '',
+        account_name: '',
+        daily_comment_limit: 10,
+        daily_post_limit: 2,
+        memo: ''
+      })
+      loadAccounts()
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || '계정 추가 실패')
+    }
+  }
+
+  // 계정 삭제
+  const handleDeleteAccount = async (accountId: string) => {
+    try {
+      await cafeAPI.deleteAccount(accountId)
+      toast.success('계정이 삭제되었습니다')
+      loadAccounts()
+    } catch (error) {
+      toast.error('계정 삭제 실패')
+    }
+  }
+
+  // 계정 워밍업
+  const handleStartWarmup = async (accountId: string) => {
+    try {
+      await cafeAPI.startAccountWarmup(accountId)
+      toast.success('워밍업이 시작되었습니다')
+      loadAccounts()
+    } catch (error) {
+      toast.error('워밍업 시작 실패')
+    }
+  }
+
+  // 계정 상태 변경
+  const handleAccountStatusChange = async (accountId: string, status: string) => {
+    try {
+      await cafeAPI.updateAccountStatus(accountId, { status })
+      toast.success('상태가 변경되었습니다')
+      loadAccounts()
+    } catch (error) {
+      toast.error('상태 변경 실패')
+    }
+  }
+
+  // 다중 계정 로테이션 게시
+  const handleRotatedPost = async (contentId: string) => {
+    setIsPosting(true)
+    try {
+      const result = await cafeAPI.postContentRotated(contentId)
+      if (result.success) {
+        toast.success(`${result.account_name || '계정'}으로 등록 완료`)
+        loadContents()
+        loadAccounts()
+      } else {
+        toast.error(result.message || '등록 실패')
+      }
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || '로테이션 게시 실패')
+    } finally {
+      setIsPosting(false)
+    }
+  }
+
+  // 다중 계정 일괄 게시
+  const handleBulkRotatedPost = async () => {
+    setIsPosting(true)
+    try {
+      const result = await cafeAPI.postMultipleRotated(5)
+      toast.success(`${result.posted || 0}개 등록 완료, ${result.failed || 0}개 실패`)
+      loadContents()
+      loadAccounts()
+      loadData()
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || '일괄 게시 실패')
+    } finally {
+      setIsPosting(false)
+    }
+  }
+
+  // 풀 자동화 시작
+  const handleStartFullAutomation = async () => {
+    try {
+      await cafeAPI.startFullAutomation()
+      toast.success('풀 자동화가 시작되었습니다')
+      loadAutomationStatus()
+    } catch (error) {
+      toast.error('풀 자동화 시작 실패')
     }
   }
 
@@ -600,6 +733,10 @@ export default function CafePage() {
             <TabsTrigger value="automation">
               <Bot className="h-4 w-4 mr-1" />
               자동화
+            </TabsTrigger>
+            <TabsTrigger value="accounts">
+              <Users className="h-4 w-4 mr-1" />
+              계정
             </TabsTrigger>
             <TabsTrigger value="settings">설정</TabsTrigger>
           </TabsList>
@@ -1299,6 +1436,265 @@ export default function CafePage() {
                       <li>2. 관련성 높은 게시글에 대해 AI가 자동으로 댓글을 생성합니다</li>
                       <li>3. 생성된 콘텐츠를 검토하고 승인하면 자동 등록됩니다</li>
                       <li>4. 업무 시간(09:00-22:00) 내에만 자동 작업이 실행됩니다</li>
+                    </ul>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* 계정 관리 탭 */}
+          <TabsContent value="accounts">
+            <div className="grid md:grid-cols-3 gap-6 mb-6">
+              {/* 계정 통계 카드 */}
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-gray-500">전체 계정</p>
+                      <p className="text-2xl font-bold text-blue-600">
+                        {accountStats?.total || 0}
+                      </p>
+                    </div>
+                    <Users className="h-8 w-8 text-blue-200" />
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-gray-500">활성 계정</p>
+                      <p className="text-2xl font-bold text-green-600">
+                        {accountStats?.active || 0}
+                      </p>
+                    </div>
+                    <CheckCircle className="h-8 w-8 text-green-200" />
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-gray-500">오늘 활동</p>
+                      <p className="text-2xl font-bold text-orange-600">
+                        댓글 {accountStats?.today_comments || 0} / 글 {accountStats?.today_posts || 0}
+                      </p>
+                    </div>
+                    <TrendingUp className="h-8 w-8 text-orange-200" />
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Users className="h-5 w-5" />
+                      네이버 계정 관리
+                    </CardTitle>
+                    <CardDescription>
+                      다중 계정 로테이션으로 안전하게 콘텐츠를 등록합니다
+                    </CardDescription>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={handleBulkRotatedPost}
+                      disabled={isPosting || accounts.length === 0}
+                    >
+                      {isPosting ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Upload className="h-4 w-4 mr-2" />
+                      )}
+                      로테이션 일괄등록
+                    </Button>
+                    <Dialog open={isAccountDialogOpen} onOpenChange={setIsAccountDialogOpen}>
+                      <DialogTrigger asChild>
+                        <Button>
+                          <Plus className="h-4 w-4 mr-2" />
+                          계정 추가
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>네이버 계정 추가</DialogTitle>
+                          <DialogDescription>
+                            자동 게시에 사용할 네이버 계정을 추가하세요
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="grid gap-4 py-4">
+                          <div className="grid gap-2">
+                            <Label>네이버 아이디</Label>
+                            <Input
+                              placeholder="아이디 입력"
+                              value={newAccount.account_id}
+                              onChange={(e) => setNewAccount({ ...newAccount, account_id: e.target.value })}
+                            />
+                          </div>
+                          <div className="grid gap-2">
+                            <Label>비밀번호</Label>
+                            <Input
+                              type="password"
+                              placeholder="비밀번호 입력"
+                              value={newAccount.password}
+                              onChange={(e) => setNewAccount({ ...newAccount, password: e.target.value })}
+                            />
+                          </div>
+                          <div className="grid gap-2">
+                            <Label>별명 (선택)</Label>
+                            <Input
+                              placeholder="예: 카페용 계정1"
+                              value={newAccount.account_name}
+                              onChange={(e) => setNewAccount({ ...newAccount, account_name: e.target.value })}
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="grid gap-2">
+                              <Label>일일 댓글 한도</Label>
+                              <Input
+                                type="number"
+                                min={1}
+                                max={50}
+                                value={newAccount.daily_comment_limit}
+                                onChange={(e) => setNewAccount({ ...newAccount, daily_comment_limit: parseInt(e.target.value) || 10 })}
+                              />
+                            </div>
+                            <div className="grid gap-2">
+                              <Label>일일 글 한도</Label>
+                              <Input
+                                type="number"
+                                min={1}
+                                max={10}
+                                value={newAccount.daily_post_limit}
+                                onChange={(e) => setNewAccount({ ...newAccount, daily_post_limit: parseInt(e.target.value) || 2 })}
+                              />
+                            </div>
+                          </div>
+                          <p className="text-xs text-gray-500">
+                            * 비밀번호는 암호화되어 저장됩니다
+                          </p>
+                        </div>
+                        <DialogFooter>
+                          <Button variant="outline" onClick={() => setIsAccountDialogOpen(false)}>
+                            취소
+                          </Button>
+                          <Button onClick={handleAddAccount}>추가</Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {accounts.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Users className="h-12 w-12 mx-auto text-gray-300 mb-4" />
+                    <p className="text-gray-500">등록된 계정이 없습니다</p>
+                    <p className="text-sm text-gray-400 mt-1">
+                      계정을 추가하면 다중 계정 로테이션으로 안전하게 콘텐츠를 등록할 수 있습니다
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {accounts.map((account) => (
+                      <div
+                        key={account.id}
+                        className="p-4 border rounded-lg hover:border-orange-300 transition-colors"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-4">
+                            <div className={`w-3 h-3 rounded-full ${
+                              account.status === 'active' ? 'bg-green-500' :
+                              account.status === 'resting' ? 'bg-yellow-500' :
+                              account.status === 'error' ? 'bg-red-500' :
+                              'bg-gray-400'
+                            }`} />
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium">{account.account_name || account.account_id}</span>
+                                {account.is_warming_up && (
+                                  <Badge className="bg-blue-100 text-blue-800">
+                                    워밍업 {account.warming_day}일차
+                                  </Badge>
+                                )}
+                                {account.status === 'resting' && (
+                                  <Badge variant="secondary">휴식중</Badge>
+                                )}
+                                {account.status === 'error' && (
+                                  <Badge variant="destructive">오류</Badge>
+                                )}
+                              </div>
+                              <p className="text-sm text-gray-500">
+                                오늘: 댓글 {account.today_comments}/{account.daily_comment_limit},
+                                글 {account.today_posts}/{account.daily_post_limit}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {!account.is_warming_up && account.status === 'active' && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleStartWarmup(account.id)}
+                              >
+                                워밍업
+                              </Button>
+                            )}
+                            {account.status === 'active' && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleAccountStatusChange(account.id, 'resting')}
+                              >
+                                휴식
+                              </Button>
+                            )}
+                            {account.status === 'resting' && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleAccountStatusChange(account.id, 'active')}
+                              >
+                                활성화
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDeleteAccount(account.id)}
+                            >
+                              <Trash2 className="h-4 w-4 text-red-500" />
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* 안내 */}
+            <Card className="mt-6">
+              <CardContent className="pt-6">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
+                    <Users className="h-5 w-5 text-orange-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold mb-1">다중 계정 로테이션</h3>
+                    <ul className="text-sm text-gray-600 space-y-1">
+                      <li>• 여러 계정을 순환하며 콘텐츠를 등록합니다</li>
+                      <li>• 각 계정별 일일 한도를 설정하여 차단을 방지합니다</li>
+                      <li>• 워밍업 기능으로 신규 계정을 안전하게 활성화합니다</li>
+                      <li>• 휴식 상태의 계정은 자동 게시에서 제외됩니다</li>
                     </ul>
                   </div>
                 </div>

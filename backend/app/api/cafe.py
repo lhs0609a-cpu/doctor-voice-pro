@@ -22,7 +22,9 @@ from app.models.cafe import (
 from app.services.cafe_crawler import cafe_crawler
 from app.services.cafe_content_generator import cafe_content_generator
 from app.services.cafe_scheduler import get_cafe_scheduler
-from app.services.cafe_poster import cafe_poster_manager
+from app.services.cafe_poster import cafe_poster_manager, CafePosterService
+from app.services.account_manager import account_manager
+from app.models.viral_common import NaverAccount, AccountStatus
 
 router = APIRouter(prefix="/cafe", tags=["cafe"])
 
@@ -895,3 +897,325 @@ async def get_stats(
     )
 
     return result.scalars().all()
+
+
+# ============= 계정 관리 (다중 계정 로테이션) =============
+
+class AccountCreate(BaseModel):
+    account_id: str = Field(..., description="네이버 아이디")
+    password: str = Field(..., description="네이버 비밀번호")
+    account_name: Optional[str] = None
+    daily_comment_limit: int = 10
+    daily_post_limit: int = 2
+    memo: Optional[str] = None
+
+
+class AccountStatusUpdate(BaseModel):
+    status: AccountStatus
+    reason: Optional[str] = None
+
+
+@router.get("/accounts")
+async def list_accounts(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    네이버 계정 목록 조회 (카페용)
+
+    다중 계정 로테이션에 사용할 계정 목록
+    """
+    result = await db.execute(
+        select(NaverAccount).where(
+            NaverAccount.user_id == str(current_user.id)
+        ).order_by(NaverAccount.created_at.desc())
+    )
+    accounts = result.scalars().all()
+
+    # 비밀번호 제외하고 반환
+    return [
+        {
+            "id": acc.id,
+            "account_id": acc.account_id,
+            "account_name": acc.account_name,
+            "status": acc.status,
+            "is_warming_up": acc.is_warming_up,
+            "warming_day": acc.warming_day,
+            "daily_comment_limit": acc.daily_comment_limit,
+            "daily_post_limit": acc.daily_post_limit,
+            "today_comments": acc.today_comments,
+            "today_posts": acc.today_posts,
+            "total_comments": acc.total_comments,
+            "total_posts": acc.total_posts,
+            "last_comment_at": acc.last_comment_at,
+            "last_post_at": acc.last_post_at,
+            "memo": acc.memo,
+            "created_at": acc.created_at,
+        }
+        for acc in accounts
+    ]
+
+
+@router.post("/accounts")
+async def create_account(
+    data: AccountCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """네이버 계정 추가"""
+    # 중복 체크
+    existing = await db.execute(
+        select(NaverAccount).where(
+            and_(
+                NaverAccount.user_id == str(current_user.id),
+                NaverAccount.account_id == data.account_id
+            )
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(400, "이미 등록된 계정입니다")
+
+    account = await account_manager.add_account(
+        db=db,
+        user_id=str(current_user.id),
+        account_id=data.account_id,
+        password=data.password,
+        account_name=data.account_name,
+        daily_answer_limit=data.daily_comment_limit,  # comment limit으로 사용
+        memo=data.memo
+    )
+
+    # 카페용 한도 설정
+    account.daily_comment_limit = data.daily_comment_limit
+    account.daily_post_limit = data.daily_post_limit
+    await db.commit()
+
+    return {
+        "success": True,
+        "account": {
+            "id": account.id,
+            "account_id": account.account_id,
+            "account_name": account.account_name,
+            "status": account.status,
+        }
+    }
+
+
+@router.delete("/accounts/{account_id}")
+async def delete_account(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """네이버 계정 삭제"""
+    result = await db.execute(
+        select(NaverAccount).where(
+            and_(
+                NaverAccount.id == account_id,
+                NaverAccount.user_id == str(current_user.id)
+            )
+        )
+    )
+    account = result.scalar_one_or_none()
+
+    if not account:
+        raise HTTPException(404, "계정을 찾을 수 없습니다")
+
+    await db.delete(account)
+    await db.commit()
+    return {"success": True}
+
+
+@router.put("/accounts/{account_id}/status")
+async def update_account_status(
+    account_id: str,
+    data: AccountStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """계정 상태 변경"""
+    result = await db.execute(
+        select(NaverAccount).where(
+            and_(
+                NaverAccount.id == account_id,
+                NaverAccount.user_id == str(current_user.id)
+            )
+        )
+    )
+    account = result.scalar_one_or_none()
+
+    if not account:
+        raise HTTPException(404, "계정을 찾을 수 없습니다")
+
+    await account_manager.update_account_status(
+        db, account_id, data.status, data.reason
+    )
+
+    return {"success": True}
+
+
+@router.post("/accounts/{account_id}/warmup")
+async def start_account_warmup(
+    account_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """계정 워밍업 시작"""
+    result = await db.execute(
+        select(NaverAccount).where(
+            and_(
+                NaverAccount.id == account_id,
+                NaverAccount.user_id == str(current_user.id)
+            )
+        )
+    )
+    account = result.scalar_one_or_none()
+
+    if not account:
+        raise HTTPException(404, "계정을 찾을 수 없습니다")
+
+    await account_manager.start_warmup(db, account_id)
+    return {"success": True, "message": "워밍업이 시작되었습니다"}
+
+
+@router.get("/accounts/stats")
+async def get_account_stats(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """계정 통계"""
+    result = await db.execute(
+        select(NaverAccount).where(
+            NaverAccount.user_id == str(current_user.id)
+        )
+    )
+    accounts = result.scalars().all()
+
+    total = len(accounts)
+    active = sum(1 for a in accounts if a.status == AccountStatus.ACTIVE)
+    warming = sum(1 for a in accounts if a.is_warming_up)
+    resting = sum(1 for a in accounts if a.status == AccountStatus.RESTING)
+    error = sum(1 for a in accounts if a.status == AccountStatus.ERROR)
+
+    today_comments = sum(a.today_comments or 0 for a in accounts)
+    today_posts = sum(a.today_posts or 0 for a in accounts)
+    total_comments = sum(a.total_comments or 0 for a in accounts)
+    total_posts = sum(a.total_posts or 0 for a in accounts)
+
+    return {
+        "total": total,
+        "active": active,
+        "warming_up": warming,
+        "resting": resting,
+        "error": error,
+        "today_comments": today_comments,
+        "today_posts": today_posts,
+        "total_comments": total_comments,
+        "total_posts": total_posts,
+    }
+
+
+# ============= 다중 계정 로테이션 게시 =============
+
+@router.post("/poster/post-rotated")
+async def post_content_rotated(
+    content_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """다중 계정 로테이션으로 콘텐츠 게시"""
+    poster = CafePosterService(db)
+
+    try:
+        await poster.initialize()
+
+        # 콘텐츠 조회
+        result = await db.execute(
+            select(CafeContent).where(
+                and_(
+                    CafeContent.id == content_id,
+                    CafeContent.user_id == str(current_user.id)
+                )
+            )
+        )
+        content = result.scalar_one_or_none()
+
+        if not content:
+            raise HTTPException(404, "콘텐츠를 찾을 수 없습니다")
+
+        if content.content_type == ContentType.COMMENT:
+            post_result = await poster.post_comment_rotated(content_id, str(current_user.id))
+        elif content.content_type == ContentType.POST:
+            post_result = await poster.create_post_rotated(content_id, str(current_user.id))
+        else:
+            raise HTTPException(400, "지원하지 않는 콘텐츠 유형입니다")
+
+        return post_result
+
+    finally:
+        await poster.close()
+
+
+@router.post("/poster/post-multiple-rotated")
+async def post_multiple_rotated(
+    limit: int = 5,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """다중 계정 로테이션으로 일괄 게시"""
+    poster = CafePosterService(db)
+
+    try:
+        await poster.initialize()
+        result = await poster.post_multiple_contents_rotated(
+            str(current_user.id), limit
+        )
+        return result
+
+    finally:
+        await poster.close()
+
+
+# ============= 풀 자동화 스케줄러 =============
+
+@router.post("/scheduler/full-automation/start")
+async def start_full_automation(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """풀 자동화 시작 (수집 + 생성 + 게시)"""
+    scheduler = await get_cafe_scheduler(db, str(current_user.id))
+    await scheduler.start_full_automation(str(current_user.id))
+    return {"success": True, "message": "풀 자동화가 시작되었습니다"}
+
+
+@router.post("/scheduler/posting/start")
+async def start_posting_scheduler(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """자동 게시만 시작"""
+    scheduler = await get_cafe_scheduler(db, str(current_user.id))
+    await scheduler.start_posting(str(current_user.id))
+    return {"success": True, "message": "자동 게시가 시작되었습니다"}
+
+
+@router.post("/scheduler/posting/stop")
+async def stop_posting_scheduler(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """자동 게시 중지"""
+    scheduler = await get_cafe_scheduler(db, str(current_user.id))
+    await scheduler.stop_posting()
+    return {"success": True, "message": "자동 게시가 중지되었습니다"}
+
+
+@router.post("/scheduler/run-posting")
+async def run_posting_job(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """수동 게시 작업 실행"""
+    scheduler = await get_cafe_scheduler(db, str(current_user.id))
+    return await scheduler.run_posting_job(str(current_user.id))
