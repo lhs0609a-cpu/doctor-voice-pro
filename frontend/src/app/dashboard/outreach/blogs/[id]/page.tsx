@@ -102,10 +102,10 @@ export default function BlogDetailPage() {
   const loadBlogDetail = async () => {
     setLoading(true)
     try {
-      const data = await outreachAPI.getBlogDetail(blogId)
-      setBlog(data.blog || data)
+      const data = await outreachAPI.getBlog(blogId)
+      setBlog(data)
       setEmailHistory(data.email_history || [])
-      setNotes(data.blog?.notes || data.notes || '')
+      setNotes(data.notes || '')
     } catch (error) {
       toast.error('블로그 정보 로딩 실패')
       console.error(error)
