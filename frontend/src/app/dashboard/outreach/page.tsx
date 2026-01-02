@@ -75,6 +75,7 @@ import {
   Activity,
   History,
   StopCircle,
+  HelpCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -1237,7 +1238,16 @@ export default function OutreachPage() {
 
             {/* SMTP Settings */}
             <div className="rounded-2xl bg-white border border-gray-100 p-6">
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">SMTP 설정</h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-gray-900">SMTP 설정</h3>
+                <a
+                  href="/dashboard/outreach/smtp-guide"
+                  className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                >
+                  <HelpCircle className="h-4 w-4" />
+                  설정 가이드 보기
+                </a>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <Label className="text-sm text-gray-600">SMTP 호스트</Label>
