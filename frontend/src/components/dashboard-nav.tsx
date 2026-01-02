@@ -32,6 +32,7 @@ import {
   Store,
   Settings,
   Coffee,
+  Mail,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -109,6 +110,11 @@ export function DashboardNav() {
       href: '/dashboard/cafe',
       label: '카페 바이럴',
       icon: Coffee,
+    },
+    {
+      href: '/dashboard/outreach',
+      label: '이메일 영업',
+      icon: Mail,
     },
   ]
 
