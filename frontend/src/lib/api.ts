@@ -3873,6 +3873,39 @@ export const publicLeadsAPI = {
     const response = await api.post('/api/v1/public-leads/export-to-outreach', leadIds)
     return response.data
   },
+
+  // 단일 리드 이메일 추출
+  extractEmail: async (leadId: string): Promise<{
+    success: boolean
+    email?: string
+    all_emails: string[]
+    website?: string
+    phone?: string
+    extraction_methods: string[]
+    message: string
+  }> => {
+    const response = await api.post(`/api/v1/public-leads/${leadId}/extract-email`)
+    return response.data
+  },
+
+  // 배치 이메일 추출
+  batchExtractEmails: async (leadIds: string[]): Promise<{
+    success: boolean
+    total: number
+    extracted: number
+    results: Array<{
+      lead_id: string
+      business_name: string
+      success: boolean
+      email?: string
+      all_emails?: string[]
+      error?: string
+    }>
+    message: string
+  }> => {
+    const response = await api.post('/api/v1/public-leads/batch-extract-emails', leadIds)
+    return response.data
+  },
 }
 
 export default api

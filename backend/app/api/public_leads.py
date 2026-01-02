@@ -382,3 +382,139 @@ async def export_to_outreach(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{lead_id}/extract-email")
+async def extract_email_for_lead(
+    lead_id: str,
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_db)
+):
+    """단일 리드의 이메일 추출"""
+    try:
+        from bson import ObjectId
+        from ..services.lead_email_extractor import lead_email_extractor
+
+        collection = db["public_leads"]
+        lead_doc = await collection.find_one({
+            "_id": ObjectId(lead_id),
+            "user_id": current_user.id
+        })
+
+        if not lead_doc:
+            raise HTTPException(status_code=404, detail="리드를 찾을 수 없습니다")
+
+        # 이메일 추출
+        result = await lead_email_extractor.extract_email_for_lead(
+            business_name=lead_doc.get("business_name", ""),
+            address=lead_doc.get("address", ""),
+            website=lead_doc.get("website"),
+            phone=lead_doc.get("phone")
+        )
+
+        # 결과 저장
+        update_data = {"updated_at": datetime.now()}
+
+        if result.get("email"):
+            update_data["email"] = result["email"]
+            update_data["score"] = min((lead_doc.get("score", 50) + 30), 100)
+
+        if result.get("website") and not lead_doc.get("website"):
+            update_data["website"] = result["website"]
+
+        if result.get("phone") and not lead_doc.get("phone"):
+            update_data["phone"] = result["phone"]
+
+        await collection.update_one(
+            {"_id": ObjectId(lead_id)},
+            {"$set": update_data}
+        )
+
+        return {
+            "success": True,
+            "email": result.get("email"),
+            "all_emails": result.get("all_emails", []),
+            "website": result.get("website"),
+            "phone": result.get("phone"),
+            "extraction_methods": result.get("extraction_methods", []),
+            "message": f"이메일 추출 완료: {result.get('email') or '이메일을 찾을 수 없습니다'}"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/batch-extract-emails")
+async def batch_extract_emails(
+    lead_ids: List[str],
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_db)
+):
+    """여러 리드의 이메일 일괄 추출"""
+    try:
+        from bson import ObjectId
+        from ..services.lead_email_extractor import lead_email_extractor
+
+        collection = db["public_leads"]
+
+        # 리드 조회
+        leads = []
+        for lead_id in lead_ids:
+            lead_doc = await collection.find_one({
+                "_id": ObjectId(lead_id),
+                "user_id": current_user.id
+            })
+            if lead_doc:
+                leads.append({
+                    "id": str(lead_doc["_id"]),
+                    "business_name": lead_doc.get("business_name", ""),
+                    "address": lead_doc.get("address", ""),
+                    "website": lead_doc.get("website"),
+                    "phone": lead_doc.get("phone")
+                })
+
+        if not leads:
+            return {
+                "success": False,
+                "message": "추출할 리드가 없습니다"
+            }
+
+        # 배치 추출
+        results = await lead_email_extractor.batch_extract(leads)
+
+        # 결과 저장
+        extracted_count = 0
+        for result in results:
+            if result.get("success") and result.get("email"):
+                lead_id = result["lead_id"]
+
+                update_data = {
+                    "email": result["email"],
+                    "updated_at": datetime.now()
+                }
+
+                if result.get("website"):
+                    update_data["website"] = result["website"]
+
+                # 스코어 증가
+                lead_doc = await collection.find_one({"_id": ObjectId(lead_id)})
+                if lead_doc:
+                    update_data["score"] = min((lead_doc.get("score", 50) + 30), 100)
+
+                await collection.update_one(
+                    {"_id": ObjectId(lead_id)},
+                    {"$set": update_data}
+                )
+
+                extracted_count += 1
+
+        return {
+            "success": True,
+            "total": len(lead_ids),
+            "extracted": extracted_count,
+            "results": results,
+            "message": f"{len(lead_ids)}개 중 {extracted_count}개의 이메일을 추출했습니다"
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

@@ -49,6 +49,8 @@ import {
   ExternalLink,
   Filter,
   Database,
+  Zap,
+  Loader2,
 } from 'lucide-react'
 
 export default function PublicLeadsPage() {
@@ -84,6 +86,10 @@ export default function PublicLeadsPage() {
 
   // 탭 상태
   const [activeTab, setActiveTab] = useState('search')
+
+  // 이메일 추출 상태
+  const [isExtracting, setIsExtracting] = useState(false)
+  const [extractingLeadId, setExtractingLeadId] = useState<string | null>(null)
 
   // 초기 데이터 로드
   useEffect(() => {
@@ -209,6 +215,52 @@ export default function PublicLeadsPage() {
       loadSavedLeads()
     } catch (error) {
       toast.error('내보내기 중 오류가 발생했습니다')
+    }
+  }
+
+  // 단일 리드 이메일 추출
+  const handleExtractEmail = async (leadId: string) => {
+    setExtractingLeadId(leadId)
+    try {
+      const result = await publicLeadsAPI.extractEmail(leadId)
+      if (result.email) {
+        toast.success(`이메일 추출 성공: ${result.email}`)
+      } else {
+        toast.info('이메일을 찾을 수 없습니다')
+      }
+      loadSavedLeads()
+      loadStats()
+    } catch (error) {
+      toast.error('이메일 추출 중 오류가 발생했습니다')
+    } finally {
+      setExtractingLeadId(null)
+    }
+  }
+
+  // 선택된 리드 이메일 일괄 추출
+  const handleBatchExtractEmails = async () => {
+    const leadsToExtract = savedLeads.filter(
+      (lead) => selectedLeads.has(lead.id) && !lead.email
+    )
+
+    if (leadsToExtract.length === 0) {
+      toast.error('이메일이 없는 선택된 리드가 없습니다')
+      return
+    }
+
+    setIsExtracting(true)
+    try {
+      const result = await publicLeadsAPI.batchExtractEmails(
+        leadsToExtract.map((l) => l.id)
+      )
+      toast.success(result.message)
+      setSelectedLeads(new Set())
+      loadSavedLeads()
+      loadStats()
+    } catch (error) {
+      toast.error('이메일 추출 중 오류가 발생했습니다')
+    } finally {
+      setIsExtracting(false)
     }
   }
 
@@ -494,6 +546,18 @@ export default function PublicLeadsPage() {
                 </div>
                 <div className="flex gap-2">
                   <Button
+                    variant="default"
+                    onClick={handleBatchExtractEmails}
+                    disabled={selectedLeads.size === 0 || isExtracting}
+                  >
+                    {isExtracting ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Zap className="h-4 w-4 mr-2" />
+                    )}
+                    이메일 추출
+                  </Button>
+                  <Button
                     variant="outline"
                     onClick={handleExportToOutreach}
                     disabled={selectedLeads.size === 0}
@@ -639,13 +703,31 @@ export default function PublicLeadsPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDeleteLead(lead.id)}
-                          >
-                            <Trash2 className="h-4 w-4 text-red-500" />
-                          </Button>
+                          <div className="flex gap-1">
+                            {!lead.email && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleExtractEmail(lead.id)}
+                                disabled={extractingLeadId === lead.id}
+                                title="이메일 추출"
+                              >
+                                {extractingLeadId === lead.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                                ) : (
+                                  <Zap className="h-4 w-4 text-blue-500" />
+                                )}
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDeleteLead(lead.id)}
+                              title="삭제"
+                            >
+                              <Trash2 className="h-4 w-4 text-red-500" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))
