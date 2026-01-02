@@ -174,7 +174,7 @@ export default function BlogDetailPage() {
 
   const handleExtractContact = async () => {
     try {
-      const result = await outreachAPI.extractContact(blogId)
+      const result = await outreachAPI.extractContacts(blogId)
       if (result.success) {
         toast.success(`연락처 추출 완료: ${result.contacts_found || 0}개 발견`)
         loadBlogDetail()

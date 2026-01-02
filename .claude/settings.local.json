@@ -202,7 +202,8 @@
       "Bash(set \"VERCEL_PROJECT_ID=\")",
       "Bash(\"C:\\\\Users\\\\이아랑\\\\AppData\\\\Roaming\\\\npm\\\\vercel.cmd\" --prod --yes --token xV1BBksAEnNuGvK0CNEUUiJs)",
       "Bash(\"C:\\\\Users\\\\이아랑\\\\AppData\\\\Roaming\\\\npm\\\\vercel.cmd\" link --yes --token xV1BBksAEnNuGvK0CNEUUiJs)",
-      "Bash(git fetch:*)"
+      "Bash(git fetch:*)",
+      "Bash(\"C:\\\\Users\\\\이아랑\\\\AppData\\\\Roaming\\\\npm\\\\vercel.cmd\" logs AJ8XraNTV --limit 50)"
     ],
     "deny": [],
     "ask": []
