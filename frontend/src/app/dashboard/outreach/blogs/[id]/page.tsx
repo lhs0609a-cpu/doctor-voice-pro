@@ -55,7 +55,7 @@ import {
   Users,
   Calendar,
 } from 'lucide-react'
-import { outreachAPI, type OutreachBlog, type OutreachEmailLog, type OutreachEmailTemplate } from '@/lib/api'
+import { outreachAPI, type NaverBlogLead, type OutreachEmailLog, type OutreachEmailTemplate } from '@/lib/api'
 import { toast } from 'sonner'
 
 const BLOG_STATUSES = [
@@ -80,7 +80,7 @@ export default function BlogDetailPage() {
   const router = useRouter()
   const blogId = params.id as string
 
-  const [blog, setBlog] = useState<OutreachBlog | null>(null)
+  const [blog, setBlog] = useState<NaverBlogLead | null>(null)
   const [emailHistory, setEmailHistory] = useState<OutreachEmailLog[]>([])
   const [templates, setTemplates] = useState<OutreachEmailTemplate[]>([])
   const [loading, setLoading] = useState(true)

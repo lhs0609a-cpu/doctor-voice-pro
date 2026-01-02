@@ -201,7 +201,8 @@
       "Bash(set \"VERCEL_ORG_ID=\")",
       "Bash(set \"VERCEL_PROJECT_ID=\")",
       "Bash(\"C:\\\\Users\\\\이아랑\\\\AppData\\\\Roaming\\\\npm\\\\vercel.cmd\" --prod --yes --token xV1BBksAEnNuGvK0CNEUUiJs)",
-      "Bash(\"C:\\\\Users\\\\이아랑\\\\AppData\\\\Roaming\\\\npm\\\\vercel.cmd\" link --yes --token xV1BBksAEnNuGvK0CNEUUiJs)"
+      "Bash(\"C:\\\\Users\\\\이아랑\\\\AppData\\\\Roaming\\\\npm\\\\vercel.cmd\" link --yes --token xV1BBksAEnNuGvK0CNEUUiJs)",
+      "Bash(git fetch:*)"
     ],
     "deny": [],
     "ask": []
