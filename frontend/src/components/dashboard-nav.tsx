@@ -33,6 +33,7 @@ import {
   Settings,
   Coffee,
   Mail,
+  Database,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -115,6 +116,11 @@ export function DashboardNav() {
       href: '/dashboard/outreach',
       label: '이메일 영업',
       icon: Mail,
+    },
+    {
+      href: '/dashboard/outreach/leads',
+      label: '리드 수집',
+      icon: Database,
     },
   ]
 

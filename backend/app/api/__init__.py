@@ -6,7 +6,7 @@ from app.api import (
     roi, place, reviews, competitors, rankings, campaigns,
     knowledge, crawl, cafe, viral,
     knowledge_extended, cafe_extended,
-    billing, blog_outreach
+    billing, blog_outreach, public_leads
 )
 
 api_router = APIRouter()
@@ -51,3 +51,5 @@ api_router.include_router(cafe_extended.router, prefix="/cafe-ext", tags=["cafe-
 api_router.include_router(billing.router)
 # Blog Outreach (블로그 영업 자동화)
 api_router.include_router(blog_outreach.router, prefix="/outreach", tags=["outreach"])
+# Public Data Leads (공공데이터 리드 수집)
+api_router.include_router(public_leads.router, tags=["public-leads"])

@@ -3755,4 +3755,124 @@ export const outreachAPI = {
   },
 }
 
+// ==================== Public Leads API (공공데이터 리드 수집) ====================
+
+export type LeadStatus = 'new' | 'contacted' | 'interested' | 'not_interested' | 'converted'
+
+export interface PublicLead {
+  id: string
+  user_id?: string
+  business_name: string
+  category: string
+  sub_category?: string
+  address: string
+  road_address?: string
+  sido: string
+  sigungu: string
+  dong?: string
+  phone?: string
+  email?: string
+  website?: string
+  business_number?: string
+  owner_name?: string
+  open_date?: string
+  status: LeadStatus
+  score: number
+  notes?: string
+  tags: string[]
+  source: string
+  collected_at?: string
+  last_contacted_at?: string
+  created_at?: string
+  updated_at?: string
+}
+
+export interface LeadSearchRequest {
+  sido: string
+  sigungu?: string
+  dong?: string
+  category?: string
+  keyword?: string
+  limit?: number
+}
+
+export interface LeadStats {
+  total: number
+  by_status: Record<string, number>
+  by_category: Record<string, number>
+  by_region: Record<string, number>
+  recent_collected: number
+  contacted_today: number
+}
+
+export interface RegionData {
+  sido_list: string[]
+  sigungu_map: Record<string, string[]>
+  categories: { code: string; name: string; sub: string[] }[]
+}
+
+export const publicLeadsAPI = {
+  // 지역/업종 목록 조회
+  getRegions: async (): Promise<RegionData> => {
+    const response = await api.get('/api/v1/public-leads/regions')
+    return response.data
+  },
+
+  // 리드 검색 및 수집
+  search: async (data: LeadSearchRequest): Promise<{ success: boolean; total: number; leads: PublicLead[]; message?: string }> => {
+    const response = await api.post('/api/v1/public-leads/search', data)
+    return response.data
+  },
+
+  // 수집된 리드 저장
+  save: async (leads: PublicLead[]): Promise<{ success: boolean; saved: number; duplicates: number; message: string }> => {
+    const response = await api.post('/api/v1/public-leads/save', leads)
+    return response.data
+  },
+
+  // 저장된 리드 목록 조회
+  getList: async (params?: {
+    status?: string
+    category?: string
+    sido?: string
+    sigungu?: string
+    search?: string
+    skip?: number
+    limit?: number
+  }): Promise<{ success: boolean; total: number; leads: PublicLead[]; skip: number; limit: number }> => {
+    const response = await api.get('/api/v1/public-leads/list', { params })
+    return response.data
+  },
+
+  // 리드 통계 조회
+  getStats: async (): Promise<LeadStats> => {
+    const response = await api.get('/api/v1/public-leads/stats')
+    return response.data
+  },
+
+  // 리드 정보 수정
+  update: async (leadId: string, data: Partial<PublicLead>): Promise<{ success: boolean; message: string }> => {
+    const response = await api.put(`/api/v1/public-leads/${leadId}`, data)
+    return response.data
+  },
+
+  // 리드 삭제
+  delete: async (leadId: string): Promise<{ success: boolean; message: string }> => {
+    const response = await api.delete(`/api/v1/public-leads/${leadId}`)
+    return response.data
+  },
+
+  // 리드 정보 보강
+  enrich: async (leadId: string): Promise<{ success: boolean; lead: PublicLead; message: string }> => {
+    const response = await api.post(`/api/v1/public-leads/${leadId}/enrich`)
+    return response.data
+  },
+
+  // 이메일 영업으로 내보내기
+  exportToOutreach: async (leadIds: string[]): Promise<{ success: boolean; exported: number; total: number; message: string }> => {
+    const response = await api.post('/api/v1/public-leads/export-to-outreach', leadIds)
+    return response.data
+  },
+}
+
 export default api
