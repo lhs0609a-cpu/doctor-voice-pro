@@ -67,7 +67,7 @@ export default function DashboardLayout({
       {/* 온보딩 모달 */}
       {showOnboarding && (
         <OnboardingModal
-          userName={user?.name}
+          userName={user?.name ?? undefined}
           onComplete={handleOnboardingComplete}
           onClose={() => {
             localStorage.setItem('onboarding_completed', 'true')
