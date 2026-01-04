@@ -20,6 +20,7 @@ import {
   Server,
   Send,
 } from 'lucide-react'
+import UsageWidget from '@/components/dashboard/UsageWidget'
 import { toast } from 'sonner'
 
 export default function DashboardPage() {
@@ -224,8 +225,8 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* Stats Grid */}
-      <div className="grid md:grid-cols-3 gap-6 animate-fade-in-up animation-delay-400">
+      {/* Stats and Usage Grid */}
+      <div className="grid md:grid-cols-4 gap-6 animate-fade-in-up animation-delay-400">
         <Card className="border-2 border-transparent hover:border-blue-200 shadow-md hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1 bg-gradient-to-br from-blue-50 to-white">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
             <CardTitle className="text-sm font-semibold text-gray-700">총 포스팅</CardTitle>
@@ -266,6 +267,9 @@ export default function DashboardPage() {
             <p className="text-sm text-gray-600 font-medium">이번 달 기준</p>
           </CardContent>
         </Card>
+
+        {/* Usage Widget */}
+        <UsageWidget compact />
       </div>
 
       {/* Recent Posts */}

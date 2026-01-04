@@ -1,10 +1,12 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { DashboardNav } from '@/components/dashboard-nav'
 import { useAuthStore } from '@/store/auth'
+import OnboardingModal from '@/components/onboarding/OnboardingModal'
+import TutorialGuide from '@/components/tutorial/TutorialGuide'
 
 export default function DashboardLayout({
   children,
@@ -13,13 +15,40 @@ export default function DashboardLayout({
 }) {
   const router = useRouter()
   const { user } = useAuthStore()
+  const [showOnboarding, setShowOnboarding] = useState(false)
+  const [showTutorial, setShowTutorial] = useState(false)
 
   useEffect(() => {
     // 로그인 체크
     if (!user) {
       router.push('/login')
+      return
+    }
+
+    // 온보딩 체크 (신규 회원)
+    const onboardingCompleted = localStorage.getItem('onboarding_completed')
+    const tutorialCompleted = localStorage.getItem('tutorial_completed')
+
+    if (!onboardingCompleted) {
+      setShowOnboarding(true)
+    } else if (!tutorialCompleted) {
+      // 온보딩은 완료했지만 튜토리얼은 아직인 경우
+      setShowTutorial(true)
     }
   }, [user, router])
+
+  const handleOnboardingComplete = () => {
+    setShowOnboarding(false)
+    // 온보딩 완료 후 튜토리얼 표시
+    const tutorialCompleted = localStorage.getItem('tutorial_completed')
+    if (!tutorialCompleted) {
+      setShowTutorial(true)
+    }
+  }
+
+  const handleTutorialComplete = () => {
+    setShowTutorial(false)
+  }
 
   // 로그인하지 않은 경우 로딩 표시
   if (!user) {
@@ -34,6 +63,26 @@ export default function DashboardLayout({
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex flex-col">
       <DashboardNav />
       <main className="container mx-auto px-4 py-8 flex-1">{children}</main>
+
+      {/* 온보딩 모달 */}
+      {showOnboarding && (
+        <OnboardingModal
+          userName={user?.name}
+          onComplete={handleOnboardingComplete}
+          onClose={() => {
+            localStorage.setItem('onboarding_completed', 'true')
+            setShowOnboarding(false)
+          }}
+        />
+      )}
+
+      {/* 튜토리얼 가이드 */}
+      {showTutorial && (
+        <TutorialGuide
+          onComplete={handleTutorialComplete}
+          onClose={handleTutorialComplete}
+        />
+      )}
 
       {/* 푸터 */}
       <footer className="bg-white border-t mt-auto">
