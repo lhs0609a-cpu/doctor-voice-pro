@@ -3,7 +3,8 @@
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import RedirectResponse
-from sqlalchemy.orm import Session
+from sqlalchemy import select, func, and_, desc
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
@@ -140,7 +141,7 @@ class KeywordCreate(BaseModel):
 @router.post("/blogs/search")
 async def search_blogs(
     request: BlogSearchRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """키워드로 블로그 검색 및 수집"""
@@ -159,7 +160,7 @@ async def search_blogs(
 @router.post("/blogs/collect/category")
 async def collect_by_category(
     request: CategoryCollectRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """카테고리별 블로그 수집"""
@@ -178,7 +179,7 @@ async def collect_by_category(
 @router.post("/blogs/collect/influencers")
 async def collect_influencers(
     request: InfluencerCollectRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """인플루언서 블로그 수집"""
@@ -203,31 +204,35 @@ async def get_blogs(
     min_score: float = 0,
     skip: int = 0,
     limit: int = 50,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """블로그 목록 조회"""
-    query = db.query(NaverBlog).filter(
-        NaverBlog.user_id == str(current_user.id)
-    )
+    conditions = [NaverBlog.user_id == str(current_user.id)]
 
     if category:
-        query = query.filter(NaverBlog.category == BlogCategory(category))
+        conditions.append(NaverBlog.category == BlogCategory(category))
 
     if grade:
-        query = query.filter(NaverBlog.lead_grade == LeadGrade(grade))
+        conditions.append(NaverBlog.lead_grade == LeadGrade(grade))
 
     if status:
-        query = query.filter(NaverBlog.status == BlogStatus(status))
+        conditions.append(NaverBlog.status == BlogStatus(status))
 
     if has_contact is not None:
-        query = query.filter(NaverBlog.has_contact == has_contact)
+        conditions.append(NaverBlog.has_contact == has_contact)
 
     if min_score > 0:
-        query = query.filter(NaverBlog.lead_score >= min_score)
+        conditions.append(NaverBlog.lead_score >= min_score)
 
-    total = query.count()
-    blogs = query.order_by(NaverBlog.lead_score.desc()).offset(skip).limit(limit).all()
+    # Count query
+    count_query = select(func.count()).select_from(NaverBlog).where(and_(*conditions))
+    total = (await db.execute(count_query)).scalar() or 0
+
+    # Data query
+    data_query = select(NaverBlog).where(and_(*conditions)).order_by(desc(NaverBlog.lead_score)).offset(skip).limit(limit)
+    result = await db.execute(data_query)
+    blogs = result.scalars().all()
 
     return {
         "total": total,
@@ -256,27 +261,31 @@ async def get_blogs(
 @router.get("/blogs/{blog_id}")
 async def get_blog_detail(
     blog_id: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """블로그 상세 조회"""
-    blog = db.query(NaverBlog).filter(
-        NaverBlog.id == blog_id,
-        NaverBlog.user_id == str(current_user.id)
-    ).first()
+    result = await db.execute(
+        select(NaverBlog).where(
+            and_(NaverBlog.id == blog_id, NaverBlog.user_id == str(current_user.id))
+        )
+    )
+    blog = result.scalar_one_or_none()
 
     if not blog:
         raise HTTPException(status_code=404, detail="블로그를 찾을 수 없습니다")
 
     # 연락처 조회
-    contacts = db.query(BlogContact).filter(
-        BlogContact.blog_id == blog_id
-    ).all()
+    contacts_result = await db.execute(
+        select(BlogContact).where(BlogContact.blog_id == blog_id)
+    )
+    contacts = contacts_result.scalars().all()
 
     # 이메일 로그 조회
-    email_logs = db.query(EmailLog).filter(
-        EmailLog.blog_id == blog_id
-    ).order_by(EmailLog.created_at.desc()).limit(10).all()
+    logs_result = await db.execute(
+        select(EmailLog).where(EmailLog.blog_id == blog_id).order_by(desc(EmailLog.created_at)).limit(10)
+    )
+    email_logs = logs_result.scalars().all()
 
     return {
         "id": blog.id,
@@ -334,20 +343,23 @@ async def get_blog_detail(
 @router.delete("/blogs/{blog_id}")
 async def delete_blog(
     blog_id: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """블로그 삭제"""
-    blog = db.query(NaverBlog).filter(
-        NaverBlog.id == blog_id,
-        NaverBlog.user_id == str(current_user.id)
-    ).first()
+    result = await db.execute(
+        select(NaverBlog).where(and_(
+            NaverBlog.id == blog_id,
+            NaverBlog.user_id == str(current_user.id)
+        ))
+    )
+    blog = result.scalar_one_or_none()
 
     if not blog:
         raise HTTPException(status_code=404, detail="블로그를 찾을 수 없습니다")
 
-    db.delete(blog)
-    db.commit()
+    await db.delete(blog)
+    await db.commit()
 
     return {"success": True, "message": "블로그가 삭제되었습니다"}
 
@@ -356,21 +368,24 @@ async def delete_blog(
 async def update_blog_status(
     blog_id: str,
     status: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """블로그 상태 변경"""
-    blog = db.query(NaverBlog).filter(
-        NaverBlog.id == blog_id,
-        NaverBlog.user_id == str(current_user.id)
-    ).first()
+    result = await db.execute(
+        select(NaverBlog).where(and_(
+            NaverBlog.id == blog_id,
+            NaverBlog.user_id == str(current_user.id)
+        ))
+    )
+    blog = result.scalar_one_or_none()
 
     if not blog:
         raise HTTPException(status_code=404, detail="블로그를 찾을 수 없습니다")
 
     blog.status = BlogStatus(status)
     blog.updated_at = datetime.utcnow()
-    db.commit()
+    await db.commit()
 
     return {"success": True, "status": status}
 
@@ -380,7 +395,7 @@ async def update_blog_status(
 @router.post("/contacts/extract/{blog_id}")
 async def extract_contacts(
     blog_id: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """블로그에서 연락처 추출"""
@@ -395,7 +410,7 @@ async def extract_contacts(
 @router.post("/contacts/extract-batch")
 async def extract_contacts_batch(
     limit: int = 50,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """배치 연락처 추출"""
@@ -413,7 +428,7 @@ async def extract_contacts_batch(
 async def score_blog(
     blog_id: str,
     request: Optional[ScoringRequest] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """블로그 스코어링"""
@@ -440,7 +455,7 @@ async def score_blog(
 async def score_blogs_batch(
     request: Optional[ScoringRequest] = None,
     limit: int = 100,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """배치 스코어링"""
@@ -466,7 +481,7 @@ async def score_blogs_batch(
 @router.post("/scoring/rescore-all")
 async def rescore_all(
     request: Optional[ScoringRequest] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """전체 재스코어링"""
@@ -494,7 +509,7 @@ async def get_top_leads(
     category: Optional[str] = None,
     has_contact: Optional[bool] = None,
     limit: int = 50,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """상위 리드 조회"""
@@ -515,7 +530,7 @@ async def get_top_leads(
 
 @router.get("/scoring/stats")
 async def get_scoring_stats(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """스코어링 통계"""
@@ -529,7 +544,7 @@ async def get_scoring_stats(
 @router.post("/templates")
 async def create_template(
     request: EmailTemplateCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """이메일 템플릿 생성"""
@@ -544,8 +559,8 @@ async def create_template(
         is_active=True
     )
     db.add(template)
-    db.commit()
-    db.refresh(template)
+    await db.commit()
+    await db.refresh(template)
 
     return {"success": True, "template_id": template.id}
 
@@ -553,18 +568,19 @@ async def create_template(
 @router.get("/templates")
 async def get_templates(
     template_type: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """템플릿 목록 조회"""
-    query = db.query(EmailTemplate).filter(
-        EmailTemplate.user_id == str(current_user.id)
-    )
+    conditions = [EmailTemplate.user_id == str(current_user.id)]
 
     if template_type:
-        query = query.filter(EmailTemplate.template_type == template_type)
+        conditions.append(EmailTemplate.template_type == template_type)
 
-    templates = query.order_by(EmailTemplate.created_at.desc()).all()
+    result = await db.execute(
+        select(EmailTemplate).where(and_(*conditions)).order_by(desc(EmailTemplate.created_at))
+    )
+    templates = result.scalars().all()
 
     return {
         "templates": [
@@ -589,14 +605,17 @@ async def get_templates(
 @router.get("/templates/{template_id}")
 async def get_template(
     template_id: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """템플릿 상세 조회"""
-    template = db.query(EmailTemplate).filter(
-        EmailTemplate.id == template_id,
-        EmailTemplate.user_id == str(current_user.id)
-    ).first()
+    result = await db.execute(
+        select(EmailTemplate).where(and_(
+            EmailTemplate.id == template_id,
+            EmailTemplate.user_id == str(current_user.id)
+        ))
+    )
+    template = result.scalar_one_or_none()
 
     if not template:
         raise HTTPException(status_code=404, detail="템플릿을 찾을 수 없습니다")
@@ -621,14 +640,17 @@ async def get_template(
 async def update_template(
     template_id: str,
     request: EmailTemplateUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """템플릿 수정"""
-    template = db.query(EmailTemplate).filter(
-        EmailTemplate.id == template_id,
-        EmailTemplate.user_id == str(current_user.id)
-    ).first()
+    result = await db.execute(
+        select(EmailTemplate).where(and_(
+            EmailTemplate.id == template_id,
+            EmailTemplate.user_id == str(current_user.id)
+        ))
+    )
+    template = result.scalar_one_or_none()
 
     if not template:
         raise HTTPException(status_code=404, detail="템플릿을 찾을 수 없습니다")
@@ -638,7 +660,7 @@ async def update_template(
         setattr(template, key, value)
 
     template.updated_at = datetime.utcnow()
-    db.commit()
+    await db.commit()
 
     return {"success": True}
 
@@ -646,20 +668,23 @@ async def update_template(
 @router.delete("/templates/{template_id}")
 async def delete_template(
     template_id: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """템플릿 삭제"""
-    template = db.query(EmailTemplate).filter(
-        EmailTemplate.id == template_id,
-        EmailTemplate.user_id == str(current_user.id)
-    ).first()
+    result = await db.execute(
+        select(EmailTemplate).where(and_(
+            EmailTemplate.id == template_id,
+            EmailTemplate.user_id == str(current_user.id)
+        ))
+    )
+    template = result.scalar_one_or_none()
 
     if not template:
         raise HTTPException(status_code=404, detail="템플릿을 찾을 수 없습니다")
 
-    db.delete(template)
-    db.commit()
+    await db.delete(template)
+    await db.commit()
 
     return {"success": True, "message": "템플릿이 삭제되었습니다"}
 
@@ -669,7 +694,7 @@ async def delete_template(
 @router.post("/campaigns")
 async def create_campaign(
     request: CampaignCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """캠페인 생성"""
@@ -690,8 +715,8 @@ async def create_campaign(
         status=CampaignStatus.DRAFT
     )
     db.add(campaign)
-    db.commit()
-    db.refresh(campaign)
+    await db.commit()
+    await db.refresh(campaign)
 
     return {"success": True, "campaign_id": campaign.id}
 
@@ -699,18 +724,19 @@ async def create_campaign(
 @router.get("/campaigns")
 async def get_campaigns(
     status: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """캠페인 목록 조회"""
-    query = db.query(EmailCampaign).filter(
-        EmailCampaign.user_id == str(current_user.id)
-    )
+    conditions = [EmailCampaign.user_id == str(current_user.id)]
 
     if status:
-        query = query.filter(EmailCampaign.status == CampaignStatus(status))
+        conditions.append(EmailCampaign.status == CampaignStatus(status))
 
-    campaigns = query.order_by(EmailCampaign.created_at.desc()).all()
+    result = await db.execute(
+        select(EmailCampaign).where(and_(*conditions)).order_by(desc(EmailCampaign.created_at))
+    )
+    campaigns = result.scalars().all()
 
     return {
         "campaigns": [
@@ -737,14 +763,17 @@ async def get_campaigns(
 @router.get("/campaigns/{campaign_id}")
 async def get_campaign(
     campaign_id: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """캠페인 상세 조회"""
-    campaign = db.query(EmailCampaign).filter(
-        EmailCampaign.id == campaign_id,
-        EmailCampaign.user_id == str(current_user.id)
-    ).first()
+    result = await db.execute(
+        select(EmailCampaign).where(and_(
+            EmailCampaign.id == campaign_id,
+            EmailCampaign.user_id == str(current_user.id)
+        ))
+    )
+    campaign = result.scalar_one_or_none()
 
     if not campaign:
         raise HTTPException(status_code=404, detail="캠페인을 찾을 수 없습니다")
@@ -780,14 +809,17 @@ async def get_campaign(
 async def update_campaign(
     campaign_id: str,
     request: CampaignUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """캠페인 수정"""
-    campaign = db.query(EmailCampaign).filter(
-        EmailCampaign.id == campaign_id,
-        EmailCampaign.user_id == str(current_user.id)
-    ).first()
+    result = await db.execute(
+        select(EmailCampaign).where(and_(
+            EmailCampaign.id == campaign_id,
+            EmailCampaign.user_id == str(current_user.id)
+        ))
+    )
+    campaign = result.scalar_one_or_none()
 
     if not campaign:
         raise HTTPException(status_code=404, detail="캠페인을 찾을 수 없습니다")
@@ -805,7 +837,7 @@ async def update_campaign(
         setattr(campaign, key, value)
 
     campaign.updated_at = datetime.utcnow()
-    db.commit()
+    await db.commit()
 
     return {"success": True}
 
@@ -813,14 +845,17 @@ async def update_campaign(
 @router.post("/campaigns/{campaign_id}/start")
 async def start_campaign(
     campaign_id: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """캠페인 시작"""
-    campaign = db.query(EmailCampaign).filter(
-        EmailCampaign.id == campaign_id,
-        EmailCampaign.user_id == str(current_user.id)
-    ).first()
+    result = await db.execute(
+        select(EmailCampaign).where(and_(
+            EmailCampaign.id == campaign_id,
+            EmailCampaign.user_id == str(current_user.id)
+        ))
+    )
+    campaign = result.scalar_one_or_none()
 
     if not campaign:
         raise HTTPException(status_code=404, detail="캠페인을 찾을 수 없습니다")
@@ -828,7 +863,7 @@ async def start_campaign(
     campaign.status = CampaignStatus.ACTIVE
     campaign.started_at = datetime.utcnow()
     campaign.updated_at = datetime.utcnow()
-    db.commit()
+    await db.commit()
 
     return {"success": True, "message": "캠페인이 시작되었습니다"}
 
@@ -836,21 +871,24 @@ async def start_campaign(
 @router.post("/campaigns/{campaign_id}/pause")
 async def pause_campaign(
     campaign_id: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """캠페인 일시정지"""
-    campaign = db.query(EmailCampaign).filter(
-        EmailCampaign.id == campaign_id,
-        EmailCampaign.user_id == str(current_user.id)
-    ).first()
+    result = await db.execute(
+        select(EmailCampaign).where(and_(
+            EmailCampaign.id == campaign_id,
+            EmailCampaign.user_id == str(current_user.id)
+        ))
+    )
+    campaign = result.scalar_one_or_none()
 
     if not campaign:
         raise HTTPException(status_code=404, detail="캠페인을 찾을 수 없습니다")
 
     campaign.status = CampaignStatus.PAUSED
     campaign.updated_at = datetime.utcnow()
-    db.commit()
+    await db.commit()
 
     return {"success": True, "message": "캠페인이 일시정지되었습니다"}
 
@@ -859,7 +897,7 @@ async def pause_campaign(
 async def send_campaign_batch(
     campaign_id: str,
     batch_size: int = 10,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """캠페인 배치 발송"""
@@ -875,20 +913,23 @@ async def send_campaign_batch(
 @router.delete("/campaigns/{campaign_id}")
 async def delete_campaign(
     campaign_id: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """캠페인 삭제"""
-    campaign = db.query(EmailCampaign).filter(
-        EmailCampaign.id == campaign_id,
-        EmailCampaign.user_id == str(current_user.id)
-    ).first()
+    result = await db.execute(
+        select(EmailCampaign).where(and_(
+            EmailCampaign.id == campaign_id,
+            EmailCampaign.user_id == str(current_user.id)
+        ))
+    )
+    campaign = result.scalar_one_or_none()
 
     if not campaign:
         raise HTTPException(status_code=404, detail="캠페인을 찾을 수 없습니다")
 
-    db.delete(campaign)
-    db.commit()
+    await db.delete(campaign)
+    await db.commit()
 
     return {"success": True, "message": "캠페인이 삭제되었습니다"}
 
@@ -898,7 +939,7 @@ async def delete_campaign(
 @router.post("/email/send")
 async def send_email(
     request: SendEmailRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """이메일 발송"""
@@ -915,7 +956,7 @@ async def send_email(
 
 @router.get("/email/stats")
 async def get_email_stats(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """이메일 발송 통계"""
@@ -930,22 +971,27 @@ async def get_email_logs(
     status: Optional[str] = None,
     skip: int = 0,
     limit: int = 50,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """이메일 발송 로그"""
-    query = db.query(EmailLog).filter(
-        EmailLog.user_id == str(current_user.id)
-    )
+    conditions = [EmailLog.user_id == str(current_user.id)]
 
     if campaign_id:
-        query = query.filter(EmailLog.campaign_id == campaign_id)
+        conditions.append(EmailLog.campaign_id == campaign_id)
 
     if status:
-        query = query.filter(EmailLog.status == EmailStatus(status))
+        conditions.append(EmailLog.status == EmailStatus(status))
 
-    total = query.count()
-    logs = query.order_by(EmailLog.created_at.desc()).offset(skip).limit(limit).all()
+    count_result = await db.execute(
+        select(func.count()).select_from(EmailLog).where(and_(*conditions))
+    )
+    total = count_result.scalar() or 0
+
+    result = await db.execute(
+        select(EmailLog).where(and_(*conditions)).order_by(desc(EmailLog.created_at)).offset(skip).limit(limit)
+    )
+    logs = result.scalars().all()
 
     return {
         "total": total,
@@ -970,7 +1016,7 @@ async def get_email_logs(
 @router.post("/email/logs/{log_id}/mark-replied")
 async def mark_email_replied(
     log_id: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """이메일 회신 마킹"""
@@ -984,7 +1030,7 @@ async def mark_email_replied(
 @router.get("/track/open/{tracking_id}")
 async def track_open(
     tracking_id: str,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """오픈 추적 (1x1 픽셀)"""
     sender = EmailSenderService(db)
@@ -999,7 +1045,7 @@ async def track_open(
 async def track_click(
     tracking_id: str,
     url: str,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """클릭 추적 및 리다이렉트"""
     sender = EmailSenderService(db)
@@ -1014,13 +1060,14 @@ async def track_click(
 
 @router.get("/settings")
 async def get_settings(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """영업 설정 조회"""
-    settings = db.query(OutreachSetting).filter(
-        OutreachSetting.user_id == str(current_user.id)
-    ).first()
+    result = await db.execute(
+        select(OutreachSetting).where(OutreachSetting.user_id == str(current_user.id))
+    )
+    settings = result.scalar_one_or_none()
 
     if not settings:
         return {"settings": None}
@@ -1057,13 +1104,14 @@ async def get_settings(
 @router.put("/settings")
 async def update_settings(
     request: OutreachSettingUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """영업 설정 업데이트"""
-    settings = db.query(OutreachSetting).filter(
-        OutreachSetting.user_id == str(current_user.id)
-    ).first()
+    result = await db.execute(
+        select(OutreachSetting).where(OutreachSetting.user_id == str(current_user.id))
+    )
+    settings = result.scalar_one_or_none()
 
     if not settings:
         settings = OutreachSetting(user_id=str(current_user.id))
@@ -1082,7 +1130,7 @@ async def update_settings(
             setattr(settings, key, value)
 
     settings.updated_at = datetime.utcnow()
-    db.commit()
+    await db.commit()
 
     return {"success": True, "message": "설정이 저장되었습니다"}
 
@@ -1092,7 +1140,7 @@ async def update_settings(
 @router.post("/keywords")
 async def create_keyword(
     request: KeywordCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """검색 키워드 추가"""
@@ -1104,21 +1152,24 @@ async def create_keyword(
         is_active=True
     )
     db.add(keyword)
-    db.commit()
-    db.refresh(keyword)
+    await db.commit()
+    await db.refresh(keyword)
 
     return {"success": True, "keyword_id": keyword.id}
 
 
 @router.get("/keywords")
 async def get_keywords(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """키워드 목록 조회"""
-    keywords = db.query(BlogSearchKeyword).filter(
-        BlogSearchKeyword.user_id == str(current_user.id)
-    ).order_by(BlogSearchKeyword.priority.desc()).all()
+    result = await db.execute(
+        select(BlogSearchKeyword).where(
+            BlogSearchKeyword.user_id == str(current_user.id)
+        ).order_by(desc(BlogSearchKeyword.priority))
+    )
+    keywords = result.scalars().all()
 
     return {
         "keywords": [
@@ -1138,20 +1189,23 @@ async def get_keywords(
 @router.delete("/keywords/{keyword_id}")
 async def delete_keyword(
     keyword_id: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """키워드 삭제"""
-    keyword = db.query(BlogSearchKeyword).filter(
-        BlogSearchKeyword.id == keyword_id,
-        BlogSearchKeyword.user_id == str(current_user.id)
-    ).first()
+    result = await db.execute(
+        select(BlogSearchKeyword).where(and_(
+            BlogSearchKeyword.id == keyword_id,
+            BlogSearchKeyword.user_id == str(current_user.id)
+        ))
+    )
+    keyword = result.scalar_one_or_none()
 
     if not keyword:
         raise HTTPException(status_code=404, detail="키워드를 찾을 수 없습니다")
 
-    db.delete(keyword)
-    db.commit()
+    await db.delete(keyword)
+    await db.commit()
 
     return {"success": True, "message": "키워드가 삭제되었습니다"}
 
@@ -1160,33 +1214,45 @@ async def delete_keyword(
 
 @router.get("/dashboard")
 async def get_dashboard(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """대시보드 통계"""
     user_id = str(current_user.id)
 
     # 블로그 통계
-    total_blogs = db.query(NaverBlog).filter(NaverBlog.user_id == user_id).count()
-    with_contact = db.query(NaverBlog).filter(
-        NaverBlog.user_id == user_id,
-        NaverBlog.has_contact == True
-    ).count()
+    total_result = await db.execute(
+        select(func.count()).select_from(NaverBlog).where(NaverBlog.user_id == user_id)
+    )
+    total_blogs = total_result.scalar() or 0
+
+    contact_result = await db.execute(
+        select(func.count()).select_from(NaverBlog).where(and_(
+            NaverBlog.user_id == user_id,
+            NaverBlog.has_contact == True
+        ))
+    )
+    with_contact = contact_result.scalar() or 0
 
     # 등급별 통계
     grades = {}
     for grade in LeadGrade:
-        count = db.query(NaverBlog).filter(
-            NaverBlog.user_id == user_id,
-            NaverBlog.lead_grade == grade
-        ).count()
-        grades[grade.value] = count
+        grade_result = await db.execute(
+            select(func.count()).select_from(NaverBlog).where(and_(
+                NaverBlog.user_id == user_id,
+                NaverBlog.lead_grade == grade
+            ))
+        )
+        grades[grade.value] = grade_result.scalar() or 0
 
     # 캠페인 통계
-    active_campaigns = db.query(EmailCampaign).filter(
-        EmailCampaign.user_id == user_id,
-        EmailCampaign.status == CampaignStatus.ACTIVE
-    ).count()
+    campaign_result = await db.execute(
+        select(func.count()).select_from(EmailCampaign).where(and_(
+            EmailCampaign.user_id == user_id,
+            EmailCampaign.status == CampaignStatus.ACTIVE
+        ))
+    )
+    active_campaigns = campaign_result.scalar() or 0
 
     # 이메일 통계
     sender = EmailSenderService(db)
@@ -1215,12 +1281,13 @@ class UnsubscribeRequest(BaseModel):
 @router.get("/unsubscribe/{tracking_id}")
 async def unsubscribe_page(
     tracking_id: str,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """수신거부 페이지 (HTML 반환)"""
-    log = db.query(EmailLog).filter(
-        EmailLog.tracking_id == tracking_id
-    ).first()
+    result = await db.execute(
+        select(EmailLog).where(EmailLog.tracking_id == tracking_id)
+    )
+    log = result.scalar_one_or_none()
 
     if not log:
         return Response(
@@ -1397,12 +1464,13 @@ async def unsubscribe_page(
 async def process_unsubscribe(
     tracking_id: str,
     request: UnsubscribeRequest,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """수신거부 처리"""
-    log = db.query(EmailLog).filter(
-        EmailLog.tracking_id == tracking_id
-    ).first()
+    result = await db.execute(
+        select(EmailLog).where(EmailLog.tracking_id == tracking_id)
+    )
+    log = result.scalar_one_or_none()
 
     if not log:
         raise HTTPException(status_code=404, detail="유효하지 않은 링크입니다")
@@ -1413,12 +1481,15 @@ async def process_unsubscribe(
 
     # 해당 블로그 상태 업데이트
     if log.blog_id:
-        blog = db.query(NaverBlog).filter(NaverBlog.id == log.blog_id).first()
+        blog_result = await db.execute(
+            select(NaverBlog).where(NaverBlog.id == log.blog_id)
+        )
+        blog = blog_result.scalar_one_or_none()
         if blog:
             blog.status = BlogStatus.NOT_INTERESTED
             blog.notes = f"수신거부 ({request.reason})"
 
-    db.commit()
+    await db.commit()
 
     return {"success": True, "message": "수신거부 처리되었습니다"}
 
@@ -1427,7 +1498,7 @@ async def process_unsubscribe(
 
 @router.post("/scheduler/start")
 async def start_scheduler(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """스케줄러 시작"""
@@ -1440,7 +1511,7 @@ async def start_scheduler(
 
 @router.post("/scheduler/stop")
 async def stop_scheduler(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """스케줄러 중지"""
@@ -1453,7 +1524,7 @@ async def stop_scheduler(
 
 @router.get("/scheduler/status")
 async def get_scheduler_status(
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """스케줄러 상태 조회"""

@@ -15,8 +15,8 @@ from ..models.public_leads import (
     CATEGORY_LIST
 )
 from ..services.public_data_service import public_data_service
-from ..core.auth import get_current_user
-from ..core.database import get_db
+from .deps import get_current_user
+from ..db.database import get_db
 
 router = APIRouter(prefix="/public-leads", tags=["공공데이터 리드"])
 

@@ -23,27 +23,20 @@ export default function LoginPage() {
     e.preventDefault()
     try {
       await login({ email, password })
-      router.push('/dashboard')
-    } catch (error) {
-      // Error handled in store
-    }
-  }
-
-  const handleAdminLogin = async () => {
-    setEmail('admin@doctorvoice.com')
-    setPassword('admin123!@#')
-    try {
-      await login({ email: 'admin@doctorvoice.com', password: 'admin123!@#' })
+      // 로그인 후 관리자인지 확인하여 적절한 페이지로 이동
       const userStr = localStorage.getItem('user')
-      const token = localStorage.getItem('access_token')
-      if (userStr && token) {
+      if (userStr) {
         const user = JSON.parse(userStr)
         if (user.is_admin) {
-          window.location.href = '/admin'
+          router.push('/admin')
+        } else {
+          router.push('/dashboard')
         }
+      } else {
+        router.push('/dashboard')
       }
     } catch (error) {
-      alert('로그인에 실패했습니다.')
+      // Error handled in store
     }
   }
 
@@ -238,25 +231,6 @@ export default function LoginPage() {
             <Link href="/register" className="text-blue-600 hover:underline font-semibold">
               무료로 시작하기
             </Link>
-          </div>
-
-          {/* 구분선 */}
-          <div className="my-8 flex items-center gap-4">
-            <div className="flex-1 h-px bg-gray-200" />
-            <span className="text-sm text-gray-400">또는</span>
-            <div className="flex-1 h-px bg-gray-200" />
-          </div>
-
-          {/* 관리자 버튼 */}
-          <div className="space-y-3">
-            <Button
-              onClick={handleAdminLogin}
-              variant="ghost"
-              className="w-full h-11 text-gray-500 hover:text-purple-600"
-              disabled={isLoading}
-            >
-              관리자 로그인
-            </Button>
           </div>
 
           {/* 하단 정보 */}

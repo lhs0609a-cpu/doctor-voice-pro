@@ -14,7 +14,7 @@ from app.models.knowledge import (
 )
 from app.services.knowledge_service import KnowledgeService
 
-router = APIRouter(prefix="/knowledge", tags=["지식인"])
+router = APIRouter(tags=["지식인"])
 
 
 # ==================== Schemas ====================

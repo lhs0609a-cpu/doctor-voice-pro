@@ -11,7 +11,17 @@ from urllib.parse import urlparse
 
 import aiohttp
 from bs4 import BeautifulSoup
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page
+
+# Playwright는 선택적으로 로드 (서버 환경에서는 설치되지 않을 수 있음)
+try:
+    from playwright.async_api import async_playwright, Browser, BrowserContext, Page
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+    async_playwright = None
+    Browser = None
+    BrowserContext = None
+    Page = None
 
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession

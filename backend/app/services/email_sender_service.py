@@ -11,7 +11,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, and_
 from cryptography.fernet import Fernet
 import os
 import base64
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 class EmailSenderService:
     """이메일 발송 서비스"""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
         # 암호화 키 (환경 변수에서 가져오거나 생성)
         self._encryption_key = os.getenv("ENCRYPTION_KEY", Fernet.generate_key().decode())
@@ -55,24 +56,28 @@ class EmailSenderService:
         f = self._get_fernet()
         return f.decrypt(encrypted.encode()).decode()
 
-    def _get_outreach_settings(self, user_id: str) -> Optional[OutreachSetting]:
+    async def _get_outreach_settings(self, user_id: str) -> Optional[OutreachSetting]:
         """사용자 발송 설정 조회"""
-        return self.db.query(OutreachSetting).filter(
-            OutreachSetting.user_id == user_id
-        ).first()
+        result = await self.db.execute(
+            select(OutreachSetting).where(OutreachSetting.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
 
-    def _check_daily_limit(self, user_id: str) -> Dict[str, Any]:
+    async def _check_daily_limit(self, user_id: str) -> Dict[str, Any]:
         """일일 발송 한도 확인"""
-        settings = self._get_outreach_settings(user_id)
+        settings = await self._get_outreach_settings(user_id)
         daily_limit = settings.daily_limit if settings else 50
 
         # 오늘 발송량 조회
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-        today_sent = self.db.query(EmailLog).filter(
-            EmailLog.user_id == user_id,
-            EmailLog.sent_at >= today_start,
-            EmailLog.status == EmailStatus.SENT
-        ).count()
+        result = await self.db.execute(
+            select(func.count()).select_from(EmailLog).where(and_(
+                EmailLog.user_id == user_id,
+                EmailLog.sent_at >= today_start,
+                EmailLog.status == EmailStatus.SENT
+            ))
+        )
+        today_sent = result.scalar() or 0
 
         remaining = max(0, daily_limit - today_sent)
 
@@ -83,18 +88,21 @@ class EmailSenderService:
             "can_send": remaining > 0
         }
 
-    def _check_hourly_limit(self, user_id: str) -> Dict[str, Any]:
+    async def _check_hourly_limit(self, user_id: str) -> Dict[str, Any]:
         """시간당 발송 한도 확인"""
-        settings = self._get_outreach_settings(user_id)
+        settings = await self._get_outreach_settings(user_id)
         hourly_limit = settings.hourly_limit if settings else 10
 
         # 최근 1시간 발송량 조회
         hour_ago = datetime.utcnow() - timedelta(hours=1)
-        hour_sent = self.db.query(EmailLog).filter(
-            EmailLog.user_id == user_id,
-            EmailLog.sent_at >= hour_ago,
-            EmailLog.status == EmailStatus.SENT
-        ).count()
+        result = await self.db.execute(
+            select(func.count()).select_from(EmailLog).where(and_(
+                EmailLog.user_id == user_id,
+                EmailLog.sent_at >= hour_ago,
+                EmailLog.status == EmailStatus.SENT
+            ))
+        )
+        hour_sent = result.scalar() or 0
 
         remaining = max(0, hourly_limit - hour_sent)
 
@@ -290,14 +298,15 @@ class EmailSenderService:
 
                 # 블로그 상태 업데이트
                 if blog_id:
-                    blog = self.db.query(NaverBlog).filter(
-                        NaverBlog.id == blog_id
-                    ).first()
+                    blog_result = await self.db.execute(
+                        select(NaverBlog).where(NaverBlog.id == blog_id)
+                    )
+                    blog = blog_result.scalar_one_or_none()
                     if blog:
                         blog.status = BlogStatus.CONTACTED
                         blog.updated_at = datetime.utcnow()
 
-                self.db.commit()
+                await self.db.commit()
 
                 return {
                     "success": True,
@@ -309,7 +318,7 @@ class EmailSenderService:
                 email_log.status = EmailStatus.BOUNCED
                 email_log.error_message = str(e)
                 email_log.bounced_at = datetime.utcnow()
-                self.db.commit()
+                await self.db.commit()
 
                 return {
                     "success": False,
@@ -318,7 +327,7 @@ class EmailSenderService:
 
         except Exception as e:
             logger.error(f"이메일 발송 오류: {e}")
-            self.db.rollback()
+            await self.db.rollback()
             return {"success": False, "error": str(e)}
 
     async def send_with_template(
@@ -332,40 +341,52 @@ class EmailSenderService:
         """템플릿으로 이메일 발송"""
         try:
             # 블로그 및 연락처 조회
-            blog = self.db.query(NaverBlog).filter(
-                NaverBlog.id == blog_id,
-                NaverBlog.user_id == user_id
-            ).first()
+            blog_result = await self.db.execute(
+                select(NaverBlog).where(and_(
+                    NaverBlog.id == blog_id,
+                    NaverBlog.user_id == user_id
+                ))
+            )
+            blog = blog_result.scalar_one_or_none()
 
             if not blog:
                 return {"success": False, "error": "블로그를 찾을 수 없습니다"}
 
             # 기본 연락처 조회
-            contact = self.db.query(BlogContact).filter(
-                BlogContact.blog_id == blog_id,
-                BlogContact.is_primary == True
-            ).first()
+            contact_result = await self.db.execute(
+                select(BlogContact).where(and_(
+                    BlogContact.blog_id == blog_id,
+                    BlogContact.is_primary == True
+                ))
+            )
+            contact = contact_result.scalar_one_or_none()
 
             if not contact:
-                contact = self.db.query(BlogContact).filter(
-                    BlogContact.blog_id == blog_id,
-                    BlogContact.email.isnot(None)
-                ).first()
+                contact_result2 = await self.db.execute(
+                    select(BlogContact).where(and_(
+                        BlogContact.blog_id == blog_id,
+                        BlogContact.email.isnot(None)
+                    ))
+                )
+                contact = contact_result2.scalar_one_or_none()
 
             if not contact or not contact.email:
                 return {"success": False, "error": "이메일 연락처가 없습니다"}
 
             # 템플릿 조회
-            template = self.db.query(EmailTemplate).filter(
-                EmailTemplate.id == template_id,
-                EmailTemplate.user_id == user_id
-            ).first()
+            template_result = await self.db.execute(
+                select(EmailTemplate).where(and_(
+                    EmailTemplate.id == template_id,
+                    EmailTemplate.user_id == user_id
+                ))
+            )
+            template = template_result.scalar_one_or_none()
 
             if not template:
                 return {"success": False, "error": "템플릿을 찾을 수 없습니다"}
 
             # 설정 조회
-            settings = self._get_outreach_settings(user_id)
+            settings = await self._get_outreach_settings(user_id)
 
             # 변수 준비
             variables = {
@@ -402,13 +423,13 @@ class EmailSenderService:
             # 템플릿 사용 횟수 증가
             if result["success"]:
                 template.usage_count = (template.usage_count or 0) + 1
-                self.db.commit()
+                await self.db.commit()
 
             return result
 
         except Exception as e:
             logger.error(f"템플릿 이메일 발송 오류: {e}")
-            self.db.rollback()
+            await self.db.rollback()
             return {"success": False, "error": str(e)}
 
     async def send_campaign_batch(
@@ -420,10 +441,13 @@ class EmailSenderService:
         """캠페인 배치 발송"""
         try:
             # 캠페인 조회
-            campaign = self.db.query(EmailCampaign).filter(
-                EmailCampaign.id == campaign_id,
-                EmailCampaign.user_id == user_id
-            ).first()
+            campaign_result = await self.db.execute(
+                select(EmailCampaign).where(and_(
+                    EmailCampaign.id == campaign_id,
+                    EmailCampaign.user_id == user_id
+                ))
+            )
+            campaign = campaign_result.scalar_one_or_none()
 
             if not campaign:
                 return {"success": False, "error": "캠페인을 찾을 수 없습니다"}
@@ -432,7 +456,7 @@ class EmailSenderService:
                 return {"success": False, "error": "활성 상태의 캠페인이 아닙니다"}
 
             # 한도 확인
-            daily_check = self._check_daily_limit(user_id)
+            daily_check = await self._check_daily_limit(user_id)
             batch_size = min(batch_size, daily_check["remaining"])
 
             if batch_size <= 0:
@@ -441,31 +465,38 @@ class EmailSenderService:
                     "error": "일일 발송 한도 초과"
                 }
 
-            # 타겟 블로그 조회 (아직 이메일 안 보낸 블로그)
-            sent_blog_ids = self.db.query(EmailLog.blog_id).filter(
-                EmailLog.campaign_id == campaign_id
-            ).subquery()
+            # 이미 발송된 블로그 ID 목록 조회
+            sent_result = await self.db.execute(
+                select(EmailLog.blog_id).where(EmailLog.campaign_id == campaign_id)
+            )
+            sent_blog_ids = [row[0] for row in sent_result.all()]
 
-            query = self.db.query(NaverBlog).filter(
+            # 타겟 블로그 조회 조건
+            conditions = [
                 NaverBlog.user_id == user_id,
                 NaverBlog.has_contact == True,
-                NaverBlog.status.notin_([BlogStatus.CONTACTED, BlogStatus.NOT_INTERESTED, BlogStatus.INVALID]),
-                NaverBlog.id.notin_(sent_blog_ids)
-            )
+                NaverBlog.status.notin_([BlogStatus.CONTACTED, BlogStatus.NOT_INTERESTED, BlogStatus.INVALID])
+            ]
+
+            if sent_blog_ids:
+                conditions.append(NaverBlog.id.notin_(sent_blog_ids))
 
             # 등급 필터
             if campaign.target_grades:
                 target_grades = [LeadGrade(g) for g in campaign.target_grades]
-                query = query.filter(NaverBlog.lead_grade.in_(target_grades))
+                conditions.append(NaverBlog.lead_grade.in_(target_grades))
 
             # 최소 점수 필터
             if campaign.min_score:
-                query = query.filter(NaverBlog.lead_score >= campaign.min_score)
+                conditions.append(NaverBlog.lead_score >= campaign.min_score)
 
             # 정렬 및 제한
-            blogs = query.order_by(
-                NaverBlog.lead_score.desc()
-            ).limit(batch_size).all()
+            blogs_result = await self.db.execute(
+                select(NaverBlog).where(and_(*conditions)).order_by(
+                    NaverBlog.lead_score.desc()
+                ).limit(batch_size)
+            )
+            blogs = blogs_result.scalars().all()
 
             if not blogs:
                 return {
@@ -490,7 +521,7 @@ class EmailSenderService:
                 "errors": []
             }
 
-            settings = self._get_outreach_settings(user_id)
+            settings = await self._get_outreach_settings(user_id)
             min_interval = settings.min_interval_seconds if settings else 300
 
             for blog in blogs:
@@ -515,7 +546,7 @@ class EmailSenderService:
                 if min_interval > 0 and results["sent"] < len(blogs):
                     await asyncio.sleep(min_interval)
 
-            self.db.commit()
+            await self.db.commit()
 
             return {
                 "success": True,
@@ -524,15 +555,16 @@ class EmailSenderService:
 
         except Exception as e:
             logger.error(f"캠페인 배치 발송 오류: {e}")
-            self.db.rollback()
+            await self.db.rollback()
             return {"success": False, "error": str(e)}
 
     async def track_open(self, tracking_id: str) -> bool:
         """오픈 추적"""
         try:
-            email_log = self.db.query(EmailLog).filter(
-                EmailLog.tracking_id == tracking_id
-            ).first()
+            result = await self.db.execute(
+                select(EmailLog).where(EmailLog.tracking_id == tracking_id)
+            )
+            email_log = result.scalar_one_or_none()
 
             if email_log and email_log.status == EmailStatus.SENT:
                 email_log.status = EmailStatus.OPENED
@@ -540,13 +572,14 @@ class EmailSenderService:
 
                 # 캠페인 통계 업데이트
                 if email_log.campaign_id:
-                    campaign = self.db.query(EmailCampaign).filter(
-                        EmailCampaign.id == email_log.campaign_id
-                    ).first()
+                    campaign_result = await self.db.execute(
+                        select(EmailCampaign).where(EmailCampaign.id == email_log.campaign_id)
+                    )
+                    campaign = campaign_result.scalar_one_or_none()
                     if campaign:
                         campaign.total_opened = (campaign.total_opened or 0) + 1
 
-                self.db.commit()
+                await self.db.commit()
                 return True
 
             return False
@@ -558,9 +591,10 @@ class EmailSenderService:
     async def track_click(self, tracking_id: str, url: str) -> bool:
         """클릭 추적"""
         try:
-            email_log = self.db.query(EmailLog).filter(
-                EmailLog.tracking_id == tracking_id
-            ).first()
+            result = await self.db.execute(
+                select(EmailLog).where(EmailLog.tracking_id == tracking_id)
+            )
+            email_log = result.scalar_one_or_none()
 
             if email_log:
                 if email_log.status in [EmailStatus.SENT, EmailStatus.OPENED]:
@@ -569,13 +603,14 @@ class EmailSenderService:
 
                 # 캠페인 통계 업데이트
                 if email_log.campaign_id:
-                    campaign = self.db.query(EmailCampaign).filter(
-                        EmailCampaign.id == email_log.campaign_id
-                    ).first()
+                    campaign_result = await self.db.execute(
+                        select(EmailCampaign).where(EmailCampaign.id == email_log.campaign_id)
+                    )
+                    campaign = campaign_result.scalar_one_or_none()
                     if campaign:
                         campaign.total_clicked = (campaign.total_clicked or 0) + 1
 
-                self.db.commit()
+                await self.db.commit()
                 return True
 
             return False
@@ -587,9 +622,10 @@ class EmailSenderService:
     async def mark_replied(self, email_log_id: str) -> bool:
         """회신 마킹"""
         try:
-            email_log = self.db.query(EmailLog).filter(
-                EmailLog.id == email_log_id
-            ).first()
+            result = await self.db.execute(
+                select(EmailLog).where(EmailLog.id == email_log_id)
+            )
+            email_log = result.scalar_one_or_none()
 
             if email_log:
                 email_log.status = EmailStatus.REPLIED
@@ -597,22 +633,24 @@ class EmailSenderService:
 
                 # 블로그 상태 업데이트
                 if email_log.blog_id:
-                    blog = self.db.query(NaverBlog).filter(
-                        NaverBlog.id == email_log.blog_id
-                    ).first()
+                    blog_result = await self.db.execute(
+                        select(NaverBlog).where(NaverBlog.id == email_log.blog_id)
+                    )
+                    blog = blog_result.scalar_one_or_none()
                     if blog:
                         blog.status = BlogStatus.RESPONDED
                         blog.updated_at = datetime.utcnow()
 
                 # 캠페인 통계 업데이트
                 if email_log.campaign_id:
-                    campaign = self.db.query(EmailCampaign).filter(
-                        EmailCampaign.id == email_log.campaign_id
-                    ).first()
+                    campaign_result = await self.db.execute(
+                        select(EmailCampaign).where(EmailCampaign.id == email_log.campaign_id)
+                    )
+                    campaign = campaign_result.scalar_one_or_none()
                     if campaign:
                         campaign.total_replied = (campaign.total_replied or 0) + 1
 
-                self.db.commit()
+                await self.db.commit()
                 return True
 
             return False
@@ -623,14 +661,17 @@ class EmailSenderService:
 
     async def get_sending_stats(self, user_id: str) -> Dict[str, Any]:
         """발송 통계"""
-        settings = self._get_outreach_settings(user_id)
+        settings = await self._get_outreach_settings(user_id)
 
         # 오늘 통계
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-        today_logs = self.db.query(EmailLog).filter(
-            EmailLog.user_id == user_id,
-            EmailLog.created_at >= today_start
-        ).all()
+        today_result = await self.db.execute(
+            select(EmailLog).where(and_(
+                EmailLog.user_id == user_id,
+                EmailLog.created_at >= today_start
+            ))
+        )
+        today_logs = today_result.scalars().all()
 
         today_stats = {
             "sent": 0,
@@ -658,9 +699,10 @@ class EmailSenderService:
                 today_stats["bounced"] += 1
 
         # 전체 통계
-        all_logs = self.db.query(EmailLog).filter(
-            EmailLog.user_id == user_id
-        ).all()
+        all_result = await self.db.execute(
+            select(EmailLog).where(EmailLog.user_id == user_id)
+        )
+        all_logs = all_result.scalars().all()
 
         total_stats = {
             "total": len(all_logs),
@@ -685,7 +727,7 @@ class EmailSenderService:
             "today": today_stats,
             "total": total_stats,
             "limits": {
-                "daily": self._check_daily_limit(user_id),
-                "hourly": self._check_hourly_limit(user_id)
+                "daily": await self._check_daily_limit(user_id),
+                "hourly": await self._check_hourly_limit(user_id)
             }
         }

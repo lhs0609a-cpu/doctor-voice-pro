@@ -10,7 +10,17 @@ from urllib.parse import quote, urljoin
 
 import aiohttp
 from bs4 import BeautifulSoup
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page
+
+# Playwright는 선택적으로 로드 (서버 환경에서는 설치되지 않을 수 있음)
+try:
+    from playwright.async_api import async_playwright, Browser, BrowserContext, Page
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+    async_playwright = None
+    Browser = None
+    BrowserContext = None
+    Page = None
 
 from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,20 +53,27 @@ class BlogOutreachCrawler:
 
     async def initialize(self):
         """브라우저 초기화"""
+        if not PLAYWRIGHT_AVAILABLE:
+            logger.warning("Playwright가 설치되지 않았습니다. HTTP 기반 크롤링만 사용 가능합니다.")
+            return
+
         if self._browser:
             return
 
-        playwright = await async_playwright().start()
-        self._browser = await playwright.chromium.launch(
-            headless=self.headless,
-            args=['--no-sandbox', '--disable-dev-shm-usage']
-        )
-        self._context = await self._browser.new_context(
-            viewport={'width': 1920, 'height': 1080},
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        )
-        self._page = await self._context.new_page()
-        logger.info("블로그 아웃리치 크롤러 초기화 완료")
+        try:
+            playwright = await async_playwright().start()
+            self._browser = await playwright.chromium.launch(
+                headless=self.headless,
+                args=['--no-sandbox', '--disable-dev-shm-usage']
+            )
+            self._context = await self._browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            )
+            self._page = await self._context.new_page()
+            logger.info("블로그 아웃리치 크롤러 초기화 완료")
+        except Exception as e:
+            logger.warning(f"Playwright 브라우저 초기화 실패: {e}. HTTP 기반 크롤링만 사용 가능합니다.")
 
     async def close(self):
         """브라우저 종료"""

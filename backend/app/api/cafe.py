@@ -2,7 +2,7 @@
 카페 바이럴 자동화 API 엔드포인트
 """
 
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional, List
 from uuid import UUID
 
@@ -26,7 +26,7 @@ from app.services.cafe_poster import cafe_poster_manager, CafePosterService
 from app.services.account_manager import account_manager
 from app.models.viral_common import NaverAccount, AccountStatus
 
-router = APIRouter(prefix="/cafe", tags=["cafe"])
+router = APIRouter(tags=["cafe"])
 
 
 # ============= Schemas =============
