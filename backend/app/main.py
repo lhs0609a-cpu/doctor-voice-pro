@@ -17,13 +17,44 @@ async def lifespan(app: FastAPI):
     try:
         from app.db.database import engine, Base
         # 모든 모델 임포트하여 테이블 메타데이터 등록
-        from app.models import User, APIKey, AIUsage
+        from app.models import (
+            User, APIKey, AIUsage,
+            # 구독 관련 모델
+            Plan, Subscription, UsageLog, UsageSummary,
+            Payment, CreditTransaction, UserCredit,
+        )
 
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         print("[OK] Database tables created/verified")
     except Exception as e:
         print(f"[ERROR] Failed to create database tables: {e}")
+
+    # 1.5. 데이터베이스 마이그레이션 (새 컬럼 추가)
+    try:
+        from app.db.database import engine
+        from sqlalchemy import text
+
+        migrations = [
+            "ALTER TABLE users ADD COLUMN has_unlimited_posts BOOLEAN DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN unlimited_granted_at DATETIME",
+            "ALTER TABLE users ADD COLUMN unlimited_granted_by VARCHAR(255)",
+        ]
+
+        async with engine.begin() as conn:
+            for migration in migrations:
+                try:
+                    await conn.execute(text(migration))
+                    print(f"[OK] Migration: {migration[:50]}...")
+                except Exception as e:
+                    # 이미 컬럼이 존재하면 무시
+                    if "duplicate column" in str(e).lower() or "already exists" in str(e).lower():
+                        pass
+                    else:
+                        print(f"[SKIP] Migration skipped: {str(e)[:50]}")
+        print("[OK] Database migrations completed")
+    except Exception as e:
+        print(f"[WARNING] Migration error (may be normal): {e}")
 
     # 2. 기본 계정들 자동 생성
     try:
