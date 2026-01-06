@@ -430,6 +430,28 @@ export default function AdminPage() {
     }
   }
 
+  const handleUnlimitedAccess = async (userId: string, grant: boolean, userEmail: string) => {
+    const action = grant ? '부여' : '해제'
+    const reason = grant ? prompt(`무제한 권한 ${action} 사유를 입력하세요:`) : null
+
+    if (grant && reason === null) return // 취소됨
+
+    if (!confirm(`${userEmail}에게 글 무제한 권한을 ${action}하시겠습니까?`)) return
+
+    try {
+      await adminAPI.grantUnlimitedAccess({
+        user_id: userId,
+        grant,
+        reason: reason || undefined
+      })
+      alert(`글 무제한 권한이 ${action}되었습니다`)
+      loadUsers()
+    } catch (error: any) {
+      console.error('무제한 권한 처리 실패:', error)
+      alert(error.response?.data?.detail || '무제한 권한 처리 중 오류가 발생했습니다')
+    }
+  }
+
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return '-'
     return new Date(dateStr).toLocaleString('ko-KR')
@@ -1023,6 +1045,7 @@ export default function AdminPage() {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">병원명</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">전문과목</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">승인 상태</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">글 무제한</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">사용 종료일</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">가입일</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">작업</th>
@@ -1048,6 +1071,32 @@ export default function AdminPage() {
                         <span className="px-2 py-1 text-xs rounded-full bg-yellow-100 text-yellow-800">
                           대기 중
                         </span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 text-sm">
+                      {user.has_unlimited_posts ? (
+                        <div className="flex flex-col gap-1">
+                          <span className="px-2 py-1 text-xs rounded-full bg-indigo-100 text-indigo-800 inline-block w-fit">
+                            무제한
+                          </span>
+                          {!user.is_admin && (
+                            <button
+                              onClick={() => handleUnlimitedAccess(user.id, false, user.email)}
+                              className="text-xs text-red-600 hover:text-red-800"
+                            >
+                              해제
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        !user.is_admin && (
+                          <button
+                            onClick={() => handleUnlimitedAccess(user.id, true, user.email)}
+                            className="px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                          >
+                            부여
+                          </button>
+                        )
                       )}
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-900">

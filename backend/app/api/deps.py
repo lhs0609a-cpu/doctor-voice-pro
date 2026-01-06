@@ -229,6 +229,12 @@ async def check_usage_limit(
     Returns:
         (can_use, summary, plan) - 사용 가능 여부, 사용량 요약, 플랜 정보
     """
+    # 관리자 부여 무제한 권한 체크 (글 생성에만 적용)
+    if usage_type == UsageType.POST_GENERATION and getattr(user, 'has_unlimited_posts', False):
+        subscription, plan = await get_user_subscription(user, db)
+        summary = await get_or_create_usage_summary(user, subscription, plan, db)
+        return True, summary, plan
+
     subscription, plan = await get_user_subscription(user, db)
     summary = await get_or_create_usage_summary(user, subscription, plan, db)
 

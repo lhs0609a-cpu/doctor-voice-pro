@@ -9,6 +9,9 @@ export interface User {
   is_active: boolean
   is_approved: boolean
   is_admin: boolean
+  has_unlimited_posts?: boolean
+  unlimited_granted_at?: string | null
+  unlimited_granted_by?: string | null
   subscription_start_date: string | null
   subscription_end_date: string | null
   created_at: string

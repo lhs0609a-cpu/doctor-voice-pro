@@ -462,3 +462,105 @@ async def get_all_api_keys_status(
             }
 
     return statuses
+
+
+# ==================== 사용자 무제한 권한 관리 ====================
+
+class UnlimitedAccessRequest(BaseModel):
+    user_id: str
+    grant: bool  # True: 부여, False: 해제
+    reason: Optional[str] = None
+
+
+class UnlimitedAccessResponse(BaseModel):
+    user_id: str
+    email: str
+    name: Optional[str]
+    has_unlimited_posts: bool
+    unlimited_granted_at: Optional[datetime]
+    unlimited_granted_by: Optional[str]
+    message: str
+
+
+@router.post("/users/unlimited-access", response_model=UnlimitedAccessResponse)
+async def manage_unlimited_access(
+    request: UnlimitedAccessRequest,
+    db: AsyncSession = Depends(get_db),
+    admin_user: User = Depends(get_current_admin_user)
+):
+    """
+    사용자에게 글 무제한 권한 부여/해제 (관리자 전용)
+
+    - **user_id**: 대상 사용자 ID
+    - **grant**: True면 부여, False면 해제
+    - **reason**: 부여/해제 사유 (선택)
+    """
+    try:
+        user_uuid = UUID(request.user_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="유효하지 않은 사용자 ID입니다"
+        )
+
+    result = await db.execute(select(User).where(User.id == user_uuid))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="사용자를 찾을 수 없습니다"
+        )
+
+    if request.grant:
+        user.has_unlimited_posts = True
+        user.unlimited_granted_at = datetime.utcnow()
+        user.unlimited_granted_by = f"{admin_user.email} ({request.reason or '사유 없음'})"
+        message = f"'{user.email}'에게 글 무제한 권한이 부여되었습니다"
+    else:
+        user.has_unlimited_posts = False
+        user.unlimited_granted_at = None
+        user.unlimited_granted_by = None
+        message = f"'{user.email}'의 글 무제한 권한이 해제되었습니다"
+
+    await db.commit()
+    await db.refresh(user)
+
+    return UnlimitedAccessResponse(
+        user_id=str(user.id),
+        email=user.email,
+        name=user.name,
+        has_unlimited_posts=user.has_unlimited_posts,
+        unlimited_granted_at=user.unlimited_granted_at,
+        unlimited_granted_by=user.unlimited_granted_by,
+        message=message
+    )
+
+
+@router.get("/users/unlimited-access", response_model=List[UnlimitedAccessResponse])
+async def get_unlimited_users(
+    db: AsyncSession = Depends(get_db),
+    admin_user: User = Depends(get_current_admin_user)
+):
+    """
+    무제한 권한을 가진 사용자 목록 조회 (관리자 전용)
+    """
+    result = await db.execute(
+        select(User)
+        .where(User.has_unlimited_posts == True)
+        .order_by(User.unlimited_granted_at.desc())
+    )
+    users = result.scalars().all()
+
+    return [
+        UnlimitedAccessResponse(
+            user_id=str(user.id),
+            email=user.email,
+            name=user.name,
+            has_unlimited_posts=user.has_unlimited_posts,
+            unlimited_granted_at=user.unlimited_granted_at,
+            unlimited_granted_by=user.unlimited_granted_by,
+            message="무제한 권한 보유"
+        )
+        for user in users
+    ]

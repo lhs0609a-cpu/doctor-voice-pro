@@ -114,6 +114,106 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[WARNING] Error creating default accounts: {e}")
 
+    # 3. 기본 구독 플랜 생성
+    try:
+        from app.db.database import get_db
+        from app.models.subscription import Plan
+        from sqlalchemy import select
+
+        # 플랜 정의 (스크린샷 기준)
+        DEFAULT_PLANS = [
+            {
+                "id": "free",
+                "name": "Free",
+                "description": "서비스를 체험해보세요",
+                "price_monthly": 0,
+                "price_yearly": 0,
+                "posts_per_month": 3,
+                "analysis_per_month": 10,
+                "keywords_per_month": 20,
+                "has_api_access": False,
+                "has_priority_support": False,
+                "has_advanced_analytics": False,
+                "has_team_features": False,
+                "extra_post_price": 1000,
+                "extra_analysis_price": 200,
+                "sort_order": 0,
+            },
+            {
+                "id": "starter",
+                "name": "Starter",
+                "description": "본격적인 블로그 운영",
+                "price_monthly": 29000,
+                "price_yearly": 290000,
+                "posts_per_month": 30,
+                "analysis_per_month": 100,
+                "keywords_per_month": 200,
+                "has_api_access": False,
+                "has_priority_support": False,
+                "has_advanced_analytics": False,
+                "has_team_features": False,
+                "extra_post_price": 800,
+                "extra_analysis_price": 150,
+                "sort_order": 1,
+            },
+            {
+                "id": "pro",
+                "name": "Pro",
+                "description": "전문 마케터를 위한 플랜",
+                "price_monthly": 79000,
+                "price_yearly": 790000,
+                "posts_per_month": -1,  # 무제한
+                "analysis_per_month": -1,  # 무제한
+                "keywords_per_month": -1,  # 무제한
+                "has_api_access": False,
+                "has_priority_support": True,
+                "has_advanced_analytics": True,
+                "has_team_features": False,
+                "extra_post_price": 0,
+                "extra_analysis_price": 0,
+                "sort_order": 2,
+            },
+            {
+                "id": "business",
+                "name": "Business",
+                "description": "팀과 기업을 위한 플랜",
+                "price_monthly": 199000,
+                "price_yearly": 1990000,
+                "posts_per_month": -1,  # 무제한
+                "analysis_per_month": -1,  # 무제한
+                "keywords_per_month": -1,  # 무제한
+                "has_api_access": True,
+                "has_priority_support": True,
+                "has_advanced_analytics": True,
+                "has_team_features": True,
+                "extra_post_price": 0,
+                "extra_analysis_price": 0,
+                "sort_order": 3,
+            },
+        ]
+
+        async for db in get_db():
+            for plan_data in DEFAULT_PLANS:
+                result = await db.execute(
+                    select(Plan).where(Plan.id == plan_data["id"])
+                )
+                existing_plan = result.scalar_one_or_none()
+
+                if not existing_plan:
+                    new_plan = Plan(**plan_data)
+                    db.add(new_plan)
+                    await db.commit()
+                    print(f"[OK] Plan created: {plan_data['name']}")
+                else:
+                    # 기존 플랜 업데이트
+                    for key, value in plan_data.items():
+                        setattr(existing_plan, key, value)
+                    await db.commit()
+                    print(f"[OK] Plan updated: {plan_data['name']}")
+            break
+    except Exception as e:
+        print(f"[WARNING] Error creating default plans: {e}")
+
     yield
 
     # 애플리케이션 종료 시 실행

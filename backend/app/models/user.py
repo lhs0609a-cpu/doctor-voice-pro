@@ -54,6 +54,9 @@ class User(Base):
     is_verified = Column(Boolean, default=False)
     is_approved = Column(Boolean, default=False)  # 관리자 승인 여부
     is_admin = Column(Boolean, default=False)  # 관리자 여부
+    has_unlimited_posts = Column(Boolean, default=False)  # 글 무제한 권한 (관리자 부여)
+    unlimited_granted_at = Column(DateTime, nullable=True)  # 무제한 권한 부여 시간
+    unlimited_granted_by = Column(String(255), nullable=True)  # 권한 부여한 관리자
     subscription_start_date = Column(DateTime, nullable=True)  # 사용 시작일
     subscription_end_date = Column(DateTime, nullable=True)  # 사용 종료일
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

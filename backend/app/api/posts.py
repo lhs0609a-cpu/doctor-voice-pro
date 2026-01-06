@@ -21,7 +21,8 @@ from app.schemas.post import (
     RewriteRequest,
 )
 from app.models import User, Post, PostVersion
-from app.api.deps import get_current_user
+from app.models.subscription import UsageType
+from app.api.deps import get_current_user, require_usage_check, record_usage
 from app.services.post_service import post_service
 from app.api.websocket import get_connection_manager
 
@@ -33,6 +34,7 @@ async def create_post(
     post_data: PostCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    _: None = Depends(require_usage_check(UsageType.POST_GENERATION)),
 ):
     """
     새로운 포스팅 생성
@@ -92,6 +94,16 @@ async def create_post(
                 seo_optimization=seo_optimization_dict,
                 top_post_rules=top_post_rules_dict,
                 websocket_manager=ws_manager,
+            )
+
+            # 사용량 기록
+            await record_usage(
+                user=current_user,
+                db=db,
+                usage_type=UsageType.POST_GENERATION,
+                quantity=1,
+                resource_id=str(post.id),
+                resource_type="post"
             )
 
             return post

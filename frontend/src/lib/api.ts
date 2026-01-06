@@ -288,6 +288,17 @@ export const adminAPI = {
     const response = await api.get<Record<string, APIKeyStatus>>('/api/v1/admin/api-keys/status')
     return response.data
   },
+
+  // 무제한 권한 관리
+  grantUnlimitedAccess: async (data: { user_id: string; grant: boolean; reason?: string }): Promise<User> => {
+    const response = await api.post<User>('/api/v1/admin/users/unlimited-access', data)
+    return response.data
+  },
+
+  getUnlimitedUsers: async (): Promise<User[]> => {
+    const response = await api.get<User[]>('/api/v1/admin/users/unlimited-access')
+    return response.data
+  },
 }
 
 // Naver Blog API

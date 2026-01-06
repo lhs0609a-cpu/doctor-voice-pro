@@ -225,7 +225,9 @@
       "Bash(__NEW_LINE__ echo -e \"\\\\n\\\\n=== 11. Reports ===\")",
       "Bash(__NEW_LINE__ echo -e \"\\\\n\\\\n=== 12. Public Leads Regions ===\")",
       "Bash(__NEW_LINE__ echo -e \"\\\\n\\\\n=== Knowledge Dashboard ===\")",
-      "Bash(\"C:\\\\Users\\\\lhs06\\\\.fly\\\\bin\\\\flyctl.exe\" logs -a doctor-voice-pro-backend --limit 50)"
+      "Bash(\"C:\\\\Users\\\\lhs06\\\\.fly\\\\bin\\\\flyctl.exe\" logs -a doctor-voice-pro-backend --limit 50)",
+      "Bash(\"C:\\\\Users\\\\u\\\\.fly\\\\bin\\\\flyctl.exe\" deploy -a doctor-voice-pro-backend --config \"G:\\\\내 드라이브\\\\developer\\\\doctor-voice-pro\\\\backend\\\\fly.toml\")",
+      "Bash(\"C:\\\\Users\\\\u\\\\.fly\\\\bin\\\\flyctl.exe\" logs -a doctor-voice-pro-backend --no-tail)"
     ],
     "deny": [],
     "ask": []
