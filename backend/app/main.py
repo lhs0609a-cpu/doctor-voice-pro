@@ -23,6 +23,13 @@ async def lifespan(app: FastAPI):
             Plan, Subscription, UsageLog, UsageSummary,
             Payment, CreditTransaction, UserCredit,
         )
+        # 블로그 아웃리치 모델
+        from app.models.blog_outreach import (
+            NaverBlog, BlogContact, EmailTemplate, EmailCampaign,
+            EmailLog, BlogSearchKeyword, OutreachSetting, OutreachStats
+        )
+        # 공공데이터 리드 모델
+        from app.models.public_leads import PublicLeadDB
 
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)

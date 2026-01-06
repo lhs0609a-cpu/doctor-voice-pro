@@ -1,8 +1,12 @@
 """공공데이터 기반 리드 수집 모델"""
+import uuid
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel
 from enum import Enum
+from sqlalchemy import Column, String, Text, Integer, Float, Boolean, DateTime, JSON, Enum as SQLEnum
+from sqlalchemy.orm import relationship
+from app.db.database import Base
 
 
 class BusinessCategory(str, Enum):
@@ -33,6 +37,82 @@ class LeadStatus(str, Enum):
     CONVERTED = "converted"
 
 
+# ============ SQLAlchemy Model ============
+class PublicLeadDB(Base):
+    """공공데이터 기반 리드 (DB 모델)"""
+    __tablename__ = "public_leads"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), nullable=False, index=True)
+
+    # 기본 정보
+    business_name = Column(String(200), nullable=False)
+    category = Column(String(100))
+    sub_category = Column(String(100))
+
+    # 위치 정보
+    address = Column(Text)
+    road_address = Column(Text)
+    sido = Column(String(50), index=True)
+    sigungu = Column(String(50), index=True)
+    dong = Column(String(50))
+
+    # 연락처 정보
+    phone = Column(String(50))
+    email = Column(String(200))
+    website = Column(String(500))
+
+    # 사업자 정보
+    business_number = Column(String(50))
+    owner_name = Column(String(100))
+    open_date = Column(String(50))
+
+    # 상태 및 메타
+    status = Column(String(20), default="new", index=True)
+    score = Column(Integer, default=0)
+    notes = Column(Text)
+    tags = Column(JSON, default=[])
+
+    # 수집 정보
+    source = Column(String(100), default="public_data")
+    collected_at = Column(DateTime)
+    last_contacted_at = Column(DateTime)
+
+    # 타임스탬프
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "business_name": self.business_name,
+            "category": self.category,
+            "sub_category": self.sub_category,
+            "address": self.address,
+            "road_address": self.road_address,
+            "sido": self.sido,
+            "sigungu": self.sigungu,
+            "dong": self.dong,
+            "phone": self.phone,
+            "email": self.email,
+            "website": self.website,
+            "business_number": self.business_number,
+            "owner_name": self.owner_name,
+            "open_date": self.open_date,
+            "status": self.status,
+            "score": self.score,
+            "notes": self.notes,
+            "tags": self.tags or [],
+            "source": self.source,
+            "collected_at": self.collected_at.isoformat() if self.collected_at else None,
+            "last_contacted_at": self.last_contacted_at.isoformat() if self.last_contacted_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+# ============ Pydantic Models ============
 class PublicLead(BaseModel):
     """공공데이터 기반 리드"""
     id: Optional[str] = None
