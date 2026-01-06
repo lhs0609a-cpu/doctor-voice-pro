@@ -422,9 +422,12 @@ class LeadScoringService:
 
     async def get_scoring_stats(self, user_id: str) -> Dict[str, Any]:
         """스코어링 통계"""
-        blogs = self.db.query(NaverBlog).filter(
-            NaverBlog.user_id == user_id
-        ).all()
+        from sqlalchemy import select
+
+        # 비동기 쿼리로 수정
+        stmt = select(NaverBlog).where(NaverBlog.user_id == user_id)
+        result = await self.db.execute(stmt)
+        blogs = result.scalars().all()
 
         stats = {
             "total_blogs": len(blogs),
@@ -456,7 +459,9 @@ class LeadScoringService:
                 total_relevance += blog.relevance_score or 0
 
                 if blog.lead_grade:
-                    stats["grades"][blog.lead_grade.value] += 1
+                    grade_val = blog.lead_grade.value if hasattr(blog.lead_grade, 'value') else blog.lead_grade
+                    if grade_val in stats["grades"]:
+                        stats["grades"][grade_val] += 1
             else:
                 stats["unscored_blogs"] += 1
 
@@ -467,7 +472,7 @@ class LeadScoringService:
                 stats["influencers"] += 1
 
             # 카테고리별 통계
-            cat = blog.category.value if blog.category else "other"
+            cat = blog.category.value if blog.category and hasattr(blog.category, 'value') else (blog.category or "other")
             if cat not in stats["categories"]:
                 stats["categories"][cat] = 0
             stats["categories"][cat] += 1
