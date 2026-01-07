@@ -615,12 +615,12 @@ export default function OutreachPage() {
                     onChange={(e) => setSearchKeyword(e.target.value)}
                     className="rounded-xl border-gray-200 bg-white"
                   />
-                  <Select value={searchCategory} onValueChange={setSearchCategory}>
+                  <Select value={searchCategory || 'all'} onValueChange={(v) => setSearchCategory(v === 'all' ? '' : v)}>
                     <SelectTrigger className="w-36 rounded-xl border-gray-200 bg-white">
                       <SelectValue placeholder="카테고리" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">전체</SelectItem>
+                      <SelectItem value="all">전체</SelectItem>
                       {BLOG_CATEGORIES.map(cat => (
                         <SelectItem key={cat.value} value={cat.value}>
                           <span className="flex items-center gap-2">
@@ -779,16 +779,16 @@ export default function OutreachPage() {
             <div className="flex flex-wrap items-center gap-3 p-4 bg-gray-50 rounded-2xl">
               <Filter className="w-4 h-4 text-gray-400" />
               {[
-                { value: blogFilter.category, setter: (v: string) => setBlogFilter({...blogFilter, category: v}), placeholder: '카테고리', options: BLOG_CATEGORIES.map(c => ({ value: c.value, label: `${c.icon} ${c.label}` })) },
-                { value: blogFilter.grade, setter: (v: string) => setBlogFilter({...blogFilter, grade: v}), placeholder: '등급', options: LEAD_GRADES.map(g => ({ value: g.value, label: g.label })) },
-                { value: blogFilter.status, setter: (v: string) => setBlogFilter({...blogFilter, status: v}), placeholder: '상태', options: BLOG_STATUSES.map(s => ({ value: s.value, label: s.label })) },
+                { value: blogFilter.category, setter: (v: string) => setBlogFilter({...blogFilter, category: v === 'all' ? '' : v}), placeholder: '카테고리', options: BLOG_CATEGORIES.map(c => ({ value: c.value, label: `${c.icon} ${c.label}` })) },
+                { value: blogFilter.grade, setter: (v: string) => setBlogFilter({...blogFilter, grade: v === 'all' ? '' : v}), placeholder: '등급', options: LEAD_GRADES.map(g => ({ value: g.value, label: g.label })) },
+                { value: blogFilter.status, setter: (v: string) => setBlogFilter({...blogFilter, status: v === 'all' ? '' : v}), placeholder: '상태', options: BLOG_STATUSES.map(s => ({ value: s.value, label: s.label })) },
               ].map((filter, i) => (
-                <Select key={i} value={filter.value} onValueChange={filter.setter}>
+                <Select key={i} value={filter.value || 'all'} onValueChange={filter.setter}>
                   <SelectTrigger className="w-32 rounded-xl border-gray-200 bg-white text-sm">
                     <SelectValue placeholder={filter.placeholder} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">전체</SelectItem>
+                    <SelectItem value="all">전체</SelectItem>
                     {filter.options.map(opt => (
                       <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
                     ))}
@@ -796,17 +796,17 @@ export default function OutreachPage() {
                 </Select>
               ))}
               <Select
-                value={blogFilter.has_contact?.toString() || ''}
+                value={blogFilter.has_contact === undefined ? 'all' : blogFilter.has_contact.toString()}
                 onValueChange={(v) => setBlogFilter({
                   ...blogFilter,
-                  has_contact: v === '' ? undefined : v === 'true'
+                  has_contact: v === 'all' ? undefined : v === 'true'
                 })}
               >
                 <SelectTrigger className="w-32 rounded-xl border-gray-200 bg-white text-sm">
                   <SelectValue placeholder="연락처" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">전체</SelectItem>
+                  <SelectItem value="all">전체</SelectItem>
                   <SelectItem value="true">있음</SelectItem>
                   <SelectItem value="false">없음</SelectItem>
                 </SelectContent>
