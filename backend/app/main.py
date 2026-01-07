@@ -3,11 +3,13 @@ FastAPI Main Application
 닥터보이스 프로 백엔드
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.api import api_router
 from contextlib import asynccontextmanager
+import traceback
 
 
 @asynccontextmanager
@@ -43,9 +45,19 @@ async def lifespan(app: FastAPI):
         from sqlalchemy import text
 
         migrations = [
+            # User 테이블 마이그레이션
             "ALTER TABLE users ADD COLUMN has_unlimited_posts BOOLEAN DEFAULT 0",
             "ALTER TABLE users ADD COLUMN unlimited_granted_at DATETIME",
             "ALTER TABLE users ADD COLUMN unlimited_granted_by VARCHAR(255)",
+            # Subscriptions 테이블 마이그레이션
+            "ALTER TABLE subscriptions ADD COLUMN customer_key VARCHAR(255)",
+            "ALTER TABLE subscriptions ADD COLUMN card_company VARCHAR(50)",
+            "ALTER TABLE subscriptions ADD COLUMN card_number_last4 VARCHAR(4)",
+            "ALTER TABLE subscriptions ADD COLUMN retry_count INTEGER DEFAULT 0",
+            "ALTER TABLE subscriptions ADD COLUMN last_retry_at DATETIME",
+            "ALTER TABLE subscriptions ADD COLUMN renewal_notice_sent BOOLEAN DEFAULT 0",
+            "ALTER TABLE subscriptions ADD COLUMN renewal_notice_sent_at DATETIME",
+            "ALTER TABLE subscriptions ADD COLUMN extra_data TEXT",
         ]
 
         async with engine.begin() as conn:
@@ -280,6 +292,25 @@ app.add_middleware(
 
 # API 라우터 등록
 app.include_router(api_router, prefix="/api/v1")
+
+
+# 전역 예외 핸들러 - 500 오류에도 CORS 헤더 포함
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """모든 예외를 처리하고 CORS 헤더를 포함한 응답 반환"""
+    error_detail = str(exc)
+    print(f"[ERROR] Unhandled exception: {error_detail}")
+    print(f"[ERROR] Traceback: {traceback.format_exc()}")
+
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error", "error": error_detail},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
 
 
 @app.get("/")
