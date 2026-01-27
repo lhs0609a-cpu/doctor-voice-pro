@@ -3938,4 +3938,76 @@ export const publicLeadsAPI = {
   },
 }
 
+// ==================== Industry API (업종 설정) ====================
+
+export interface Industry {
+  value: string
+  name: string
+  name_en: string
+  icon: string
+  business_name_label: string
+  specialty_label: string
+  specialty_options: string[]
+  sample_topics: string[]
+}
+
+export interface IndustryConfig {
+  industry_type: string
+  name: string
+  name_en: string
+  icon: string
+  business_name_label: string
+  specialty_label: string
+  specialty_options: string[]
+  tone: string
+  cta_options: string[]
+  keywords_hint: string
+  compliance_warning: string
+  ai_system_prompt: string
+  sample_topics: string[]
+}
+
+export interface MyIndustry {
+  industry_type: string
+  business_name: string | null
+  specialty: string | null
+  config: IndustryConfig
+}
+
+export const industryAPI = {
+  // 모든 업종 목록 조회
+  getAll: async (): Promise<{ industries: Industry[] }> => {
+    const response = await api.get('/api/v1/profiles/industries')
+    return response.data
+  },
+
+  // 특정 업종 상세 설정 조회
+  getDetail: async (industryType: string): Promise<IndustryConfig> => {
+    const response = await api.get(`/api/v1/profiles/industries/${industryType}`)
+    return response.data
+  },
+
+  // 내 업종 설정 조회
+  getMyIndustry: async (): Promise<MyIndustry> => {
+    const response = await api.get('/api/v1/profiles/me/industry')
+    return response.data
+  },
+
+  // 내 업종 설정 업데이트
+  updateMyIndustry: async (data: {
+    industry_type: string
+    business_name?: string
+    specialty?: string
+  }): Promise<{
+    success: boolean
+    industry_type: string
+    business_name: string | null
+    specialty: string | null
+    config: IndustryConfig
+  }> => {
+    const response = await api.put('/api/v1/profiles/me/industry', data)
+    return response.data
+  },
+}
+
 export default api

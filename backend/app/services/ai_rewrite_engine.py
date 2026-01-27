@@ -1,5 +1,6 @@
 """
-AI Rewrite Engine - OpenAI GPT, Anthropic Claude, Google Gemini API를 사용한 의료 콘텐츠 각색
+AI Rewrite Engine - OpenAI GPT, Anthropic Claude, Google Gemini API를 사용한 콘텐츠 각색
+다양한 업종(의료, 법률, 음식점, 뷰티, 피트니스, 교육, 부동산 등) 지원
 """
 
 from openai import OpenAI
@@ -8,6 +9,8 @@ import httpx
 import re
 from typing import Dict, Optional, List
 from app.core.config import settings
+from app.models.user import IndustryType
+from app.services.industry_config import get_industry_config, get_industry_ai_prompt
 
 # Gemini SDK 임포트 (설치되어 있는 경우)
 try:
@@ -111,14 +114,21 @@ class AIRewriteEngine:
         target_length: int = 1500,
         seo_optimization: Optional[Dict] = None,
         top_post_rules: Optional[Dict] = None,
+        industry_type: IndustryType = IndustryType.MEDICAL,
     ) -> str:
         """
-        의사 프로필 기반 시스템 프롬프트 생성
+        프로필 기반 시스템 프롬프트 생성 (업종별 최적화)
         """
+        # 업종별 설정 가져오기
+        industry_config = get_industry_config(industry_type)
+        industry_name = industry_config.get("name", "전문")
+        industry_tone = industry_config.get("tone", "전문적이고 신뢰감 있는")
+        compliance_warning = industry_config.get("compliance_warning", "")
+
         # custom_writing_style이 제공되면 우선 사용, 없으면 doctor_profile에서 가져옴
         writing_style = custom_writing_style if custom_writing_style else doctor_profile.get("writing_style", {})
         signature_phrases = doctor_profile.get("signature_phrases", [])
-        specialty = doctor_profile.get("specialty", "의료")
+        specialty = doctor_profile.get("specialty", industry_name)
 
         # 스타일 강도를 텍스트로 변환
         formality_text = self._get_style_text(
@@ -159,27 +169,8 @@ class AIRewriteEngine:
         if signature_phrases:
             signature_phrase_text = f"\n자주 사용하는 표현: {', '.join(signature_phrases[:3])}"
 
-        # 시점별 작성 가이드
-        perspective_guide = {
-            "1인칭": """
-작성 시점: 1인칭 (저, 제가, 우리 병원)
-- "제 경험상", "저는 ~라고 생각합니다", "진료하면서 느낀 점은" 같은 표현 사용
-- 원장님이 직접 환자에게 이야기하는 느낌으로 작성
-- 예: "진료실에서 환자분들을 만나다 보면...", "제가 항상 강조하는 것은..."
-""",
-            "3인칭": """
-작성 시점: 3인칭 객관적 관점
-- "의사들은", "전문가들은", "연구에 따르면" 같은 표현 사용
-- 객관적이고 전문적인 정보 전달에 초점
-- 예: "전문의들은 이 증상을 ~라고 설명한다", "최근 연구 결과에 따르면..."
-""",
-            "대화형": """
-작성 시점: 직접 대화하는 느낌 (2인칭 활용)
-- "여러분", "~하셨나요?", "~해보세요" 같은 직접 대화 표현 사용
-- 독자에게 직접 말을 거는 것처럼 친근하고 상호작용적으로 작성
-- 예: "혹시 아침에 일어났을 때 목이 칼칼하신가요?", "함께 알아볼까요?"
-"""
-        }
+        # 업종별 시점 작성 가이드 생성
+        perspective_guide = self._get_perspective_guide(industry_type, industry_config)
 
         # 요청사항 추가
         requirements_text = ""
@@ -357,7 +348,10 @@ class AIRewriteEngine:
             top_post_rules_text += "\n✅ 이 분석 결과를 참고하여 상위 노출에 최적화된 글을 작성하세요.\n"
             top_post_rules_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
 
-        system_prompt = f"""당신은 {specialty} 전문의이며, 환자들과 소통하는 블로그를 직접 운영하는 원장입니다.
+        # 업종별 시스템 프롬프트 기본 문구 생성
+        intro_prompt = self._get_industry_intro_prompt(industry_type, industry_config, specialty)
+
+        system_prompt = f"""{intro_prompt}
 
 당신의 글쓰기 특징:
 - {formality_text}
@@ -444,6 +438,125 @@ class AIRewriteEngine:
             return f"{label}: {high_text}"
         else:
             return f"{label}: 적당한 수준"
+
+    def _get_industry_intro_prompt(self, industry_type: IndustryType, industry_config: Dict, specialty: str) -> str:
+        """
+        업종별 시스템 프롬프트 소개 문구 생성
+        """
+        industry_intros = {
+            IndustryType.MEDICAL: f"당신은 {specialty} 전문의이며, 환자들과 소통하는 블로그를 직접 운영하는 원장입니다.",
+            IndustryType.LEGAL: f"당신은 {specialty} 전문 변호사이며, 의뢰인들과 소통하는 블로그를 직접 운영하고 있습니다.",
+            IndustryType.RESTAURANT: f"당신은 {specialty} 전문점을 운영하는 대표이며, 손님들과 소통하는 블로그를 직접 운영하고 있습니다.",
+            IndustryType.BEAUTY: f"당신은 {specialty} 전문 뷰티샵을 운영하는 원장이며, 고객들과 소통하는 블로그를 직접 운영하고 있습니다.",
+            IndustryType.FITNESS: f"당신은 {specialty} 전문 센터를 운영하는 대표이며, 회원들과 소통하는 블로그를 직접 운영하고 있습니다.",
+            IndustryType.EDUCATION: f"당신은 {specialty} 전문 교육기관을 운영하는 원장이며, 학생/학부모와 소통하는 블로그를 직접 운영하고 있습니다.",
+            IndustryType.REALESTATE: f"당신은 {specialty} 전문 공인중개사이며, 고객들과 소통하는 블로그를 직접 운영하고 있습니다.",
+        }
+
+        return industry_intros.get(
+            industry_type,
+            f"당신은 {specialty} 분야의 전문가이며, 고객들과 소통하는 블로그를 직접 운영하고 있습니다."
+        )
+
+    def _get_perspective_guide(self, industry_type: IndustryType, industry_config: Dict) -> Dict[str, str]:
+        """
+        업종별 시점 작성 가이드 생성
+        """
+        industry_name = industry_config.get("name", "전문")
+        business_label = industry_config.get("business_name_label", "업체명")
+
+        # 업종별 맞춤 예시
+        industry_examples = {
+            IndustryType.MEDICAL: {
+                "1인칭_examples": '"진료실에서 환자분들을 만나다 보면...", "제가 항상 강조하는 것은..."',
+                "3인칭_examples": '"전문의들은 이 증상을 ~라고 설명한다", "최근 연구 결과에 따르면..."',
+                "대화형_examples": '"혹시 아침에 일어났을 때 목이 칼칼하신가요?", "함께 알아볼까요?"',
+                "owner_term": "원장님",
+                "customer_term": "환자",
+                "action_term": "진료하면서",
+            },
+            IndustryType.LEGAL: {
+                "1인칭_examples": '"제 경험상 이런 사건에서는...", "수많은 의뢰인을 만나며 느낀 점은..."',
+                "3인칭_examples": '"변호사들은 이런 상황을 ~라고 판단한다", "대법원 판례에 따르면..."',
+                "대화형_examples": '"혹시 비슷한 상황에 처해 계신가요?", "이런 경우는 어떨까요?"',
+                "owner_term": "변호사",
+                "customer_term": "의뢰인",
+                "action_term": "사건을 맡으면서",
+            },
+            IndustryType.RESTAURANT: {
+                "1인칭_examples": '"저희 식당에서 가장 인기 있는 메뉴는...", "제가 직접 고른 재료로..."',
+                "3인칭_examples": '"전문 셰프들은 이 요리를 ~하게 표현한다", "요리 전문가들에 따르면..."',
+                "대화형_examples": '"오늘 점심 뭐 드실지 고민이신가요?", "맛있는 식사 어떠세요?"',
+                "owner_term": "대표",
+                "customer_term": "손님",
+                "action_term": "가게를 운영하면서",
+            },
+            IndustryType.BEAUTY: {
+                "1인칭_examples": '"저희 샵에서 가장 많이 하시는 시술은...", "제가 추천드리는 스타일은..."',
+                "3인칭_examples": '"전문 디자이너들은 이 스타일을 ~라고 분석한다", "뷰티 트렌드에 따르면..."',
+                "대화형_examples": '"요즘 머리 스타일 고민이신가요?", "새로운 변화를 원하시나요?"',
+                "owner_term": "원장",
+                "customer_term": "고객",
+                "action_term": "시술하면서",
+            },
+            IndustryType.FITNESS: {
+                "1인칭_examples": '"제가 회원님들께 항상 말씀드리는 것은...", "트레이너로서 느낀 점은..."',
+                "3인칭_examples": '"피트니스 전문가들은 이 운동을 ~라고 설명한다", "연구 결과에 따르면..."',
+                "대화형_examples": '"오늘 운동 계획 세우셨나요?", "함께 건강해지실 준비 되셨나요?"',
+                "owner_term": "트레이너",
+                "customer_term": "회원",
+                "action_term": "지도하면서",
+            },
+            IndustryType.EDUCATION: {
+                "1인칭_examples": '"제가 학생들을 가르치면서 느낀 점은...", "우리 학원에서 강조하는 것은..."',
+                "3인칭_examples": '"교육 전문가들은 이 학습법을 ~라고 평가한다", "최신 교육 연구에 따르면..."',
+                "대화형_examples": '"공부하다 막히는 부분이 있으신가요?", "함께 성적을 올려볼까요?"',
+                "owner_term": "원장",
+                "customer_term": "학생/학부모",
+                "action_term": "가르치면서",
+            },
+            IndustryType.REALESTATE: {
+                "1인칭_examples": '"제가 이 지역을 오래 담당하면서 느낀 점은...", "중개사로서 말씀드리면..."',
+                "3인칭_examples": '"부동산 전문가들은 이 시세를 ~라고 분석한다", "시장 동향에 따르면..."',
+                "대화형_examples": '"어떤 집을 찾고 계신가요?", "이 매물 한번 살펴보실까요?"',
+                "owner_term": "공인중개사",
+                "customer_term": "고객",
+                "action_term": "중개하면서",
+            },
+        }
+
+        # 기본값 (OTHER 업종)
+        default_examples = {
+            "1인칭_examples": '"제 경험상...", "저희 업체에서는..."',
+            "3인칭_examples": '"전문가들은 ~라고 말한다", "업계에 따르면..."',
+            "대화형_examples": '"어떤 서비스를 찾고 계신가요?", "함께 알아볼까요?"',
+            "owner_term": "대표",
+            "customer_term": "고객",
+            "action_term": "운영하면서",
+        }
+
+        examples = industry_examples.get(industry_type, default_examples)
+
+        return {
+            "1인칭": f"""
+작성 시점: 1인칭 (저, 제가, 우리 {business_label.replace('명', '')})
+- "제 경험상", "저는 ~라고 생각합니다", "{examples['action_term']} 느낀 점은" 같은 표현 사용
+- {examples['owner_term']}이 직접 {examples['customer_term']}에게 이야기하는 느낌으로 작성
+- 예: {examples['1인칭_examples']}
+""",
+            "3인칭": f"""
+작성 시점: 3인칭 객관적 관점
+- "{industry_name} 전문가들은", "업계에서는", "연구에 따르면" 같은 표현 사용
+- 객관적이고 전문적인 정보 전달에 초점
+- 예: {examples['3인칭_examples']}
+""",
+            "대화형": f"""
+작성 시점: 직접 대화하는 느낌 (2인칭 활용)
+- "여러분", "~하셨나요?", "~해보세요" 같은 직접 대화 표현 사용
+- 독자에게 직접 말을 거는 것처럼 친근하고 상호작용적으로 작성
+- 예: {examples['대화형_examples']}
+"""
+        }
 
     def _build_user_prompt(
         self,
@@ -646,13 +759,14 @@ class AIRewriteEngine:
         ai_model: Optional[str] = None,
         seo_optimization: Optional[Dict] = None,
         top_post_rules: Optional[Dict] = None,
+        industry_type: IndustryType = IndustryType.MEDICAL,
     ) -> str:
         """
         콘텐츠 각색 실행
 
         Args:
-            original_content: 원본 의료 정보
-            doctor_profile: 의사 프로필 정보
+            original_content: 원본 정보 (의료, 법률, 자영업 등)
+            doctor_profile: 프로필 정보 (의사/변호사/자영업자 등)
             framework: 글쓰기 스타일 (관심유도형, 공감해결형, 스토리형, 질문답변형, 정보전달형, 경험공유형)
             persuasion_level: 각색 레벨 (1-5)
             target_length: 목표 글자 수
@@ -660,9 +774,11 @@ class AIRewriteEngine:
             writing_perspective: 작성 시점 (1인칭, 3인칭, 대화형)
             custom_writing_style: 사용자가 지정한 말투 설정 (프로필보다 우선)
             requirements: 특별 요청사항 (common/individual)
-            ai_provider: AI 제공자 ("claude" 또는 "gpt")
+            ai_provider: AI 제공자 ("claude" 또는 "gpt" 또는 "gemini")
             ai_model: 사용할 모델 (예: "gpt-4o", "claude-sonnet-4-5-20250929")
             seo_optimization: SEO 최적화 설정 (DIA/CRANK)
+            top_post_rules: 상위글 분석 규칙
+            industry_type: 업종 타입 (의료, 법률, 음식점, 뷰티 등)
 
         Returns:
             각색된 블로그 포스팅
@@ -689,7 +805,8 @@ class AIRewriteEngine:
                 requirements,
                 adjusted_target_length,
                 seo_optimization,
-                top_post_rules
+                top_post_rules,
+                industry_type
             )
             user_prompt = self._build_user_prompt(
                 original_content, framework, persuasion_level, adjusted_target_length, target_audience

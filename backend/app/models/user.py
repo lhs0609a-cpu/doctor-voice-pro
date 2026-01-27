@@ -38,6 +38,18 @@ class SubscriptionTier(str, enum.Enum):
     ENTERPRISE = "enterprise"
 
 
+class IndustryType(str, enum.Enum):
+    """업종 타입"""
+    MEDICAL = "medical"          # 의료 (병원/의원/한의원)
+    LEGAL = "legal"              # 법률 (변호사/법무사)
+    RESTAURANT = "restaurant"    # 음식점/카페
+    BEAUTY = "beauty"            # 미용/뷰티 (미용실/네일/피부관리)
+    FITNESS = "fitness"          # 피트니스/헬스
+    EDUCATION = "education"      # 교육/학원
+    REALESTATE = "realestate"    # 부동산
+    OTHER = "other"              # 기타 자영업
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -45,8 +57,13 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=False)
     name = Column(String(100))
-    hospital_name = Column(String(200))
-    specialty = Column(String(50))
+    industry_type = Column(
+        Enum(IndustryType), default=IndustryType.MEDICAL, nullable=False
+    )
+    # 업종별 상호명 (의료: hospital_name, 법률: firm_name, 자영업: business_name)
+    business_name = Column(String(200))  # 통합 상호명
+    hospital_name = Column(String(200))  # 레거시 호환
+    specialty = Column(String(50))  # 의료: 진료과목, 법률: 전문분야, 자영업: 업종상세
     subscription_tier = Column(
         Enum(SubscriptionTier), default=SubscriptionTier.FREE, nullable=False
     )

@@ -2,6 +2,19 @@ from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 from datetime import datetime
 from uuid import UUID
+from enum import Enum
+
+
+class IndustryTypeEnum(str, Enum):
+    """업종 타입 Enum"""
+    MEDICAL = "medical"
+    LEGAL = "legal"
+    RESTAURANT = "restaurant"
+    BEAUTY = "beauty"
+    FITNESS = "fitness"
+    EDUCATION = "education"
+    REALESTATE = "realestate"
+    OTHER = "other"
 
 
 class UserCreate(BaseModel):
@@ -10,7 +23,9 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8)
     name: Optional[str] = None
-    hospital_name: Optional[str] = None
+    industry_type: Optional[IndustryTypeEnum] = IndustryTypeEnum.MEDICAL
+    business_name: Optional[str] = None
+    hospital_name: Optional[str] = None  # 레거시 호환
     specialty: Optional[str] = None
 
 
@@ -27,7 +42,9 @@ class UserResponse(BaseModel):
     id: UUID
     email: str
     name: Optional[str]
-    hospital_name: Optional[str]
+    industry_type: IndustryTypeEnum
+    business_name: Optional[str]
+    hospital_name: Optional[str]  # 레거시 호환
     specialty: Optional[str]
     subscription_tier: str
     is_active: bool

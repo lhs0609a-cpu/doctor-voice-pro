@@ -10,8 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.models import User, DoctorProfile, Post, PostVersion, AIUsage, calculate_cost
+from app.models.user import IndustryType
 from app.models.top_post_analysis import AggregatedPattern
 from app.services.ai_rewrite_engine import ai_rewrite_engine
+from app.services.industry_config import get_industry_config
 from app.services.medical_law_checker import medical_law_checker
 from app.services.persuasion_scorer import persuasion_scorer
 from app.services.seo_optimizer import seo_optimizer
@@ -119,6 +121,9 @@ class PostService:
         else:
             target_audience = None
 
+        # 업종 타입 가져오기 (user가 있으면 user의 industry_type, 없으면 기본값)
+        industry_type = user.industry_type if user else IndustryType.MEDICAL
+
         generated_content = await ai_rewrite_engine.generate(
             original_content=original_content,
             doctor_profile=profile_dict,
@@ -132,6 +137,7 @@ class PostService:
             ai_model=ai_model,
             seo_optimization=seo_optimization,
             top_post_rules=top_post_rules,
+            industry_type=industry_type,
         )
 
         # AI 사용량 기록
@@ -356,6 +362,9 @@ class PostService:
         persuasion_level = persuasion_level or 3
         target_length = target_length or 1500
 
+        # 업종 타입 가져오기
+        industry_type = user.industry_type if user else IndustryType.MEDICAL
+
         # AI 재작성
         generated_content = await ai_rewrite_engine.generate(
             original_content=post.original_content,
@@ -364,6 +373,7 @@ class PostService:
             persuasion_level=persuasion_level,
             target_length=target_length,
             target_audience=profile.target_audience if profile else None,
+            industry_type=industry_type,
         )
 
         # 검증 및 점수 계산
@@ -470,11 +480,28 @@ class PostService:
 
     def _profile_to_dict(self, user: Optional[User], profile: Optional[DoctorProfile]) -> Dict:
         """프로필을 딕셔너리로 변환 (user가 None이어도 가능)"""
+        # 업종에 맞는 기본값 설정
+        industry_type = user.industry_type if user else IndustryType.MEDICAL
+        industry_config = get_industry_config(industry_type)
+        default_specialty = industry_config.get("name", "전문")
+
+        # 업종별 기본 호칭
+        owner_titles = {
+            IndustryType.MEDICAL: "원장님",
+            IndustryType.LEGAL: "변호사님",
+            IndustryType.RESTAURANT: "대표님",
+            IndustryType.BEAUTY: "원장님",
+            IndustryType.FITNESS: "대표님",
+            IndustryType.EDUCATION: "원장님",
+            IndustryType.REALESTATE: "공인중개사님",
+        }
+        default_name = owner_titles.get(industry_type, "대표님")
+
         # 익명 사용자 또는 프로필 없음
         if not profile and not user:
             return {
-                "name": "원장님",
-                "specialty": "의료",
+                "name": default_name,
+                "specialty": default_specialty,
                 "writing_style": {
                     "formality": 5,
                     "friendliness": 7,
@@ -489,8 +516,8 @@ class PostService:
         # 프로필이 dict인 경우 (익명 프로필)
         if isinstance(profile, dict):
             return {
-                "name": user.name if user else "원장님",
-                "specialty": user.specialty if user else "의료",
+                "name": user.name if user else default_name,
+                "specialty": user.specialty if user else default_specialty,
                 "writing_style": profile.get("writing_style", {}),
                 "signature_phrases": profile.get("signature_phrases", []),
                 "target_audience": profile.get("target_audience", {}),
@@ -499,8 +526,8 @@ class PostService:
         # 일반 프로필
         if not profile:
             return {
-                "name": user.name if user else "원장님",
-                "specialty": user.specialty if user else "의료",
+                "name": user.name if user else default_name,
+                "specialty": user.specialty if user else default_specialty,
                 "writing_style": {
                     "formality": 5,
                     "friendliness": 7,
@@ -513,8 +540,8 @@ class PostService:
             }
 
         return {
-            "name": user.name if user else "원장님",
-            "specialty": user.specialty if user else "의료",
+            "name": user.name if user else default_name,
+            "specialty": user.specialty if user else default_specialty,
             "writing_style": profile.writing_style or {},
             "signature_phrases": profile.signature_phrases or [],
             "target_audience": profile.target_audience or {},

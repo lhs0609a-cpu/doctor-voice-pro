@@ -1,9 +1,22 @@
+// Industry Type Enum
+export type IndustryType =
+  | 'medical'     // 의료 (병원/의원/한의원)
+  | 'legal'       // 법률 (변호사/법무사)
+  | 'restaurant'  // 음식점/카페
+  | 'beauty'      // 미용/뷰티 (미용실/네일/피부관리)
+  | 'fitness'     // 피트니스/헬스
+  | 'education'   // 교육/학원
+  | 'realestate'  // 부동산
+  | 'other'       // 기타 자영업
+
 // User & Auth Types
 export interface User {
   id: string
   email: string
   name: string | null
-  hospital_name: string | null
+  industry_type: IndustryType
+  business_name: string | null
+  hospital_name: string | null  // 레거시 호환
   specialty: string | null
   subscription_tier: string
   is_active: boolean
