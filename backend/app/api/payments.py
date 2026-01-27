@@ -38,6 +38,55 @@ def get_toss_auth_header() -> str:
     return f"Basic {encoded}"
 
 
+def _get_user_friendly_payment_error(error_code: str, original_message: str) -> tuple[str, bool]:
+    """
+    P0-4 Fix: 토스 에러 코드를 사용자 친화적 메시지로 변환
+
+    Returns:
+        (user_message, can_retry) - 사용자 메시지와 재시도 가능 여부
+    """
+    # 토스페이먼츠 에러 코드별 처리
+    # 참고: https://docs.tosspayments.com/reference/error-codes
+    error_messages = {
+        # 카드 관련 에러
+        "CARD_DECLINED": ("카드 승인이 거절되었습니다. 다른 카드로 시도해주세요.", True),
+        "CARD_LIMIT_EXCEEDED": ("카드 한도가 초과되었습니다. 한도를 확인하거나 다른 카드를 사용해주세요.", True),
+        "CARD_LOST_OR_STOLEN": ("분실 또는 도난 신고된 카드입니다. 카드사에 문의해주세요.", False),
+        "CARD_RESTRICTED": ("사용이 제한된 카드입니다. 카드사에 문의해주세요.", False),
+        "CARD_COMPANY_ERROR": ("카드사 시스템 오류입니다. 잠시 후 다시 시도해주세요.", True),
+        "INVALID_CARD_NUMBER": ("카드 번호가 올바르지 않습니다. 다시 확인해주세요.", True),
+        "INVALID_EXPIRY_DATE": ("카드 유효기간이 올바르지 않습니다. 다시 확인해주세요.", True),
+        "INVALID_PASSWORD": ("카드 비밀번호가 올바르지 않습니다.", True),
+
+        # 결제 관련 에러
+        "ALREADY_PROCESSED_PAYMENT": ("이미 처리된 결제입니다.", False),
+        "EXCEED_MAX_AMOUNT": ("결제 금액이 최대 한도를 초과했습니다.", False),
+        "BELOW_MIN_AMOUNT": ("결제 금액이 최소 금액 미만입니다.", False),
+        "INVALID_REQUEST": ("잘못된 요청입니다. 다시 시도해주세요.", True),
+        "NOT_FOUND_PAYMENT": ("결제 정보를 찾을 수 없습니다.", False),
+        "CANCELED_PAYMENT": ("취소된 결제입니다.", False),
+
+        # 인증 관련 에러
+        "UNAUTHORIZED_KEY": ("인증에 실패했습니다. 관리자에게 문의해주세요.", False),
+        "INVALID_API_KEY": ("결제 설정 오류입니다. 관리자에게 문의해주세요.", False),
+
+        # 일반 에러
+        "PROVIDER_ERROR": ("결제사 시스템 오류입니다. 잠시 후 다시 시도해주세요.", True),
+        "FAILED_INTERNAL_SYSTEM_PROCESSING": ("시스템 오류가 발생했습니다. 잠시 후 다시 시도해주세요.", True),
+    }
+
+    if error_code in error_messages:
+        return error_messages[error_code]
+
+    # 알 수 없는 에러 코드인 경우
+    if "카드" in original_message or "card" in original_message.lower():
+        return (f"카드 결제에 실패했습니다: {original_message}", True)
+    elif "한도" in original_message or "limit" in original_message.lower():
+        return ("결제 한도를 초과했습니다. 다른 결제 수단을 이용해주세요.", True)
+
+    return (f"결제에 실패했습니다: {original_message}", True)
+
+
 # ==================== Schemas ====================
 
 class PaymentIntentRequest(BaseModel):
@@ -127,7 +176,7 @@ async def create_payment_intent(
         pg_provider="tosspayments",
         pg_order_id=order_id,
         description=request.order_name,
-        metadata=request.metadata
+        extra_data=request.metadata  # P0-4 Fix: Model uses extra_data, not metadata
     )
 
     db.add(payment)
@@ -170,14 +219,33 @@ async def confirm_payment(
 
     # 금액 검증 (클라이언트에서 전송된 금액과 DB의 원본 금액 비교)
     if payment.amount != request.amount:
+        # P0-4 Fix: 금액 불일치 시 결제 상태 업데이트
+        payment.status = PaymentStatus.FAILED
+        payment.extra_data = {"error": "amount_mismatch", "expected": payment.amount, "received": request.amount}
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="결제 금액이 일치하지 않습니다"
+            detail={
+                "error": "amount_mismatch",
+                "message": "결제 금액이 일치하지 않습니다. 다시 시도해주세요.",
+                "can_retry": True
+            }
         )
 
     # 이미 완료된 결제인지 확인 (중복 처리 방지)
     if payment.status == PaymentStatus.COMPLETED:
         return payment
+
+    # P0-4 Fix: 이미 실패한 결제는 재시도 불가
+    if payment.status == PaymentStatus.FAILED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "payment_already_failed",
+                "message": "이 결제는 이미 실패했습니다. 새로운 결제를 시도해주세요.",
+                "can_retry": False
+            }
+        )
 
     # 토스페이먼츠에 결제 승인 요청
     headers = {
@@ -191,18 +259,65 @@ async def confirm_payment(
         "amount": request.amount
     }
 
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{TOSS_API_URL}/payments/confirm",
-            headers=headers,
-            json=data
-        )
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            response = await client.post(
+                f"{TOSS_API_URL}/payments/confirm",
+                headers=headers,
+                json=data
+            )
+        except httpx.TimeoutException:
+            # P0-4 Fix: 타임아웃 시 결제 상태를 PENDING으로 유지하고 재시도 허용
+            payment.extra_data = {"error": "timeout", "message": "결제 확인 중 타임아웃이 발생했습니다"}
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail={
+                    "error": "payment_timeout",
+                    "message": "결제 처리 중 응답이 지연되고 있습니다. 잠시 후 결제 내역을 확인해주세요.",
+                    "can_retry": True,
+                    "check_status_url": f"/api/payments/{payment.id}"
+                }
+            )
+        except httpx.RequestError as e:
+            # P0-4 Fix: 네트워크 오류 시
+            payment.extra_data = {"error": "network_error", "message": str(e)}
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error": "payment_network_error",
+                    "message": "결제 서버와의 통신에 문제가 발생했습니다. 잠시 후 다시 시도해주세요.",
+                    "can_retry": True
+                }
+            )
 
         if response.status_code >= 400:
             error_data = response.json()
+            # P0-4 Fix: 토스 에러 코드에 따른 상세 처리
+            toss_error_code = error_data.get("code", "UNKNOWN")
+            toss_error_message = error_data.get("message", "결제 승인에 실패했습니다")
+
+            # 결제 실패 상태 업데이트
+            payment.status = PaymentStatus.FAILED
+            payment.extra_data = {
+                "error": toss_error_code,
+                "message": toss_error_message,
+                "toss_response": error_data
+            }
+            await db.commit()
+
+            # 사용자 친화적 에러 메시지 생성
+            user_message, can_retry = _get_user_friendly_payment_error(toss_error_code, toss_error_message)
+
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=error_data.get("message", "결제 승인에 실패했습니다")
+                detail={
+                    "error": toss_error_code,
+                    "message": user_message,
+                    "can_retry": can_retry,
+                    "original_message": toss_error_message
+                }
             )
 
         result = response.json()
@@ -472,7 +587,7 @@ async def charge_billing(
             if response.status_code >= 400:
                 error_data = response.json()
                 payment.status = PaymentStatus.FAILED
-                payment.metadata = {"error": error_data}
+                payment.extra_data = {"error": error_data}
                 await db.commit()
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -495,7 +610,7 @@ async def charge_billing(
         raise
     except Exception as e:
         payment.status = PaymentStatus.FAILED
-        payment.metadata = {"error": str(e)}
+        payment.extra_data = {"error": str(e)}
 
     await db.commit()
     await db.refresh(payment)
@@ -529,7 +644,7 @@ async def purchase_credits(
 
     order_id = f"credit_{uuid_pkg.uuid4().hex[:16]}"
 
-    # 결제 레코드 생성
+    # 결제 레코드 생성 (P0-4 Fix: metadata -> extra_data로 수정)
     payment = Payment(
         user_id=current_user.id,
         amount=total_amount,
@@ -537,7 +652,7 @@ async def purchase_credits(
         pg_provider="tosspayments",
         pg_order_id=order_id,
         description=f"{'글 생성' if request.credit_type == 'post' else '분석'} 크레딧 {request.amount}개",
-        metadata={
+        extra_data={
             "credit_type": request.credit_type,
             "credit_amount": request.amount
         }
@@ -564,35 +679,7 @@ async def confirm_credit_purchase(
     db: AsyncSession = Depends(get_db)
 ):
     """크레딧 구매 결제 승인"""
-    # 결제 승인
-    headers = {
-        "Authorization": get_toss_auth_header(),
-        "Content-Type": "application/json"
-    }
-
-    data = {
-        "paymentKey": request.payment_key,
-        "orderId": request.order_id,
-        "amount": request.amount
-    }
-
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{TOSS_API_URL}/payments/confirm",
-            headers=headers,
-            json=data
-        )
-
-        if response.status_code >= 400:
-            error_data = response.json()
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=error_data.get("message", "결제 승인에 실패했습니다")
-            )
-
-        result = response.json()
-
-    # 결제 정보 업데이트
+    # P0-4 Fix: 결제 정보 먼저 조회
     payment_result = await db.execute(
         select(Payment)
         .where(
@@ -610,6 +697,90 @@ async def confirm_credit_purchase(
             detail="결제 정보를 찾을 수 없습니다"
         )
 
+    # 이미 완료된 결제인지 확인
+    if payment.status == PaymentStatus.COMPLETED:
+        # 이미 크레딧이 지급된 상태
+        credit_result = await db.execute(
+            select(UserCredit)
+            .where(UserCredit.user_id == current_user.id)
+        )
+        user_credit = credit_result.scalar_one_or_none()
+        return {
+            "success": True,
+            "credit_type": payment.extra_data.get("credit_type") if payment.extra_data else "unknown",
+            "credit_added": payment.extra_data.get("credit_amount") if payment.extra_data else 0,
+            "new_balance": user_credit.post_credits if payment.extra_data.get("credit_type") == "post" else user_credit.analysis_credits if user_credit else 0,
+            "receipt_url": payment.receipt_url,
+            "message": "이미 처리된 결제입니다."
+        }
+
+    # 결제 승인
+    headers = {
+        "Authorization": get_toss_auth_header(),
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "paymentKey": request.payment_key,
+        "orderId": request.order_id,
+        "amount": request.amount
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            response = await client.post(
+                f"{TOSS_API_URL}/payments/confirm",
+                headers=headers,
+                json=data
+            )
+        except httpx.TimeoutException:
+            # P0-4 Fix: 타임아웃 처리
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail={
+                    "error": "payment_timeout",
+                    "message": "결제 처리 중 응답이 지연되고 있습니다. 잠시 후 결제 내역을 확인해주세요.",
+                    "can_retry": True
+                }
+            )
+        except httpx.RequestError as e:
+            # P0-4 Fix: 네트워크 오류
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error": "payment_network_error",
+                    "message": "결제 서버와의 통신에 문제가 발생했습니다. 잠시 후 다시 시도해주세요.",
+                    "can_retry": True
+                }
+            )
+
+        if response.status_code >= 400:
+            error_data = response.json()
+            # P0-4 Fix: 결제 실패 상태 업데이트
+            toss_error_code = error_data.get("code", "UNKNOWN")
+            toss_error_message = error_data.get("message", "결제 승인에 실패했습니다")
+
+            payment.status = PaymentStatus.FAILED
+            payment.extra_data = {
+                **(payment.extra_data or {}),
+                "error": toss_error_code,
+                "error_message": toss_error_message
+            }
+            await db.commit()
+
+            user_message, can_retry = _get_user_friendly_payment_error(toss_error_code, toss_error_message)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": toss_error_code,
+                    "message": user_message,
+                    "can_retry": can_retry
+                }
+            )
+
+        result = response.json()
+
+    # 결제 정보 업데이트 (payment 객체는 이미 조회됨)
     payment.pg_payment_key = request.payment_key
     payment.pg_transaction_id = result.get("transactionKey")
     payment.status = PaymentStatus.COMPLETED
@@ -623,9 +794,9 @@ async def confirm_credit_purchase(
         card = result.get("card", {})
         payment.payment_method_detail = f"{card.get('company')} {card.get('number', '')[-4:]}"
 
-    # 크레딧 추가
-    credit_type = payment.metadata.get("credit_type")
-    credit_amount = payment.metadata.get("credit_amount")
+    # 크레딧 추가 (P0-4 Fix: extra_data에서 조회하도록 통일)
+    credit_type = (payment.extra_data or {}).get("credit_type")
+    credit_amount = (payment.extra_data or {}).get("credit_amount")
 
     # UserCredit 조회 또는 생성
     credit_result = await db.execute(

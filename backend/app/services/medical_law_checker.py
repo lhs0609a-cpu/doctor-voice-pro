@@ -89,28 +89,71 @@ class MedicalLawChecker:
         """
         return [re.compile(pattern, re.IGNORECASE) for pattern in self.QUOTATION_PATTERNS]
 
+    def _extract_sentence(self, text: str, position: int) -> str:
+        """
+        주어진 위치가 포함된 문장을 추출 - P0 버그 수정
+
+        Args:
+            text: 전체 텍스트
+            position: 문장을 찾을 위치
+
+        Returns:
+            해당 위치가 포함된 문장
+        """
+        # 문장 구분자 정의 (마침표, 물음표, 느낌표, 줄바꿈)
+        sentence_delimiters = '.?!。\n'
+
+        # 문장 시작 위치 찾기
+        sentence_start = position
+        while sentence_start > 0:
+            if text[sentence_start - 1] in sentence_delimiters:
+                break
+            sentence_start -= 1
+
+        # 문장 끝 위치 찾기
+        sentence_end = position
+        while sentence_end < len(text):
+            if text[sentence_end] in sentence_delimiters:
+                sentence_end += 1  # 구분자 포함
+                break
+            sentence_end += 1
+
+        return text[sentence_start:sentence_end].strip()
+
     def _is_negation_context(self, text: str, match_position: Tuple[int, int], window: int = 30) -> bool:
         """
         부정문 문맥인지 확인 - P0 버그 수정 (거짓양성 방지)
 
+        P0 개선: 30자 윈도우 → 문장 단위 컨텍스트 분석
+        - 기존: "100% 효과를 보장하기는 어렵습니다" → 30자 밖이면 위반 처리
+        - 개선: 문장 전체에서 부정 표현 검색
+
         Args:
             text: 전체 텍스트
             match_position: 매칭된 위반 표현의 위치 (start, end)
-            window: 문맥 확인 범위 (앞뒤 글자 수)
+            window: 문맥 확인 범위 (fallback용, 기본값 유지)
 
         Returns:
             True면 부정문 문맥 (위반이 아님)
         """
         start, end = match_position
-        # 앞뒤 문맥 추출
-        context_start = max(0, start - window)
-        context_end = min(len(text), end + window)
-        context = text[context_start:context_end]
 
-        # 부정문 패턴 검사
+        # P0 Fix: 문장 단위로 컨텍스트 추출
+        sentence = self._extract_sentence(text, start)
+
+        # 문장 내에서 부정문 패턴 검사
         for pattern in self.compiled_negation_patterns:
-            if pattern.search(context):
+            if pattern.search(sentence):
                 return True
+
+        # Fallback: 문장 추출이 너무 짧으면 기존 윈도우 방식도 함께 사용
+        if len(sentence) < 20:
+            context_start = max(0, start - window)
+            context_end = min(len(text), end + window)
+            context = text[context_start:context_end]
+            for pattern in self.compiled_negation_patterns:
+                if pattern.search(context):
+                    return True
 
         return False
 

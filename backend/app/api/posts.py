@@ -24,6 +24,7 @@ from app.models import User, Post, PostVersion
 from app.models.subscription import UsageType
 from app.api.deps import get_current_user, require_usage_check, record_usage
 from app.services.post_service import post_service
+from app.services.ai_rewrite_engine import APIKeyNotConfiguredError  # P0-3 Fix
 from app.api.websocket import get_connection_manager
 
 router = APIRouter()
@@ -119,6 +120,18 @@ async def create_post(
                 continue
             # 최대 재시도 횟수 초과
             break
+
+        except APIKeyNotConfiguredError as e:
+            # P0-3 Fix: API 키 미설정 에러 - 사용자 친화적 메시지 반환
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error": "api_key_not_configured",
+                    "message": e.user_message,
+                    "provider": e.provider,
+                    "suggestion": "다른 AI 모델을 선택하거나 관리자에게 문의해주세요."
+                }
+            )
 
         except Exception as e:
             # 다른 오류는 즉시 반환

@@ -12,6 +12,25 @@ from app.core.config import settings
 from app.models.user import IndustryType
 from app.services.industry_config import get_industry_config, get_industry_ai_prompt
 
+
+# P0-3 Fix: API 키 설정 오류를 위한 커스텀 예외
+class APIKeyNotConfiguredError(Exception):
+    """
+    AI API 키가 설정되지 않았을 때 발생하는 예외
+    사용자에게 친화적인 에러 메시지를 제공합니다.
+    """
+    def __init__(self, provider: str):
+        self.provider = provider
+        provider_names = {
+            "claude": "Claude (Anthropic)",
+            "gpt": "GPT (OpenAI)",
+            "gemini": "Gemini (Google)"
+        }
+        provider_name = provider_names.get(provider, provider)
+        self.message = f"{provider_name} API 키가 설정되지 않았습니다. 관리자에게 문의해주세요."
+        self.user_message = "AI 서비스가 일시적으로 사용 불가합니다. 관리자에게 문의하거나 다른 AI 모델을 선택해주세요."
+        super().__init__(self.message)
+
 # Gemini SDK 임포트 (설치되어 있는 경우)
 try:
     import google.generativeai as genai
@@ -827,7 +846,8 @@ class AIRewriteEngine:
                     # DB에서 API 키 로드 (없으면 환경변수 사용)
                     claude_api_key = await get_api_key_from_db("claude")
                     if not claude_api_key:
-                        raise Exception("Claude API 키가 설정되지 않았습니다.")
+                        # P0-3 Fix: 사용자 친화적 예외 발생
+                        raise APIKeyNotConfiguredError("claude")
 
                     # 매번 새로운 클라이언트 생성 (DB 키 사용)
                     claude_client = anthropic.Anthropic(api_key=claude_api_key, timeout=180.0)
@@ -851,7 +871,8 @@ class AIRewriteEngine:
                     # DB에서 Gemini API 키 로드
                     gemini_api_key = await get_api_key_from_db("gemini")
                     if not gemini_api_key:
-                        raise Exception("Gemini API 키가 설정되지 않았습니다.")
+                        # P0-3 Fix: 사용자 친화적 예외 발생
+                        raise APIKeyNotConfiguredError("gemini")
 
                     if not GEMINI_AVAILABLE:
                         raise Exception("Gemini SDK가 설치되어 있지 않습니다.")
@@ -894,7 +915,8 @@ class AIRewriteEngine:
                     # DB에서 GPT API 키 로드
                     gpt_api_key = await get_api_key_from_db("gpt")
                     if not gpt_api_key:
-                        raise Exception("GPT API 키가 설정되지 않았습니다.")
+                        # P0-3 Fix: 사용자 친화적 예외 발생
+                        raise APIKeyNotConfiguredError("gpt")
 
                     # 매번 새로운 클라이언트 생성 (DB 키 사용)
                     http_client = httpx.Client(timeout=httpx.Timeout(connect=30.0, read=180.0, write=30.0, pool=30.0))
@@ -992,7 +1014,9 @@ class AIRewriteEngine:
             # DB에서 GPT API 키 로드
             gpt_api_key = await get_api_key_from_db("gpt")
             if not gpt_api_key:
-                raise Exception("GPT API 키가 설정되지 않았습니다.")
+                # P0-3 Fix: API 키 없으면 기본값 반환 (보조 기능이므로 에러 대신 기본값)
+                print("[WARNING] GPT API 키 미설정 - 제목/메타 생성 스킵")
+                return {"title": "", "meta_description": "", "hashtags": []}
 
             http_client = httpx.Client(timeout=httpx.Timeout(connect=30.0, read=60.0, write=30.0, pool=30.0))
             openai_client = OpenAI(api_key=gpt_api_key, http_client=http_client, timeout=60.0)
@@ -1026,8 +1050,9 @@ class AIRewriteEngine:
             return {"title": title, "meta_description": meta, "hashtags": hashtags}
 
         except Exception as e:
+            print(f"[ERROR] 제목/메타 생성 실패: {e}")
             return {
-                "title": "제목 생성 실패",
+                "title": "",
                 "meta_description": "",
                 "hashtags": [],
             }
@@ -1068,7 +1093,9 @@ class AIRewriteEngine:
             # DB에서 GPT API 키 로드
             gpt_api_key = await get_api_key_from_db("gpt")
             if not gpt_api_key:
-                raise Exception("GPT API 키가 설정되지 않았습니다.")
+                # P0-3 Fix: API 키 없으면 빈 리스트 반환 (보조 기능이므로 에러 대신 기본값)
+                print("[WARNING] GPT API 키 미설정 - 후킹 제목 생성 스킵")
+                return []
 
             http_client = httpx.Client(timeout=httpx.Timeout(connect=30.0, read=60.0, write=30.0, pool=30.0))
             openai_client = OpenAI(api_key=gpt_api_key, http_client=http_client, timeout=60.0)
@@ -1093,8 +1120,8 @@ class AIRewriteEngine:
             return titles[:5]
 
         except Exception as e:
-            print(f"Error generating titles: {e}")
-            return ["제목 생성 실패"] * 5
+            print(f"[ERROR] 후킹 제목 생성 실패: {e}")
+            return []
 
     async def generate_subtitles(self, content: str) -> List[str]:
         """
@@ -1129,7 +1156,9 @@ class AIRewriteEngine:
             # DB에서 GPT API 키 로드
             gpt_api_key = await get_api_key_from_db("gpt")
             if not gpt_api_key:
-                raise Exception("GPT API 키가 설정되지 않았습니다.")
+                # P0-3 Fix: API 키 없으면 빈 리스트 반환 (보조 기능이므로 에러 대신 기본값)
+                print("[WARNING] GPT API 키 미설정 - 소제목 생성 스킵")
+                return []
 
             http_client = httpx.Client(timeout=httpx.Timeout(connect=30.0, read=60.0, write=30.0, pool=30.0))
             openai_client = OpenAI(api_key=gpt_api_key, http_client=http_client, timeout=60.0)
@@ -1153,8 +1182,8 @@ class AIRewriteEngine:
             return subtitles[:4]
 
         except Exception as e:
-            print(f"Error generating subtitles: {e}")
-            return ["소제목 생성 실패"] * 4
+            print(f"[ERROR] 소제목 생성 실패: {e}")
+            return []
 
 
 # Singleton instance

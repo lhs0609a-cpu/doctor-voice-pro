@@ -10,6 +10,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
+from sqlalchemy.exc import IntegrityError
 
 from app.db.database import get_db
 from app.models import User
@@ -174,7 +175,13 @@ async def get_or_create_usage_summary(
     plan: Optional[Plan],
     db: AsyncSession
 ) -> UsageSummary:
-    """현재 월 사용량 요약 조회 또는 생성"""
+    """
+    현재 월 사용량 요약 조회 또는 생성
+
+    P0 Fix: Race Condition 방지
+    - UniqueConstraint(user_id, year, month) + IntegrityError 처리로
+    - 동시 요청 시에도 중복 레코드 생성 방지
+    """
     now = datetime.utcnow()
     year = now.year
     month = now.month
@@ -212,7 +219,30 @@ async def get_or_create_usage_summary(
             keywords_limit=keywords_limit
         )
         db.add(summary)
-        await db.flush()
+
+        try:
+            await db.flush()
+        except IntegrityError:
+            # P0 Fix: 동시 요청으로 인한 중복 삽입 시
+            # 롤백 후 기존 레코드 재조회
+            await db.rollback()
+            result = await db.execute(
+                select(UsageSummary)
+                .where(
+                    and_(
+                        UsageSummary.user_id == user.id,
+                        UsageSummary.year == year,
+                        UsageSummary.month == month
+                    )
+                )
+            )
+            summary = result.scalar_one_or_none()
+            if not summary:
+                # 그래도 없으면 에러 (거의 발생하지 않음)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="사용량 정보를 생성할 수 없습니다. 잠시 후 다시 시도해주세요."
+                )
 
     return summary
 

@@ -2,7 +2,7 @@
 구독 및 결제 관련 모델
 """
 
-from sqlalchemy import Column, String, DateTime, Integer, Float, Boolean, ForeignKey, Text, Enum, JSON
+from sqlalchemy import Column, String, DateTime, Integer, Float, Boolean, ForeignKey, Text, Enum, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
@@ -169,6 +169,10 @@ class UsageLog(Base):
 class UsageSummary(Base):
     """월별 사용량 요약"""
     __tablename__ = "usage_summaries"
+    # P0 Fix: Race Condition 방지를 위한 UniqueConstraint
+    __table_args__ = (
+        UniqueConstraint('user_id', 'year', 'month', name='uq_usage_summary_user_month'),
+    )
 
     id = Column(GUID(), primary_key=True, default=uuid_pkg.uuid4)
     user_id = Column(GUID(), ForeignKey("users.id"), nullable=False)
