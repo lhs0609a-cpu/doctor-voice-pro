@@ -14,7 +14,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
-import { profileAPI } from '@/lib/api'
+import { profileAPI, industryAPI, Industry, MyIndustry } from '@/lib/api'
+import { toast } from 'sonner'
 import {
   Save,
   Sliders,
@@ -24,6 +25,8 @@ import {
   Trash2,
   Plus,
   Info,
+  Building2,
+  Loader2,
 } from 'lucide-react'
 
 interface WritingStyle {
@@ -59,6 +62,14 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false)
   const [profile, setProfile] = useState<Profile | null>(null)
 
+  // Industry State (업종 설정)
+  const [industries, setIndustries] = useState<Industry[]>([])
+  const [selectedIndustry, setSelectedIndustry] = useState<string>('medical')
+  const [businessName, setBusinessName] = useState('')
+  const [specialty, setSpecialty] = useState('')
+  const [industryLoading, setIndustryLoading] = useState(false)
+  const [industrySaving, setIndustrySaving] = useState(false)
+
   // Writing Style State
   const [formality, setFormality] = useState(5)
   const [friendliness, setFriendliness] = useState(5)
@@ -83,9 +94,49 @@ export default function ProfilePage() {
   // Preferred Structure State
   const [preferredStructure, setPreferredStructure] = useState('story_problem_solution')
 
+  // Get current industry config
+  const currentIndustry = industries.find(i => i.value === selectedIndustry)
+
   useEffect(() => {
     loadProfile()
+    loadIndustryData()
   }, [])
+
+  const loadIndustryData = async () => {
+    setIndustryLoading(true)
+    try {
+      // Load all industries
+      const industriesData = await industryAPI.getAll()
+      setIndustries(industriesData.industries)
+
+      // Load my industry setting
+      const myIndustry = await industryAPI.getMyIndustry()
+      setSelectedIndustry(myIndustry.industry_type)
+      setBusinessName(myIndustry.business_name || '')
+      setSpecialty(myIndustry.specialty || '')
+    } catch (error) {
+      console.error('Failed to load industry data:', error)
+    } finally {
+      setIndustryLoading(false)
+    }
+  }
+
+  const handleSaveIndustry = async () => {
+    setIndustrySaving(true)
+    try {
+      await industryAPI.updateMyIndustry({
+        industry_type: selectedIndustry,
+        business_name: businessName || undefined,
+        specialty: specialty || undefined,
+      })
+      toast.success('업종 설정이 저장되었습니다.')
+    } catch (error) {
+      console.error('Failed to save industry:', error)
+      toast.error('업종 설정 저장 중 오류가 발생했습니다.')
+    } finally {
+      setIndustrySaving(false)
+    }
+  }
 
   const loadProfile = async () => {
     try {
@@ -114,7 +165,7 @@ export default function ProfilePage() {
       }
     } catch (error) {
       console.error('Failed to load profile:', error)
-      alert('프로필을 불러올 수 없습니다.')
+      toast.error('프로필을 불러올 수 없습니다.')
     } finally {
       setLoading(false)
     }
@@ -145,11 +196,11 @@ export default function ProfilePage() {
         preferred_structure: preferredStructure,
       })
 
-      alert('프로필이 저장되었습니다.')
+      toast.success('프로필이 저장되었습니다.')
       loadProfile()
     } catch (error) {
       console.error('Failed to save profile:', error)
-      alert('프로필 저장 중 오류가 발생했습니다.')
+      toast.error('프로필 저장 중 오류가 발생했습니다.')
     } finally {
       setSaving(false)
     }
@@ -236,6 +287,130 @@ export default function ProfilePage() {
           AI가 당신의 스타일을 학습하도록 프로필을 설정하세요
         </p>
       </div>
+
+      {/* Industry Selection - 업종 설정 */}
+      <Card className="border-2 border-blue-200 bg-blue-50/30">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Building2 className="h-5 w-5 text-blue-600" />
+            <CardTitle>업종 설정</CardTitle>
+          </div>
+          <CardDescription>
+            업종에 맞는 AI 프롬프트와 전문 용어가 자동으로 적용됩니다
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {industryLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
+            </div>
+          ) : (
+            <>
+              {/* Industry Type Selection */}
+              <div className="space-y-2">
+                <Label>업종 선택</Label>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {industries.map((industry) => (
+                    <button
+                      key={industry.value}
+                      onClick={() => {
+                        setSelectedIndustry(industry.value)
+                        setSpecialty('') // Reset specialty when industry changes
+                      }}
+                      className={`p-3 rounded-lg border-2 text-left transition-all ${
+                        selectedIndustry === industry.value
+                          ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200'
+                          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="text-2xl mb-1">{industry.icon}</div>
+                      <div className="font-medium text-sm">{industry.name}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Business Name */}
+              {currentIndustry && (
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="business-name">
+                      {currentIndustry.business_name_label}
+                    </Label>
+                    <Input
+                      id="business-name"
+                      placeholder={`예: ${
+                        selectedIndustry === 'medical' ? '○○병원' :
+                        selectedIndustry === 'legal' ? '○○법률사무소' :
+                        selectedIndustry === 'restaurant' ? '○○맛집' :
+                        '○○업체'
+                      }`}
+                      value={businessName}
+                      onChange={(e) => setBusinessName(e.target.value)}
+                    />
+                  </div>
+
+                  {/* Specialty */}
+                  <div className="space-y-2">
+                    <Label htmlFor="specialty">
+                      {currentIndustry.specialty_label}
+                    </Label>
+                    <Select
+                      value={specialty || '_none'}
+                      onValueChange={(val) => setSpecialty(val === '_none' ? '' : val)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="선택하세요" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="_none">선택하세요</SelectItem>
+                        {currentIndustry.specialty_options.map((opt) => (
+                          <SelectItem key={opt} value={opt}>
+                            {opt}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
+
+              {/* Industry Info */}
+              {currentIndustry && (
+                <div className="p-3 bg-white rounded-lg border">
+                  <div className="flex items-start gap-2">
+                    <Info className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                    <div className="text-sm">
+                      <p className="font-medium text-gray-900 mb-1">
+                        {currentIndustry.name} 업종 AI 설정
+                      </p>
+                      <p className="text-gray-600 text-xs">
+                        추천 글 주제: {currentIndustry.sample_topics.slice(0, 3).join(', ')}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Save Industry Button */}
+              <div className="flex justify-end">
+                <Button
+                  onClick={handleSaveIndustry}
+                  disabled={industrySaving}
+                  className="gap-2"
+                >
+                  {industrySaving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4" />
+                  )}
+                  {industrySaving ? '저장 중...' : '업종 설정 저장'}
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Writing Style */}
       <Card>
