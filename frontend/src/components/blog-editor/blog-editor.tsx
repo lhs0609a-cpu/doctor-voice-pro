@@ -721,7 +721,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
       onDragLeave={handleGlobalDragLeave}
       onDrop={handleGlobalDrop}
     >
-      {/* 헤더 */}
+      {/* 헤더 - P1 Fix: 모바일 UX 개선 */}
       <div className="sticky top-0 z-50 bg-white border-b shadow-sm">
         <div className="container mx-auto px-2 sm:px-4 py-2 sm:py-3">
           <div className="flex items-center justify-between gap-2">
@@ -731,28 +731,51 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                 <span className="hidden sm:inline">돌아가기</span>
               </Button>
               <div className="h-6 w-px bg-gray-300 hidden sm:block" />
-              <h1 className="font-semibold text-sm sm:text-base truncate hidden sm:block">블로그 에디터</h1>
+              {/* P1 Fix: 모바일에서도 제목 표시 (짧게) */}
+              <h1 className="font-semibold text-sm sm:text-base truncate">
+                <span className="sm:hidden">에디터</span>
+                <span className="hidden sm:inline">블로그 에디터</span>
+              </h1>
             </div>
 
-            <div className="flex items-center gap-1 sm:gap-2">
+            {/* P1 Fix: 모바일에서 버튼 간격 및 터치 영역 개선 */}
+            <div className="flex items-center gap-1.5 sm:gap-2">
               <Button
                 variant={previewMode ? 'default' : 'outline'}
                 size="sm"
                 onClick={() => setPreviewMode(!previewMode)}
-                className="px-2 sm:px-3"
+                className="px-2.5 sm:px-3 min-w-[40px] sm:min-w-0"
+                title={previewMode ? '편집 모드' : '미리보기'}
               >
                 <Eye className="h-4 w-4 sm:mr-2" />
                 <span className="hidden sm:inline">{previewMode ? '편집' : '미리보기'}</span>
               </Button>
-              <Button variant="outline" size="sm" onClick={copyToClipboard} className="px-2 sm:px-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={copyToClipboard}
+                className="px-2.5 sm:px-3 min-w-[40px] sm:min-w-0"
+                title="복사"
+              >
                 <Copy className="h-4 w-4 sm:mr-2" />
                 <span className="hidden sm:inline">복사</span>
               </Button>
-              <Button variant="outline" size="sm" onClick={handleSave} className="px-2 sm:px-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleSave}
+                className="px-2.5 sm:px-3 min-w-[40px] sm:min-w-0"
+                title="저장"
+              >
                 <Save className="h-4 w-4 sm:mr-2" />
                 <span className="hidden sm:inline">저장</span>
               </Button>
-              <Button size="sm" className="bg-green-600 hover:bg-green-700 px-2 sm:px-3" onClick={sendToExtension}>
+              <Button
+                size="sm"
+                className="bg-green-600 hover:bg-green-700 px-2.5 sm:px-3 min-w-[40px] sm:min-w-0"
+                onClick={sendToExtension}
+                title="블로그에 포스팅"
+              >
                 <Send className="h-4 w-4 sm:mr-2" />
                 <span className="hidden sm:inline">포스팅</span>
               </Button>
@@ -791,12 +814,13 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                   onChange={handleImageUpload}
                   className="hidden"
                 />
+                {/* P1 Fix: 모바일 패딩 정상화 */}
                 <Button
                   variant="outline"
-                  className="w-full py-5 sm:py-2"
+                  className="w-full py-2.5 sm:py-2"
                   onClick={() => fileInputRef.current?.click()}
                 >
-                  <Upload className="h-5 w-5 sm:h-4 sm:w-4 mr-2" />
+                  <Upload className="h-4 w-4 mr-2" />
                   이미지 업로드
                 </Button>
 
@@ -985,7 +1009,8 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                             value={block.content}
                             onChange={e => updateBlockContent(block.id, e.target.value)}
                             placeholder="텍스트를 입력하세요..."
-                            className="w-full min-h-[80px] sm:min-h-[60px] p-2 sm:p-3 bg-transparent border-none resize-none focus:outline-none text-sm sm:text-base"
+                            // P1 Fix: 모바일에서 더 작은 min-height (세로 공간 절약)
+                            className="w-full min-h-[60px] sm:min-h-[80px] p-2 sm:p-3 bg-transparent border-none resize-none focus:outline-none text-sm sm:text-base"
                             style={{
                               textAlign: block.style?.textAlign,
                               fontWeight: block.style?.bold ? 'bold' : undefined,

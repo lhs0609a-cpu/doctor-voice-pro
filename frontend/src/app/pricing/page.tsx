@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Check, Sparkles, Zap, Building2, Loader2 } from 'lucide-react'
+import { Check, Sparkles, Zap, Building2, Loader2, Clock, TrendingUp, PiggyBank, FileText } from 'lucide-react'
 import { subscriptionAPI, type Plan, type Subscription } from '@/lib/api'
 import { toast } from 'sonner'
 
@@ -108,6 +108,71 @@ export default function PricingPage() {
             의료 마케팅에 최적화된 AI 블로그 작성 도구를 시작하세요.
             모든 플랜에서 7일 무료 체험을 제공합니다.
           </p>
+        </div>
+
+        {/* P1 Fix: ROI 시각화 섹션 */}
+        <div className="max-w-4xl mx-auto mb-12">
+          <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-2xl p-6 sm:p-8 border border-blue-100">
+            <h2 className="text-xl sm:text-2xl font-bold text-center mb-6">
+              닥터보이스로 얼마나 절약할 수 있을까요?
+            </h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
+              {/* 시간 절약 */}
+              <div className="text-center p-4 bg-white/80 rounded-xl">
+                <div className="inline-flex items-center justify-center w-12 h-12 bg-blue-100 rounded-full mb-3">
+                  <Clock className="h-6 w-6 text-blue-600" />
+                </div>
+                <div className="text-2xl sm:text-3xl font-bold text-blue-600">20+</div>
+                <div className="text-sm text-muted-foreground">시간/월 절약</div>
+                <div className="text-xs text-muted-foreground mt-1">글 작성 시간</div>
+              </div>
+
+              {/* 비용 절감 */}
+              <div className="text-center p-4 bg-white/80 rounded-xl">
+                <div className="inline-flex items-center justify-center w-12 h-12 bg-green-100 rounded-full mb-3">
+                  <PiggyBank className="h-6 w-6 text-green-600" />
+                </div>
+                <div className="text-2xl sm:text-3xl font-bold text-green-600">90%</div>
+                <div className="text-sm text-muted-foreground">비용 절감</div>
+                <div className="text-xs text-muted-foreground mt-1">대행사 대비</div>
+              </div>
+
+              {/* 콘텐츠 생산량 */}
+              <div className="text-center p-4 bg-white/80 rounded-xl">
+                <div className="inline-flex items-center justify-center w-12 h-12 bg-purple-100 rounded-full mb-3">
+                  <FileText className="h-6 w-6 text-purple-600" />
+                </div>
+                <div className="text-2xl sm:text-3xl font-bold text-purple-600">10x</div>
+                <div className="text-sm text-muted-foreground">콘텐츠 생산</div>
+                <div className="text-xs text-muted-foreground mt-1">생산량 증가</div>
+              </div>
+
+              {/* SEO 최적화 */}
+              <div className="text-center p-4 bg-white/80 rounded-xl">
+                <div className="inline-flex items-center justify-center w-12 h-12 bg-orange-100 rounded-full mb-3">
+                  <TrendingUp className="h-6 w-6 text-orange-600" />
+                </div>
+                <div className="text-2xl sm:text-3xl font-bold text-orange-600">상위</div>
+                <div className="text-sm text-muted-foreground">노출 최적화</div>
+                <div className="text-xs text-muted-foreground mt-1">SEO 자동 분석</div>
+              </div>
+            </div>
+
+            {/* 비용 비교 */}
+            <div className="mt-6 pt-6 border-t border-blue-200">
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-4 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">마케팅 대행사:</span>
+                  <span className="line-through text-red-500">월 100~300만원</span>
+                </div>
+                <span className="hidden sm:inline text-muted-foreground">→</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">닥터보이스:</span>
+                  <span className="font-bold text-green-600">월 9,900원부터</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Plans Grid */}
