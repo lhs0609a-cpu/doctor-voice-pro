@@ -147,6 +147,11 @@ class BlogContact(Base):
     is_primary = Column(Boolean, default=False)
     is_verified = Column(Boolean, default=False)
 
+    # P2: 바운스 추적
+    bounce_count = Column(Integer, default=0)  # 바운스 횟수
+    last_bounce_at = Column(DateTime)  # 마지막 바운스 시간
+    bounce_reason = Column(String(200))  # 마지막 바운스 사유
+
     extracted_at = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -349,6 +354,10 @@ class OutreachSetting(Base):
 
     # 수신거부 문구
     unsubscribe_text = Column(Text, default="이 이메일 수신을 원치 않으시면 회신해 주세요.")
+
+    # 네이버 검색 API 설정
+    naver_client_id = Column(String(100))
+    naver_client_secret_encrypted = Column(Text)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

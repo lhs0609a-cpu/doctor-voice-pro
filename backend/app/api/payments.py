@@ -150,6 +150,35 @@ async def confirm_payment(
     db: AsyncSession = Depends(get_db)
 ):
     """결제 승인 (클라이언트 결제 완료 후 호출)"""
+    # 먼저 DB에서 결제 조회하여 금액 검증 (금액 변조 방지)
+    payment_result = await db.execute(
+        select(Payment)
+        .where(
+            and_(
+                Payment.pg_order_id == request.order_id,
+                Payment.user_id == current_user.id
+            )
+        )
+    )
+    payment = payment_result.scalar_one_or_none()
+
+    if not payment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="결제 정보를 찾을 수 없습니다"
+        )
+
+    # 금액 검증 (클라이언트에서 전송된 금액과 DB의 원본 금액 비교)
+    if payment.amount != request.amount:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="결제 금액이 일치하지 않습니다"
+        )
+
+    # 이미 완료된 결제인지 확인 (중복 처리 방지)
+    if payment.status == PaymentStatus.COMPLETED:
+        return payment
+
     # 토스페이먼츠에 결제 승인 요청
     headers = {
         "Authorization": get_toss_auth_header(),
@@ -177,24 +206,6 @@ async def confirm_payment(
             )
 
         result = response.json()
-
-    # DB에서 결제 조회
-    payment_result = await db.execute(
-        select(Payment)
-        .where(
-            and_(
-                Payment.pg_order_id == request.order_id,
-                Payment.user_id == current_user.id
-            )
-        )
-    )
-    payment = payment_result.scalar_one_or_none()
-
-    if not payment:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="결제 정보를 찾을 수 없습니다"
-        )
 
     # 결제 정보 업데이트
     payment.pg_payment_key = request.payment_key
@@ -265,8 +276,21 @@ async def cancel_payment(
             detail="완료된 결제만 취소할 수 있습니다"
         )
 
-    # 환불 금액
+    # 환불 금액 검증
     refund_amount = request.refund_amount or (payment.amount - payment.refunded_amount)
+
+    if refund_amount <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="환불 금액은 0보다 커야 합니다"
+        )
+
+    max_refundable = payment.amount - payment.refunded_amount
+    if refund_amount > max_refundable:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"환불 가능 금액({max_refundable}원)을 초과했습니다"
+        )
 
     # 토스페이먼츠에 취소 요청
     headers = {
@@ -648,12 +672,43 @@ async def confirm_credit_purchase(
 
 # ==================== 웹훅 (토스페이먼츠 콜백) ====================
 
+import hmac
+import hashlib
+
+TOSS_WEBHOOK_SECRET = os.getenv("TOSS_WEBHOOK_SECRET", "")
+
+
+def verify_webhook_signature(payload: bytes, signature: str) -> bool:
+    """토스페이먼츠 웹훅 서명 검증"""
+    if not TOSS_WEBHOOK_SECRET:
+        # 시크릿이 설정되지 않은 경우 (개발 환경)
+        return True
+
+    expected = hmac.new(
+        TOSS_WEBHOOK_SECRET.encode(),
+        payload,
+        hashlib.sha256
+    ).hexdigest()
+
+    return hmac.compare_digest(expected, signature)
+
+
 @router.post("/webhook")
 async def toss_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db)
 ):
     """토스페이먼츠 웹훅 처리"""
+    # 웹훅 서명 검증
+    body = await request.body()
+    signature = request.headers.get("Toss-Signature", "")
+
+    if TOSS_WEBHOOK_SECRET and not verify_webhook_signature(body, signature):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid webhook signature"
+        )
+
     try:
         data = await request.json()
     except Exception:

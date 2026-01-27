@@ -3,7 +3,6 @@
 SMTP를 통한 이메일 발송, 템플릿 렌더링, 추적 기능
 """
 import logging
-import smtplib
 import uuid
 import asyncio
 import re
@@ -16,6 +15,16 @@ from sqlalchemy import select, func, and_
 from cryptography.fernet import Fernet
 import os
 import base64
+
+# 비동기 SMTP 라이브러리 (동기 smtplib 대체)
+try:
+    import aiosmtplib
+    HAS_AIOSMTPLIB = True
+except ImportError:
+    import smtplib
+    HAS_AIOSMTPLIB = False
+    import warnings
+    warnings.warn("aiosmtplib not installed. Using synchronous smtplib (may cause performance issues).")
 
 from app.models.blog_outreach import (
     NaverBlog, BlogContact, EmailTemplate, EmailCampaign,
@@ -129,6 +138,139 @@ class EmailSenderService:
         """추적 ID 생성"""
         return str(uuid.uuid4())
 
+    def _classify_bounce(self, error_str: str, error_type: str) -> tuple:
+        """
+        P2: 바운스 유형 분류
+        Returns: (bounce_type: str, is_hard_bounce: bool)
+        """
+        # Hard bounce 패턴 (영구적 - 재시도 불필요)
+        hard_bounce_patterns = [
+            "550",  # 사용자 없음
+            "551",  # 사용자가 로컬 아님
+            "553",  # 잘못된 주소 형식
+            "user unknown",
+            "user not found",
+            "mailbox not found",
+            "address rejected",
+            "no such user",
+            "invalid recipient",
+            "does not exist",
+            "undeliverable",
+            "permanently rejected",
+        ]
+
+        # Soft bounce 패턴 (일시적 - 재시도 가능)
+        soft_bounce_patterns = [
+            "552",  # 저장 공간 초과
+            "421",  # 서비스 일시 사용 불가
+            "450",  # 메일박스 사용 불가
+            "451",  # 로컬 오류
+            "452",  # 시스템 저장 공간 부족
+            "timeout",
+            "connection",
+            "temporarily",
+            "try again",
+            "rate limit",
+            "too many",
+            "quota",
+            "mailbox full",
+            "over quota",
+        ]
+
+        # Hard bounce 체크
+        for pattern in hard_bounce_patterns:
+            if pattern in error_str:
+                return ("hard_bounce", True)
+
+        # Soft bounce 체크
+        for pattern in soft_bounce_patterns:
+            if pattern in error_str:
+                return ("soft_bounce", False)
+
+        # 기본값: unknown (안전하게 soft로 처리)
+        return ("unknown", False)
+
+    async def _invalidate_contact(self, contact_id: str, reason: str):
+        """
+        P2: Hard bounce 시 연락처 무효화
+        - 연락처를 무효 상태로 변경
+        - 바운스 카운트 증가
+        - 블로그 상태 업데이트
+        """
+        try:
+            result = await self.db.execute(
+                select(BlogContact).where(BlogContact.id == contact_id)
+            )
+            contact = result.scalar_one_or_none()
+
+            if contact:
+                contact.is_verified = False
+                contact.is_primary = False  # Primary에서 제외
+
+                # 바운스 정보 기록
+                contact.bounce_count = (contact.bounce_count or 0) + 1
+                contact.last_bounce_at = datetime.utcnow()
+                contact.bounce_reason = reason[:200] if reason else None
+
+                # 블로그 상태도 업데이트 (연락처가 더 없으면 INVALID로)
+                if contact.blog_id:
+                    blog_result = await self.db.execute(
+                        select(NaverBlog).where(NaverBlog.id == contact.blog_id)
+                    )
+                    blog = blog_result.scalar_one_or_none()
+                    if blog:
+                        # 다른 유효한 연락처가 있는지 확인
+                        other_contacts_result = await self.db.execute(
+                            select(BlogContact).where(
+                                and_(
+                                    BlogContact.blog_id == contact.blog_id,
+                                    BlogContact.id != contact_id,
+                                    BlogContact.email.isnot(None),
+                                    BlogContact.bounce_count < 3  # 바운스 3회 미만
+                                )
+                            )
+                        )
+                        other_valid_contacts = other_contacts_result.scalars().all()
+
+                        if not other_valid_contacts:
+                            # 유효한 연락처가 없으면 블로그도 INVALID
+                            blog.status = BlogStatus.INVALID
+                            blog.notes = f"모든 이메일 바운스: {reason}"
+                        else:
+                            # 다른 유효한 연락처 중 하나를 primary로 설정
+                            other_valid_contacts[0].is_primary = True
+                            blog.notes = f"이메일 바운스 발생, 대체 연락처로 전환: {reason}"
+
+                logger.info(f"연락처 무효화: contact_id={contact_id}, bounce_count={contact.bounce_count}, reason={reason}")
+
+        except Exception as e:
+            logger.error(f"연락처 무효화 실패: {e}")
+
+    def _send_email_sync(
+        self,
+        settings: "OutreachSetting",
+        smtp_password: str,
+        to_email: str,
+        msg: MIMEMultipart
+    ) -> None:
+        """
+        동기 SMTP 발송 (aiosmtplib 미설치 시 fallback)
+        run_in_executor에서 호출되어 이벤트 루프 블로킹 방지
+        """
+        import smtplib
+
+        if settings.smtp_use_tls:
+            server = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30)
+            server.starttls()
+        else:
+            server = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=30)
+
+        try:
+            server.login(settings.smtp_username, smtp_password)
+            server.sendmail(settings.sender_email, to_email, msg.as_string())
+        finally:
+            server.quit()
+
     def _add_tracking_pixel(
         self,
         html_body: str,
@@ -217,23 +359,23 @@ class EmailSenderService:
     ) -> Dict[str, Any]:
         """이메일 발송"""
         try:
-            # 한도 확인
-            daily_check = self._check_daily_limit(user_id)
+            # 한도 확인 (await 추가 - P0 버그 수정)
+            daily_check = await self._check_daily_limit(user_id)
             if not daily_check["can_send"]:
                 return {
                     "success": False,
                     "error": f"일일 발송 한도 초과 ({daily_check['daily_limit']}건)"
                 }
 
-            hourly_check = self._check_hourly_limit(user_id)
+            hourly_check = await self._check_hourly_limit(user_id)
             if not hourly_check["can_send"]:
                 return {
                     "success": False,
                     "error": f"시간당 발송 한도 초과 ({hourly_check['hourly_limit']}건)"
                 }
 
-            # 설정 조회
-            settings = self._get_outreach_settings(user_id)
+            # 설정 조회 (await 추가 - P0 버그 수정)
+            settings = await self._get_outreach_settings(user_id)
             if not settings or not settings.smtp_host:
                 return {
                     "success": False,
@@ -266,7 +408,7 @@ class EmailSenderService:
             self.db.add(email_log)
             self.db.flush()
 
-            # SMTP 발송
+            # SMTP 발송 (비동기로 변경 - P0 성능 개선)
             try:
                 # 이메일 메시지 구성
                 msg = MIMEMultipart('alternative')
@@ -282,15 +424,42 @@ class EmailSenderService:
                 # SMTP 연결 및 발송
                 smtp_password = self.decrypt_password(settings.smtp_password_encrypted) if settings.smtp_password_encrypted else ""
 
-                if settings.smtp_use_tls:
-                    server = smtplib.SMTP(settings.smtp_host, settings.smtp_port)
-                    server.starttls()
+                # 비동기 SMTP 발송 (aiosmtplib 사용)
+                if HAS_AIOSMTPLIB:
+                    if settings.smtp_use_tls:
+                        # STARTTLS 방식
+                        await aiosmtplib.send(
+                            msg,
+                            hostname=settings.smtp_host,
+                            port=settings.smtp_port,
+                            username=settings.smtp_username,
+                            password=smtp_password,
+                            start_tls=True,
+                            timeout=30
+                        )
+                    else:
+                        # SSL 방식
+                        await aiosmtplib.send(
+                            msg,
+                            hostname=settings.smtp_host,
+                            port=settings.smtp_port,
+                            username=settings.smtp_username,
+                            password=smtp_password,
+                            use_tls=True,
+                            timeout=30
+                        )
                 else:
-                    server = smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port)
-
-                server.login(settings.smtp_username, smtp_password)
-                server.sendmail(settings.sender_email, to_email, msg.as_string())
-                server.quit()
+                    # Fallback: 동기 smtplib (aiosmtplib 미설치 시)
+                    # run_in_executor로 이벤트 루프 블로킹 방지
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(
+                        None,
+                        self._send_email_sync,
+                        settings,
+                        smtp_password,
+                        to_email,
+                        msg
+                    )
 
                 # 발송 성공 업데이트
                 email_log.status = EmailStatus.SENT
@@ -314,21 +483,134 @@ class EmailSenderService:
                     "tracking_id": tracking_id
                 }
 
-            except smtplib.SMTPException as e:
+            except Exception as smtp_error:
+                # P2: 개선된 바운스 감지 - Hard/Soft bounce 구분
+                error_str = str(smtp_error).lower()
+                error_type = type(smtp_error).__name__.lower()
+
+                # 바운스 유형 분류
+                bounce_type, is_hard_bounce = self._classify_bounce(error_str, error_type)
+
                 email_log.status = EmailStatus.BOUNCED
-                email_log.error_message = str(e)
+                email_log.error_message = f"[{bounce_type}] {str(smtp_error)}"
                 email_log.bounced_at = datetime.utcnow()
+
+                # P2: Hard bounce인 경우 연락처 자동 무효화
+                if is_hard_bounce and contact_id:
+                    await self._invalidate_contact(contact_id, bounce_type)
+
                 await self.db.commit()
 
-                return {
-                    "success": False,
-                    "error": f"SMTP 발송 오류: {str(e)}"
-                }
+                # 인증 오류 (Soft bounce - 발신자 문제)
+                if "auth" in error_str or "authentication" in error_str or "login" in error_str:
+                    return {
+                        "success": False,
+                        "error": "SMTP 인증 실패",
+                        "error_code": "SMTP_AUTH_ERROR",
+                        "bounce_type": "soft",
+                        "user_message": "SMTP 로그인에 실패했습니다. 이메일 주소와 비밀번호(앱 비밀번호)를 확인해주세요.",
+                        "action_required": "설정 > 이메일 설정에서 SMTP 정보를 확인해주세요.",
+                        "help_url": "/dashboard/outreach/smtp-guide"
+                    }
+
+                # 연결 오류 (Soft bounce - 일시적 문제)
+                elif "connect" in error_str or "connection" in error_str or "refused" in error_type:
+                    return {
+                        "success": False,
+                        "error": "SMTP 서버 연결 실패",
+                        "error_code": "SMTP_CONNECT_ERROR",
+                        "bounce_type": "soft",
+                        "user_message": "SMTP 서버에 연결할 수 없습니다. 호스트 주소와 포트를 확인해주세요.",
+                        "action_required": "SMTP 호스트: smtp.gmail.com (Gmail), smtp.naver.com (네이버) 등을 확인하세요.",
+                        "help_url": "/dashboard/outreach/smtp-guide"
+                    }
+
+                # 수신자 거부 - Hard bounce 케이스 분류
+                elif "550" in error_str or "551" in error_str or "552" in error_str or "553" in error_str or "554" in error_str:
+                    # 550: 사용자 없음 (Hard)
+                    # 551: 사용자가 로컬 아님 (Hard)
+                    # 552: 저장 공간 초과 (Soft)
+                    # 553: 잘못된 주소 형식 (Hard)
+                    # 554: 트랜잭션 실패 (상황에 따라 다름)
+                    if "550" in error_str or "551" in error_str or "553" in error_str:
+                        return {
+                            "success": False,
+                            "error": "수신자 이메일 주소 없음",
+                            "error_code": "HARD_BOUNCE_USER_NOT_FOUND",
+                            "bounce_type": "hard",
+                            "is_permanent": True,
+                            "contact_invalidated": is_hard_bounce and contact_id is not None,
+                            "user_message": f"수신자 이메일 주소({to_email})가 존재하지 않습니다. 이 연락처는 자동으로 무효 처리됩니다.",
+                            "action_required": "다른 연락처를 사용하거나 이 블로그를 목록에서 제외해주세요."
+                        }
+                    else:
+                        return {
+                            "success": False,
+                            "error": "수신자 메일함 문제",
+                            "error_code": "SOFT_BOUNCE_MAILBOX",
+                            "bounce_type": "soft",
+                            "user_message": f"수신자({to_email})의 메일함에 일시적 문제가 있습니다. 나중에 다시 시도해주세요.",
+                            "action_required": "1-2일 후 다시 시도해주세요."
+                        }
+
+                # 수신자 거부 (일반)
+                elif "recipient" in error_str or "rcpt" in error_str:
+                    return {
+                        "success": False,
+                        "error": "수신자 이메일 거부",
+                        "error_code": "RECIPIENT_REFUSED",
+                        "bounce_type": "hard",
+                        "is_permanent": True,
+                        "contact_invalidated": is_hard_bounce and contact_id is not None,
+                        "user_message": f"수신자 이메일 주소({to_email})가 유효하지 않거나 수신을 거부했습니다.",
+                        "action_required": "수신자 이메일 주소를 확인하거나 다른 연락처를 시도해주세요."
+                    }
+
+                # 타임아웃 (Soft bounce)
+                elif "timeout" in error_str or "timed out" in error_str:
+                    return {
+                        "success": False,
+                        "error": "SMTP 서버 응답 시간 초과",
+                        "error_code": "SMTP_TIMEOUT",
+                        "bounce_type": "soft",
+                        "user_message": "SMTP 서버가 응답하지 않습니다. 잠시 후 다시 시도해주세요.",
+                        "action_required": "네트워크 연결을 확인하고 잠시 후 다시 시도해주세요."
+                    }
+
+                # Rate limit (Soft bounce)
+                elif "rate limit" in error_str or "too many" in error_str or "quota" in error_str:
+                    return {
+                        "success": False,
+                        "error": "발송 한도 초과 (SMTP 서버)",
+                        "error_code": "SMTP_RATE_LIMIT",
+                        "bounce_type": "soft",
+                        "user_message": "SMTP 서버의 발송 한도를 초과했습니다. 잠시 후 다시 시도해주세요.",
+                        "action_required": "1시간 정도 후에 다시 시도하거나, 일일 발송량을 줄여주세요."
+                    }
+
+                # 기타 SMTP 오류
+                else:
+                    return {
+                        "success": False,
+                        "error": f"SMTP 발송 오류: {str(smtp_error)}",
+                        "error_code": "SMTP_ERROR",
+                        "bounce_type": bounce_type,
+                        "user_message": "이메일 발송 중 오류가 발생했습니다.",
+                        "action_required": "SMTP 설정을 확인하고 다시 시도해주세요.",
+                        "technical_detail": str(smtp_error)
+                    }
 
         except Exception as e:
             logger.error(f"이메일 발송 오류: {e}")
             await self.db.rollback()
-            return {"success": False, "error": str(e)}
+            return {
+                "success": False,
+                "error": "이메일 발송 중 예기치 않은 오류",
+                "error_code": "UNEXPECTED_ERROR",
+                "user_message": "이메일 발송 중 예기치 않은 오류가 발생했습니다.",
+                "action_required": "잠시 후 다시 시도하거나, 관리자에게 문의해주세요.",
+                "technical_detail": str(e)
+            }
 
     async def send_with_template(
         self,

@@ -76,7 +76,7 @@ const tutorialSteps: TutorialStep[] = [
     description: '나에게 맞는 플랜을 선택하세요.',
     icon: <CreditCard className="h-12 w-12 text-pink-500" />,
     tips: [
-      'Free: 월 3건 글 생성 (무료)',
+      'Free: 월 10건 글 생성 (무료)',
       'Starter: 월 30건 + 상위노출 분석',
       'Pro: 무제한 생성 + 모든 기능',
       'Business: 팀 기능 + API 접근'

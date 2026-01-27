@@ -121,6 +121,9 @@ class OutreachSettingUpdate(BaseModel):
     track_opens: Optional[bool] = None
     track_clicks: Optional[bool] = None
     unsubscribe_text: Optional[str] = None
+    # 네이버 검색 API 설정
+    naver_client_id: Optional[str] = None
+    naver_client_secret: Optional[str] = None
 
 
 class SendEmailRequest(BaseModel):
@@ -395,14 +398,21 @@ async def update_blog_status(
 @router.post("/contacts/extract/{blog_id}")
 async def extract_contacts(
     blog_id: str,
+    auto_generate_naver_email: bool = True,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """블로그에서 연락처 추출"""
+    """블로그에서 연락처 추출
+
+    Args:
+        blog_id: 블로그 DB ID
+        auto_generate_naver_email: 블로그 ID 기반 네이버 이메일 자동 생성 (기본값: True)
+    """
     extractor = ContactExtractorService(db)
     result = await extractor.extract_contacts(
         blog_id=blog_id,
-        user_id=str(current_user.id)
+        user_id=str(current_user.id),
+        auto_generate_naver_email=auto_generate_naver_email
     )
     return result
 
@@ -410,16 +420,105 @@ async def extract_contacts(
 @router.post("/contacts/extract-batch")
 async def extract_contacts_batch(
     limit: int = 50,
+    auto_generate_naver_email: bool = True,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """배치 연락처 추출"""
+    """배치 연락처 추출
+
+    Args:
+        limit: 최대 처리 개수
+        auto_generate_naver_email: 블로그 ID 기반 네이버 이메일 자동 생성 (기본값: True)
+    """
     extractor = ContactExtractorService(db)
     result = await extractor.extract_contacts_batch(
         user_id=str(current_user.id),
-        limit=limit
+        limit=limit,
+        auto_generate_naver_email=auto_generate_naver_email
     )
     return result
+
+
+@router.post("/contacts/generate-naver-emails")
+async def generate_naver_emails(
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """블로그 ID 기반 네이버 이메일 일괄 생성 (빠른 처리)
+
+    Playwright 없이 블로그 ID만으로 이메일 주소를 생성합니다.
+    예: myblog123 → myblog123@naver.com
+
+    Args:
+        limit: 최대 처리 개수 (기본값: 100)
+    """
+    from app.models.blog_outreach import BlogContact, ContactSource
+
+    user_id = str(current_user.id)
+
+    # 연락처가 없는 블로그 조회
+    result = await db.execute(
+        select(NaverBlog).where(
+            and_(
+                NaverBlog.user_id == user_id,
+                NaverBlog.has_contact == False
+            )
+        ).limit(limit)
+    )
+    blogs = result.scalars().all()
+
+    if not blogs:
+        return {
+            "success": True,
+            "processed": 0,
+            "generated": 0,
+            "message": "처리할 블로그가 없습니다"
+        }
+
+    generated = 0
+    for blog in blogs:
+        if not blog.blog_id:
+            continue
+
+        # 이미 같은 이메일이 있는지 확인
+        naver_email = f"{blog.blog_id.lower().strip()}@naver.com"
+        existing = await db.execute(
+            select(BlogContact).where(
+                and_(
+                    BlogContact.blog_id == blog.id,
+                    BlogContact.email == naver_email
+                )
+            )
+        )
+        if existing.scalar_one_or_none():
+            continue
+
+        # 네이버 이메일 연락처 생성
+        contact = BlogContact(
+            blog_id=blog.id,
+            email=naver_email,
+            source=ContactSource.PROFILE,
+            source_url=blog.blog_url,
+            is_primary=True,
+            is_verified=False
+        )
+        db.add(contact)
+
+        # 블로그 상태 업데이트
+        blog.has_contact = True
+        blog.status = BlogStatus.CONTACT_FOUND
+
+        generated += 1
+
+    await db.commit()
+
+    return {
+        "success": True,
+        "processed": len(blogs),
+        "generated": generated,
+        "message": f"{generated}개의 네이버 이메일이 생성되었습니다"
+    }
 
 
 # ==================== Lead Scoring APIs ====================
@@ -428,10 +527,11 @@ async def extract_contacts_batch(
 async def score_blog(
     blog_id: str,
     request: Optional[ScoringRequest] = None,
+    include_breakdown: bool = True,  # P2: 점수 산정 근거 포함 옵션
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """블로그 스코어링"""
+    """블로그 스코어링 (P2: score_breakdown으로 점수 산정 근거 제공)"""
     scorer = LeadScoringService(db)
 
     target_categories = None
@@ -446,7 +546,8 @@ async def score_blog(
         blog_id=blog_id,
         user_id=str(current_user.id),
         target_categories=target_categories,
-        target_keywords=target_keywords
+        target_keywords=target_keywords,
+        include_breakdown=include_breakdown
     )
     return result
 
@@ -1048,11 +1149,40 @@ async def track_click(
     db: AsyncSession = Depends(get_db)
 ):
     """클릭 추적 및 리다이렉트"""
+    # URL 검증 - 허용된 도메인만 리다이렉트 (Open Redirect 방지)
+    decoded_url = urllib.parse.unquote(url)
+    parsed = urllib.parse.urlparse(decoded_url)
+
+    # 허용된 도메인 목록 (프로토콜 포함)
+    ALLOWED_DOMAINS = [
+        "blog.naver.com",
+        "m.blog.naver.com",
+        "in.naver.com",
+        "www.instagram.com",
+        "instagram.com",
+        "www.youtube.com",
+        "youtube.com",
+        "youtu.be",
+    ]
+
+    # 도메인 검증
+    if parsed.netloc and parsed.netloc not in ALLOWED_DOMAINS:
+        raise HTTPException(
+            status_code=400,
+            detail="허용되지 않은 URL입니다"
+        )
+
+    # 상대 URL 또는 유효한 절대 URL인 경우에만 허용
+    if not parsed.scheme or parsed.scheme not in ["http", "https"]:
+        raise HTTPException(
+            status_code=400,
+            detail="유효하지 않은 URL 형식입니다"
+        )
+
     sender = EmailSenderService(db)
     await sender.track_click(tracking_id, url)
 
     # 원래 URL로 리다이렉트
-    decoded_url = urllib.parse.unquote(url)
     return RedirectResponse(url=decoded_url)
 
 
@@ -1096,7 +1226,10 @@ async def get_settings(
             "auto_score": settings.auto_score,
             "track_opens": settings.track_opens,
             "track_clicks": settings.track_clicks,
-            "unsubscribe_text": settings.unsubscribe_text
+            "unsubscribe_text": settings.unsubscribe_text,
+            # 네이버 API 설정
+            "naver_client_id": settings.naver_client_id,
+            "naver_api_configured": bool(settings.naver_client_secret_encrypted)
         }
     }
 
@@ -1124,6 +1257,12 @@ async def update_settings(
         sender = EmailSenderService(db)
         settings.smtp_password_encrypted = sender.encrypt_password(update_data["smtp_password"])
         del update_data["smtp_password"]
+
+    # 네이버 API Secret 암호화
+    if "naver_client_secret" in update_data and update_data["naver_client_secret"]:
+        sender = EmailSenderService(db)
+        settings.naver_client_secret_encrypted = sender.encrypt_password(update_data["naver_client_secret"])
+        del update_data["naver_client_secret"]
 
     for key, value in update_data.items():
         if hasattr(settings, key):

@@ -48,6 +48,150 @@ import { CafeReviewCreator } from '@/components/cafe-review/cafe-review-creator'
 import { OneClickPublish } from '@/components/naver-publish/one-click-publish'
 import { TopPostAnalyzer } from '@/components/post/top-post-analyzer'
 
+// P1: 프리셋 정의
+const PRESETS = {
+  seo_optimized: {
+    name: 'SEO 최적화',
+    description: '네이버 상위노출에 최적화된 설정',
+    icon: '🔍',
+    config: {
+      persuasion_level: 4,
+      framework: '정보전달형',
+      target_length: 2000,
+      writing_perspective: '3인칭',
+      count: 1,
+    },
+    seoOptimization: {
+      enabled: true,
+      experience_focus: true,
+      expertise: true,
+      originality: true,
+      timeliness: true,
+      topic_concentration: true,
+      trustworthiness: true,
+      source_authority: true,
+      multi_perspective: true,
+      search_intent_match: true,
+    },
+    writingStyle: {
+      formality: 6,
+      friendliness: 5,
+      technical_depth: 7,
+      storytelling: 4,
+      emotion: 4,
+      humor: 3,
+      question_usage: 5,
+      metaphor_usage: 4,
+      sentence_length: 5,
+    }
+  },
+  persuasive: {
+    name: '설득력 강화',
+    description: '환자 설득에 최적화된 스토리텔링',
+    icon: '💪',
+    config: {
+      persuasion_level: 5,
+      framework: '공감해결형',
+      target_length: 1800,
+      writing_perspective: '1인칭',
+      count: 1,
+    },
+    seoOptimization: {
+      enabled: false,
+      experience_focus: true,
+      expertise: true,
+      originality: true,
+      timeliness: false,
+      topic_concentration: true,
+      trustworthiness: true,
+      source_authority: false,
+      multi_perspective: false,
+      search_intent_match: false,
+    },
+    writingStyle: {
+      formality: 4,
+      friendliness: 8,
+      technical_depth: 4,
+      storytelling: 9,
+      emotion: 8,
+      humor: 5,
+      question_usage: 7,
+      metaphor_usage: 7,
+      sentence_length: 5,
+    }
+  },
+  quick_simple: {
+    name: '빠른 작성',
+    description: '간단하고 빠른 블로그 글',
+    icon: '⚡',
+    config: {
+      persuasion_level: 3,
+      framework: '관심유도형',
+      target_length: 1200,
+      writing_perspective: '1인칭',
+      count: 1,
+    },
+    seoOptimization: {
+      enabled: false,
+      experience_focus: false,
+      expertise: false,
+      originality: false,
+      timeliness: false,
+      topic_concentration: false,
+      trustworthiness: false,
+      source_authority: false,
+      multi_perspective: false,
+      search_intent_match: false,
+    },
+    writingStyle: {
+      formality: 5,
+      friendliness: 7,
+      technical_depth: 5,
+      storytelling: 6,
+      emotion: 6,
+      humor: 5,
+      question_usage: 6,
+      metaphor_usage: 5,
+      sentence_length: 5,
+    }
+  },
+  bulk_generate: {
+    name: '대량 생성',
+    description: '여러 버전을 한번에 생성',
+    icon: '📚',
+    config: {
+      persuasion_level: 4,
+      framework: '관심유도형',
+      target_length: 1800,
+      writing_perspective: '1인칭',
+      count: 5,
+    },
+    seoOptimization: {
+      enabled: true,
+      experience_focus: true,
+      expertise: true,
+      originality: true,
+      timeliness: true,
+      topic_concentration: true,
+      trustworthiness: true,
+      source_authority: true,
+      multi_perspective: true,
+      search_intent_match: true,
+    },
+    writingStyle: {
+      formality: 5,
+      friendliness: 7,
+      technical_depth: 5,
+      storytelling: 6,
+      emotion: 6,
+      humor: 5,
+      question_usage: 6,
+      metaphor_usage: 5,
+      sentence_length: 5,
+    }
+  }
+}
+
 export default function CreatePostPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
@@ -62,6 +206,11 @@ export default function CreatePostPage() {
   const [checkingGeminiApi, setCheckingGeminiApi] = useState(true)
   const [aiPricing, setAiPricing] = useState<any>(null)
   const [aiUsageStats, setAiUsageStats] = useState<any>(null)
+
+  // P1: 간편/전문가 모드 상태
+  const [editorMode, setEditorMode] = useState<'simple' | 'advanced'>('simple')
+  const [selectedPreset, setSelectedPreset] = useState<string | null>('quick_simple')
+
   const [config, setConfig] = useState({
     persuasion_level: 4,
     framework: '관심유도형',
@@ -105,6 +254,26 @@ export default function CreatePostPage() {
     from: '',
     to: '',
   })
+
+  // P1: 프리셋 적용 함수
+  const applyPreset = (presetKey: string) => {
+    const preset = PRESETS[presetKey as keyof typeof PRESETS]
+    if (!preset) return
+
+    setSelectedPreset(presetKey)
+    setConfig(prev => ({
+      ...prev,
+      ...preset.config,
+      ai_provider: prev.ai_provider, // AI 제공자는 유지
+      ai_model: prev.ai_model, // AI 모델도 유지
+    }))
+    setSeoOptimization(preset.seoOptimization)
+    setWritingStyle(preset.writingStyle)
+
+    toast.success(`"${preset.name}" 프리셋이 적용되었습니다`, {
+      description: preset.description
+    })
+  }
   const [topPostRules, setTopPostRules] = useState<any>(null)
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [selectedPostIndex, setSelectedPostIndex] = useState(0)
@@ -119,6 +288,7 @@ export default function CreatePostPage() {
     failed: number
     errors: string[]
   }>({ total: 0, completed: 0, failed: 0, errors: [] })
+  const [hasLoadedConfig, setHasLoadedConfig] = useState(false)
 
   // Auto-save hook
   const { lastSaved, loadSaved, clearSaved } = useAutoSave({
@@ -127,6 +297,60 @@ export default function CreatePostPage() {
     delay: 3000,
     enabled: !generatedPost, // Only auto-save before generation
   })
+
+  // 설정 기억 - localStorage에서 마지막 사용 설정 로드
+  useEffect(() => {
+    try {
+      const savedConfig = localStorage.getItem('doctorvoice-last-config')
+      if (savedConfig) {
+        const parsed = JSON.parse(savedConfig)
+        setConfig(prev => ({ ...prev, ...parsed }))
+        setHasLoadedConfig(true)
+      }
+      const savedWritingStyle = localStorage.getItem('doctorvoice-last-writing-style')
+      if (savedWritingStyle) {
+        setWritingStyle(JSON.parse(savedWritingStyle))
+      }
+      const savedSeoOpt = localStorage.getItem('doctorvoice-last-seo-optimization')
+      if (savedSeoOpt) {
+        setSeoOptimization(JSON.parse(savedSeoOpt))
+      }
+    } catch (e) {
+      console.log('이전 설정 로드 실패:', e)
+    }
+  }, [])
+
+  // 설정 변경시 localStorage에 저장
+  useEffect(() => {
+    try {
+      localStorage.setItem('doctorvoice-last-config', JSON.stringify({
+        persuasion_level: config.persuasion_level,
+        framework: config.framework,
+        target_length: config.target_length,
+        writing_perspective: config.writing_perspective,
+        ai_provider: config.ai_provider,
+        ai_model: config.ai_model,
+      }))
+    } catch (e) {
+      // ignore
+    }
+  }, [config])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('doctorvoice-last-writing-style', JSON.stringify(writingStyle))
+    } catch (e) {
+      // ignore
+    }
+  }, [writingStyle])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('doctorvoice-last-seo-optimization', JSON.stringify(seoOptimization))
+    } catch (e) {
+      // ignore
+    }
+  }, [seoOptimization])
 
   // Fetch current user
   useEffect(() => {
@@ -734,13 +958,74 @@ export default function CreatePostPage() {
             블로그 글과 카페 바이럴 후기를 AI로 쉽게 작성하세요
           </p>
         </div>
-        {lastSaved && !generatedPost && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Clock className="h-4 w-4" />
-            <span>마지막 저장: {formatLastSaved(lastSaved)}</span>
+        <div className="flex items-center gap-4">
+          {lastSaved && !generatedPost && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Clock className="h-4 w-4" />
+              <span>마지막 저장: {formatLastSaved(lastSaved)}</span>
+            </div>
+          )}
+          {/* P1: 간편/전문가 모드 전환 */}
+          <div className="flex items-center gap-2 p-1 bg-gray-100 rounded-lg">
+            <Button
+              variant={editorMode === 'simple' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setEditorMode('simple')}
+              className="gap-1"
+            >
+              <Zap className="h-3 w-3" />
+              간편
+            </Button>
+            <Button
+              variant={editorMode === 'advanced' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setEditorMode('advanced')}
+              className="gap-1"
+            >
+              <Sparkles className="h-3 w-3" />
+              전문가
+            </Button>
           </div>
-        )}
+        </div>
       </div>
+
+      {/* P1: 프리셋 선택 (간편 모드에서만 표시) */}
+      {editorMode === 'simple' && (
+        <Card className="bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200">
+          <CardContent className="py-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Lightbulb className="h-4 w-4 text-blue-600" />
+                <span className="font-medium text-blue-900">빠른 시작 프리셋</span>
+              </div>
+              <span className="text-xs text-blue-600">원클릭으로 최적 설정 적용</span>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {Object.entries(PRESETS).map(([key, preset]) => (
+                <Button
+                  key={key}
+                  variant={selectedPreset === key ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => applyPreset(key)}
+                  className={`justify-start gap-2 h-auto py-2 ${
+                    selectedPreset === key
+                      ? 'bg-blue-600 hover:bg-blue-700'
+                      : 'hover:bg-blue-50 border-blue-200'
+                  }`}
+                >
+                  <span className="text-lg">{preset.icon}</span>
+                  <div className="text-left">
+                    <div className="font-medium text-xs">{preset.name}</div>
+                    <div className={`text-[10px] ${selectedPreset === key ? 'text-blue-100' : 'text-gray-500'}`}>
+                      {preset.description}
+                    </div>
+                  </div>
+                </Button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Tabs defaultValue="blog" className="w-full">
         <TabsList className="grid w-full max-w-md grid-cols-2">
@@ -874,7 +1159,8 @@ export default function CreatePostPage() {
         </Card>
       )}
 
-      {/* AI 제공자 선택 */}
+      {/* AI 제공자 선택 - 전문가 모드에서만 표시 */}
+      {editorMode === 'advanced' && (
       <Card>
         <CardHeader>
           <CardTitle>AI 제공자 선택</CardTitle>
@@ -954,6 +1240,7 @@ export default function CreatePostPage() {
           )}
         </CardContent>
       </Card>
+      )}
 
       <div className="grid lg:grid-cols-2 gap-6">
         {/* Input Section */}
@@ -1155,43 +1442,55 @@ export default function CreatePostPage() {
                 {originalContent.length}자 / 최소 50자
               </div>
 
-              {/* 주제 변환 옵션 */}
-              <div className="space-y-3 pt-4 border-t">
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="topicConversion"
-                    checked={topicConversion.enabled}
-                    onChange={(e) => setTopicConversion({ ...topicConversion, enabled: e.target.checked })}
-                    className="rounded"
-                  />
-                  <Label htmlFor="topicConversion" className="cursor-pointer">
-                    주제 변환 (예: 아토피 → 건선)
-                  </Label>
-                </div>
-
-                {topicConversion.enabled && (
-                  <div className="grid grid-cols-2 gap-2 pl-6">
-                    <Input
-                      placeholder="변환 전 (예: 아토피)"
-                      value={topicConversion.from}
-                      onChange={(e) => setTopicConversion({ ...topicConversion, from: e.target.value })}
+              {/* 주제 변환 옵션 - 전문가 모드에서만 표시 */}
+              {editorMode === 'advanced' && (
+                <div className="space-y-3 pt-4 border-t">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="topicConversion"
+                      checked={topicConversion.enabled}
+                      onChange={(e) => setTopicConversion({ ...topicConversion, enabled: e.target.checked })}
+                      className="rounded"
                     />
-                    <Input
-                      placeholder="변환 후 (예: 건선)"
-                      value={topicConversion.to}
-                      onChange={(e) => setTopicConversion({ ...topicConversion, to: e.target.value })}
-                    />
+                    <Label htmlFor="topicConversion" className="cursor-pointer">
+                      주제 변환 (예: 아토피 → 건선)
+                    </Label>
                   </div>
-                )}
-              </div>
+
+                  {topicConversion.enabled && (
+                    <div className="grid grid-cols-2 gap-2 pl-6">
+                      <Input
+                        placeholder="변환 전 (예: 아토피)"
+                        value={topicConversion.from}
+                        onChange={(e) => setTopicConversion({ ...topicConversion, from: e.target.value })}
+                      />
+                      <Input
+                        placeholder="변환 후 (예: 건선)"
+                        value={topicConversion.to}
+                        onChange={(e) => setTopicConversion({ ...topicConversion, to: e.target.value })}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
-              <CardTitle>각색 설정</CardTitle>
-              <CardDescription>원하는 스타일을 선택하세요</CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>각색 설정</CardTitle>
+                  <CardDescription>원하는 스타일을 선택하세요</CardDescription>
+                </div>
+                {hasLoadedConfig && (
+                  <span className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded-full flex items-center gap-1">
+                    <CheckCircle2 className="h-3 w-3" />
+                    이전 설정 적용됨
+                  </span>
+                )}
+              </div>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
@@ -1216,7 +1515,11 @@ export default function CreatePostPage() {
               <div className="space-y-2">
                 <Label>설득 프레임워크</Label>
                 <div className="grid grid-cols-2 gap-2">
-                  {['관심유도형', '공감해결형', '스토리형', '질문답변형', '정보전달형', '경험공유형'].map((framework) => (
+                  {/* P1: 간편 모드에서는 주요 3개만, 전문가 모드에서는 전체 표시 */}
+                  {(editorMode === 'simple'
+                    ? ['관심유도형', '공감해결형', '정보전달형']
+                    : ['관심유도형', '공감해결형', '스토리형', '질문답변형', '정보전달형', '경험공유형']
+                  ).map((framework) => (
                     <Button
                       key={framework}
                       variant={config.framework === framework ? 'default' : 'outline'}
@@ -1227,6 +1530,11 @@ export default function CreatePostPage() {
                     </Button>
                   ))}
                 </div>
+                {editorMode === 'simple' && (
+                  <p className="text-xs text-muted-foreground">
+                    더 많은 프레임워크는 전문가 모드에서 확인하세요
+                  </p>
+                )}
               </div>
 
               <div className="space-y-3">
@@ -1287,24 +1595,27 @@ export default function CreatePostPage() {
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label>작성 시점</Label>
-                <div className="grid grid-cols-3 gap-2">
-                  {['1인칭', '3인칭', '대화형'].map((perspective) => (
-                    <Button
-                      key={perspective}
-                      variant={config.writing_perspective === perspective ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => setConfig({ ...config, writing_perspective: perspective })}
-                    >
-                      {perspective}
-                    </Button>
-                  ))}
+              {/* 작성 시점 - 전문가 모드에서만 표시 */}
+              {editorMode === 'advanced' && (
+                <div className="space-y-2">
+                  <Label>작성 시점</Label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {['1인칭', '3인칭', '대화형'].map((perspective) => (
+                      <Button
+                        key={perspective}
+                        variant={config.writing_perspective === perspective ? 'default' : 'outline'}
+                        size="sm"
+                        onClick={() => setConfig({ ...config, writing_perspective: perspective })}
+                      >
+                        {perspective}
+                      </Button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    1인칭: 원장이 직접 | 3인칭: 객관적 전문가 | 대화형: 친근한 대화
+                  </p>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  1인칭: 원장이 직접 | 3인칭: 객관적 전문가 | 대화형: 친근한 대화
-                </p>
-              </div>
+              )}
 
               <div className="space-y-2">
                 <Label>생성 개수</Label>
@@ -1320,18 +1631,21 @@ export default function CreatePostPage() {
                     </Button>
                   ))}
                 </div>
-                <div className="grid grid-cols-5 gap-2">
-                  {[6, 7, 8, 9, 10].map((count) => (
-                    <Button
-                      key={count}
-                      variant={config.count === count ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => setConfig({ ...config, count })}
-                    >
-                      {count}개
-                    </Button>
-                  ))}
-                </div>
+                {/* P1: 6-10개는 전문가 모드에서만 표시 */}
+                {editorMode === 'advanced' && (
+                  <div className="grid grid-cols-5 gap-2">
+                    {[6, 7, 8, 9, 10].map((count) => (
+                      <Button
+                        key={count}
+                        variant={config.count === count ? 'default' : 'outline'}
+                        size="sm"
+                        onClick={() => setConfig({ ...config, count })}
+                      >
+                        {count}개
+                      </Button>
+                    ))}
+                  </div>
+                )}
                 <p className="text-xs text-muted-foreground">
                   순차 처리로 안정적 생성 (1개당 약 30초, 오류 시 자동 재시도)
                 </p>
@@ -1355,7 +1669,7 @@ export default function CreatePostPage() {
                   <span className="text-xs text-muted-foreground">네이버 상위노출</span>
                 </div>
 
-                {seoOptimization.enabled && (
+                {seoOptimization.enabled && editorMode === 'advanced' && (
                   <div className="pl-6 space-y-2">
                     <p className="text-xs text-muted-foreground mb-3">
                       네이버 검색 알고리즘(DIA/CRANK)에 최적화된 콘텐츠로 작성합니다
@@ -1531,9 +1845,13 @@ export default function CreatePostPage() {
             </CardContent>
           </Card>
 
-          <WritingStyleConfig value={writingStyle} onChange={setWritingStyle} />
-
-          <RequestRequirementsInput value={requirements} onChange={setRequirements} />
+          {/* P1: 쓰기 스타일과 요구사항은 전문가 모드에서만 표시 */}
+          {editorMode === 'advanced' && (
+            <>
+              <WritingStyleConfig value={writingStyle} onChange={setWritingStyle} />
+              <RequestRequirementsInput value={requirements} onChange={setRequirements} />
+            </>
+          )}
 
           {/* 진행률 표시 */}
           {loading && generationProgress.total > 0 && (
@@ -1660,10 +1978,33 @@ export default function CreatePostPage() {
                 <CardHeader>
                   <CardTitle className="flex items-center justify-between">
                     생성된 포스팅
-                    <div className="flex items-center gap-2 text-sm font-normal">
-                      <TrendingUp className="h-4 w-4 text-blue-600" />
-                      <span className="text-blue-600 font-medium">
-                        설득력 {Math.round(generatedPost.persuasion_score)}점
+                    {/* 설득력 점수 + 벤치마크 */}
+                    <div className="flex items-center gap-3 text-sm font-normal">
+                      <div className="flex items-center gap-2">
+                        <TrendingUp className="h-4 w-4 text-blue-600" />
+                        <span className={`font-bold ${
+                          generatedPost.persuasion_score >= 80 ? 'text-emerald-600' :
+                          generatedPost.persuasion_score >= 60 ? 'text-blue-600' :
+                          'text-amber-600'
+                        }`}>
+                          설득력 {Math.round(generatedPost.persuasion_score)}점
+                        </span>
+                      </div>
+                      {/* 벤치마크 뱃지 */}
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                        generatedPost.persuasion_score >= 80 ? 'bg-emerald-100 text-emerald-700' :
+                        generatedPost.persuasion_score >= 60 ? 'bg-blue-100 text-blue-700' :
+                        generatedPost.persuasion_score >= 40 ? 'bg-amber-100 text-amber-700' :
+                        'bg-gray-100 text-gray-700'
+                      }`}>
+                        {generatedPost.persuasion_score >= 80 ? '상위 10%' :
+                         generatedPost.persuasion_score >= 70 ? '상위 25%' :
+                         generatedPost.persuasion_score >= 60 ? '상위 40%' :
+                         generatedPost.persuasion_score >= 50 ? '평균' : '개선 필요'}
+                      </span>
+                      {/* 평균 비교 */}
+                      <span className="text-xs text-gray-500">
+                        (평균 62점)
                       </span>
                     </div>
                   </CardTitle>
@@ -1778,6 +2119,27 @@ export default function CreatePostPage() {
                         ? '위반 표현이 없습니다'
                         : `${generatedPost.medical_law_check?.total_issues}개 이슈 발견 (자동 수정됨)`}
                     </p>
+                    {/* 의료법 검증 면책조항 */}
+                    <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                      <div className="flex items-start gap-2">
+                        <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                        <div className="space-y-1">
+                          <p className="text-xs font-semibold text-amber-800">
+                            ⚠️ 의료법 검증 면책조항
+                          </p>
+                          <p className="text-xs text-amber-700">
+                            본 검증 결과는 AI 기반 참고 자료이며, 법적 효력이 없습니다.
+                            의료광고 관련 법률 준수 여부의 최종 판단과 책임은 사용자(광고주)에게 있습니다.
+                          </p>
+                          <p className="text-xs text-amber-600">
+                            💡 중요한 광고물은 반드시 전문 법률 자문 또는 공식 심의 절차를 거치시기 바랍니다.
+                          </p>
+                          <p className="text-xs text-red-600 font-medium">
+                            ⚖️ 의료법 위반 시 과태료 최대 300만원, 반복 위반 시 영업정지 처분이 가능합니다.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                   {generatedPost.hashtags && generatedPost.hashtags.length > 0 && (
@@ -1800,13 +2162,48 @@ export default function CreatePostPage() {
                   )}
 
                   {generatedPost.seo_keywords && generatedPost.seo_keywords.length > 0 && (
-                    <div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <Lightbulb className="h-4 w-4 text-yellow-600" />
-                        <Label className="text-sm">SEO 키워드</Label>
+                    <div className="bg-amber-50 p-4 rounded-lg border border-amber-200">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <Lightbulb className="h-4 w-4 text-amber-600" />
+                          <Label className="text-sm font-medium text-amber-800">SEO 키워드</Label>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs border-amber-300 text-amber-700 hover:bg-amber-100"
+                          onClick={() => {
+                            // 제목에 첫 번째 키워드 자동 삽입
+                            const keyword = generatedPost.seo_keywords[0]
+                            const currentTitle = generatedPost.title || ''
+                            if (!currentTitle.includes(keyword)) {
+                              const newTitle = `${keyword} ${currentTitle}`
+                              setGeneratedPost({ ...generatedPost, title: newTitle })
+                              toast.success(`제목에 "${keyword}" 키워드가 추가되었습니다`)
+                            } else {
+                              toast.info('이미 제목에 해당 키워드가 포함되어 있습니다')
+                            }
+                          }}
+                        >
+                          제목에 삽입
+                        </Button>
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        {generatedPost.seo_keywords.slice(0, 5).join(', ')}
+                      <div className="flex flex-wrap gap-2">
+                        {generatedPost.seo_keywords.slice(0, 5).map((keyword: string, idx: number) => (
+                          <button
+                            key={idx}
+                            className="px-2 py-1 text-xs bg-white border border-amber-200 rounded-full text-amber-700 hover:bg-amber-100 transition-colors"
+                            onClick={() => {
+                              navigator.clipboard.writeText(keyword)
+                              toast.success(`"${keyword}" 복사됨`)
+                            }}
+                          >
+                            {keyword}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-xs text-amber-600 mt-2">
+                        💡 키워드를 클릭하면 복사됩니다
                       </p>
                     </div>
                   )}

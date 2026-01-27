@@ -6,7 +6,8 @@ from app.api import (
     roi, place, reviews, competitors, rankings, campaigns,
     knowledge, crawl, cafe, viral,
     knowledge_extended, cafe_extended,
-    billing, blog_outreach, public_leads
+    billing, blog_outreach, public_leads,
+    demo  # P0: 온보딩 데모 API
 )
 
 api_router = APIRouter()
@@ -53,3 +54,5 @@ api_router.include_router(billing.router)
 api_router.include_router(blog_outreach.router, prefix="/outreach", tags=["outreach"])
 # Public Data Leads (공공데이터 리드 수집)
 api_router.include_router(public_leads.router, tags=["public-leads"])
+# Demo API (온보딩 체험용 - 인증 불필요) - P0 버그 수정
+api_router.include_router(demo.router, tags=["demo"])

@@ -41,21 +41,7 @@ import {
 } from '@/components/ui/dialog'
 import { PublishGuide } from './publish-guide'
 import { HelpCircle, PlayCircle } from 'lucide-react'
-
-// 저장된 글 타입 (간단한 버전)
-interface SavedPost {
-  id: string
-  savedAt: string
-  suggested_titles?: string[]
-  generated_content?: string
-  seo_keywords?: string[]
-  original_content?: string
-  title?: string
-  content?: string
-  // DB에서 온 글 식별용
-  sourcePostId?: string
-  sourceType?: 'database' | 'local'
-}
+import type { SavedPost } from '@/types'
 
 // 샘플 글 (항상 유지)
 const SAMPLE_POST: SavedPost = {

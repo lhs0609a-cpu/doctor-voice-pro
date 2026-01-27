@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, Suspense } from 'react'
+import React, { useEffect, useState, Suspense, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -14,8 +14,12 @@ function SuccessContent() {
   const [loading, setLoading] = useState(true)
   const [success, setSuccess] = useState(false)
   const [paymentInfo, setPaymentInfo] = useState<any>(null)
+  const confirmedRef = useRef(false)
 
   useEffect(() => {
+    // 중복 결제 확인 방지
+    if (confirmedRef.current) return
+    confirmedRef.current = true
     confirmPayment()
   }, [])
 

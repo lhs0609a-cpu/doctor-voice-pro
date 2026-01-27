@@ -46,8 +46,8 @@ export default function PricingPage() {
         const subscription = await subscriptionAPI.getCurrentSubscription()
         setCurrentSubscription(subscription)
       }
-    } catch (error) {
-      console.error('Failed to load pricing data:', error)
+    } catch {
+      toast.error('요금제 정보를 불러오는데 실패했습니다')
     } finally {
       setLoading(false)
     }

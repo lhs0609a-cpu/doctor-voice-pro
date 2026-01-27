@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -110,6 +111,7 @@ const BLOG_STATUSES = [
 ]
 
 export default function OutreachPage() {
+  const router = useRouter()
   const [activeTab, setActiveTab] = useState('dashboard')
   const [dashboard, setDashboard] = useState<OutreachDashboard | null>(null)
   const [scoringStats, setScoringStats] = useState<ScoringStats | null>(null)
@@ -248,6 +250,30 @@ export default function OutreachPage() {
     loadBlogs()
   }, [blogFilter, loadBlogs])
 
+  // 에러 메시지 포맷팅 헬퍼
+  const formatApiError = (error: any, defaultMessage: string) => {
+    const data = error?.response?.data
+    if (data) {
+      // 상세 에러 정보가 있는 경우
+      if (data.user_message) {
+        return {
+          title: data.error || defaultMessage,
+          description: data.user_message,
+          action: data.action_required,
+          helpUrl: data.help_url,
+        }
+      }
+      // 기본 detail 에러
+      if (data.detail) {
+        return {
+          title: defaultMessage,
+          description: typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail),
+        }
+      }
+    }
+    return { title: defaultMessage, description: error?.message || '알 수 없는 오류가 발생했습니다' }
+  }
+
   // Actions
   const handleSearchBlogs = async () => {
     if (!searchKeyword) {
@@ -268,8 +294,15 @@ export default function OutreachPage() {
       } else {
         toast.error(result.message || '수집 실패')
       }
-    } catch (error) {
-      toast.error('블로그 수집 중 오류 발생')
+    } catch (error: any) {
+      const err = formatApiError(error, '블로그 수집 중 오류 발생')
+      toast.error(err.title, {
+        description: err.description,
+        action: err.helpUrl ? {
+          label: '도움말 보기',
+          onClick: () => window.open(err.helpUrl, '_blank'),
+        } : undefined,
+      })
     } finally {
       setLoading(false)
     }
@@ -283,9 +316,35 @@ export default function OutreachPage() {
         toast.success(`${result.processed || 0}개 처리, ${result.with_contacts || 0}개 연락처 발견`)
         loadBlogs()
         loadDashboard()
+      } else if (result.error) {
+        toast.error(result.user_message || result.error, {
+          description: result.action_required,
+        })
       }
-    } catch (error) {
-      toast.error('연락처 추출 중 오류 발생')
+    } catch (error: any) {
+      const err = formatApiError(error, '연락처 추출 중 오류 발생')
+      toast.error(err.title, { description: err.description })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleGenerateNaverEmails = async () => {
+    setLoading(true)
+    try {
+      const result = await outreachAPI.generateNaverEmails(100)
+      if (result.success) {
+        toast.success(result.message || `${result.generated}개 네이버 이메일 생성`)
+        loadBlogs()
+        loadDashboard()
+      } else if (result.error) {
+        toast.error(result.user_message || result.error, {
+          description: result.action_required,
+        })
+      }
+    } catch (error: any) {
+      const err = formatApiError(error, '네이버 이메일 생성 중 오류 발생')
+      toast.error(err.title, { description: err.description })
     } finally {
       setLoading(false)
     }
@@ -299,11 +358,25 @@ export default function OutreachPage() {
         toast.success('스코어링 완료')
         loadBlogs()
         loadScoringStats()
+      } else if (result.error) {
+        toast.error(result.user_message || result.error)
       }
-    } catch (error) {
-      toast.error('스코어링 중 오류 발생')
+    } catch (error: any) {
+      const err = formatApiError(error, '스코어링 중 오류 발생')
+      toast.error(err.title, { description: err.description })
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleUpdateBlogStatus = async (blogId: string, status: string) => {
+    try {
+      await outreachAPI.updateBlogStatus(blogId, status)
+      toast.success(status === 'WATCHING' ? '관심 목록에 추가되었습니다' : '상태가 변경되었습니다')
+      loadBlogs()
+    } catch (error: any) {
+      const err = formatApiError(error, '상태 변경 실패')
+      toast.error(err.title, { description: err.description })
     }
   }
 
@@ -387,40 +460,66 @@ export default function OutreachPage() {
   const handleStartCampaign = async (campaignId: string) => {
     try {
       const result = await outreachAPI.startCampaign(campaignId)
-      toast.success(result.message)
-      loadCampaigns()
-    } catch (error) {
-      toast.error('캠페인 시작 실패')
+      if (result.success === false) {
+        toast.error(result.user_message || result.error || '캠페인 시작 실패', {
+          description: result.action_required,
+          action: result.help_url ? {
+            label: '설정 확인',
+            onClick: () => window.location.href = result.help_url,
+          } : undefined,
+        })
+      } else {
+        toast.success(result.message || '캠페인이 시작되었습니다')
+        loadCampaigns()
+      }
+    } catch (error: any) {
+      const err = formatApiError(error, '캠페인 시작 실패')
+      toast.error(err.title, {
+        description: err.description,
+        action: err.helpUrl ? {
+          label: 'SMTP 설정 확인',
+          onClick: () => window.location.href = err.helpUrl,
+        } : undefined,
+      })
     }
   }
 
   const handlePauseCampaign = async (campaignId: string) => {
     try {
       const result = await outreachAPI.pauseCampaign(campaignId)
-      toast.success(result.message)
+      toast.success(result.message || '캠페인이 일시정지되었습니다')
       loadCampaigns()
-    } catch (error) {
-      toast.error('캠페인 일시정지 실패')
+    } catch (error: any) {
+      const err = formatApiError(error, '캠페인 일시정지 실패')
+      toast.error(err.title, { description: err.description })
     }
   }
 
   const handleStartScheduler = async () => {
     try {
       const result = await outreachAPI.startScheduler()
-      toast.success(result.message)
-      loadSchedulerStatus()
-    } catch (error) {
-      toast.error('스케줄러 시작 실패')
+      if (result.success === false) {
+        toast.error(result.user_message || result.error || '스케줄러 시작 실패', {
+          description: result.action_required,
+        })
+      } else {
+        toast.success(result.message || '스케줄러가 시작되었습니다')
+        loadSchedulerStatus()
+      }
+    } catch (error: any) {
+      const err = formatApiError(error, '스케줄러 시작 실패')
+      toast.error(err.title, { description: err.description })
     }
   }
 
   const handleStopScheduler = async () => {
     try {
       const result = await outreachAPI.stopScheduler()
-      toast.success(result.message)
+      toast.success(result.message || '스케줄러가 중지되었습니다')
       loadSchedulerStatus()
-    } catch (error) {
-      toast.error('스케줄러 중지 실패')
+    } catch (error: any) {
+      const err = formatApiError(error, '스케줄러 중지 실패')
+      toast.error(err.title, { description: err.description })
     }
   }
 
@@ -640,7 +739,16 @@ export default function OutreachPage() {
                     수집
                   </Button>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
+                  <Button
+                    variant="outline"
+                    onClick={handleGenerateNaverEmails}
+                    disabled={loading}
+                    className="rounded-xl border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+                  >
+                    <Mail className="w-4 h-4 mr-2" />
+                    네이버 이메일 생성
+                  </Button>
                   <Button
                     variant="outline"
                     onClick={handleExtractContactsBatch}
@@ -861,7 +969,7 @@ export default function OutreachPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between mb-3">
                     {blog.has_contact ? (
                       <span className="text-xs text-emerald-600 flex items-center gap-1">
                         <CheckCircle2 className="w-3 h-3" />
@@ -878,6 +986,63 @@ export default function OutreachPage() {
                     >
                       <ArrowUpRight className="w-4 h-4" />
                     </Button>
+                  </div>
+
+                  {/* 등급별 액션 가이드 */}
+                  <div className={`p-3 rounded-xl text-xs ${
+                    blog.lead_grade === 'A' ? 'bg-emerald-50 border border-emerald-200' :
+                    blog.lead_grade === 'B' ? 'bg-blue-50 border border-blue-200' :
+                    blog.lead_grade === 'C' ? 'bg-amber-50 border border-amber-200' :
+                    'bg-gray-50 border border-gray-200'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <span className={`font-medium ${
+                        blog.lead_grade === 'A' ? 'text-emerald-700' :
+                        blog.lead_grade === 'B' ? 'text-blue-700' :
+                        blog.lead_grade === 'C' ? 'text-amber-700' :
+                        'text-gray-600'
+                      }`}>
+                        {blog.lead_grade === 'A' ? '🔥 지금 연락 추천' :
+                         blog.lead_grade === 'B' ? '👀 관심 목록 추가' :
+                         blog.lead_grade === 'C' ? '📋 추후 검토' :
+                         '⏳ 관찰 대상'}
+                      </span>
+                      {blog.lead_grade === 'A' && blog.has_contact && (
+                        <Button
+                          size="sm"
+                          className="h-6 text-xs rounded-lg bg-emerald-600 hover:bg-emerald-700"
+                          onClick={() => {
+                            // 이메일 발송 페이지로 이동하거나 모달 열기
+                            router.push(`/dashboard/outreach/campaigns/new?blog_id=${blog.id}`)
+                          }}
+                        >
+                          이메일 발송
+                        </Button>
+                      )}
+                      {blog.lead_grade === 'B' && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 text-xs rounded-lg border-blue-300 text-blue-700 hover:bg-blue-100"
+                          onClick={() => {
+                            handleUpdateBlogStatus(blog.id, 'WATCHING')
+                          }}
+                        >
+                          관심 등록
+                        </Button>
+                      )}
+                    </div>
+                    <p className={`mt-1 ${
+                      blog.lead_grade === 'A' ? 'text-emerald-600' :
+                      blog.lead_grade === 'B' ? 'text-blue-600' :
+                      blog.lead_grade === 'C' ? 'text-amber-600' :
+                      'text-gray-500'
+                    }`}>
+                      {blog.lead_grade === 'A' ? '높은 영향력 + 활발한 활동. 협찬 성공률 높음!' :
+                       blog.lead_grade === 'B' ? '잠재력 있음. 팔로업 알림을 설정하세요.' :
+                       blog.lead_grade === 'C' ? '영향력 보통. 대량 캠페인에 적합.' :
+                       '활동량 낮음. 추가 모니터링 필요.'}
+                    </p>
                   </div>
                 </div>
               ))}
@@ -1288,6 +1453,58 @@ export default function OutreachPage() {
               <div className="flex items-center gap-3 mt-4 pt-4 border-t border-gray-100">
                 <Switch checked={settings?.smtp_use_tls || false} />
                 <Label className="text-sm text-gray-600">TLS 암호화 사용</Label>
+              </div>
+            </div>
+
+            {/* Naver API Settings */}
+            <div className="rounded-2xl bg-white border border-gray-100 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">네이버 검색 API</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    블로그 수집에 사용되는 네이버 Open API 설정
+                  </p>
+                </div>
+                {settings?.naver_api_configured ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
+                    <CheckCircle2 className="w-3 h-3" />
+                    설정됨
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+                    미설정
+                  </span>
+                )}
+              </div>
+              <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 mb-4">
+                <p className="text-sm text-blue-800">
+                  <strong>네이버 Open API 키 발급 방법:</strong>
+                </p>
+                <ol className="text-sm text-blue-700 mt-2 space-y-1 list-decimal list-inside">
+                  <li><a href="https://developers.naver.com" target="_blank" rel="noopener noreferrer" className="underline">developers.naver.com</a> 접속</li>
+                  <li>애플리케이션 등록 → 검색 API 선택</li>
+                  <li>Client ID와 Client Secret 복사</li>
+                </ol>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-sm text-gray-600">Client ID</Label>
+                  <Input
+                    value={settings?.naver_client_id || ''}
+                    onChange={(e) => setSettings(s => s ? {...s, naver_client_id: e.target.value} : null)}
+                    placeholder="네이버 API Client ID"
+                    className="mt-1 rounded-xl"
+                  />
+                </div>
+                <div>
+                  <Label className="text-sm text-gray-600">Client Secret</Label>
+                  <Input
+                    type="password"
+                    placeholder={settings?.naver_api_configured ? '●●●●●●●●' : 'Client Secret'}
+                    onChange={(e) => setSettings(s => s ? {...s, naver_client_secret: e.target.value} : null)}
+                    className="mt-1 rounded-xl"
+                  />
+                </div>
               </div>
             </div>
 

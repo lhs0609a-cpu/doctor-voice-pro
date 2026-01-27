@@ -136,7 +136,8 @@ async def create_post(
                 "post_creation",
                 str(last_error)
             )
-        except:
+        except Exception:
+            # WebSocket 알림 실패는 무시 (핵심 기능에 영향 없음)
             pass
 
         # Database lock 오류인 경우 더 명확한 메시지

@@ -58,6 +58,11 @@ async def lifespan(app: FastAPI):
             "ALTER TABLE subscriptions ADD COLUMN renewal_notice_sent BOOLEAN DEFAULT 0",
             "ALTER TABLE subscriptions ADD COLUMN renewal_notice_sent_at DATETIME",
             "ALTER TABLE subscriptions ADD COLUMN extra_data TEXT",
+            # Knowledge answers 테이블 마이그레이션
+            "ALTER TABLE knowledge_answers ADD COLUMN posted_account_id VARCHAR(36)",
+            # Outreach settings 테이블 - 네이버 API 설정
+            "ALTER TABLE outreach_settings ADD COLUMN naver_client_id VARCHAR(100)",
+            "ALTER TABLE outreach_settings ADD COLUMN naver_client_secret_encrypted TEXT",
         ]
 
         async with engine.begin() as conn:
@@ -178,9 +183,9 @@ async def lifespan(app: FastAPI):
                 "description": "서비스를 체험해보세요",
                 "price_monthly": 0,
                 "price_yearly": 0,
-                "posts_per_month": 3,
-                "analysis_per_month": 10,
-                "keywords_per_month": 20,
+                "posts_per_month": 10,  # 3 → 10: 가치 체험을 위한 충분한 사용량 제공
+                "analysis_per_month": 30,  # 10 → 30: 분석 기능도 충분히 체험
+                "keywords_per_month": 50,  # 20 → 50: 키워드 연구 체험
                 "has_api_access": False,
                 "has_priority_support": False,
                 "has_advanced_analytics": False,
@@ -226,16 +231,16 @@ async def lifespan(app: FastAPI):
             {
                 "id": "business",
                 "name": "Business",
-                "description": "팀과 기업을 위한 플랜",
+                "description": "마케팅 대행사 & 다점포 의료기관용",
                 "price_monthly": 199000,
                 "price_yearly": 1990000,
                 "posts_per_month": -1,  # 무제한
                 "analysis_per_month": -1,  # 무제한
                 "keywords_per_month": -1,  # 무제한
-                "has_api_access": True,
-                "has_priority_support": True,
-                "has_advanced_analytics": True,
-                "has_team_features": True,
+                "has_api_access": True,  # REST API 접근
+                "has_priority_support": True,  # 전담 매니저 + 우선 지원
+                "has_advanced_analytics": True,  # 고급 분석 + 경쟁사 분석
+                "has_team_features": True,  # 팀 5명 + 역할 관리
                 "extra_post_price": 0,
                 "extra_analysis_price": 0,
                 "sort_order": 3,

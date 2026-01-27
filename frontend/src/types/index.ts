@@ -116,6 +116,22 @@ export interface Post {
   dia_crank_analysis: DIACRANKAnalysis | null
 }
 
+// 로컬 저장 글 타입 (localStorage에 저장되는 글)
+export interface SavedPost {
+  id: string
+  savedAt: string
+  suggested_titles?: string[]
+  generated_content?: string
+  seo_keywords?: string[]
+  original_content?: string
+  title?: string
+  content?: string
+  hashtags?: string[]
+  // DB에서 온 글 식별용
+  sourcePostId?: string
+  sourceType?: 'database' | 'local'
+}
+
 export interface MedicalLawCheck {
   is_compliant: boolean
   violations: any[]

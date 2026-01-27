@@ -66,6 +66,51 @@ const statusLabels: Record<string, string> = {
   cancelled: '취소됨',
 }
 
+// 예약 발행 프리셋
+const SCHEDULE_PRESETS = [
+  {
+    id: 'weekday_morning',
+    name: '평일 오전 발행',
+    icon: '☀️',
+    description: '월~금 오전 9시 자동 발행',
+    schedule_type: 'recurring' as const,
+    recurrence_pattern: 'weekly' as const,
+    days_of_week: [1, 2, 3, 4, 5],
+    scheduled_time: '09:00',
+    recommended: true,
+  },
+  {
+    id: 'mwf_afternoon',
+    name: '월수금 오후 발행',
+    icon: '📅',
+    description: '월/수/금 오후 2시 발행',
+    schedule_type: 'recurring' as const,
+    recurrence_pattern: 'weekly' as const,
+    days_of_week: [1, 3, 5],
+    scheduled_time: '14:00',
+  },
+  {
+    id: 'daily_evening',
+    name: '매일 저녁 발행',
+    icon: '🌙',
+    description: '매일 오후 7시 자동 발행',
+    schedule_type: 'recurring' as const,
+    recurrence_pattern: 'daily' as const,
+    days_of_week: [],
+    scheduled_time: '19:00',
+  },
+  {
+    id: 'weekend_only',
+    name: '주말 발행',
+    icon: '🎉',
+    description: '토/일 오전 10시 발행',
+    schedule_type: 'recurring' as const,
+    recurrence_pattern: 'weekly' as const,
+    days_of_week: [0, 6],
+    scheduled_time: '10:00',
+  },
+]
+
 export default function SchedulePage() {
   const router = useRouter()
   const [schedules, setSchedules] = useState<Schedule[]>([])
@@ -88,6 +133,24 @@ export default function SchedulePage() {
     day_of_month: 1,
     auto_hashtags: true,
   })
+  const [selectedPreset, setSelectedPreset] = useState<string | null>(null)
+
+  // 프리셋 적용 함수
+  const applyPreset = (presetId: string) => {
+    const preset = SCHEDULE_PRESETS.find(p => p.id === presetId)
+    if (!preset) return
+
+    setNewSchedule(prev => ({
+      ...prev,
+      name: preset.name,
+      schedule_type: preset.schedule_type,
+      recurrence_pattern: preset.recurrence_pattern,
+      days_of_week: preset.days_of_week,
+      scheduled_time: preset.scheduled_time,
+    }))
+    setSelectedPreset(presetId)
+    toast.success(`"${preset.name}" 프리셋이 적용되었습니다`)
+  }
 
   useEffect(() => {
     loadData()
@@ -244,6 +307,47 @@ export default function SchedulePage() {
             </DialogHeader>
 
             <div className="space-y-4 py-4">
+              {/* 원클릭 프리셋 */}
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2">
+                  <Zap className="h-4 w-4 text-amber-500" />
+                  빠른 설정 (프리셋)
+                </Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {SCHEDULE_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      onClick={() => applyPreset(preset.id)}
+                      className={`p-3 rounded-lg border text-left transition-all ${
+                        selectedPreset === preset.id
+                          ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200'
+                          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <span>{preset.icon}</span>
+                        <span className="font-medium text-sm">{preset.name}</span>
+                        {preset.recommended && (
+                          <span className="text-[10px] px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded-full">
+                            추천
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-500">{preset.description}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-white px-2 text-gray-500">또는 직접 설정</span>
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <Label>예약 이름 (선택)</Label>
                 <Input

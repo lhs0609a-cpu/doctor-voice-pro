@@ -9,8 +9,12 @@ import { XCircle, ArrowLeft, RefreshCw, Loader2 } from 'lucide-react'
 function FailContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const message = searchParams.get('message') || '결제 처리 중 문제가 발생했습니다'
-  const code = searchParams.get('code')
+  // 메시지 길이 제한 및 기본값 설정
+  const rawMessage = searchParams.get('message')
+  const message = rawMessage
+    ? rawMessage.slice(0, 200) // 최대 200자 제한
+    : '결제 처리 중 문제가 발생했습니다'
+  const code = searchParams.get('code')?.slice(0, 50) // 코드도 길이 제한
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-muted/30 p-4">
@@ -36,7 +40,14 @@ function FailContent() {
           <div className="space-y-2">
             <Button
               className="w-full"
-              onClick={() => router.back()}
+              onClick={() => {
+                // 히스토리가 없으면 pricing 페이지로 이동
+                if (window.history.length > 1) {
+                  router.back()
+                } else {
+                  router.push('/pricing')
+                }
+              }}
             >
               <RefreshCw className="mr-2 h-4 w-4" />
               다시 시도

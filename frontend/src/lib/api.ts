@@ -2578,7 +2578,7 @@ export const crawlAPI = {
     return response.data
   },
 
-  // 원클릭 자동화
+  // 원클릭 자동화 (크롤링 + AI 생성 + 네이버 발행까지 포함하므로 5분 타임아웃)
   oneClick: async (params: {
     url: string
     category_no?: string
@@ -2588,7 +2588,9 @@ export const crawlAPI = {
     framework?: string
     persuasion_level?: number
   }): Promise<OneClickResponse> => {
-    const response = await api.post('/api/v1/crawl/one-click', params)
+    const response = await api.post('/api/v1/crawl/one-click', params, {
+      timeout: 300000, // 5분 타임아웃 (크롤링 + AI 생성 + 네이버 발행)
+    })
     return response.data
   },
 }
@@ -3366,6 +3368,10 @@ export interface OutreachSetting {
   track_opens: boolean
   track_clicks: boolean
   unsubscribe_text: string | null
+  // 네이버 API 설정
+  naver_client_id: string | null
+  naver_api_configured: boolean
+  naver_client_secret?: string  // 업데이트용 (저장할 때만 사용)
 }
 
 export interface OutreachSearchKeyword {
@@ -3530,14 +3536,27 @@ export const outreachAPI = {
     return response.data
   },
 
-  extractContactsBatch: async (limit?: number): Promise<{
+  extractContactsBatch: async (limit?: number, autoGenerateNaverEmail?: boolean): Promise<{
     success: boolean
     processed?: number
     with_contacts?: number
+    naver_emails_generated?: number
     message?: string
   }> => {
     const response = await api.post('/api/v1/outreach/contacts/extract-batch', null, {
-      params: { limit }
+      params: { limit, auto_generate_naver_email: autoGenerateNaverEmail ?? true }
+    })
+    return response.data
+  },
+
+  generateNaverEmails: async (limit?: number): Promise<{
+    success: boolean
+    processed: number
+    generated: number
+    message: string
+  }> => {
+    const response = await api.post('/api/v1/outreach/contacts/generate-naver-emails', null, {
+      params: { limit: limit ?? 100 }
     })
     return response.data
   },

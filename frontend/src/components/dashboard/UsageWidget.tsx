@@ -19,9 +19,10 @@ import { subscriptionAPI, type UsageSummary } from '@/lib/api'
 
 interface UsageWidgetProps {
   compact?: boolean
+  inline?: boolean  // P3: 다른 카드에 내장될 때 카드 래퍼 없이 렌더링
 }
 
-export default function UsageWidget({ compact = false }: UsageWidgetProps) {
+export default function UsageWidget({ compact = false, inline = false }: UsageWidgetProps) {
   const router = useRouter()
   const [usage, setUsage] = useState<UsageSummary | null>(null)
   const [loading, setLoading] = useState(true)
@@ -67,6 +68,13 @@ export default function UsageWidget({ compact = false }: UsageWidgetProps) {
   }
 
   if (loading) {
+    if (inline) {
+      return (
+        <div className="flex items-center justify-center py-4">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      )
+    }
     return (
       <Card>
         <CardContent className="flex items-center justify-center py-8">
@@ -85,6 +93,34 @@ export default function UsageWidget({ compact = false }: UsageWidgetProps) {
   const keywordsPercent = getUsagePercent(usage.keywords_used, usage.keywords_limit)
 
   const isLowUsage = postsPercent >= 80 || analysisPercent >= 80
+
+  // P3: Inline version (카드 없이 다른 컴포넌트에 내장)
+  if (inline) {
+    return (
+      <div className="flex-1">
+        <div className="flex items-center gap-2 mb-2">
+          <Badge variant="outline" className="text-xs">{planName}</Badge>
+          <span className="text-xs text-gray-500">사용량</span>
+        </div>
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <FileText className="h-3 w-3 text-blue-500" />
+            <span className="text-xs text-gray-600 w-12">글 생성</span>
+            <span className={`text-xs font-medium ${getUsageColor(postsPercent)}`}>
+              {usage.posts_used}/{usage.posts_limit === -1 ? '∞' : usage.posts_limit}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Search className="h-3 w-3 text-green-500" />
+            <span className="text-xs text-gray-600 w-12">분석</span>
+            <span className={`text-xs font-medium ${getUsageColor(analysisPercent)}`}>
+              {usage.analysis_used}/{usage.analysis_limit === -1 ? '∞' : usage.analysis_limit}
+            </span>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   // Compact version for sidebar
   if (compact) {

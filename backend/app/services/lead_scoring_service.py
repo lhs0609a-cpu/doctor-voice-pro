@@ -95,16 +95,21 @@ class LeadScoringService:
             }
         return self.DEFAULT_WEIGHTS.copy()
 
-    def _calculate_influence_score(self, blog: NaverBlog) -> float:
-        """영향력 점수 계산"""
+    def _calculate_influence_score(self, blog: NaverBlog, include_breakdown: bool = False) -> Dict[str, Any]:
+        """영향력 점수 계산 (P2: 투명성 개선)"""
         visitor_score = 0
         neighbor_score = 0
+        breakdown = []
 
         # 일일 방문자 점수
         daily_visitors = blog.visitor_daily or 0
         for threshold, score in self.INFLUENCE_TIERS["visitor_daily"]:
             if daily_visitors >= threshold:
                 visitor_score = score
+                if threshold > 0:
+                    breakdown.append(f"일일 방문자 {daily_visitors:,}명 (≥{threshold:,}) → {score}점")
+                else:
+                    breakdown.append(f"일일 방문자 {daily_visitors:,}명 → {score}점")
                 break
 
         # 이웃 수 점수
@@ -112,83 +117,160 @@ class LeadScoringService:
         for threshold, score in self.INFLUENCE_TIERS["neighbor_count"]:
             if neighbors >= threshold:
                 neighbor_score = score
+                if threshold > 0:
+                    breakdown.append(f"이웃 수 {neighbors:,}명 (≥{threshold:,}) → {score}점")
+                else:
+                    breakdown.append(f"이웃 수 {neighbors:,}명 → {score}점")
                 break
 
         # 인플루언서 보너스
         influencer_bonus = 20 if blog.is_influencer else 0
+        if influencer_bonus > 0:
+            breakdown.append(f"인플루언서 보너스 +{influencer_bonus}점")
 
         # 평균 + 보너스
         base_score = (visitor_score + neighbor_score) / 2
-        return min(100, base_score + influencer_bonus)
+        final_score = min(100, base_score + influencer_bonus)
 
-    def _calculate_activity_score(self, blog: NaverBlog) -> float:
-        """활동성 점수 계산"""
+        if include_breakdown:
+            return {
+                "score": final_score,
+                "breakdown": breakdown,
+                "components": {
+                    "visitor_score": visitor_score,
+                    "neighbor_score": neighbor_score,
+                    "influencer_bonus": influencer_bonus
+                }
+            }
+        return {"score": final_score}
+
+    def _calculate_activity_score(self, blog: NaverBlog, include_breakdown: bool = False) -> Dict[str, Any]:
+        """활동성 점수 계산 (P2: 투명성 개선)"""
+        breakdown = []
+
         if not blog.last_post_date:
-            return 10  # 정보 없음
+            if include_breakdown:
+                return {
+                    "score": 10,
+                    "breakdown": ["최근 포스팅 정보 없음 → 10점"],
+                    "days_since_post": None
+                }
+            return {"score": 10}
 
         days_since_post = (datetime.utcnow() - blog.last_post_date).days
 
         for days, score in self.ACTIVITY_TIERS:
             if days_since_post <= days:
-                return score
+                if days == 1:
+                    breakdown.append(f"마지막 포스팅 오늘/어제 ({days_since_post}일 전) → {score}점")
+                elif days == float('inf'):
+                    breakdown.append(f"마지막 포스팅 {days_since_post}일 전 (90일 초과) → {score}점")
+                else:
+                    breakdown.append(f"마지막 포스팅 {days_since_post}일 전 (≤{days}일) → {score}점")
 
-        return 5  # 기본값
+                if include_breakdown:
+                    return {
+                        "score": score,
+                        "breakdown": breakdown,
+                        "days_since_post": days_since_post
+                    }
+                return {"score": score}
+
+        if include_breakdown:
+            return {
+                "score": 5,
+                "breakdown": [f"마지막 포스팅 {days_since_post}일 전 → 5점"],
+                "days_since_post": days_since_post
+            }
+        return {"score": 5}
 
     def _calculate_relevance_score(
         self,
         blog: NaverBlog,
         target_categories: Optional[List[BlogCategory]] = None,
-        target_keywords: Optional[List[str]] = None
-    ) -> float:
-        """관련성 점수 계산"""
+        target_keywords: Optional[List[str]] = None,
+        include_breakdown: bool = False
+    ) -> Dict[str, Any]:
+        """관련성 점수 계산 (P2: 투명성 개선)"""
+        breakdown = []
+
         # 카테고리 점수
+        category_name = blog.category.value if blog.category else "미분류"
         category_score = self.CATEGORY_RELEVANCE.get(blog.category, 30)
 
         # 타겟 카테고리가 지정된 경우
         if target_categories:
+            target_names = [c.value for c in target_categories]
             if blog.category in target_categories:
-                category_score = 100  # 타겟 카테고리면 최고점
+                category_score = 100
+                breakdown.append(f"카테고리 '{category_name}' (타겟 매칭) → 100점")
             else:
-                category_score = category_score * 0.5  # 타겟이 아니면 감점
+                original = category_score
+                category_score = int(category_score * 0.5)
+                breakdown.append(f"카테고리 '{category_name}' (타겟 외: {', '.join(target_names)}) → {original}×0.5={category_score}점")
+        else:
+            breakdown.append(f"카테고리 '{category_name}' → {category_score}점")
 
         # 키워드 매칭 점수
         keyword_score = 0
+        matched_keywords = []
         if target_keywords and blog.keywords:
             blog_keywords = blog.keywords if isinstance(blog.keywords, list) else []
-            matched_keywords = set(target_keywords) & set(blog_keywords)
+            matched_keywords = list(set(target_keywords) & set(blog_keywords))
             if matched_keywords:
-                # 매칭 비율에 따른 점수
                 match_ratio = len(matched_keywords) / len(target_keywords)
                 keyword_score = match_ratio * 100
+                breakdown.append(f"키워드 매칭 {len(matched_keywords)}/{len(target_keywords)}개 ({', '.join(matched_keywords[:3])}) → {int(keyword_score)}점")
 
         # 연락처 보유 보너스
         contact_bonus = 20 if blog.has_contact else 0
+        if contact_bonus > 0:
+            breakdown.append(f"연락처 보유 보너스 +{contact_bonus}점")
 
         # 가중 평균
         if target_keywords:
             relevance = (category_score * 0.6 + keyword_score * 0.4)
+            breakdown.append(f"최종: (카테고리 {category_score}×0.6 + 키워드 {int(keyword_score)}×0.4) + 보너스 {contact_bonus}")
         else:
             relevance = category_score
 
-        return min(100, relevance + contact_bonus)
+        final_score = min(100, relevance + contact_bonus)
+
+        if include_breakdown:
+            return {
+                "score": final_score,
+                "breakdown": breakdown,
+                "components": {
+                    "category_score": category_score,
+                    "keyword_score": keyword_score,
+                    "contact_bonus": contact_bonus,
+                    "matched_keywords": matched_keywords
+                }
+            }
+        return {"score": final_score}
 
     def calculate_lead_score(
         self,
         blog: NaverBlog,
         user_id: str,
         target_categories: Optional[List[BlogCategory]] = None,
-        target_keywords: Optional[List[str]] = None
+        target_keywords: Optional[List[str]] = None,
+        include_breakdown: bool = True  # P2: 기본값으로 breakdown 포함
     ) -> Dict[str, Any]:
-        """리드 점수 종합 계산"""
+        """리드 점수 종합 계산 (P2: 투명성 개선 - score_breakdown 포함)"""
         # 가중치 가져오기
         weights = self._get_user_weights(user_id)
 
-        # 개별 점수 계산
-        influence_score = self._calculate_influence_score(blog)
-        activity_score = self._calculate_activity_score(blog)
-        relevance_score = self._calculate_relevance_score(
-            blog, target_categories, target_keywords
+        # 개별 점수 계산 (breakdown 포함)
+        influence_result = self._calculate_influence_score(blog, include_breakdown)
+        activity_result = self._calculate_activity_score(blog, include_breakdown)
+        relevance_result = self._calculate_relevance_score(
+            blog, target_categories, target_keywords, include_breakdown
         )
+
+        influence_score = influence_result["score"]
+        activity_score = activity_result["score"]
+        relevance_score = relevance_result["score"]
 
         # 종합 점수 계산
         total_score = (
@@ -199,12 +281,14 @@ class LeadScoringService:
 
         # 등급 결정
         grade = LeadGrade.D
+        grade_reason = ""
         for g, threshold in self.GRADE_THRESHOLDS.items():
             if total_score >= threshold:
                 grade = LeadGrade(g)
+                grade_reason = f"종합 점수 {round(total_score, 1)}점 ≥ {threshold}점"
                 break
 
-        return {
+        result = {
             "lead_score": round(total_score, 2),
             "lead_grade": grade,
             "influence_score": round(influence_score, 2),
@@ -213,14 +297,33 @@ class LeadScoringService:
             "weights": weights
         }
 
+        # P2: 점수 산정 근거 추가
+        if include_breakdown:
+            result["score_breakdown"] = {
+                "summary": f"영향력({int(weights['influence']*100)}%) {round(influence_score, 1)}점 + "
+                          f"활동성({int(weights['activity']*100)}%) {round(activity_score, 1)}점 + "
+                          f"관련성({int(weights['relevance']*100)}%) {round(relevance_score, 1)}점 = "
+                          f"{round(total_score, 1)}점 → {grade.value}등급",
+                "grade_reason": grade_reason,
+                "influence": influence_result.get("breakdown", []),
+                "activity": activity_result.get("breakdown", []),
+                "relevance": relevance_result.get("breakdown", []),
+                "formula": f"({round(influence_score, 1)} × {weights['influence']}) + "
+                          f"({round(activity_score, 1)} × {weights['activity']}) + "
+                          f"({round(relevance_score, 1)} × {weights['relevance']}) = {round(total_score, 2)}"
+            }
+
+        return result
+
     async def score_blog(
         self,
         blog_id: str,
         user_id: str,
         target_categories: Optional[List[BlogCategory]] = None,
-        target_keywords: Optional[List[str]] = None
+        target_keywords: Optional[List[str]] = None,
+        include_breakdown: bool = True  # P2: 점수 산정 근거 포함
     ) -> Dict[str, Any]:
-        """블로그 스코어링 및 저장"""
+        """블로그 스코어링 및 저장 (P2: score_breakdown 포함)"""
         try:
             blog = self.db.query(NaverBlog).filter(
                 NaverBlog.id == blog_id,
@@ -230,9 +333,9 @@ class LeadScoringService:
             if not blog:
                 return {"success": False, "error": "블로그를 찾을 수 없습니다"}
 
-            # 점수 계산
+            # 점수 계산 (breakdown 포함)
             scores = self.calculate_lead_score(
-                blog, user_id, target_categories, target_keywords
+                blog, user_id, target_categories, target_keywords, include_breakdown
             )
 
             # DB 업데이트
@@ -248,7 +351,7 @@ class LeadScoringService:
             return {
                 "success": True,
                 "blog_id": blog_id,
-                "scores": scores
+                "scores": scores  # P2: score_breakdown이 포함됨
             }
 
         except Exception as e:

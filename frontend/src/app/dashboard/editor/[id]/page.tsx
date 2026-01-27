@@ -6,17 +6,7 @@ import { BlogEditor } from '@/components/blog-editor/blog-editor'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
-
-interface SavedPost {
-  id: string
-  savedAt: string
-  suggested_titles?: string[]
-  generated_content?: string
-  seo_keywords?: string[]
-  original_content?: string
-  title?: string
-  hashtags?: string[]
-}
+import type { SavedPost } from '@/types'
 
 export default function EditorPage() {
   const params = useParams()

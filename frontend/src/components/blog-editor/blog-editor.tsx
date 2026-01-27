@@ -33,17 +33,7 @@ import {
   X,
   GripVertical,
 } from 'lucide-react'
-
-interface SavedPost {
-  id: string
-  savedAt: string
-  suggested_titles?: string[]
-  generated_content?: string
-  seo_keywords?: string[]
-  original_content?: string
-  title?: string
-  hashtags?: string[]
-}
+import type { SavedPost } from '@/types'
 
 // 에디터 블록 타입
 type BlockType = 'text' | 'image' | 'quote' | 'divider'
@@ -733,37 +723,38 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
     >
       {/* 헤더 */}
       <div className="sticky top-0 z-50 bg-white border-b shadow-sm">
-        <div className="container mx-auto px-4 py-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Button variant="ghost" size="sm" onClick={() => router.push('/dashboard/saved')}>
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                돌아가기
+        <div className="container mx-auto px-2 sm:px-4 py-2 sm:py-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+              <Button variant="ghost" size="sm" onClick={() => router.push('/dashboard/saved')} className="px-2 sm:px-3">
+                <ArrowLeft className="h-4 w-4 sm:mr-2" />
+                <span className="hidden sm:inline">돌아가기</span>
               </Button>
-              <div className="h-6 w-px bg-gray-300" />
-              <h1 className="font-semibold">블로그 에디터</h1>
+              <div className="h-6 w-px bg-gray-300 hidden sm:block" />
+              <h1 className="font-semibold text-sm sm:text-base truncate hidden sm:block">블로그 에디터</h1>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 sm:gap-2">
               <Button
                 variant={previewMode ? 'default' : 'outline'}
                 size="sm"
                 onClick={() => setPreviewMode(!previewMode)}
+                className="px-2 sm:px-3"
               >
-                <Eye className="h-4 w-4 mr-2" />
-                {previewMode ? '편집모드' : '미리보기'}
+                <Eye className="h-4 w-4 sm:mr-2" />
+                <span className="hidden sm:inline">{previewMode ? '편집' : '미리보기'}</span>
               </Button>
-              <Button variant="outline" size="sm" onClick={copyToClipboard}>
-                <Copy className="h-4 w-4 mr-2" />
-                복사
+              <Button variant="outline" size="sm" onClick={copyToClipboard} className="px-2 sm:px-3">
+                <Copy className="h-4 w-4 sm:mr-2" />
+                <span className="hidden sm:inline">복사</span>
               </Button>
-              <Button variant="outline" size="sm" onClick={handleSave}>
-                <Save className="h-4 w-4 mr-2" />
-                저장
+              <Button variant="outline" size="sm" onClick={handleSave} className="px-2 sm:px-3">
+                <Save className="h-4 w-4 sm:mr-2" />
+                <span className="hidden sm:inline">저장</span>
               </Button>
-              <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={sendToExtension}>
-                <Send className="h-4 w-4 mr-2" />
-                블로그 포스팅
+              <Button size="sm" className="bg-green-600 hover:bg-green-700 px-2 sm:px-3" onClick={sendToExtension}>
+                <Send className="h-4 w-4 sm:mr-2" />
+                <span className="hidden sm:inline">포스팅</span>
               </Button>
             </div>
           </div>
@@ -780,13 +771,13 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
         </div>
       )}
 
-      <div className="container mx-auto px-4 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          {/* 왼쪽: 이미지 패널 */}
-          <div className="lg:col-span-1 space-y-4">
+      <div className="container mx-auto px-2 sm:px-4 py-4 sm:py-6">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6">
+          {/* 왼쪽: 이미지 패널 (모바일에서는 에디터 다음에 표시) */}
+          <div className="lg:col-span-1 space-y-4 order-2 lg:order-1">
             <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm flex items-center gap-2">
+              <CardHeader className="pb-2 sm:pb-3">
+                <CardTitle className="text-xs sm:text-sm flex items-center gap-2">
                   <ImageIcon className="h-4 w-4" />
                   이미지 라이브러리
                 </CardTitle>
@@ -802,10 +793,10 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                 />
                 <Button
                   variant="outline"
-                  className="w-full"
+                  className="w-full py-5 sm:py-2"
                   onClick={() => fileInputRef.current?.click()}
                 >
-                  <Upload className="h-4 w-4 mr-2" />
+                  <Upload className="h-5 w-5 sm:h-4 sm:w-4 mr-2" />
                   이미지 업로드
                 </Button>
 
@@ -851,51 +842,54 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
 
             {/* 블록 추가 */}
             <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm">블록 추가</CardTitle>
+              <CardHeader className="pb-2 sm:pb-3">
+                <CardTitle className="text-xs sm:text-sm">블록 추가</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full justify-start"
-                  onClick={() => addBlock('text', selectedBlockId || undefined)}
-                >
-                  <Type className="h-4 w-4 mr-2" />
-                  텍스트
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full justify-start"
-                  onClick={() => addBlock('quote', selectedBlockId || undefined)}
-                >
-                  <Quote className="h-4 w-4 mr-2" />
-                  인용구
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full justify-start"
-                  onClick={() => addBlock('divider', selectedBlockId || undefined)}
-                >
-                  <span className="mr-2">—</span>
-                  구분선
-                </Button>
+                {/* 모바일: 가로 배열, 데스크탑: 세로 배열 */}
+                <div className="flex lg:flex-col gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1 lg:w-full justify-center lg:justify-start py-3 sm:py-2"
+                    onClick={() => addBlock('text', selectedBlockId || undefined)}
+                  >
+                    <Type className="h-4 w-4 lg:mr-2" />
+                    <span className="hidden lg:inline">텍스트</span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1 lg:w-full justify-center lg:justify-start py-3 sm:py-2"
+                    onClick={() => addBlock('quote', selectedBlockId || undefined)}
+                  >
+                    <Quote className="h-4 w-4 lg:mr-2" />
+                    <span className="hidden lg:inline">인용구</span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1 lg:w-full justify-center lg:justify-start py-3 sm:py-2"
+                    onClick={() => addBlock('divider', selectedBlockId || undefined)}
+                  >
+                    <span className="lg:mr-2">—</span>
+                    <span className="hidden lg:inline">구분선</span>
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           </div>
 
-          {/* 가운데: 에디터 영역 */}
-          <div className="lg:col-span-2">
+          {/* 가운데: 에디터 영역 (모바일에서 최상단) */}
+          <div className="lg:col-span-2 order-1 lg:order-2">
             <Card>
-              <CardContent className="p-6">
+              <CardContent className="p-3 sm:p-6">
                 {/* 제목 */}
                 <Input
                   value={title}
                   onChange={e => setTitle(e.target.value)}
                   placeholder="제목을 입력하세요"
-                  className="text-2xl font-bold border-none shadow-none focus-visible:ring-0 px-0 mb-6"
+                  className="text-lg sm:text-2xl font-bold border-none shadow-none focus-visible:ring-0 px-0 mb-4 sm:mb-6"
                   disabled={previewMode}
                 />
 
@@ -911,30 +905,68 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                       onDrop={e => handleDrop(e, block.id)}
                       onClick={() => !previewMode && setSelectedBlockId(block.id)}
                     >
-                      {/* 블록 컨트롤 */}
+                      {/* 블록 컨트롤 - 모바일에서는 상단에 표시 */}
                       {!previewMode && (
-                        <div className="absolute -left-10 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1">
-                          <button
-                            onClick={e => {
-                              e.stopPropagation()
-                              moveBlock(block.id, 'up')
-                            }}
-                            className="p-1 hover:bg-gray-100 rounded"
-                            disabled={index === 0}
-                          >
-                            <MoveUp className="h-3 w-3" />
-                          </button>
-                          <button
-                            onClick={e => {
-                              e.stopPropagation()
-                              moveBlock(block.id, 'down')
-                            }}
-                            className="p-1 hover:bg-gray-100 rounded"
-                            disabled={index === blocks.length - 1}
-                          >
-                            <MoveDown className="h-3 w-3" />
-                          </button>
-                        </div>
+                        <>
+                          {/* 데스크탑: 왼쪽에 표시 */}
+                          <div className="absolute -left-10 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity hidden lg:flex flex-col gap-1">
+                            <button
+                              onClick={e => {
+                                e.stopPropagation()
+                                moveBlock(block.id, 'up')
+                              }}
+                              className="p-1 hover:bg-gray-100 rounded"
+                              disabled={index === 0}
+                            >
+                              <MoveUp className="h-3 w-3" />
+                            </button>
+                            <button
+                              onClick={e => {
+                                e.stopPropagation()
+                                moveBlock(block.id, 'down')
+                              }}
+                              className="p-1 hover:bg-gray-100 rounded"
+                              disabled={index === blocks.length - 1}
+                            >
+                              <MoveDown className="h-3 w-3" />
+                            </button>
+                          </div>
+                          {/* 모바일: 선택 시 상단 툴바 표시 */}
+                          {selectedBlockId === block.id && (
+                            <div className="lg:hidden flex items-center gap-1 mb-2 p-1 bg-gray-100 rounded-lg">
+                              <button
+                                onClick={e => {
+                                  e.stopPropagation()
+                                  moveBlock(block.id, 'up')
+                                }}
+                                className="p-2 hover:bg-white rounded disabled:opacity-30"
+                                disabled={index === 0}
+                              >
+                                <MoveUp className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={e => {
+                                  e.stopPropagation()
+                                  moveBlock(block.id, 'down')
+                                }}
+                                className="p-2 hover:bg-white rounded disabled:opacity-30"
+                                disabled={index === blocks.length - 1}
+                              >
+                                <MoveDown className="h-4 w-4" />
+                              </button>
+                              <div className="flex-1" />
+                              <button
+                                onClick={e => {
+                                  e.stopPropagation()
+                                  deleteBlock(block.id)
+                                }}
+                                className="p-2 text-red-500 hover:bg-red-50 rounded"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
+                          )}
+                        </>
                       )}
 
                       {/* 블록 내용 */}
@@ -953,7 +985,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                             value={block.content}
                             onChange={e => updateBlockContent(block.id, e.target.value)}
                             placeholder="텍스트를 입력하세요..."
-                            className="w-full min-h-[60px] p-3 bg-transparent border-none resize-none focus:outline-none"
+                            className="w-full min-h-[80px] sm:min-h-[60px] p-2 sm:p-3 bg-transparent border-none resize-none focus:outline-none text-sm sm:text-base"
                             style={{
                               textAlign: block.style?.textAlign,
                               fontWeight: block.style?.bold ? 'bold' : undefined,
@@ -975,12 +1007,12 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                         )}
 
                         {block.type === 'quote' && (
-                          <div className="border-l-4 border-blue-500 pl-4 py-2">
+                          <div className="border-l-4 border-blue-500 pl-3 sm:pl-4 py-2">
                             <textarea
                               value={block.content}
                               onChange={e => updateBlockContent(block.id, e.target.value)}
                               placeholder="인용구를 입력하세요..."
-                              className="w-full min-h-[40px] bg-transparent border-none resize-none focus:outline-none text-gray-600 italic"
+                              className="w-full min-h-[60px] sm:min-h-[40px] bg-transparent border-none resize-none focus:outline-none text-gray-600 italic text-sm sm:text-base"
                               disabled={previewMode}
                             />
                           </div>
@@ -991,14 +1023,14 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                         )}
                       </div>
 
-                      {/* 삭제 버튼 */}
+                      {/* 삭제 버튼 (데스크탑만) */}
                       {!previewMode && (
                         <button
                           onClick={e => {
                             e.stopPropagation()
                             deleteBlock(block.id)
                           }}
-                          className="absolute -right-8 top-1/2 -translate-y-1/2 p-1 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50 rounded"
+                          className="absolute -right-8 top-1/2 -translate-y-1/2 p-1 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50 rounded hidden lg:block"
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
@@ -1010,9 +1042,9 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                   {!previewMode && (
                     <button
                       onClick={() => addBlock('text')}
-                      className="w-full py-4 border-2 border-dashed border-gray-200 rounded-lg text-gray-400 hover:border-blue-400 hover:text-blue-500 transition-colors flex items-center justify-center gap-2"
+                      className="w-full py-6 sm:py-4 border-2 border-dashed border-gray-200 rounded-lg text-gray-400 hover:border-blue-400 hover:text-blue-500 active:bg-blue-50 transition-colors flex items-center justify-center gap-2"
                     >
-                      <Plus className="h-4 w-4" />
+                      <Plus className="h-5 w-5 sm:h-4 sm:w-4" />
                       블록 추가
                     </button>
                   )}
@@ -1021,17 +1053,17 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
             </Card>
           </div>
 
-          {/* 오른쪽: 스타일 패널 */}
-          <div className="lg:col-span-1">
+          {/* 오른쪽: 스타일 패널 (모바일에서 마지막) */}
+          <div className="lg:col-span-1 order-3">
             {selectedBlock && selectedBlock.type !== 'divider' && selectedBlock.type !== 'image' && !previewMode && (
               <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm flex items-center gap-2">
+                <CardHeader className="pb-2 sm:pb-3">
+                  <CardTitle className="text-xs sm:text-sm flex items-center gap-2">
                     <Palette className="h-4 w-4" />
                     블록 스타일
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-4">
+                <CardContent className="space-y-3 sm:space-y-4">
                   {/* 텍스트 스타일 */}
                   {selectedBlock.type === 'text' && (
                     <>
@@ -1041,6 +1073,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                           <Button
                             variant={selectedBlock.style?.bold ? 'default' : 'outline'}
                             size="sm"
+                            className="flex-1 sm:flex-none py-3 sm:py-2"
                             onClick={() =>
                               updateBlockStyle(selectedBlock.id, {
                                 bold: !selectedBlock.style?.bold,
@@ -1052,6 +1085,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                           <Button
                             variant={selectedBlock.style?.italic ? 'default' : 'outline'}
                             size="sm"
+                            className="flex-1 sm:flex-none py-3 sm:py-2"
                             onClick={() =>
                               updateBlockStyle(selectedBlock.id, {
                                 italic: !selectedBlock.style?.italic,
@@ -1063,6 +1097,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                           <Button
                             variant={selectedBlock.style?.underline ? 'default' : 'outline'}
                             size="sm"
+                            className="flex-1 sm:flex-none py-3 sm:py-2"
                             onClick={() =>
                               updateBlockStyle(selectedBlock.id, {
                                 underline: !selectedBlock.style?.underline,
@@ -1080,6 +1115,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                           <Button
                             variant={selectedBlock.style?.textAlign === 'left' ? 'default' : 'outline'}
                             size="sm"
+                            className="flex-1 sm:flex-none py-3 sm:py-2"
                             onClick={() =>
                               updateBlockStyle(selectedBlock.id, { textAlign: 'left' })
                             }
@@ -1089,6 +1125,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                           <Button
                             variant={selectedBlock.style?.textAlign === 'center' ? 'default' : 'outline'}
                             size="sm"
+                            className="flex-1 sm:flex-none py-3 sm:py-2"
                             onClick={() =>
                               updateBlockStyle(selectedBlock.id, { textAlign: 'center' })
                             }
@@ -1112,7 +1149,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                               backgroundColor: color.value,
                             })
                           }
-                          className={`h-8 rounded border-2 transition-all ${
+                          className={`h-10 sm:h-8 rounded border-2 transition-all active:scale-95 ${
                             selectedBlock.style?.backgroundColor === color.value
                               ? 'border-blue-500 scale-110'
                               : 'border-gray-200 hover:border-gray-400'

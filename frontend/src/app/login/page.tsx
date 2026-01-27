@@ -26,10 +26,15 @@ export default function LoginPage() {
       // 로그인 후 관리자인지 확인하여 적절한 페이지로 이동
       const userStr = localStorage.getItem('user')
       if (userStr) {
-        const user = JSON.parse(userStr)
-        if (user.is_admin) {
-          router.push('/admin')
-        } else {
+        try {
+          const user = JSON.parse(userStr)
+          if (user.is_admin) {
+            router.push('/admin')
+          } else {
+            router.push('/dashboard')
+          }
+        } catch {
+          // JSON 파싱 실패 시 기본 대시보드로 이동
           router.push('/dashboard')
         }
       } else {

@@ -60,7 +60,7 @@ function CheckoutContent() {
       const tossPayments = window.TossPayments(config.client_key)
 
       paymentWidgetRef.current = tossPayments.widgets({
-        customerKey: `user_${Date.now()}`,
+        customerKey: `user_${crypto.randomUUID()}`,
       })
 
       await paymentWidgetRef.current.setAmount({

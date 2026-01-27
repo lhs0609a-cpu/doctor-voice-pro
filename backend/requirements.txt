@@ -29,6 +29,12 @@ requests==2.31.0
 httpx==0.25.2
 aiohttp>=3.10.0
 
+# Async SMTP (P0 성능 개선 - 이메일 발송 비동기화)
+aiosmtplib>=3.0.0
+
+# Encryption (이메일 설정 암호화)
+cryptography>=42.0.0
+
 # Web Scraping
 beautifulsoup4==4.12.2
 lxml>=5.2.0

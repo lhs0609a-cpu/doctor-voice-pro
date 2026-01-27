@@ -115,7 +115,8 @@ class ContactExtractorService:
     async def extract_contacts(
         self,
         blog_id: str,
-        user_id: str
+        user_id: str,
+        auto_generate_naver_email: bool = True
     ) -> Dict[str, Any]:
         """
         블로그에서 연락처 추출
@@ -123,6 +124,7 @@ class ContactExtractorService:
         Args:
             blog_id: 블로그 DB ID
             user_id: 사용자 ID
+            auto_generate_naver_email: 블로그 ID 기반 네이버 이메일 자동 생성 여부
 
         Returns:
             추출 결과
@@ -142,22 +144,39 @@ class ContactExtractorService:
             if not blog:
                 return {"success": False, "error": "블로그를 찾을 수 없습니다"}
 
-            if not self._page:
-                await self.initialize()
-
             contacts_found = []
 
-            # 1. 프로필 페이지에서 추출
-            profile_contacts = await self._extract_from_profile(blog.blog_id)
-            contacts_found.extend(profile_contacts)
+            # 0. 블로그 ID 기반 네이버 이메일 자동 생성 (가장 우선)
+            if auto_generate_naver_email and blog.blog_id:
+                naver_email = self._generate_naver_email(blog.blog_id)
+                contacts_found.append({
+                    'email': naver_email,
+                    'source': ContactSource.PROFILE,
+                    'source_url': blog.blog_url,
+                    'is_naver_id_email': True  # 블로그 ID 기반 이메일 표시
+                })
+                logger.info(f"블로그 ID 기반 네이버 이메일 생성: {naver_email}")
 
-            # 2. 블로그 메인에서 추출
-            main_contacts = await self._extract_from_main(blog.blog_id)
-            contacts_found.extend(main_contacts)
+            # Playwright 초기화 (선택적 - 추가 연락처 추출용)
+            try:
+                if PLAYWRIGHT_AVAILABLE and not self._page:
+                    await self.initialize()
+            except Exception as e:
+                logger.warning(f"Playwright 초기화 실패 (네이버 이메일만 사용): {e}")
 
-            # 3. 협찬/문의 관련 포스팅에서 추출
-            post_contacts = await self._extract_from_contact_posts(blog.blog_id)
-            contacts_found.extend(post_contacts)
+            # Playwright가 사용 가능한 경우에만 추가 추출 수행
+            if self._page:
+                # 1. 프로필 페이지에서 추출
+                profile_contacts = await self._extract_from_profile(blog.blog_id)
+                contacts_found.extend(profile_contacts)
+
+                # 2. 블로그 메인에서 추출
+                main_contacts = await self._extract_from_main(blog.blog_id)
+                contacts_found.extend(main_contacts)
+
+                # 3. 협찬/문의 관련 포스팅에서 추출
+                post_contacts = await self._extract_from_contact_posts(blog.blog_id)
+                contacts_found.extend(post_contacts)
 
             # 중복 제거 및 DB 저장
             saved_contacts = await self._save_contacts(blog, contacts_found)
@@ -172,7 +191,8 @@ class ContactExtractorService:
                 "success": True,
                 "blog_id": blog_id,
                 "contacts_found": len(saved_contacts),
-                "contacts": saved_contacts
+                "contacts": saved_contacts,
+                "naver_email_generated": auto_generate_naver_email and blog.blog_id is not None
             }
 
         except Exception as e:
@@ -428,8 +448,13 @@ class ContactExtractorService:
 
         return list(instagrams)
 
-    def _is_valid_email(self, email: str) -> bool:
-        """이메일 유효성 검사"""
+    def _is_valid_email(self, email: str, allow_naver: bool = False) -> bool:
+        """이메일 유효성 검사
+
+        Args:
+            email: 검사할 이메일 주소
+            allow_naver: naver.com 도메인 허용 여부 (블로그 ID 기반 이메일용)
+        """
         # 기본 형식 체크
         if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
             return False
@@ -437,14 +462,27 @@ class ContactExtractorService:
         # 제외할 도메인
         excluded_domains = [
             'example.com', 'test.com', 'localhost',
-            'naver.com',  # 네이버 일반 계정은 제외 (블로거 개인 이메일이 아님)
         ]
+
+        # naver.com은 allow_naver가 False일 때만 제외
+        if not allow_naver:
+            excluded_domains.append('naver.com')
 
         domain = email.split('@')[1].lower()
         if domain in excluded_domains:
             return False
 
         return True
+
+    def _generate_naver_email(self, naver_blog_id: str) -> str:
+        """네이버 블로그 ID로 네이버 이메일 주소 생성
+
+        네이버 블로그 ID는 대부분 네이버 계정 ID와 동일하므로
+        blogId@naver.com 형태로 이메일 발송 가능
+        """
+        # 블로그 ID 정규화 (소문자, 특수문자 제거)
+        clean_id = naver_blog_id.lower().strip()
+        return f"{clean_id}@naver.com"
 
     async def _save_contacts(
         self,
@@ -457,11 +495,17 @@ class ContactExtractorService:
         seen_phones = set()
         seen_instagrams = set()
 
-        for contact_data in contacts:
+        # 블로그 ID 기반 네이버 이메일을 가장 먼저 처리 (primary로 설정하기 위해)
+        naver_id_emails = [c for c in contacts if c.get('is_naver_id_email')]
+        other_contacts = [c for c in contacts if not c.get('is_naver_id_email')]
+        sorted_contacts = naver_id_emails + other_contacts
+
+        for contact_data in sorted_contacts:
             try:
                 email = contact_data.get('email')
                 phone = contact_data.get('phone')
                 instagram = contact_data.get('instagram')
+                is_naver_id_email = contact_data.get('is_naver_id_email', False)
 
                 # 중복 체크
                 if email and email in seen_emails:
@@ -494,15 +538,21 @@ class ContactExtractorService:
                     kakao_channel=contact_data.get('kakao_channel'),
                     source=contact_data.get('source', ContactSource.OTHER),
                     source_url=contact_data.get('source_url'),
-                    is_primary=len(saved) == 0  # 첫 번째 연락처를 primary로
+                    is_primary=len(saved) == 0,  # 첫 번째 연락처를 primary로 (네이버 ID 이메일 우선)
+                    is_verified=False  # 네이버 ID 이메일은 검증되지 않은 상태로 시작
                 )
                 self.db.add(contact)
-                saved.append({
+
+                saved_info = {
                     'email': email,
                     'phone': phone,
                     'instagram': instagram,
                     'source': contact_data.get('source', ContactSource.OTHER).value
-                })
+                }
+                if is_naver_id_email:
+                    saved_info['is_naver_id_email'] = True
+
+                saved.append(saved_info)
 
                 if email:
                     seen_emails.add(email)
@@ -520,7 +570,8 @@ class ContactExtractorService:
     async def extract_contacts_batch(
         self,
         user_id: str,
-        limit: int = 50
+        limit: int = 50,
+        auto_generate_naver_email: bool = True
     ) -> Dict[str, Any]:
         """
         연락처가 없는 블로그들에서 일괄 추출
@@ -528,6 +579,7 @@ class ContactExtractorService:
         Args:
             user_id: 사용자 ID
             limit: 최대 처리 개수
+            auto_generate_naver_email: 블로그 ID 기반 네이버 이메일 자동 생성 여부
 
         Returns:
             추출 결과
@@ -549,25 +601,39 @@ class ContactExtractorService:
                 return {
                     "success": True,
                     "processed": 0,
-                    "contacts_found": 0,
+                    "with_contacts": 0,
+                    "naver_emails_generated": 0,
                     "message": "처리할 블로그가 없습니다"
                 }
 
             total_contacts = 0
+            naver_emails = 0
             processed = 0
             errors = 0
 
             for blog in blogs:
                 try:
-                    extract_result = await self.extract_contacts(blog.id, user_id)
+                    extract_result = await self.extract_contacts(
+                        blog.id,
+                        user_id,
+                        auto_generate_naver_email=auto_generate_naver_email
+                    )
                     if extract_result.get('success'):
-                        total_contacts += extract_result.get('contacts_found', 0)
+                        contacts_count = extract_result.get('contacts_found', 0)
+                        total_contacts += contacts_count
                         processed += 1
+
+                        # 네이버 이메일 생성 여부 체크
+                        if extract_result.get('naver_email_generated'):
+                            naver_emails += 1
                     else:
                         errors += 1
 
-                    # 딜레이
-                    await asyncio.sleep(2)
+                    # 딜레이 (네이버 이메일만 사용하는 경우 딜레이 최소화)
+                    if self._page:
+                        await asyncio.sleep(2)
+                    else:
+                        await asyncio.sleep(0.1)  # Playwright 없이 네이버 이메일만 생성하면 빠름
 
                 except Exception as e:
                     logger.error(f"블로그 연락처 추출 오류 ({blog.id}): {e}")
@@ -576,7 +642,8 @@ class ContactExtractorService:
             return {
                 "success": True,
                 "processed": processed,
-                "contacts_found": total_contacts,
+                "with_contacts": total_contacts,
+                "naver_emails_generated": naver_emails,
                 "errors": errors
             }
 

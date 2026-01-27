@@ -26,7 +26,8 @@ from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.blog_outreach import (
-    NaverBlog, BlogContact, BlogSearchKeyword, BlogCategory, BlogStatus, ContactSource
+    NaverBlog, BlogContact, BlogSearchKeyword, BlogCategory, BlogStatus, ContactSource,
+    OutreachSetting
 )
 
 logger = logging.getLogger(__name__)
@@ -103,8 +104,13 @@ class BlogOutreachCrawler:
         Returns:
             수집 결과
         """
+        # Playwright 초기화 시도
         if not self._page:
             await self.initialize()
+
+        # Playwright 사용 불가능 시 HTTP 기반 크롤링
+        if not self._page:
+            return await self._search_blogs_http(keyword, user_id, category, max_results)
 
         collected = 0
         duplicates = 0
@@ -584,6 +590,338 @@ class BlogOutreachCrawler:
             "results": results
         }
 
+    async def _search_blogs_http(
+        self,
+        keyword: str,
+        user_id: str,
+        category: Optional[BlogCategory] = None,
+        max_results: int = 50
+    ) -> Dict[str, Any]:
+        """HTTP 기반 블로그 검색 (Playwright 없을 때 사용)"""
+        # 먼저 Naver API가 설정되어 있는지 확인
+        naver_api_result = await self._search_blogs_naver_api(keyword, user_id, category, max_results)
+        if naver_api_result.get("success"):
+            return naver_api_result
+
+        # Naver API가 없으면 HTTP 스크래핑 시도 (네이버에서 차단될 가능성 높음)
+        collected = 0
+        duplicates = 0
+        errors = 0
+        blogs = []
+
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+        }
+
+        try:
+            async with aiohttp.ClientSession(headers=headers) as session:
+                # 네이버 블로그 검색 페이지 스크래핑
+                for start in range(1, max_results + 1, 10):
+                    if collected >= max_results:
+                        break
+
+                    search_url = f"https://search.naver.com/search.naver?where=blog&query={quote(keyword)}&start={start}"
+
+                    try:
+                        async with session.get(search_url) as response:
+                            if response.status != 200:
+                                logger.warning(f"검색 요청 실패: {response.status}")
+                                continue
+
+                            html = await response.text()
+                            soup = BeautifulSoup(html, 'html.parser')
+
+                            # 블로그 검색 결과 파싱
+                            blog_items = soup.select('li.bx') or soup.select('div.api_subject_bx') or soup.select('div.total_wrap')
+
+                            if not blog_items:
+                                logger.info(f"검색 결과 없음 (start={start})")
+                                break
+
+                            for item in blog_items:
+                                if collected >= max_results:
+                                    break
+
+                                try:
+                                    # 블로그 링크 추출
+                                    link_elem = (
+                                        item.select_one('a.api_txt_lines.total_tit') or
+                                        item.select_one('a.title_link') or
+                                        item.select_one('a[href*="blog.naver.com"]')
+                                    )
+
+                                    if not link_elem:
+                                        continue
+
+                                    href = link_elem.get('href', '')
+                                    if 'blog.naver.com' not in href:
+                                        continue
+
+                                    blog_id = self._extract_blog_id(href)
+                                    if not blog_id:
+                                        continue
+
+                                    # 중복 체크
+                                    existing = await self.db.execute(
+                                        select(NaverBlog).where(
+                                            and_(
+                                                NaverBlog.user_id == user_id,
+                                                NaverBlog.blog_id == blog_id
+                                            )
+                                        )
+                                    )
+                                    if existing.scalar_one_or_none():
+                                        duplicates += 1
+                                        continue
+
+                                    # 블로그 이름
+                                    name_elem = (
+                                        item.select_one('.sub_txt.sub_name') or
+                                        item.select_one('.source_txt') or
+                                        item.select_one('.blog_name')
+                                    )
+                                    blog_name = name_elem.get_text(strip=True) if name_elem else ""
+
+                                    # 포스팅 제목
+                                    title = link_elem.get_text(strip=True)
+
+                                    # DB 저장
+                                    blog = NaverBlog(
+                                        user_id=user_id,
+                                        blog_id=blog_id,
+                                        blog_url=f"https://blog.naver.com/{blog_id}",
+                                        blog_name=blog_name,
+                                        last_post_title=title,
+                                        category=category or BlogCategory.OTHER,
+                                        keywords=[keyword],
+                                        status=BlogStatus.NEW
+                                    )
+                                    self.db.add(blog)
+                                    blogs.append(blog)
+                                    collected += 1
+
+                                except Exception as e:
+                                    logger.debug(f"블로그 항목 처리 오류: {e}")
+                                    errors += 1
+
+                        # 요청 간 딜레이
+                        await asyncio.sleep(self.request_delay)
+
+                    except Exception as e:
+                        logger.error(f"검색 페이지 요청 오류: {e}")
+                        errors += 1
+
+                await self.db.commit()
+
+                # 검색 키워드 통계 업데이트
+                await self._update_keyword_stats(user_id, keyword, collected, category)
+
+                logger.info(f"HTTP 기반 블로그 수집 완료: {collected}개 수집, {duplicates}개 중복, {errors}개 오류")
+
+                return {
+                    "success": True,
+                    "keyword": keyword,
+                    "collected": collected,
+                    "duplicates": duplicates,
+                    "errors": errors,
+                    "blogs": [{"id": b.id, "blog_id": b.blog_id, "blog_name": b.blog_name} for b in blogs],
+                    "method": "http"
+                }
+
+        except Exception as e:
+            logger.error(f"HTTP 기반 블로그 검색 오류: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "collected": collected,
+                "method": "http"
+            }
+
+    async def _search_blogs_naver_api(
+        self,
+        keyword: str,
+        user_id: str,
+        category: Optional[BlogCategory] = None,
+        max_results: int = 50
+    ) -> Dict[str, Any]:
+        """네이버 검색 API를 사용한 블로그 검색"""
+        # 사용자의 네이버 API 설정 조회
+        try:
+            result = await self.db.execute(
+                select(OutreachSetting).where(OutreachSetting.user_id == user_id)
+            )
+            settings = result.scalar_one_or_none()
+
+            if not settings or not settings.naver_client_id or not settings.naver_client_secret_encrypted:
+                logger.info("네이버 API 설정이 없습니다. HTTP 스크래핑으로 대체합니다.")
+                return {
+                    "success": False,
+                    "error": "naver_api_not_configured",
+                    "error_code": "NAVER_API_NOT_CONFIGURED",
+                    "user_message": "네이버 검색 API가 설정되지 않았습니다.",
+                    "action_required": "설정 > 네이버 검색 API에서 Client ID와 Secret을 입력해주세요.",
+                    "help_url": "/dashboard/outreach/settings"
+                }
+
+            # 암호화된 비밀번호 복호화
+            from app.services.email_sender_service import EmailSenderService
+            email_service = EmailSenderService(self.db)
+            naver_client_secret = email_service.decrypt_password(settings.naver_client_secret_encrypted)
+
+            if not naver_client_secret:
+                logger.error("네이버 API Secret 복호화 실패")
+                return {
+                    "success": False,
+                    "error": "naver_secret_decrypt_failed",
+                    "error_code": "NAVER_SECRET_DECRYPT_FAILED",
+                    "user_message": "네이버 API Secret 복호화에 실패했습니다.",
+                    "action_required": "설정에서 네이버 API Secret을 다시 입력해주세요.",
+                    "help_url": "/dashboard/outreach/settings"
+                }
+
+        except Exception as e:
+            logger.error(f"네이버 API 설정 조회 오류: {e}")
+            return {"success": False, "error": str(e)}
+
+        collected = 0
+        duplicates = 0
+        errors = 0
+        blogs = []
+
+        headers = {
+            'X-Naver-Client-Id': settings.naver_client_id,
+            'X-Naver-Client-Secret': naver_client_secret,
+        }
+
+        try:
+            async with aiohttp.ClientSession(headers=headers) as session:
+                # 네이버 블로그 검색 API (최대 100개씩, 총 1000개까지)
+                for start in range(1, min(max_results, 1000) + 1, 100):
+                    if collected >= max_results:
+                        break
+
+                    display = min(100, max_results - collected)
+                    api_url = f"https://openapi.naver.com/v1/search/blog.json?query={quote(keyword)}&display={display}&start={start}&sort=sim"
+
+                    try:
+                        async with session.get(api_url) as response:
+                            if response.status != 200:
+                                error_text = await response.text()
+                                logger.error(f"네이버 API 오류: {response.status} - {error_text}")
+                                if response.status == 429:
+                                    logger.warning("API 호출 한도 초과. 잠시 후 다시 시도하세요.")
+                                    break
+                                continue
+
+                            data = await response.json()
+                            items = data.get('items', [])
+
+                            if not items:
+                                logger.info(f"검색 결과 없음 (start={start})")
+                                break
+
+                            for item in items:
+                                if collected >= max_results:
+                                    break
+
+                                try:
+                                    # 블로그 링크에서 ID 추출
+                                    blog_link = item.get('bloggerlink', '') or item.get('link', '')
+
+                                    # blog.naver.com 링크가 아닌 경우 스킵
+                                    if 'blog.naver.com' not in blog_link:
+                                        continue
+
+                                    blog_id = self._extract_blog_id(blog_link)
+                                    if not blog_id:
+                                        # 포스트 링크에서 추출 시도
+                                        post_link = item.get('link', '')
+                                        blog_id = self._extract_blog_id(post_link)
+
+                                    if not blog_id:
+                                        continue
+
+                                    # 중복 체크
+                                    existing = await self.db.execute(
+                                        select(NaverBlog).where(
+                                            and_(
+                                                NaverBlog.user_id == user_id,
+                                                NaverBlog.blog_id == blog_id
+                                            )
+                                        )
+                                    )
+                                    if existing.scalar_one_or_none():
+                                        duplicates += 1
+                                        continue
+
+                                    # HTML 태그 제거
+                                    import html
+                                    title = re.sub(r'<[^>]+>', '', item.get('title', ''))
+                                    title = html.unescape(title)
+                                    description = re.sub(r'<[^>]+>', '', item.get('description', ''))
+                                    description = html.unescape(description)
+                                    blogger_name = item.get('bloggername', '')
+
+                                    # DB 저장
+                                    blog = NaverBlog(
+                                        user_id=user_id,
+                                        blog_id=blog_id,
+                                        blog_url=f"https://blog.naver.com/{blog_id}",
+                                        blog_name=blogger_name,
+                                        last_post_title=title,
+                                        introduction=description[:500] if description else None,
+                                        category=category or BlogCategory.OTHER,
+                                        keywords=[keyword],
+                                        status=BlogStatus.NEW
+                                    )
+                                    self.db.add(blog)
+                                    blogs.append(blog)
+                                    collected += 1
+
+                                except Exception as e:
+                                    logger.debug(f"블로그 항목 처리 오류: {e}")
+                                    errors += 1
+
+                            # 다음 페이지가 없으면 종료
+                            total = data.get('total', 0)
+                            if start + display > total:
+                                break
+
+                        # API 호출 간 딜레이 (초당 10회 제한 고려)
+                        await asyncio.sleep(0.2)
+
+                    except Exception as e:
+                        logger.error(f"네이버 API 요청 오류: {e}")
+                        errors += 1
+
+                await self.db.commit()
+
+                # 검색 키워드 통계 업데이트
+                await self._update_keyword_stats(user_id, keyword, collected, category)
+
+                logger.info(f"네이버 API 블로그 수집 완료: {collected}개 수집, {duplicates}개 중복, {errors}개 오류")
+
+                return {
+                    "success": True,
+                    "keyword": keyword,
+                    "collected": collected,
+                    "duplicates": duplicates,
+                    "errors": errors,
+                    "blogs": [{"id": b.id, "blog_id": b.blog_id, "blog_name": b.blog_name} for b in blogs],
+                    "method": "naver_api"
+                }
+
+        except Exception as e:
+            logger.error(f"네이버 API 블로그 검색 오류: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "collected": collected,
+                "method": "naver_api"
+            }
+
     async def refresh_blog_info(self, blog_id: str) -> Dict[str, Any]:
         """블로그 정보 갱신"""
         try:
@@ -618,14 +956,98 @@ class BlogOutreachCrawler:
             return {"success": False, "error": str(e)}
 
 
-# 싱글톤 인스턴스 관리
-_crawler_instances: Dict[str, BlogOutreachCrawler] = {}
+# 싱글톤 인스턴스 관리 (P2: 메모리 관리 개선)
+_crawler_instances: Dict[str, Dict[str, Any]] = {}
+_MAX_INSTANCES = 10  # 최대 인스턴스 수
+_INSTANCE_TTL_SECONDS = 1800  # 30분 미사용 시 정리
+_BROWSER_IDLE_SECONDS = 600  # 10분 미사용 시 브라우저 종료
 
 
 async def get_blog_outreach_crawler(db: AsyncSession, user_id: str) -> BlogOutreachCrawler:
-    """사용자별 크롤러 인스턴스 반환"""
+    """사용자별 크롤러 인스턴스 반환 (메모리 관리 포함)"""
+    now = datetime.utcnow()
+
+    # 주기적 정리 (매 호출 시 체크)
+    await _cleanup_idle_instances()
+
+    if user_id in _crawler_instances:
+        instance_data = _crawler_instances[user_id]
+        instance_data["last_access"] = now
+        instance_data["crawler"].db = db
+        return instance_data["crawler"]
+
+    # 최대 인스턴스 수 초과 시 가장 오래된 인스턴스 제거
+    if len(_crawler_instances) >= _MAX_INSTANCES:
+        await _evict_oldest_instance()
+
+    # 새 인스턴스 생성
+    crawler = BlogOutreachCrawler(db)
+    _crawler_instances[user_id] = {
+        "crawler": crawler,
+        "created_at": now,
+        "last_access": now,
+        "browser_last_used": None
+    }
+
+    return crawler
+
+
+async def _cleanup_idle_instances():
+    """유휴 인스턴스 정리"""
+    now = datetime.utcnow()
+    to_remove = []
+
+    for user_id, data in _crawler_instances.items():
+        idle_seconds = (now - data["last_access"]).total_seconds()
+
+        # TTL 초과한 인스턴스 제거 대상
+        if idle_seconds > _INSTANCE_TTL_SECONDS:
+            to_remove.append(user_id)
+        # 브라우저만 종료 (인스턴스는 유지)
+        elif idle_seconds > _BROWSER_IDLE_SECONDS:
+            crawler = data["crawler"]
+            if crawler._browser:
+                try:
+                    await crawler.close()
+                    logger.info(f"유휴 브라우저 종료: user_id={user_id}")
+                except Exception as e:
+                    logger.warning(f"브라우저 종료 실패: {e}")
+
+    # 오래된 인스턴스 제거
+    for user_id in to_remove:
+        await _remove_instance(user_id)
+
+
+async def _evict_oldest_instance():
+    """가장 오래된 인스턴스 제거 (LRU)"""
+    if not _crawler_instances:
+        return
+
+    oldest_user_id = min(
+        _crawler_instances.keys(),
+        key=lambda uid: _crawler_instances[uid]["last_access"]
+    )
+    await _remove_instance(oldest_user_id)
+    logger.info(f"LRU 인스턴스 제거: user_id={oldest_user_id}")
+
+
+async def _remove_instance(user_id: str):
+    """인스턴스 안전하게 제거"""
     if user_id not in _crawler_instances:
-        _crawler_instances[user_id] = BlogOutreachCrawler(db)
-    else:
-        _crawler_instances[user_id].db = db
-    return _crawler_instances[user_id]
+        return
+
+    try:
+        crawler = _crawler_instances[user_id]["crawler"]
+        await crawler.close()
+    except Exception as e:
+        logger.warning(f"인스턴스 종료 중 오류: {e}")
+    finally:
+        del _crawler_instances[user_id]
+
+
+async def cleanup_all_crawler_instances():
+    """모든 크롤러 인스턴스 정리 (앱 종료 시 호출)"""
+    user_ids = list(_crawler_instances.keys())
+    for user_id in user_ids:
+        await _remove_instance(user_id)
+    logger.info(f"모든 크롤러 인스턴스 정리 완료 ({len(user_ids)}개)")
