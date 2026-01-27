@@ -355,7 +355,7 @@ export default function OutreachPage() {
         loadBlogs()
         loadScoringStats()
       } else {
-        toast.error(result.message || '스코어링에 실패했습니다')
+        toast.error('스코어링에 실패했습니다')
       }
     } catch (error: any) {
       const err = formatApiError(error, '스코어링 중 오류 발생')
