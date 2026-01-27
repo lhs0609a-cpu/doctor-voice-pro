@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, Fragment } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuthStore } from '@/store/auth'
@@ -441,5 +441,6 @@ export function DashboardNav() {
         </div>
       </div>
     </div>
+    </>
   )
 }
