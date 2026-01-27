@@ -316,10 +316,8 @@ export default function OutreachPage() {
         toast.success(`${result.processed || 0}개 처리, ${result.with_contacts || 0}개 연락처 발견`)
         loadBlogs()
         loadDashboard()
-      } else if (result.error) {
-        toast.error(result.user_message || result.error, {
-          description: result.action_required,
-        })
+      } else {
+        toast.error(result.message || '연락처 추출에 실패했습니다')
       }
     } catch (error: any) {
       const err = formatApiError(error, '연락처 추출 중 오류 발생')
@@ -337,10 +335,8 @@ export default function OutreachPage() {
         toast.success(result.message || `${result.generated}개 네이버 이메일 생성`)
         loadBlogs()
         loadDashboard()
-      } else if (result.error) {
-        toast.error(result.user_message || result.error, {
-          description: result.action_required,
-        })
+      } else {
+        toast.error(result.message || '네이버 이메일 생성에 실패했습니다')
       }
     } catch (error: any) {
       const err = formatApiError(error, '네이버 이메일 생성 중 오류 발생')
@@ -358,8 +354,8 @@ export default function OutreachPage() {
         toast.success('스코어링 완료')
         loadBlogs()
         loadScoringStats()
-      } else if (result.error) {
-        toast.error(result.user_message || result.error)
+      } else {
+        toast.error(result.message || '스코어링에 실패했습니다')
       }
     } catch (error: any) {
       const err = formatApiError(error, '스코어링 중 오류 발생')
@@ -460,17 +456,11 @@ export default function OutreachPage() {
   const handleStartCampaign = async (campaignId: string) => {
     try {
       const result = await outreachAPI.startCampaign(campaignId)
-      if (result.success === false) {
-        toast.error(result.user_message || result.error || '캠페인 시작 실패', {
-          description: result.action_required,
-          action: result.help_url ? {
-            label: '설정 확인',
-            onClick: () => window.location.href = result.help_url,
-          } : undefined,
-        })
-      } else {
+      if (result.success) {
         toast.success(result.message || '캠페인이 시작되었습니다')
         loadCampaigns()
+      } else {
+        toast.error(result.message || '캠페인 시작 실패')
       }
     } catch (error: any) {
       const err = formatApiError(error, '캠페인 시작 실패')
@@ -498,13 +488,11 @@ export default function OutreachPage() {
   const handleStartScheduler = async () => {
     try {
       const result = await outreachAPI.startScheduler()
-      if (result.success === false) {
-        toast.error(result.user_message || result.error || '스케줄러 시작 실패', {
-          description: result.action_required,
-        })
-      } else {
+      if (result.success) {
         toast.success(result.message || '스케줄러가 시작되었습니다')
         loadSchedulerStatus()
+      } else {
+        toast.error(result.message || '스케줄러 시작 실패')
       }
     } catch (error: any) {
       const err = formatApiError(error, '스케줄러 시작 실패')
