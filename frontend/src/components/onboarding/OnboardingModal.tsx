@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Textarea } from '@/components/ui/textarea'
+// P2 Fix: Textarea import 제거 (사용 안 함)
 import {
   Sparkles,
   Check,
@@ -24,81 +24,8 @@ import {
 // API URL 설정
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
-interface PricingPlan {
-  id: string
-  name: string
-  price: number
-  period: string
-  description: string
-  features: string[]
-  popular?: boolean
-  badge?: string
-}
-
-const plans: PricingPlan[] = [
-  {
-    id: 'free',
-    name: 'Free',
-    price: 0,
-    period: '영구 무료',
-    description: '서비스를 체험해보세요',
-    features: [
-      '월 10건 글 생성',
-      '월 30건 상위노출 분석',
-      '기본 템플릿',
-      '커뮤니티 지원'
-    ],
-    badge: '시작하기'
-  },
-  {
-    id: 'starter',
-    name: 'Starter',
-    price: 29000,
-    period: '월',
-    description: '본격적인 블로그 운영',
-    features: [
-      '월 30건 글 생성',
-      '월 100건 상위노출 분석',
-      '모든 템플릿',
-      '네이버 자동 발행',
-      '이메일 지원'
-    ]
-  },
-  {
-    id: 'pro',
-    name: 'Pro',
-    price: 79000,
-    period: '월',
-    description: '전문 마케터를 위한 플랜',
-    features: [
-      '무제한 글 생성',
-      '무제한 상위노출 분석',
-      'AI 이미지 생성',
-      '고급 분석 리포트',
-      '예약 발행',
-      '우선 지원'
-    ],
-    popular: true,
-    badge: '가장 인기'
-  },
-  {
-    id: 'business',
-    name: 'Business',
-    price: 199000,
-    period: '월',
-    description: '대행사 & 다점포 의료기관용',
-    features: [
-      'Pro의 모든 기능',
-      '팀 멤버 5명 + 역할 관리',
-      'REST API 접근',
-      '전담 매니저 + 월 1회 컨설팅',
-      '경쟁 병원 분석 리포트',
-      '병원별 AI 스타일 학습',
-      '화이트라벨 리포트'
-    ],
-    badge: '대행사용'
-  }
-]
+// P2 Fix: pricing 단계 제거로 PricingPlan 인터페이스와 plans 배열 삭제
+// 요금제 정보는 /pricing 페이지에서 확인 가능
 
 interface OnboardingModalProps {
   userName?: string
@@ -147,9 +74,10 @@ interface DemoApiResponse {
   }
 }
 
+// P2 Fix: 4단계 → 3단계로 간소화 (pricing 단계 제거 - 대시보드에서 접근 가능)
 export default function OnboardingModal({ userName, onComplete, onClose }: OnboardingModalProps) {
   const router = useRouter()
-  const [step, setStep] = useState<'welcome' | 'demo' | 'demo-result' | 'pricing'>('welcome')
+  const [step, setStep] = useState<'welcome' | 'demo' | 'demo-result'>('welcome')
   const [isTransforming, setIsTransforming] = useState(false)
   const [showResult, setShowResult] = useState(false)
 
@@ -199,19 +127,7 @@ export default function OnboardingModal({ userName, onComplete, onClose }: Onboa
     onComplete()
   }
 
-  const handleSelectPlan = (planId: string) => {
-    localStorage.setItem('onboarding_completed', 'true')
-    if (planId === 'free') {
-      onComplete()
-    } else {
-      router.push(`/pricing?plan=${planId}`)
-      onClose()
-    }
-  }
-
-  const formatPrice = (price: number) => {
-    return new Intl.NumberFormat('ko-KR').format(price)
-  }
+  // P2 Fix: handleSelectPlan, formatPrice 제거됨 (pricing 단계 삭제)
 
   if (step === 'welcome') {
     return (
@@ -495,21 +411,25 @@ export default function OnboardingModal({ userName, onComplete, onClose }: Onboa
                 </div>
               </div>
 
-              {/* CTA */}
+              {/* P2 Fix: CTA 간소화 - pricing 단계 제거, 바로 시작 유도 */}
               <div className="space-y-3 pt-2">
                 <Button
                   className="w-full h-12 text-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700"
-                  onClick={() => setStep('pricing')}
+                  onClick={handleStartFree}
                 >
-                  이런 글을 직접 만들어보기
+                  무료로 시작하기
                   <ArrowRight className="ml-2 h-5 w-5" />
                 </Button>
                 <Button
-                  variant="outline"
-                  className="w-full"
-                  onClick={handleStartFree}
+                  variant="ghost"
+                  className="w-full text-muted-foreground"
+                  onClick={() => {
+                    localStorage.setItem('onboarding_completed', 'true')
+                    router.push('/pricing')
+                    onClose()
+                  }}
                 >
-                  무료 10건으로 시작하기
+                  요금제 먼저 살펴보기
                 </Button>
               </div>
             </div>
@@ -519,93 +439,7 @@ export default function OnboardingModal({ userName, onComplete, onClose }: Onboa
     )
   }
 
-  // Pricing Step
-  return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
-      <Card className="w-full max-w-5xl bg-white dark:bg-gray-900 shadow-2xl my-8">
-        <CardContent className="p-0">
-          {/* Header */}
-          <div className="flex items-center justify-between p-6 border-b">
-            <div>
-              <h2 className="text-2xl font-bold">구독 플랜 선택</h2>
-              <p className="text-muted-foreground">나에게 맞는 플랜을 선택하세요</p>
-            </div>
-            <Button variant="ghost" size="icon" onClick={onClose}>
-              <X className="h-5 w-5" />
-            </Button>
-          </div>
-
-          {/* Plans Grid */}
-          <div className="p-6">
-            <div className="grid md:grid-cols-4 gap-4">
-              {plans.map((plan) => (
-                <div
-                  key={plan.id}
-                  className={`relative rounded-xl border-2 p-5 transition-all hover:shadow-lg ${
-                    plan.popular
-                      ? 'border-purple-500 bg-purple-50/50 dark:bg-purple-900/10'
-                      : 'border-gray-200 dark:border-gray-700 hover:border-gray-300'
-                  }`}
-                >
-                  {plan.badge && (
-                    <Badge
-                      className={`absolute -top-3 left-4 ${
-                        plan.popular
-                          ? 'bg-purple-500'
-                          : 'bg-gray-500'
-                      }`}
-                    >
-                      {plan.badge}
-                    </Badge>
-                  )}
-
-                  <div className="mb-4">
-                    <h3 className="text-lg font-bold">{plan.name}</h3>
-                    <p className="text-sm text-muted-foreground">{plan.description}</p>
-                  </div>
-
-                  <div className="mb-4">
-                    <span className="text-3xl font-bold">
-                      {plan.price === 0 ? '무료' : `₩${formatPrice(plan.price)}`}
-                    </span>
-                    {plan.price > 0 && (
-                      <span className="text-muted-foreground">/{plan.period}</span>
-                    )}
-                  </div>
-
-                  <ul className="space-y-2 mb-6">
-                    {plan.features.map((feature, index) => (
-                      <li key={index} className="flex items-center gap-2 text-sm">
-                        <Check className="h-4 w-4 text-green-500 flex-shrink-0" />
-                        <span>{feature}</span>
-                      </li>
-                    ))}
-                  </ul>
-
-                  <Button
-                    className={`w-full ${
-                      plan.popular
-                        ? 'bg-purple-600 hover:bg-purple-700'
-                        : ''
-                    }`}
-                    variant={plan.popular ? 'default' : 'outline'}
-                    onClick={() => handleSelectPlan(plan.id)}
-                  >
-                    {plan.price === 0 ? '무료로 시작' : '선택하기'}
-                  </Button>
-                </div>
-              ))}
-            </div>
-
-            {/* Back button */}
-            <div className="mt-6 text-center">
-              <Button variant="ghost" onClick={() => setStep('welcome')}>
-                뒤로 가기
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  )
+  // P2 Fix: pricing 단계 제거됨 - 대시보드에서 /pricing 페이지로 접근 가능
+  // demo-result가 마지막 단계
+  return null
 }

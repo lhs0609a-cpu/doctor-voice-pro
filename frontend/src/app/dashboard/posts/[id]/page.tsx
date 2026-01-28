@@ -598,28 +598,78 @@ export default function PostDetailPage({ params }: PageProps) {
             </Card>
           )}
 
-          {/* Law Check Issues */}
+          {/* P2 Fix: Law Check Issues - 수정 제안과 함께 표시 */}
           {post.medical_law_check && (post.medical_law_check.violations.length > 0 || post.medical_law_check.warnings.length > 0) && (
             <Card className="border-orange-200">
               <CardHeader>
                 <CardTitle className="text-orange-600">의료법 검토 사항</CardTitle>
-                <CardDescription>확인이 필요한 항목들</CardDescription>
+                <CardDescription>아래 표현들을 수정하시면 의료법 위반 위험을 줄일 수 있습니다</CardDescription>
               </CardHeader>
-              <CardContent>
-                <ul className="space-y-2">
-                  {post.medical_law_check.violations.map((violation: any, index: number) => (
-                    <li key={`violation-${index}`} className="flex items-start gap-2">
-                      <span className="text-red-600 mt-0.5">•</span>
-                      <span className="text-red-600">{violation}</span>
-                    </li>
-                  ))}
-                  {post.medical_law_check.warnings.map((warning: any, index: number) => (
-                    <li key={`warning-${index}`} className="flex items-start gap-2">
-                      <span className="text-orange-600 mt-0.5">•</span>
-                      <span>{warning}</span>
-                    </li>
-                  ))}
-                </ul>
+              <CardContent className="space-y-4">
+                {post.medical_law_check.violations.length > 0 && (
+                  <div className="space-y-3">
+                    <p className="text-sm font-medium text-red-600 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-red-500" />
+                      위반 의심 표현 ({post.medical_law_check.violations.length}건)
+                    </p>
+                    <div className="space-y-2">
+                      {post.medical_law_check.violations.map((violation: any, index: number) => (
+                        <div key={`violation-${index}`} className="bg-red-50 border border-red-100 rounded-lg p-3">
+                          <div className="flex items-start gap-2 flex-wrap">
+                            <span className="text-red-700 font-medium line-through">
+                              {typeof violation === 'string' ? violation : violation.text}
+                            </span>
+                            {typeof violation === 'object' && violation.suggestion && (
+                              <>
+                                <span className="text-gray-400">→</span>
+                                <span className="text-green-700 font-medium">
+                                  {violation.suggestion}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                          {typeof violation === 'object' && violation.category && (
+                            <p className="text-xs text-muted-foreground mt-1.5">
+                              분류: {violation.category.replace(/_/g, ' ')}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {post.medical_law_check.warnings.length > 0 && (
+                  <div className="space-y-3">
+                    <p className="text-sm font-medium text-orange-600 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-orange-500" />
+                      주의 표현 ({post.medical_law_check.warnings.length}건)
+                    </p>
+                    <div className="space-y-2">
+                      {post.medical_law_check.warnings.map((warning: any, index: number) => (
+                        <div key={`warning-${index}`} className="bg-orange-50 border border-orange-100 rounded-lg p-3">
+                          <div className="flex items-start gap-2 flex-wrap">
+                            <span className="text-orange-700 font-medium">
+                              {typeof warning === 'string' ? warning : warning.text}
+                            </span>
+                            {typeof warning === 'object' && warning.suggestion && (
+                              <>
+                                <span className="text-gray-400">→</span>
+                                <span className="text-green-700 font-medium">
+                                  {warning.suggestion}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                          {typeof warning === 'object' && warning.category && (
+                            <p className="text-xs text-muted-foreground mt-1.5">
+                              분류: {warning.category.replace(/_/g, ' ')}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
