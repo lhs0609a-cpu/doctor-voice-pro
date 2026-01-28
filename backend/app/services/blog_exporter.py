@@ -316,14 +316,30 @@ class BlogExporter:
         """
         try:
             img_stream = None
+            url = img_data.get('url', '')
 
             # URL이 base64인 경우
-            if img_data.get('url', '').startswith('data:image'):
+            if url.startswith('data:image'):
                 # base64 디코딩
-                img_base64 = img_data['url'].split(',')[1]
+                img_base64 = url.split(',')[1]
                 img_bytes = base64.b64decode(img_base64)
                 # PNG로 변환
                 img_stream = self._convert_to_png(io.BytesIO(img_bytes))
+
+            # P3 Fix: HTTP/HTTPS URL 이미지 다운로드
+            elif url.startswith(('http://', 'https://')):
+                try:
+                    import requests
+                    response = requests.get(url, timeout=10, headers={
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    })
+                    if response.status_code == 200:
+                        img_bytes = response.content
+                        img_stream = self._convert_to_png(io.BytesIO(img_bytes))
+                    else:
+                        print(f"⚠️ 이미지 다운로드 실패 (HTTP {response.status_code}): {url}")
+                except Exception as e:
+                    print(f"⚠️ 이미지 다운로드 오류: {url} - {e}")
 
             elif img_data.get('path'):
                 # 로컬 파일 경로 - PNG로 변환

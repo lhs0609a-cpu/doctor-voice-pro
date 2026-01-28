@@ -342,16 +342,53 @@ class NotificationService:
         message: str,
         data: Optional[Dict[str, Any]] = None
     ):
-        """이메일 전송 (구현 필요)"""
-        # SMTP 또는 외부 이메일 서비스 연동
-        # 현재는 placeholder
+        """
+        이메일 전송
+
+        P3 Fix: BillingNotificationService와 동일한 SMTP 로직 사용
+        """
+        import os
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+
         email = config.get("email")
         if not email:
             raise ValueError("Email address not configured")
 
-        # TODO: 실제 이메일 전송 구현
-        # import smtplib 또는 SendGrid/Mailgun API 사용
-        pass
+        # SMTP 설정 (환경변수 또는 config에서)
+        smtp_host = config.get("smtp_host") or os.getenv("SMTP_HOST", "smtp.gmail.com")
+        smtp_port = int(config.get("smtp_port") or os.getenv("SMTP_PORT", "587"))
+        smtp_user = config.get("smtp_user") or os.getenv("SMTP_USER", "")
+        smtp_password = config.get("smtp_password") or os.getenv("SMTP_PASSWORD", "")
+        smtp_from = config.get("smtp_from") or os.getenv("EMAIL_FROM", "noreply@platonmarketing.com")
+        use_tls = config.get("smtp_use_tls", True)
+
+        if not smtp_user or not smtp_password:
+            raise ValueError("SMTP credentials not configured")
+
+        # HTML 이메일 생성
+        html_content = f"""
+        <div style="font-family: 'Noto Sans KR', sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h2 style="color: #2563eb;">{title}</h2>
+            <p>{message}</p>
+            {f'<pre style="background: #f3f4f6; padding: 10px; border-radius: 4px;">{json.dumps(data, ensure_ascii=False, indent=2)}</pre>' if data else ''}
+        </div>
+        """
+
+        # MIME 메시지 생성
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = title
+        msg["From"] = smtp_from
+        msg["To"] = email
+        msg.attach(MIMEText(html_content, "html", "utf-8"))
+
+        # SMTP 발송
+        with smtplib.SMTP(smtp_host, smtp_port) as server:
+            if use_tls:
+                server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.sendmail(smtp_from, email, msg.as_string())
 
     async def _send_webhook(
         self,

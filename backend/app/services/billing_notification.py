@@ -6,13 +6,25 @@ import logging
 from datetime import datetime
 from typing import Optional
 import os
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 logger = logging.getLogger(__name__)
 
-# 이메일 발송 서비스 설정 (향후 실제 이메일 서비스로 교체)
-# 예: SendGrid, AWS SES, Mailgun 등
+# 이메일 발송 서비스 설정
+# console: 로그로 출력 (개발용)
+# smtp: SMTP 서버를 통한 발송 (Gmail, Naver 등)
+# sendgrid/ses: 외부 이메일 서비스 (추후 구현)
 EMAIL_FROM = os.getenv("EMAIL_FROM", "noreply@platonmarketing.com")
-EMAIL_SERVICE = os.getenv("EMAIL_SERVICE", "console")  # console, sendgrid, ses
+EMAIL_SERVICE = os.getenv("EMAIL_SERVICE", "console")  # console, smtp, sendgrid, ses
+
+# P3 Fix: SMTP 설정
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
 
 
 class BillingNotificationService:
@@ -23,8 +35,11 @@ class BillingNotificationService:
 
     async def _send_email(self, to: str, subject: str, html_content: str):
         """
-        이메일 발송 (실제 서비스 연동 필요)
-        현재는 로그로 출력
+        이메일 발송
+
+        지원 서비스:
+        - console: 개발용 (로그로 출력)
+        - smtp: SMTP 서버를 통한 발송 (Gmail, Naver, 회사 메일 등)
         """
         if EMAIL_SERVICE == "console":
             logger.info(f"""
@@ -37,11 +52,45 @@ Subject: {subject}
             """)
             return True
 
-        # TODO: 실제 이메일 서비스 연동
-        # if EMAIL_SERVICE == "sendgrid":
-        #     import sendgrid
-        #     ...
+        # P3 Fix: SMTP 이메일 발송 구현
+        if EMAIL_SERVICE == "smtp":
+            try:
+                if not SMTP_USER or not SMTP_PASSWORD:
+                    logger.error("SMTP credentials not configured (SMTP_USER, SMTP_PASSWORD)")
+                    return False
 
+                # MIME 메시지 생성
+                msg = MIMEMultipart("alternative")
+                msg["Subject"] = subject
+                msg["From"] = self.email_from
+                msg["To"] = to
+
+                # HTML 본문 추가
+                html_part = MIMEText(html_content, "html", "utf-8")
+                msg.attach(html_part)
+
+                # SMTP 서버 연결 및 발송
+                with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+                    if SMTP_USE_TLS:
+                        server.starttls()
+                    server.login(SMTP_USER, SMTP_PASSWORD)
+                    server.sendmail(self.email_from, to, msg.as_string())
+
+                logger.info(f"이메일 발송 성공: {to}")
+                return True
+
+            except smtplib.SMTPAuthenticationError:
+                logger.error(f"SMTP 인증 실패: {SMTP_USER}")
+                return False
+            except smtplib.SMTPException as e:
+                logger.error(f"SMTP 오류: {e}")
+                return False
+            except Exception as e:
+                logger.error(f"이메일 발송 실패: {e}")
+                return False
+
+        # 기타 서비스 (sendgrid, ses 등)는 추후 구현
+        logger.warning(f"Unsupported email service: {EMAIL_SERVICE}")
         return False
 
     async def send_renewal_notice(

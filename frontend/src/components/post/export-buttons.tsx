@@ -10,7 +10,40 @@ interface ExportButtonsProps {
   title?: string
   keywords?: string[]
   emphasisPhrases?: string[]
+  images?: Array<{ url: string; caption?: string }>  // P3: 직접 이미지 전달 옵션
   onExportSuccess?: () => void
+}
+
+// P3 Fix: 콘텐츠에서 이미지 URL 추출 함수
+function extractImagesFromContent(content: string): Array<{ url: string; caption: string; position: number }> {
+  const images: Array<{ url: string; caption: string; position: number }> = []
+
+  // 마크다운 이미지 패턴: ![alt](url)
+  const markdownRegex = /!\[([^\]]*)\]\(([^)]+)\)/g
+  let match
+  while ((match = markdownRegex.exec(content)) !== null) {
+    images.push({
+      caption: match[1] || '',
+      url: match[2],
+      position: match.index,
+    })
+  }
+
+  // HTML 이미지 패턴: <img src="url" alt="caption">
+  const htmlRegex = /<img[^>]+src=["']([^"']+)["'][^>]*(?:alt=["']([^"']*)["'])?[^>]*>/gi
+  while ((match = htmlRegex.exec(content)) !== null) {
+    // 이미 마크다운으로 추출된 URL이 아닌 경우만 추가
+    const url = match[1]
+    if (!images.some(img => img.url === url)) {
+      images.push({
+        url: url,
+        caption: match[2] || '',
+        position: match.index,
+      })
+    }
+  }
+
+  return images
 }
 
 export function ExportButtons({
@@ -18,6 +51,7 @@ export function ExportButtons({
   title = '',
   keywords = [],
   emphasisPhrases = [],
+  images: providedImages,
   onExportSuccess,
 }: ExportButtonsProps) {
   const [exporting, setExporting] = useState(false)
@@ -26,6 +60,9 @@ export function ExportButtons({
   const exportToDocx = async () => {
     setExporting(true)
     try {
+      // P3 Fix: 콘텐츠에서 이미지 추출 또는 제공된 이미지 사용
+      const extractedImages = providedImages || extractImagesFromContent(content)
+
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/export/docx`, {
         method: 'POST',
         headers: {
@@ -36,7 +73,7 @@ export function ExportButtons({
           title,
           keywords,
           emphasis_phrases: emphasisPhrases,
-          images: [], // 이미지는 나중에 추가 가능
+          images: extractedImages,
         }),
       })
 
