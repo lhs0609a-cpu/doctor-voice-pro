@@ -13,6 +13,14 @@ import type {
   WritingTemplate,
   IndustryProfileDefaults,
 } from '@/types'
+import type {
+  MonitorProfile as RepMonitorProfile,
+  DashboardData as RepDashboardData,
+  Mention as RepMention,
+  GeneratedResponse as RepGeneratedResponse,
+  AlertRule as RepAlertRule,
+  ReputationCompetitor as RepCompetitor,
+} from '@/types/reputation'
 import { logger } from '@/lib/logger'
 
 // Extend Axios config to include metadata for tracking
@@ -4097,6 +4105,83 @@ export const industryAPI = {
   getProfileDefaults: async (industryType: string): Promise<IndustryProfileDefaults> => {
     const response = await api.get(`/api/v1/profiles/industries/${industryType}/profile-defaults`)
     return response.data
+  },
+}
+
+// ==================== 평판 모니터링 API ====================
+const R = '/api/v1/reputation'
+
+export const reputationAPI = {
+  // 프로필(사업장)
+  getProfiles: async (): Promise<RepMonitorProfile[]> => {
+    const res = await api.get(`${R}/profiles`)
+    return res.data
+  },
+  createProfile: async (payload: Record<string, any>): Promise<RepMonitorProfile> => {
+    const res = await api.post(`${R}/profiles`, payload)
+    return res.data
+  },
+  deleteProfile: async (profileId: string): Promise<{ success: boolean }> => {
+    const res = await api.delete(`${R}/profiles/${profileId}`)
+    return res.data
+  },
+
+  // 대시보드
+  getDashboard: async (profileId: string, days = 30): Promise<RepDashboardData> => {
+    const res = await api.get(`${R}/dashboard`, { params: { profile_id: profileId, days } })
+    return res.data
+  },
+
+  // 멘션
+  getMentions: async (params: Record<string, any>): Promise<{ mentions: RepMention[]; total: number }> => {
+    const res = await api.get(`${R}/mentions`, { params })
+    return res.data
+  },
+  getMention: async (mentionId: string): Promise<RepMention> => {
+    const res = await api.get(`${R}/mentions/${mentionId}`)
+    return res.data
+  },
+  updateMention: async (mentionId: string, data: Record<string, any>): Promise<RepMention> => {
+    const res = await api.put(`${R}/mentions/${mentionId}`, data)
+    return res.data
+  },
+  generateResponse: async (mentionId: string): Promise<{ responses: RepGeneratedResponse[] }> => {
+    const res = await api.post(`${R}/mentions/${mentionId}/generate-response`)
+    return res.data
+  },
+
+  // 알림 규칙 (profile_id 는 쿼리, 규칙 본문은 바디)
+  getAlertRules: async (profileId: string): Promise<RepAlertRule[]> => {
+    const res = await api.get(`${R}/alerts/rules`, { params: { profile_id: profileId } })
+    return res.data
+  },
+  createAlertRule: async (profileId: string, data: Record<string, any>): Promise<RepAlertRule> => {
+    const res = await api.post(`${R}/alerts/rules`, data, { params: { profile_id: profileId } })
+    return res.data
+  },
+  deleteAlertRule: async (ruleId: string): Promise<{ success: boolean }> => {
+    const res = await api.delete(`${R}/alerts/rules/${ruleId}`)
+    return res.data
+  },
+
+  // 경쟁사 (profile_id 는 쿼리, 본문은 바디)
+  getCompetitors: async (profileId: string): Promise<RepCompetitor[]> => {
+    const res = await api.get(`${R}/competitors`, { params: { profile_id: profileId } })
+    return res.data
+  },
+  addCompetitor: async (profileId: string, data: Record<string, any>): Promise<RepCompetitor> => {
+    const res = await api.post(`${R}/competitors`, data, { params: { profile_id: profileId } })
+    return res.data
+  },
+  deleteCompetitor: async (competitorId: string): Promise<{ success: boolean }> => {
+    const res = await api.delete(`${R}/competitors/${competitorId}`)
+    return res.data
+  },
+
+  // 크롤링 즉시 실행
+  triggerCrawl: async (data: { profile_id: string }): Promise<{ message: string; [k: string]: any }> => {
+    const res = await api.post(`${R}/crawl/trigger`, data)
+    return res.data
   },
 }
 

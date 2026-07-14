@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
-  Images,
+  Image as ImageIcon,
   Upload,
   Trash2,
   Loader2,
@@ -146,7 +146,7 @@ export default function MediaPoolPage() {
         {/* 헤더 */}
         <div className="flex items-center gap-3 mb-2">
           <div className="p-2 rounded-lg bg-primary/10">
-            <Images className="h-6 w-6 text-primary" />
+            <ImageIcon className="h-6 w-6 text-primary" />
           </div>
           <div>
             <h1 className="text-2xl font-bold">사진 풀</h1>

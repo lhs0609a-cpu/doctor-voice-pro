@@ -39,7 +39,7 @@ import {
   Menu,
   X,
   ChevronRight,
-  Images,
+  Image as ImagesIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -147,7 +147,7 @@ export function DashboardNav() {
     {
       href: '/dashboard/media',
       label: '사진 풀',
-      icon: Images,
+      icon: ImagesIcon,
     },
   ]
 
