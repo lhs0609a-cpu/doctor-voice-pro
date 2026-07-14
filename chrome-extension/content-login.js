@@ -1,147 +1,78 @@
-// 네이버 로그인 감지 및 자동 이동 스크립트
-console.log('[닥터보이스] 로그인 감지 스크립트 로드됨');
+// ============================================================
+// 닥터보이스 프로 - 로그인 복귀 브릿지 v15
+//  미로그인 상태로 글쓰기를 열면 네이버가 로그인 페이지로 보냄.
+//  사용자가 수동 로그인(세션 재사용 설계)을 마치면 → pendingJob 이 있을 때
+//  글쓰기 페이지(GoBlogWrite)로 자동 복귀시켜 자동화를 재개한다.
+//  실행 대상: nid.naver.com(로그인) + www.naver.com/naver.com(로그인 후 랜딩 대비)
+// ============================================================
+(() => {
+  'use strict';
+  const TAG = '[닥터보이스:login]';
+  const WRITE_URL = 'https://blog.naver.com/GoBlogWrite.naver';
 
-// 저장된 포스트 데이터가 있는지 확인
-async function checkPendingPost() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(['pendingPost', 'autoPostEnabled'], (result) => {
-      resolve(result);
+  // v15 규격: background.startJob 이 chrome.storage.local.pendingJob 저장
+  function hasPendingJob() {
+    return new Promise((resolve) => {
+      try {
+        chrome.storage.local.get('pendingJob', (r) => resolve(!!(r && r.pendingJob)));
+      } catch (e) { resolve(false); }
     });
-  });
-}
-
-// 로그인 상태 확인
-function isLoggedIn() {
-  // 네이버 메인 페이지에서 로그인 상태 확인
-  const loginArea = document.querySelector('.MyView-module__link_login___HpHMW');
-  const logoutBtn = document.querySelector('.MyView-module__link_logout___HLmhi');
-  const profileArea = document.querySelector('.MyView-module__item_my___Uw5Ym');
-  const blogLink = document.querySelector('a[href*="blog.naver.com"]');
-
-  // 로그인 버튼이 없거나, 로그아웃 버튼/프로필이 있으면 로그인된 상태
-  return !loginArea || logoutBtn || profileArea || blogLink;
-}
-
-// 로그인 성공 감지 (로그인 페이지에서)
-function detectLoginSuccess() {
-  const url = window.location.href;
-
-  // 로그인 페이지에서 리다이렉트 감지
-  if (url.includes('nid.naver.com')) {
-    // 로그인 폼이 없어지면 로그인 성공
-    const loginForm = document.querySelector('#frmNIDLogin, .login_form, #login_form');
-
-    if (!loginForm) {
-      console.log('[닥터보이스] 로그인 성공 감지 (폼 없음)');
-      return true;
-    }
-
-    // 에러 메시지가 없고, 리다이렉트 중이면 성공
-    const errorMsg = document.querySelector('.error_message, .err_msg');
-    if (!errorMsg) {
-      // 페이지가 변경되는지 확인
-      return false;
-    }
   }
 
-  return false;
-}
-
-// 블로그 글쓰기 페이지로 이동
-async function goToBlogWrite() {
-  const { pendingPost, autoPostEnabled } = await checkPendingPost();
-
-  if (pendingPost && autoPostEnabled) {
-    console.log('[닥터보이스] 저장된 포스트 있음, 글쓰기 페이지로 이동');
-    showNotification('블로그 글쓰기 페이지로 이동합니다...');
-
-    setTimeout(() => {
-      window.location.href = 'https://blog.naver.com/GoBlogWrite.naver';
-    }, 1500);
-
-    return true;
+  function notify(message) {
+    if (!document.body) return;
+    const el = document.createElement('div');
+    el.textContent = message;
+    el.style.cssText =
+      'position:fixed;top:20px;right:20px;z-index:2147483647;' +
+      'background:linear-gradient(135deg,#10b981,#059669);color:#fff;' +
+      'padding:14px 20px;border-radius:12px;font-size:14px;font-weight:600;' +
+      "box-shadow:0 8px 28px rgba(16,185,129,.4);font-family:-apple-system,'Malgun Gothic',sans-serif";
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 3500);
   }
 
-  return false;
-}
+  const onLoginPage = () => location.href.includes('nid.naver.com');
+  const loginFormPresent = () =>
+    !!document.querySelector(
+      '#frmNIDLogin, form[name="frmNIDLogin"], #id, #pw, .login_form, #login_form'
+    );
 
-// 알림 표시
-function showNotification(message) {
-  const notification = document.createElement('div');
-  notification.style.cssText = `
-    position: fixed;
-    top: 20px;
-    right: 20px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
-    padding: 16px 24px;
-    border-radius: 12px;
-    font-size: 14px;
-    font-weight: 500;
-    z-index: 999999;
-    box-shadow: 0 4px 20px rgba(102, 126, 234, 0.4);
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  `;
-  notification.textContent = message;
-  document.body.appendChild(notification);
-
-  setTimeout(() => notification.remove(), 3000);
-}
-
-// 메인 로직
-async function main() {
-  const url = window.location.href;
-
-  // 네이버 메인 페이지에서 로그인 상태 확인
-  if (url.includes('www.naver.com') || url === 'https://naver.com/') {
-    console.log('[닥터보이스] 네이버 메인 페이지 감지');
-
-    // 잠시 대기 후 로그인 상태 확인
-    setTimeout(async () => {
-      if (isLoggedIn()) {
-        console.log('[닥터보이스] 로그인 상태 확인됨');
-        await goToBlogWrite();
-      }
-    }, 1000);
+  let navigated = false;
+  async function goWriteIfPending(reason) {
+    if (navigated) return;
+    if (!(await hasPendingJob())) return; // 대기 중인 작업 없으면 일반 로그인 → 개입 안 함
+    navigated = true;
+    console.log(TAG, '로그인 완료 감지(' + reason + ') → 글쓰기로 복귀');
+    notify('로그인 완료 — 글 작성을 이어갑니다...');
+    setTimeout(() => { window.location.href = WRITE_URL; }, 1000);
   }
 
-  // 로그인 페이지에서 로그인 성공 감지
-  if (url.includes('nid.naver.com')) {
-    console.log('[닥터보이스] 로그인 페이지 감지');
+  async function main() {
+    // 로그인 페이지: 폼이 사라지거나 nid 도메인을 벗어나면 로그인 성공으로 간주
+    if (onLoginPage()) {
+      if (!(await hasPendingJob())) return; // 우리 작업과 무관한 로그인
+      notify('네이버 로그인 후 자동으로 글 작성이 이어집니다');
 
-    // URL 변경 감지 (로그인 성공 시 리다이렉트)
-    let lastUrl = url;
-    const observer = new MutationObserver(async () => {
-      if (window.location.href !== lastUrl) {
-        lastUrl = window.location.href;
-        console.log('[닥터보이스] URL 변경 감지:', lastUrl);
-
-        // 로그인 성공 후 리다이렉트된 경우
-        if (!lastUrl.includes('nid.naver.com')) {
-          await goToBlogWrite();
+      const iv = setInterval(async () => {
+        if (!onLoginPage() || !loginFormPresent()) {
+          clearInterval(iv);
+          await goWriteIfPending('form-gone');
         }
-      }
-    });
+      }, 800);
 
-    observer.observe(document.body, { childList: true, subtree: true });
+      // SPA/리다이렉트로 DOM이 바뀌는 경우도 감시
+      const obs = new MutationObserver(async () => {
+        if (!loginFormPresent()) { obs.disconnect(); await goWriteIfPending('mutation'); }
+      });
+      if (document.body) obs.observe(document.body, { childList: true, subtree: true });
+      return;
+    }
 
-    // 페이지 언로드 시에도 확인
-    window.addEventListener('beforeunload', async () => {
-      const { pendingPost, autoPostEnabled } = await checkPendingPost();
-      if (pendingPost && autoPostEnabled) {
-        // storage에 이동 플래그 저장
-        chrome.storage.local.set({ shouldNavigateToWrite: true });
-      }
-    });
+    // 네이버 메인 등으로 랜딩한 경우(로그인 후 url 파라미터가 write 로 안 돌아온 케이스)
+    await goWriteIfPending('landed');
   }
-}
 
-// 페이지 로드 시 실행
-if (document.readyState === 'complete') {
-  main();
-} else {
-  window.addEventListener('load', main);
-}
-
-// 히스토리 변경 감지 (SPA 대응)
-window.addEventListener('popstate', main);
+  if (document.readyState === 'complete' || document.readyState === 'interactive') main();
+  else window.addEventListener('DOMContentLoaded', main);
+})();

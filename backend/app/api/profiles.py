@@ -18,7 +18,12 @@ from app.schemas.doctor_profile import (
 from app.models import User, DoctorProfile
 from app.models.user import IndustryType
 from app.api.deps import get_current_user
-from app.services.industry_config import get_industry_config, get_all_industries
+from app.services.industry_config import (
+    get_industry_config,
+    get_all_industries,
+    get_industry_templates,
+    get_industry_profile_defaults,
+)
 
 router = APIRouter()
 
@@ -39,6 +44,45 @@ async def get_industries():
     return {
         "industries": get_all_industries()
     }
+
+
+@router.get("/industries/{industry_type}/templates")
+async def get_industry_templates_endpoint(industry_type: str):
+    """
+    업종별 글쓰기 템플릿 조회
+    """
+    try:
+        industry = IndustryType(industry_type)
+        templates = get_industry_templates(industry)
+        return {
+            "industry_type": industry_type,
+            "templates": templates,
+            "count": len(templates),
+        }
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid industry type: {industry_type}"
+        )
+
+
+@router.get("/industries/{industry_type}/profile-defaults")
+async def get_industry_profile_defaults_endpoint(industry_type: str):
+    """
+    업종별 프로필 기본값 조회
+    """
+    try:
+        industry = IndustryType(industry_type)
+        defaults = get_industry_profile_defaults(industry)
+        return {
+            "industry_type": industry_type,
+            **defaults,
+        }
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid industry type: {industry_type}"
+        )
 
 
 @router.get("/industries/{industry_type}")

@@ -73,6 +73,16 @@ from app.models.cafe_extended import (
     PopularPost, PopularPostPattern, EngagementActivity, EngagementSchedule,
     ContentPerformance, ReplyStatus, EngagementType, PopularPostCategory
 )
+from app.models.reputation import (
+    MonitorProfile, Mention, GeneratedMentionResponse,
+    ReputationAlertRule, ReputationAlertLog,
+    SpreadIncident, ReputationSnapshot,
+    ReputationCompetitor, ReputationCompetitorSnapshot,
+    ReputationCrawlJob, PlatformGuide,
+    MentionPlatform, MentionSentiment, RiskLevel, MentionStatus,
+    ResponseStyle, CrawlJobStatus, AlertSeverity, SpreadStatus, GuideCategory
+)
+from app.models.media_pool import PoolImage, ImageVariant
 
 __all__ = [
     "User",
@@ -230,4 +240,28 @@ __all__ = [
     "ReplyStatus",
     "EngagementType",
     "PopularPostCategory",
+    # Reputation Monitoring models (평판 모니터링)
+    "MonitorProfile",
+    "Mention",
+    "GeneratedMentionResponse",
+    "ReputationAlertRule",
+    "ReputationAlertLog",
+    "SpreadIncident",
+    "ReputationSnapshot",
+    "ReputationCompetitor",
+    "ReputationCompetitorSnapshot",
+    "ReputationCrawlJob",
+    "PlatformGuide",
+    "MentionPlatform",
+    "MentionSentiment",
+    "RiskLevel",
+    "MentionStatus",
+    "ResponseStyle",
+    "CrawlJobStatus",
+    "AlertSeverity",
+    "SpreadStatus",
+    "GuideCategory",
+    # Media Pool / Image Uniquifier (사진 풀 + 유니크화)
+    "PoolImage",
+    "ImageVariant",
 ]

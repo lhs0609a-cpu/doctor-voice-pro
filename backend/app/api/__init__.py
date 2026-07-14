@@ -7,7 +7,9 @@ from app.api import (
     knowledge, crawl, cafe, viral,
     knowledge_extended, cafe_extended,
     billing, blog_outreach, public_leads,
-    demo  # P0: 온보딩 데모 API
+    demo,  # P0: 온보딩 데모 API
+    reputation,  # 평판 모니터링
+    media_pool,  # 사진 풀 + 이미지 유니크화
 )
 
 api_router = APIRouter()
@@ -56,3 +58,7 @@ api_router.include_router(blog_outreach.router, prefix="/outreach", tags=["outre
 api_router.include_router(public_leads.router, tags=["public-leads"])
 # Demo API (온보딩 체험용 - 인증 불필요) - P0 버그 수정
 api_router.include_router(demo.router, tags=["demo"])
+# Reputation Monitoring (평판 모니터링)
+api_router.include_router(reputation.router, prefix="/reputation", tags=["reputation"])
+# Media Pool + Image Uniquifier (사진 풀 + 유니크화)
+api_router.include_router(media_pool.router, prefix="/media", tags=["media"])

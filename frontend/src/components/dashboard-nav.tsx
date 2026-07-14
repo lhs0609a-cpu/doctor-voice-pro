@@ -38,6 +38,7 @@ import {
   Menu,
   X,
   ChevronRight,
+  Images,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -136,6 +137,16 @@ export function DashboardNav() {
       href: '/dashboard/outreach/leads',
       label: '리드 수집',
       icon: Database,
+    },
+    {
+      href: '/dashboard/reputation',
+      label: '평판 모니터링',
+      icon: Shield,
+    },
+    {
+      href: '/dashboard/media',
+      label: '사진 풀',
+      icon: Images,
     },
   ]
 

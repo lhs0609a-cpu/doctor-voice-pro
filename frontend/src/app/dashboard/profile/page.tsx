@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { profileAPI, industryAPI, Industry, MyIndustry } from '@/lib/api'
+import type { IndustryProfileDefaults } from '@/types'
 import { toast } from 'sonner'
 import {
   Save,
@@ -27,6 +28,7 @@ import {
   Info,
   Building2,
   Loader2,
+  Sparkles,
 } from 'lucide-react'
 
 interface WritingStyle {
@@ -94,6 +96,9 @@ export default function ProfilePage() {
   // Preferred Structure State
   const [preferredStructure, setPreferredStructure] = useState('story_problem_solution')
 
+  // Industry Profile Defaults State (업종별 추천 기본값)
+  const [profileDefaults, setProfileDefaults] = useState<IndustryProfileDefaults | null>(null)
+
   // Get current industry config
   const currentIndustry = industries.find(i => i.value === selectedIndustry)
 
@@ -114,6 +119,14 @@ export default function ProfilePage() {
       setSelectedIndustry(myIndustry.industry_type)
       setBusinessName(myIndustry.business_name || '')
       setSpecialty(myIndustry.specialty || '')
+
+      // Load profile defaults for current industry
+      try {
+        const defaults = await industryAPI.getProfileDefaults(myIndustry.industry_type)
+        setProfileDefaults(defaults)
+      } catch (err) {
+        console.error('Failed to load profile defaults:', err)
+      }
     } catch (error) {
       console.error('Failed to load industry data:', error)
     } finally {
@@ -313,9 +326,16 @@ export default function ProfilePage() {
                   {industries.map((industry) => (
                     <button
                       key={industry.value}
-                      onClick={() => {
+                      onClick={async () => {
                         setSelectedIndustry(industry.value)
                         setSpecialty('') // Reset specialty when industry changes
+                        // 업종별 프로필 기본값 로드
+                        try {
+                          const defaults = await industryAPI.getProfileDefaults(industry.value)
+                          setProfileDefaults(defaults)
+                        } catch (err) {
+                          console.error('Failed to load profile defaults:', err)
+                        }
                       }}
                       className={`p-3 rounded-lg border-2 text-left transition-all ${
                         selectedIndustry === industry.value
@@ -415,13 +435,37 @@ export default function ProfilePage() {
       {/* Writing Style */}
       <Card>
         <CardHeader>
-          <div className="flex items-center gap-2">
-            <Sliders className="h-5 w-5" />
-            <CardTitle>글쓰기 스타일</CardTitle>
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <Sliders className="h-5 w-5" />
+                <CardTitle>글쓰기 스타일</CardTitle>
+              </div>
+              <CardDescription className="mt-1.5">
+                AI가 생성할 글의 스타일을 세밀하게 조정합니다 (1-10)
+              </CardDescription>
+            </div>
+            {profileDefaults && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2 border-purple-300 text-purple-700 hover:bg-purple-50"
+                onClick={() => {
+                  const ws = profileDefaults.writing_style
+                  setFormality(ws.formality)
+                  setFriendliness(ws.friendliness)
+                  setTechnicalDepth(ws.technical_depth)
+                  setStorytelling(ws.storytelling)
+                  setEmotion(ws.emotion)
+                  setPreferredStructure(profileDefaults.recommended_structure)
+                  toast.success('업종 추천 스타일이 적용되었습니다')
+                }}
+              >
+                <Sparkles className="h-4 w-4" />
+                업종 추천 스타일 적용
+              </Button>
+            )}
           </div>
-          <CardDescription>
-            AI가 생성할 글의 스타일을 세밀하게 조정합니다 (1-10)
-          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <SliderWithValue
@@ -499,6 +543,31 @@ export default function ProfilePage() {
               </p>
             )}
           </div>
+          {profileDefaults && profileDefaults.recommended_phrases.length > 0 && (
+            <div className="space-y-2">
+              <Label className="text-purple-700 flex items-center gap-1">
+                <Sparkles className="h-3 w-3" />
+                업종 추천 표현 (클릭하여 추가)
+              </Label>
+              <div className="flex flex-wrap gap-2">
+                {profileDefaults.recommended_phrases
+                  .filter(phrase => !signaturePhrases.includes(phrase))
+                  .map((phrase, index) => (
+                    <Badge
+                      key={index}
+                      variant="outline"
+                      className="cursor-pointer border-purple-300 text-purple-700 hover:bg-purple-50 transition-colors"
+                      onClick={() => {
+                        setSignaturePhrases([...signaturePhrases, phrase])
+                        toast.success(`"${phrase}" 추가됨`)
+                      }}
+                    >
+                      + {phrase}
+                    </Badge>
+                  ))}
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -569,25 +638,55 @@ export default function ProfilePage() {
           <div className="grid md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="age-range">연령대</Label>
-              <Input
-                id="age-range"
-                placeholder="예: 30-50"
-                value={ageRange}
-                onChange={(e) => setAgeRange(e.target.value)}
-              />
+              <div className="flex gap-2">
+                <Input
+                  id="age-range"
+                  placeholder="예: 30-50"
+                  value={ageRange}
+                  onChange={(e) => setAgeRange(e.target.value)}
+                />
+                {profileDefaults && profileDefaults.target_audience.age_range && !ageRange && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 border-purple-300 text-purple-700 hover:bg-purple-50 text-xs"
+                    onClick={() => {
+                      setAgeRange(profileDefaults.target_audience.age_range)
+                      toast.success('추천 연령대 적용됨')
+                    }}
+                  >
+                    추천: {profileDefaults.target_audience.age_range}
+                  </Button>
+                )}
+              </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="gender">성별</Label>
-              <Select value={gender || 'all'} onValueChange={(val) => setGender(val === 'all' ? '' : val)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="선택" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">전체</SelectItem>
-                  <SelectItem value="male">남성</SelectItem>
-                  <SelectItem value="female">여성</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="flex gap-2">
+                <Select value={gender || 'all'} onValueChange={(val) => setGender(val === 'all' ? '' : val)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="선택" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">전체</SelectItem>
+                    <SelectItem value="male">남성</SelectItem>
+                    <SelectItem value="female">여성</SelectItem>
+                  </SelectContent>
+                </Select>
+                {profileDefaults && profileDefaults.target_audience.gender && !gender && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 border-purple-300 text-purple-700 hover:bg-purple-50 text-xs"
+                    onClick={() => {
+                      setGender(profileDefaults.target_audience.gender)
+                      toast.success('추천 성별 적용됨')
+                    }}
+                  >
+                    추천: {profileDefaults.target_audience.gender === 'female' ? '여성' : profileDefaults.target_audience.gender === 'male' ? '남성' : '전체'}
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -623,6 +722,31 @@ export default function ProfilePage() {
                 </p>
               )}
             </div>
+            {profileDefaults && profileDefaults.target_audience.recommended_concerns.length > 0 && (
+              <div className="space-y-2 mt-2">
+                <Label className="text-purple-700 flex items-center gap-1">
+                  <Sparkles className="h-3 w-3" />
+                  업종 추천 관심사 (클릭하여 추가)
+                </Label>
+                <div className="flex flex-wrap gap-2">
+                  {profileDefaults.target_audience.recommended_concerns
+                    .filter(concern => !concerns.includes(concern))
+                    .map((concern, index) => (
+                      <Badge
+                        key={index}
+                        variant="outline"
+                        className="cursor-pointer border-purple-300 text-purple-700 hover:bg-purple-50 transition-colors"
+                        onClick={() => {
+                          setConcerns([...concerns, concern])
+                          toast.success(`"${concern}" 추가됨`)
+                        }}
+                      >
+                        + {concern}
+                      </Badge>
+                    ))}
+                </div>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

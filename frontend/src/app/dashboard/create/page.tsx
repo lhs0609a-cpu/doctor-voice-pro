@@ -7,8 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { postsAPI, authAPI, crawlAPI, type CrawlImage, type OneClickResponse } from '@/lib/api'
-import type { Post, WritingStyle, RequestRequirements, User } from '@/types'
+import { postsAPI, authAPI, crawlAPI, industryAPI, type CrawlImage, type OneClickResponse } from '@/lib/api'
+import type { Post, WritingStyle, RequestRequirements, User, WritingTemplate } from '@/types'
 import { useAutoSave } from '@/hooks/useAutoSave'
 import { toast } from 'sonner'
 import {
@@ -274,6 +274,39 @@ export default function CreatePostPage() {
       description: preset.description
     })
   }
+
+  // 업종별 템플릿 적용 함수
+  const applyTemplate = (template: WritingTemplate) => {
+    setSelectedTemplate(template.id)
+    setSelectedPreset(null) // 기본 프리셋 선택 해제
+
+    setConfig(prev => ({
+      ...prev,
+      persuasion_level: template.config.persuasion_level,
+      framework: template.config.framework,
+      target_length: template.config.target_length,
+      writing_perspective: template.config.writing_perspective,
+    }))
+    setSeoOptimization(template.seo_optimization)
+    setWritingStyle(template.writing_style)
+
+    // placeholder 적용
+    if (!originalContent.trim()) {
+      setOriginalContent('')
+    }
+
+    // localStorage에 마지막 선택 저장
+    try {
+      localStorage.setItem('doctorvoice-last-template', template.id)
+    } catch (e) {
+      // ignore
+    }
+
+    toast.success(`"${template.name}" 템플릿이 적용되었습니다`, {
+      description: template.description
+    })
+  }
+
   const [topPostRules, setTopPostRules] = useState<any>(null)
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [selectedPostIndex, setSelectedPostIndex] = useState(0)
@@ -289,6 +322,12 @@ export default function CreatePostPage() {
     errors: string[]
   }>({ total: 0, completed: 0, failed: 0, errors: [] })
   const [hasLoadedConfig, setHasLoadedConfig] = useState(false)
+
+  // 업종별 템플릿 상태
+  const [industryTemplates, setIndustryTemplates] = useState<WritingTemplate[]>([])
+  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null)
+  const [industryName, setIndustryName] = useState<string>('')
+  const [industryIcon, setIndustryIcon] = useState<string>('')
 
   // Auto-save hook
   const { lastSaved, loadSaved, clearSaved } = useAutoSave({
@@ -352,12 +391,39 @@ export default function CreatePostPage() {
     }
   }, [seoOptimization])
 
-  // Fetch current user
+  // Fetch current user and load industry templates
   useEffect(() => {
     const fetchUser = async () => {
       try {
         const user = await authAPI.getMe()
         setCurrentUser(user)
+
+        // 업종별 템플릿 로드
+        if (user.industry_type) {
+          try {
+            const data = await industryAPI.getTemplates(user.industry_type)
+            setIndustryTemplates(data.templates)
+
+            // 업종 이름/아이콘 가져오기
+            const allIndustries = await industryAPI.getAll()
+            const myIndustry = allIndustries.industries.find(i => i.value === user.industry_type)
+            if (myIndustry) {
+              setIndustryName(myIndustry.name)
+              setIndustryIcon(myIndustry.icon)
+            }
+
+            // localStorage에서 마지막 선택 템플릿 복원
+            const savedTemplate = localStorage.getItem('doctorvoice-last-template')
+            if (savedTemplate) {
+              const exists = data.templates.find(t => t.id === savedTemplate)
+              if (exists) {
+                setSelectedTemplate(savedTemplate)
+              }
+            }
+          } catch (err) {
+            console.error('Failed to load industry templates:', err)
+          }
+        }
       } catch (error) {
         console.error('Failed to fetch user:', error)
       }
@@ -989,6 +1055,44 @@ export default function CreatePostPage() {
         </div>
       </div>
 
+      {/* 업종별 템플릿 (간편 모드에서만 표시) */}
+      {editorMode === 'simple' && industryTemplates.length > 0 && (
+        <Card className="bg-gradient-to-r from-purple-50 to-pink-50 border-purple-200">
+          <CardContent className="py-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">{industryIcon}</span>
+                <span className="font-medium text-purple-900">{industryName} 전용 템플릿</span>
+              </div>
+              <span className="text-xs text-purple-600">업종에 최적화된 글쓰기 설정</span>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {industryTemplates.map((template) => (
+                <Button
+                  key={template.id}
+                  variant={selectedTemplate === template.id ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => applyTemplate(template)}
+                  className={`justify-start gap-2 h-auto py-2 ${
+                    selectedTemplate === template.id
+                      ? 'bg-purple-600 hover:bg-purple-700'
+                      : 'hover:bg-purple-50 border-purple-200'
+                  }`}
+                >
+                  <span className="text-lg">{template.icon}</span>
+                  <div className="text-left">
+                    <div className="font-medium text-xs">{template.name}</div>
+                    <div className={`text-[10px] ${selectedTemplate === template.id ? 'text-purple-100' : 'text-gray-500'}`}>
+                      {template.description.length > 20 ? template.description.slice(0, 20) + '...' : template.description}
+                    </div>
+                  </div>
+                </Button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* P1: 프리셋 선택 (간편 모드에서만 표시) */}
       {editorMode === 'simple' && (
         <Card className="bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200">
@@ -1006,7 +1110,10 @@ export default function CreatePostPage() {
                   key={key}
                   variant={selectedPreset === key ? 'default' : 'outline'}
                   size="sm"
-                  onClick={() => applyPreset(key)}
+                  onClick={() => {
+                    applyPreset(key)
+                    setSelectedTemplate(null)
+                  }}
                   className={`justify-start gap-2 h-auto py-2 ${
                     selectedPreset === key
                       ? 'bg-blue-600 hover:bg-blue-700'

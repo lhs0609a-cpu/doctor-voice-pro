@@ -1,71 +1,124 @@
-// 닥터보이스 웹사이트용 Content Script v11.0 - 단순화
-console.log('[닥터보이스] 웹사이트 스크립트 v11.0 로드');
+// ============================================================
+// 닥터보이스 프로 - 웹사이트 브릿지 Content Script v15
+//  1) 확장 ID를 페이지에 노출 (프론트 one-click-publish 가 읽음)
+//  2) 새 버전 감지 시 웹사이트에 업데이트 팝업 표시
+// ============================================================
+(() => {
+  'use strict';
+  const TAG = '[닥터보이스:web]';
+  const EXTENSION_ID = chrome.runtime.id;
 
-const EXTENSION_ID = chrome.runtime.id;
-
-// 확장 프로그램 연결 표시
-function showExtensionConnected() {
-  // localStorage에 확장 프로그램 ID 저장
-  localStorage.setItem('doctorvoice-extension-id', EXTENSION_ID);
-
-  // DOM에 연결 표시
-  let indicator = document.getElementById('doctorvoice-extension-connected');
-  if (!indicator) {
-    indicator = document.createElement('div');
-    indicator.id = 'doctorvoice-extension-connected';
-    indicator.style.display = 'none';
-    indicator.dataset.extensionId = EXTENSION_ID;
-    document.body.appendChild(indicator);
-  }
-
-  console.log('[닥터보이스] 확장 프로그램 연결됨, ID:', EXTENSION_ID);
-}
-
-// localStorage 변화 감지해서 발행 요청 처리
-function checkForPublishRequest() {
-  const pendingPost = localStorage.getItem('doctorvoice-pending-post');
-  const autoPublish = localStorage.getItem('doctorvoice-auto-publish');
-
-  if (pendingPost && autoPublish === 'true') {
-    console.log('[닥터보이스] 발행 요청 감지!');
-
+  // ---------- 1) 확장 ID 노출 ----------
+  function exposeExtensionId() {
     try {
-      const postData = JSON.parse(pendingPost);
-      console.log('[닥터보이스] 제목:', postData.title);
-      console.log('[닥터보이스] 이미지:', postData.imageUrls?.length || 0, '개');
+      localStorage.setItem('doctorvoice-extension-id', EXTENSION_ID);
+    } catch (e) { /* private mode 등 */ }
 
-      // 플래그 초기화 (중복 방지)
-      localStorage.removeItem('doctorvoice-auto-publish');
-
-      // chrome.storage.local에 저장
-      chrome.storage.local.set({
-        pendingPost: postData,
-        autoPostEnabled: true
-      }, () => {
-        console.log('[닥터보이스] chrome.storage에 저장 완료');
-
-        // 네이버 블로그 열기
-        window.open('https://blog.naver.com/GoBlogWrite.naver', '_blank');
-      });
-
-    } catch (e) {
-      console.error('[닥터보이스] 발행 데이터 파싱 오류:', e);
+    let indicator = document.getElementById('doctorvoice-extension-connected');
+    if (!indicator && document.body) {
+      indicator = document.createElement('div');
+      indicator.id = 'doctorvoice-extension-connected';
+      indicator.style.display = 'none';
+      indicator.dataset.extensionId = EXTENSION_ID;
+      document.body.appendChild(indicator);
     }
+    console.log(TAG, '확장 연결됨, ID:', EXTENSION_ID);
   }
-}
 
-// 초기화
-showExtensionConnected();
+  // ---------- 2) 업데이트 팝업 ----------
+  const DISMISS_KEY = 'doctorvoice-update-dismissed'; // 값 = 무시한 latest 버전
 
-// 1초마다 발행 요청 확인
-setInterval(checkForPublishRequest, 1000);
-
-// storage 이벤트로도 감지
-window.addEventListener('storage', (e) => {
-  if (e.key === 'doctorvoice-auto-publish' && e.newValue === 'true') {
-    console.log('[닥터보이스] storage 이벤트로 발행 요청 감지');
-    setTimeout(checkForPublishRequest, 100);
+  function alreadyDismissed(latest) {
+    try { return localStorage.getItem(DISMISS_KEY) === latest; } catch (e) { return false; }
   }
-});
+  function dismiss(latest) {
+    try { localStorage.setItem(DISMISS_KEY, latest); } catch (e) {}
+  }
 
-console.log('[닥터보이스] 웹사이트 스크립트 초기화 완료');
+  function showUpdatePopup(info) {
+    if (document.getElementById('dv-update-popup')) return;
+    if (!document.body) return;
+
+    const wrap = document.createElement('div');
+    wrap.id = 'dv-update-popup';
+    wrap.innerHTML = `
+      <div class="dv-up-card">
+        <button class="dv-up-close" aria-label="닫기">&times;</button>
+        <div class="dv-up-head">
+          <span class="dv-up-badge">NEW</span>
+          <strong>확장 프로그램 업데이트</strong>
+        </div>
+        <div class="dv-up-ver">v${info.current} &rarr; <b>v${info.latest}</b></div>
+        <div class="dv-up-notes">${(info.notes || '새로운 버전이 준비되었습니다.').replace(/</g, '&lt;')}</div>
+        <div class="dv-up-actions">
+          <a class="dv-up-download" href="${info.downloadUrl || '#'}" target="_blank" rel="noopener">
+            새 버전 다운로드
+          </a>
+          <button class="dv-up-later">나중에</button>
+        </div>
+        <div class="dv-up-hint">다운로드 후 chrome://extensions 에서 압축 해제한 폴더를 갱신해 주세요</div>
+      </div>`;
+
+    const style = document.createElement('style');
+    style.textContent = `
+      #dv-update-popup{position:fixed;right:20px;bottom:20px;z-index:2147483647;
+        font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Malgun Gothic',sans-serif;}
+      #dv-update-popup .dv-up-card{position:relative;width:320px;background:#fff;border-radius:16px;
+        padding:20px 22px;box-shadow:0 16px 48px rgba(0,0,0,.24);border:1px solid #e5e7eb;
+        animation:dvUpIn .3s ease}
+      @keyframes dvUpIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+      #dv-update-popup .dv-up-close{position:absolute;top:10px;right:12px;border:0;background:none;
+        font-size:20px;line-height:1;color:#9ca3af;cursor:pointer}
+      #dv-update-popup .dv-up-head{display:flex;align-items:center;gap:8px;font-size:15px;color:#111827}
+      #dv-update-popup .dv-up-badge{background:#ef4444;color:#fff;font-size:10px;font-weight:700;
+        padding:2px 7px;border-radius:999px;letter-spacing:.03em}
+      #dv-update-popup .dv-up-ver{margin:10px 0 6px;font-size:13px;color:#6b7280}
+      #dv-update-popup .dv-up-ver b{color:#059669}
+      #dv-update-popup .dv-up-notes{font-size:13px;color:#374151;line-height:1.5;margin-bottom:14px}
+      #dv-update-popup .dv-up-actions{display:flex;gap:8px}
+      #dv-update-popup .dv-up-download{flex:1;text-align:center;background:#10b981;color:#fff;
+        text-decoration:none;font-size:13px;font-weight:600;padding:9px 0;border-radius:9px}
+      #dv-update-popup .dv-up-download:hover{background:#059669}
+      #dv-update-popup .dv-up-later{background:#f3f4f6;color:#4b5563;border:0;font-size:13px;
+        padding:9px 14px;border-radius:9px;cursor:pointer}
+      #dv-update-popup .dv-up-later:hover{background:#e5e7eb}
+      #dv-update-popup .dv-up-hint{margin-top:10px;font-size:11px;color:#9ca3af;line-height:1.4}`;
+
+    document.documentElement.appendChild(style);
+    document.body.appendChild(wrap);
+
+    const close = () => { wrap.remove(); style.remove(); };
+    wrap.querySelector('.dv-up-close').addEventListener('click', () => { dismiss(info.latest); close(); });
+    wrap.querySelector('.dv-up-later').addEventListener('click', () => { dismiss(info.latest); close(); });
+    wrap.querySelector('.dv-up-download').addEventListener('click', () => { dismiss(info.latest); });
+  }
+
+  // background 에 최신 버전 확인 요청 → 새 버전이면 팝업
+  function checkUpdateAndNotify() {
+    try {
+      chrome.runtime.sendMessage({ action: 'CHECK_UPDATE' }, (info) => {
+        if (chrome.runtime.lastError || !info) return;
+        if (info.updateAvailable && !alreadyDismissed(info.latest)) {
+          showUpdatePopup({
+            current: info.current,
+            latest: info.latest,
+            notes: info.notes,
+            downloadUrl: info.downloadUrl,
+          });
+        }
+      });
+    } catch (e) { /* 서비스워커 미기동 등 */ }
+  }
+
+  // ---------- 초기화 ----------
+  function init() {
+    exposeExtensionId();
+    checkUpdateAndNotify();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();

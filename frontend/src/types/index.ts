@@ -410,6 +410,56 @@ export interface BulkAnalyzeResponse {
   message: string
 }
 
+// ============================================================
+// 업종별 글쓰기 템플릿 관련 타입
+// ============================================================
+
+export interface WritingTemplate {
+  id: string
+  name: string
+  icon: string
+  description: string
+  config: {
+    persuasion_level: number
+    framework: string
+    target_length: number
+    writing_perspective: string
+  }
+  writing_style: WritingStyle
+  seo_optimization: {
+    enabled: boolean
+    experience_focus: boolean
+    expertise: boolean
+    originality: boolean
+    timeliness: boolean
+    topic_concentration: boolean
+    trustworthiness: boolean
+    source_authority: boolean
+    multi_perspective: boolean
+    search_intent_match: boolean
+  }
+  placeholder_content: string
+  example_topics: string[]
+}
+
+export interface IndustryProfileDefaults {
+  industry_type: string
+  writing_style: {
+    formality: number
+    friendliness: number
+    technical_depth: number
+    storytelling: number
+    emotion: number
+  }
+  target_audience: {
+    age_range: string
+    gender: string
+    recommended_concerns: string[]
+  }
+  recommended_phrases: string[]
+  recommended_structure: string
+}
+
 export interface CollectedKeyword {
   keyword: string
   source: string

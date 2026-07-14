@@ -10,6 +10,8 @@ import type {
   DoctorProfile,
   UserApprovalRequest,
   UserSubscriptionRequest,
+  WritingTemplate,
+  IndustryProfileDefaults,
 } from '@/types'
 import { logger } from '@/lib/logger'
 
@@ -515,6 +517,81 @@ export const imagesAPI = {
   // 상태 확인
   getStatus: async () => {
     const response = await api.get('/api/v1/images/status')
+    return response.data
+  },
+}
+
+// ==================== 사진 풀 + 자동 유니크화 API ====================
+export interface PoolImageItem {
+  id: string
+  filename: string | null
+  width: number | null
+  height: number | null
+  size_bytes: number | null
+  use_count: number
+  created_at: string
+  thumbnail: string | null
+}
+
+export interface PoolListResponse {
+  total: number
+  images: PoolImageItem[]
+}
+
+export interface PoolUploadResponse {
+  uploaded: number
+  failed: number
+  images: PoolImageItem[]
+}
+
+export interface AssignedImage {
+  pool_image_id: string
+  filename: string | null
+  image: string // data URL (유니크화된 JPEG base64)
+  phash: string
+  frame_style: string
+  ssim: number
+  min_distance: number
+  passed: boolean
+}
+
+export interface AssignResponse {
+  requested: number
+  returned: number
+  all_passed: boolean
+  images: AssignedImage[]
+  warnings: string[]
+}
+
+export const mediaPoolAPI = {
+  // 풀 목록 (썸네일 포함)
+  list: async (): Promise<PoolListResponse> => {
+    const response = await api.get<PoolListResponse>('/api/v1/media/pool')
+    return response.data
+  },
+
+  // 사진 풀에 여러 장 업로드
+  upload: async (files: File[]): Promise<PoolUploadResponse> => {
+    const formData = new FormData()
+    files.forEach(file => formData.append('files', file))
+    const response = await api.post<PoolUploadResponse>('/api/v1/media/pool/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
+    })
+    return response.data
+  },
+
+  // 풀에서 사진 제거(비활성화)
+  remove: async (imageId: string): Promise<{ success: boolean }> => {
+    const response = await api.delete(`/api/v1/media/pool/${imageId}`)
+    return response.data
+  },
+
+  // 자동 배정 + 유니크화
+  assign: async (params: { count: number; post_id?: string; max_width?: number }): Promise<AssignResponse> => {
+    const response = await api.post<AssignResponse>('/api/v1/media/assign', params, {
+      timeout: 120000,
+    })
     return response.data
   },
 }
@@ -3949,6 +4026,7 @@ export interface Industry {
   specialty_label: string
   specialty_options: string[]
   sample_topics: string[]
+  template_count: number
 }
 
 export interface IndustryConfig {
@@ -4006,6 +4084,18 @@ export const industryAPI = {
     config: IndustryConfig
   }> => {
     const response = await api.put('/api/v1/profiles/me/industry', data)
+    return response.data
+  },
+
+  // 업종별 글쓰기 템플릿 조회
+  getTemplates: async (industryType: string): Promise<{ industry_type: string; templates: WritingTemplate[]; count: number }> => {
+    const response = await api.get(`/api/v1/profiles/industries/${industryType}/templates`)
+    return response.data
+  },
+
+  // 업종별 프로필 기본값 조회
+  getProfileDefaults: async (industryType: string): Promise<IndustryProfileDefaults> => {
+    const response = await api.get(`/api/v1/profiles/industries/${industryType}/profile-defaults`)
     return response.data
   },
 }

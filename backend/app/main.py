@@ -32,6 +32,16 @@ async def lifespan(app: FastAPI):
         )
         # 공공데이터 리드 모델
         from app.models.public_leads import PublicLeadDB
+        # 평판 모니터링 모델
+        from app.models.reputation import (
+            MonitorProfile, Mention, GeneratedMentionResponse,
+            ReputationAlertRule, ReputationAlertLog,
+            SpreadIncident, ReputationSnapshot,
+            ReputationCompetitor, ReputationCompetitorSnapshot,
+            ReputationCrawlJob, PlatformGuide
+        )
+        # 사진 풀 / 이미지 유니크화 모델
+        from app.models.media_pool import PoolImage, ImageVariant
 
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -269,10 +279,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[WARNING] Error creating default plans: {e}")
 
+    # 평판 모니터링 스케줄러 시작
+    try:
+        from app.services.reputation_scheduler import reputation_scheduler
+        await reputation_scheduler.start()
+        print("[OK] Reputation monitoring scheduler started")
+    except Exception as e:
+        print(f"[WARNING] Reputation scheduler failed to start: {e}")
+
     yield
 
     # 애플리케이션 종료 시 실행
-    pass
+    try:
+        from app.services.reputation_scheduler import reputation_scheduler
+        await reputation_scheduler.stop()
+        print("[OK] Reputation monitoring scheduler stopped")
+    except Exception:
+        pass
 
 
 # FastAPI 앱 생성

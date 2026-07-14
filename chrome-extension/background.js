@@ -1,469 +1,305 @@
-// 백그라운드 서비스 워커 v14.0 - 실제 입력 시뮬레이션
-console.log('[닥터보이스] 백그라운드 v14.0 시작');
+// ============================================================
+// 닥터보이스 프로 - 백그라운드 서비스워커 v15
+// CDP(chrome.debugger) 기반 실제 입력 + 오케스트레이션 + 자동 업데이트
+// ============================================================
+const VERSION = '15.0.1';
+const UPDATE_URL = 'https://doctor-voice-pro-ghwi.vercel.app/extension/version.json';
+const WRITE_URL = 'https://blog.naver.com/GoBlogWrite.naver';
 
-// 전역 변수
-let pendingPostData = null;
-let currentDebuggerTabId = null;
+let currentJob = null;
+let debuggerTabId = null;
 
-// 블로그 글쓰기 페이지 열기 공통 함수
-async function openBlogWritePage(postData) {
-  console.log('[닥터보이스] 발행 요청:', postData?.title);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const log = (...a) => console.log('[닥터보이스:bg]', ...a);
 
-  pendingPostData = postData;
-  await chrome.storage.local.set({
-    pendingPost: postData,
-    autoPostEnabled: true
-  });
+// ============================================================
+// 외부 메시지 (닥터보이스 웹사이트에서)
+// ============================================================
+chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
+  (async () => {
+    try {
+      switch (msg.action) {
+        case 'PING':
+          sendResponse({ success: true, version: VERSION });
+          break;
+        case 'CHECK_UPDATE': {
+          const info = await checkForUpdate();
+          sendResponse({ success: true, current: VERSION, ...info });
+          break;
+        }
+        case 'SUBMIT_JOB':
+        case 'ONE_CLICK_PUBLISH': // 구버전 호환
+          await startJob(normalizeJob(msg.job || msg.postData));
+          sendResponse({ success: true });
+          break;
+        default:
+          sendResponse({ success: false, error: 'unknown action' });
+      }
+    } catch (e) {
+      log('외부 메시지 오류', e);
+      sendResponse({ success: false, error: e.message });
+    }
+  })();
+  return true;
+});
 
-  console.log('[닥터보이스] storage 저장 완료');
+// ============================================================
+// 내부 메시지 (content script에서)
+// ============================================================
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  (async () => {
+    try {
+      if (msg.action === 'EDITOR_READY') {
+        if (!currentJob) {
+          const stored = await chrome.storage.local.get('pendingJob');
+          currentJob = stored.pendingJob || null;
+        }
+        if (currentJob && sender.tab) {
+          sendResponse({ hasJob: true });
+          runAutomation(sender.tab.id, currentJob).catch((e) => log('자동화 실패', e));
+        } else {
+          sendResponse({ hasJob: false });
+        }
+        return;
+      }
+      if (msg.action === 'GET_VERSION') {
+        sendResponse({ version: VERSION });
+        return;
+      }
+      if (msg.action === 'CHECK_UPDATE') {
+        const info = await checkForUpdate();
+        sendResponse({ current: VERSION, ...info });
+        return;
+      }
+      sendResponse({ ok: false });
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message });
+    }
+  })();
+  return true;
+});
 
-  // 이미 열린 블로그 글쓰기 탭이 있는지 확인
+// ============================================================
+// Job 정규화
+// ============================================================
+function normalizeJob(raw) {
+  if (!raw) return null;
+  return {
+    id: raw.id || String(Date.now()),
+    title: raw.title || raw.suggested_titles?.[0] || '',
+    content: raw.content || raw.generated_content || '',
+    images: raw.images || [], // base64 data URL 배열 (EXIF는 프론트에서 제거됨)
+    tags: raw.tags || raw.keywords || raw.seo_keywords || [],
+    options: {
+      openType: raw.options?.openType || 'public',
+      search: raw.options?.search !== false,
+    },
+    finalAction: raw.finalAction || 'draft', // 'draft' | 'publishNow' | 'schedule'
+    schedule: raw.schedule || null, // { datetime: ISOString }
+  };
+}
+
+async function startJob(job) {
+  currentJob = job;
+  await chrome.storage.local.set({ pendingJob: job });
+  log('Job 시작:', job.title, '| 최종동작:', job.finalAction);
+
+  // 기존 글쓰기 탭 재사용 or 새 탭
   const tabs = await chrome.tabs.query({});
-  const existingTab = tabs.find(tab =>
-    tab.url && tab.url.includes('blog.naver.com') &&
-    (tab.url.includes('Write') || tab.url.includes('editor'))
-  );
-
-  if (existingTab) {
-    // 기존 탭 활성화 및 새로고침
-    await chrome.tabs.update(existingTab.id, { active: true });
-    await chrome.tabs.reload(existingTab.id);
-    console.log('[닥터보이스] 기존 블로그 탭 사용:', existingTab.id);
+  const existing = tabs.find((t) => t.url && t.url.includes('blog.naver.com') &&
+    (t.url.includes('Write') || t.url.includes('editor') || t.url.includes('PostWriteForm')));
+  if (existing) {
+    await chrome.tabs.update(existing.id, { active: true });
+    await chrome.tabs.reload(existing.id);
   } else {
-    // 새 탭 열기
-    chrome.tabs.create({
-      url: 'https://blog.naver.com/GoBlogWrite.naver',
-      active: true
-    });
-    console.log('[닥터보이스] 새 블로그 탭 열기');
+    await chrome.tabs.create({ url: WRITE_URL, active: true });
   }
-
-  return { success: true };
 }
 
-// 외부 메시지 수신 (웹페이지에서)
-chrome.runtime.onMessageExternal.addListener(async (message, sender, sendResponse) => {
-  console.log('[닥터보이스] 외부 메시지:', message.action);
-
-  if (message.action === 'PING') {
-    sendResponse({ success: true, version: '14.0.0' });
-    return true;
-  }
-
-  // ONE_CLICK_PUBLISH (프론트엔드에서 사용)
-  if (message.action === 'ONE_CLICK_PUBLISH') {
-    console.log('[닥터보이스] ONE_CLICK_PUBLISH 요청');
-    console.log('[닥터보이스] postData:', message.postData?.title);
-
-    try {
-      const result = await openBlogWritePage(message.postData);
-      sendResponse(result);
-    } catch (err) {
-      console.error('[닥터보이스] 오류:', err);
-      sendResponse({ success: false, error: err.message });
-    }
-    return true;
-  }
-
-  // PUBLISH_TO_BLOG (기존 방식 유지)
-  if (message.action === 'PUBLISH_TO_BLOG') {
-    try {
-      const result = await openBlogWritePage(message.data);
-      sendResponse(result);
-    } catch (err) {
-      console.error('[닥터보이스] 오류:', err);
-      sendResponse({ success: false, error: err.message });
-    }
-    return true;
-  }
-});
-
-// 내부 메시지 수신 (content script에서)
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('[닥터보이스] 내부 메시지:', message.action);
-
-  if (message.action === 'GET_POST_DATA') {
-    chrome.storage.local.get(['pendingPost', 'autoPostEnabled'], (result) => {
-      sendResponse({
-        success: true,
-        data: result.pendingPost,
-        autoPostEnabled: result.autoPostEnabled
-      });
-    });
-    return true;
-  }
-
-  if (message.action === 'CLEAR_POST_DATA') {
-    pendingPostData = null;
-    chrome.storage.local.set({ pendingPost: null, autoPostEnabled: false });
-    sendResponse({ success: true });
-    return true;
-  }
-
-  // 완전자동 입력 요청
-  if (message.action === 'AUTO_TYPE') {
-    const tabId = sender.tab.id;
-    console.log('[닥터보이스] AUTO_TYPE 요청, tabId:', tabId);
-    console.log('[닥터보이스] 제목:', message.title?.substring(0, 30));
-    console.log('[닥터보이스] 본문 길이:', message.content?.length);
-
-    autoTypeWithDebugger(tabId, message.title, message.content, message.titlePos, message.bodyPos)
-      .then((result) => {
-        console.log('[닥터보이스] AUTO_TYPE 완료:', result);
-        sendResponse({ success: true, result });
-      })
-      .catch((err) => {
-        console.error('[닥터보이스] AUTO_TYPE 실패:', err);
-        sendResponse({ success: false, error: err.message });
-      });
-    return true;
-  }
-});
-
-// 완전자동 입력 (Input.dispatchMouseEvent + Input.insertText)
-async function autoTypeWithDebugger(tabId, title, content, titlePos, bodyPos) {
-  console.log('[닥터보이스] === 완전자동 입력 시작 (실제 입력 시뮬레이션) ===');
-  console.log('[닥터보이스] titlePos:', titlePos);
-  console.log('[닥터보이스] bodyPos:', bodyPos);
-
+// ============================================================
+// 자동화 시퀀스 (CDP)
+// ============================================================
+async function runAutomation(tabId, job) {
+  log('=== 자동화 시작 ===', tabId);
   try {
-    // 1. debugger 연결
-    console.log('[닥터보이스] 1단계: debugger 연결');
+    await progress(tabId, '팝업 정리 중...', 8);
+    await sendToTab(tabId, { action: 'DISMISS_POPUP' });
+
+    // 위치 확보 (재시도)
+    let pos = null;
+    for (let i = 0; i < 20; i++) {
+      const r = await sendToTab(tabId, { action: 'GET_POSITIONS' });
+      if (r && r.ok && r.title && r.body) { pos = r; break; }
+      await sleep(400);
+    }
+    if (!pos) throw new Error('제목/본문 위치 확보 실패');
+
     await attachDebugger(tabId);
-    await sleep(500);
+    await sleep(400);
 
-    // 2. 제목 클릭 후 입력
-    console.log('[닥터보이스] 2단계: 제목 영역 클릭');
-    await clickAt(tabId, titlePos.x, titlePos.y);
-    await sleep(300);
+    // 제목 입력
+    await progress(tabId, '제목 입력 중...', 25);
+    await clickAt(tabId, pos.title.x, pos.title.y);
+    await sleep(250);
+    await ctrlA(tabId);
+    await sleep(80);
+    await insertText(tabId, job.title);
+    await sleep(400);
 
-    // Ctrl+A로 전체 선택
-    await sendCtrlA(tabId);
-    await sleep(100);
+    // 본문 입력 (문단별)
+    await progress(tabId, '본문 입력 중...', 45);
+    await clickAt(tabId, pos.body.x, pos.body.y);
+    await sleep(250);
+    await ctrlA(tabId);
+    await sleep(80);
+    await typeBody(tabId, job.content);
+    await sleep(400);
 
-    // 제목 입력 (Input.insertText 사용)
-    console.log('[닥터보이스] 3단계: 제목 입력 -', title.substring(0, 30));
-    await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', {
-      text: title
-    });
-    await sleep(500);
-
-    // 3. 본문 클릭 후 입력
-    console.log('[닥터보이스] 4단계: 본문 영역 클릭');
-    await clickAt(tabId, bodyPos.x, bodyPos.y);
-    await sleep(300);
-
-    // Ctrl+A로 전체 선택
-    await sendCtrlA(tabId);
-    await sleep(100);
-
-    // 본문 입력 (Input.insertText 사용)
-    console.log('[닥터보이스] 5단계: 본문 입력 - 길이:', content.length);
-    await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', {
-      text: content
-    });
-    await sleep(300);
-
-    // 4. debugger 연결 해제
-    console.log('[닥터보이스] 6단계: debugger 해제');
+    // CDP 해제 (이미지 드롭/버튼 클릭은 일반 DOM으로)
     await detachDebugger(tabId);
+    await sleep(300);
 
-    console.log('[닥터보이스] === 완전자동 입력 완료! ===');
-    return { success: true };
+    // 이미지 삽입
+    if (job.images && job.images.length) {
+      await progress(tabId, `이미지 삽입 중... (${job.images.length}개)`, 60);
+      await sendToTab(tabId, { action: 'INSERT_IMAGES', images: job.images });
+    }
 
-  } catch (error) {
-    console.error('[닥터보이스] 오류:', error);
-    try { await detachDebugger(tabId); } catch (e) {}
-    throw error;
-  }
-}
+    // 최종 동작 (임시저장 / 발행 / 예약)
+    await progress(tabId, '마무리 중...', 88);
+    const fin = await sendToTab(tabId, { action: 'FINALIZE', job });
+    log('최종 동작 결과:', fin);
 
-// Ctrl+A 전체 선택
-async function sendCtrlA(tabId) {
-  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
-    type: 'keyDown',
-    key: 'Control',
-    code: 'ControlLeft',
-    windowsVirtualKeyCode: 17,
-    modifiers: 2
-  });
-
-  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
-    type: 'keyDown',
-    key: 'a',
-    code: 'KeyA',
-    windowsVirtualKeyCode: 65,
-    modifiers: 2
-  });
-
-  await sleep(50);
-
-  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
-    type: 'keyUp',
-    key: 'a',
-    code: 'KeyA',
-    windowsVirtualKeyCode: 65,
-    modifiers: 2
-  });
-
-  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
-    type: 'keyUp',
-    key: 'Control',
-    code: 'ControlLeft',
-    windowsVirtualKeyCode: 17,
-    modifiers: 0
-  });
-}
-
-// 텍스트 입력 (클립보드 + Ctrl+V 방식 - 가장 안정적)
-async function insertText(tabId, text) {
-  console.log('[닥터보이스] 텍스트 삽입 시작, 길이:', text.length);
-
-  try {
-    // 1. Runtime.evaluate로 클립보드에 텍스트 복사 (페이지 컨텍스트에서 실행)
-    await chrome.debugger.sendCommand({ tabId }, 'Runtime.evaluate', {
-      expression: `
-        (async () => {
-          try {
-            await navigator.clipboard.writeText(${JSON.stringify(text)});
-            return true;
-          } catch (e) {
-            // 클립보드 API 실패 시 execCommand 사용
-            const textarea = document.createElement('textarea');
-            textarea.value = ${JSON.stringify(text)};
-            textarea.style.position = 'fixed';
-            textarea.style.left = '-9999px';
-            document.body.appendChild(textarea);
-            textarea.select();
-            document.execCommand('copy');
-            document.body.removeChild(textarea);
-            return true;
-          }
-        })()
-      `,
-      awaitPromise: true
+    // 완료
+    await chrome.storage.local.remove('pendingJob');
+    currentJob = null;
+    await chrome.storage.local.set({
+      lastResult: { ok: !!(fin && fin.ok), action: job.finalAction, title: job.title, at: Date.now() },
     });
-    console.log('[닥터보이스] 클립보드 복사 완료');
-
-    await sleep(100);
-
-    // 2. Ctrl+V로 붙여넣기
-    await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
-      type: 'keyDown',
-      key: 'Control',
-      code: 'ControlLeft',
-      windowsVirtualKeyCode: 17,
-      modifiers: 2
-    });
-
-    await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
-      type: 'keyDown',
-      key: 'v',
-      code: 'KeyV',
-      text: 'v',
-      windowsVirtualKeyCode: 86,
-      modifiers: 2
-    });
-
-    await sleep(100);
-
-    await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
-      type: 'keyUp',
-      key: 'v',
-      code: 'KeyV',
-      windowsVirtualKeyCode: 86,
-      modifiers: 2
-    });
-
-    await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
-      type: 'keyUp',
-      key: 'Control',
-      code: 'ControlLeft',
-      windowsVirtualKeyCode: 17,
-      modifiers: 0
-    });
-
-    console.log('[닥터보이스] Ctrl+V 붙여넣기 완료');
-
+    log('=== 자동화 완료 ===');
   } catch (e) {
-    console.error('[닥터보이스] 클립보드 방식 실패:', e.message);
-
-    // 폴백: Input.insertText 시도
-    try {
-      await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', {
-        text: text
-      });
-      console.log('[닥터보이스] insertText 폴백 완료');
-    } catch (e2) {
-      console.error('[닥터보이스] insertText도 실패:', e2.message);
-      throw e2;
-    }
+    log('자동화 오류:', e);
+    try { await detachDebugger(tabId); } catch (_) {}
+    await sendToTab(tabId, { action: 'PROGRESS', text: '⚠️ 오류: ' + e.message, pct: 100 });
+    await chrome.storage.local.set({ lastResult: { ok: false, error: e.message, at: Date.now() } });
   }
 }
 
-// 클릭
-async function clickAt(tabId, x, y) {
-  console.log('[닥터보이스] 클릭:', x, y);
-
-  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', {
-    type: 'mousePressed',
-    x: x,
-    y: y,
-    button: 'left',
-    clickCount: 1
-  });
-
-  await sleep(50);
-
-  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', {
-    type: 'mouseReleased',
-    x: x,
-    y: y,
-    button: 'left',
-    clickCount: 1
-  });
-
-  console.log('[닥터보이스] 클릭 완료');
+// 본문: 줄바꿈을 문단으로 처리
+async function typeBody(tabId, content) {
+  const lines = (content || '').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].length) await insertText(tabId, lines[i]);
+    if (i < lines.length - 1) { await pressEnter(tabId); await sleep(30); }
+  }
 }
 
-// 텍스트 입력
-async function typeText(tabId, text) {
-  console.log('[닥터보이스] 타이핑 시작, 길이:', text.length);
-
-  const startTime = Date.now();
-
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-
-    if (char === '\n') {
-      // Enter 키
-      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
-        type: 'keyDown',
-        key: 'Enter',
-        code: 'Enter',
-        windowsVirtualKeyCode: 13,
-        nativeVirtualKeyCode: 13
-      });
-      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
-        type: 'keyUp',
-        key: 'Enter',
-        code: 'Enter',
-        windowsVirtualKeyCode: 13,
-        nativeVirtualKeyCode: 13
-      });
-    } else {
-      // 일반 문자 - char 이벤트로 직접 입력
-      await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
-        type: 'char',
-        text: char
-      });
-    }
-
-    // 진행상황 로그 (10% 단위)
-    if (text.length > 100 && i > 0 && i % Math.floor(text.length / 10) === 0) {
-      const progress = Math.round((i / text.length) * 100);
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      console.log(`[닥터보이스] 타이핑 진행: ${progress}% (${elapsed}초)`);
-    }
-
-    // 속도 조절 (50자마다 약간 대기)
-    if (i > 0 && i % 50 === 0) {
-      await sleep(10);
-    }
-  }
-
-  const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log(`[닥터보이스] 타이핑 완료! (${totalTime}초)`);
-}
-
-// debugger 연결
-async function attachDebugger(tabId) {
-  // 이미 연결되어 있으면 먼저 해제
-  if (currentDebuggerTabId) {
-    try {
-      await detachDebugger(currentDebuggerTabId);
-    } catch (e) {}
-  }
-
+// ============================================================
+// CDP 헬퍼
+// ============================================================
+function cdp(tabId, method, params) {
   return new Promise((resolve, reject) => {
+    chrome.debugger.sendCommand({ tabId }, method, params || {}, (res) => {
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else resolve(res);
+    });
+  });
+}
+
+async function attachDebugger(tabId) {
+  if (debuggerTabId) { try { await detachDebugger(debuggerTabId); } catch (_) {} }
+  await new Promise((resolve, reject) => {
     chrome.debugger.attach({ tabId }, '1.3', () => {
-      if (chrome.runtime.lastError) {
-        console.error('[닥터보이스] debugger 연결 실패:', chrome.runtime.lastError.message);
-        reject(new Error(chrome.runtime.lastError.message));
-      } else {
-        currentDebuggerTabId = tabId;
-        console.log('[닥터보이스] debugger 연결됨, tabId:', tabId);
-        resolve();
-      }
+      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+      else { debuggerTabId = tabId; resolve(); }
     });
   });
 }
-
-// debugger 연결 해제
 async function detachDebugger(tabId) {
+  await new Promise((resolve) => {
+    chrome.debugger.detach({ tabId }, () => { debuggerTabId = null; resolve(); });
+  });
+}
+async function clickAt(tabId, x, y) {
+  await cdp(tabId, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 });
+  await sleep(40);
+  await cdp(tabId, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 });
+}
+async function insertText(tabId, text) {
+  if (!text) return;
+  await cdp(tabId, 'Input.insertText', { text });
+}
+async function pressEnter(tabId) {
+  await cdp(tabId, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+  await cdp(tabId, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+}
+async function ctrlA(tabId) {
+  await cdp(tabId, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'Control', code: 'ControlLeft', windowsVirtualKeyCode: 17, modifiers: 2 });
+  await cdp(tabId, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
+  await sleep(40);
+  await cdp(tabId, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
+  await cdp(tabId, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'Control', code: 'ControlLeft', windowsVirtualKeyCode: 17, modifiers: 0 });
+}
+
+// tab 메시지 (editor 프레임 응답 사용)
+function sendToTab(tabId, message) {
   return new Promise((resolve) => {
-    chrome.debugger.detach({ tabId }, () => {
-      if (chrome.runtime.lastError) {
-        console.log('[닥터보이스] debugger 해제 경고:', chrome.runtime.lastError.message);
-      }
-      currentDebuggerTabId = null;
-      console.log('[닥터보이스] debugger 연결 해제됨');
-      resolve();
+    chrome.tabs.sendMessage(tabId, message, (res) => {
+      if (chrome.runtime.lastError) resolve(null); else resolve(res);
     });
   });
 }
-
-// sleep
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+async function progress(tabId, text, pct) {
+  await sendToTab(tabId, { action: 'PROGRESS', text, pct });
 }
 
-// debugger 연결 해제 감지
-chrome.debugger.onDetach.addListener((source, reason) => {
-  console.log('[닥터보이스] debugger 연결 해제됨:', reason);
-  currentDebuggerTabId = null;
-});
-
-// 탭 업데이트 감지
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.status !== 'complete') return;
-
-  const url = tab.url || '';
-  if (!url.includes('blog.naver.com')) return;
-  if (!url.includes('Write') && !url.includes('editor')) return;
-
-  console.log('[닥터보이스] 블로그 글쓰기 페이지 감지, tabId:', tabId);
-
-  const stored = await chrome.storage.local.get(['pendingPost', 'autoPostEnabled']);
-
-  if (stored.autoPostEnabled && stored.pendingPost) {
-    console.log('[닥터보이스] 자동 발행 데이터 있음!');
-
-    setTimeout(async () => {
-      try {
-        await chrome.tabs.sendMessage(tabId, {
-          action: 'INSERT_POST',
-          data: stored.pendingPost
-        });
-        console.log('[닥터보이스] INSERT_POST 메시지 전송 완료');
-      } catch (e) {
-        console.log('[닥터보이스] 메시지 전송 실패:', e.message);
-        // 재시도
-        setTimeout(async () => {
-          try {
-            await chrome.tabs.sendMessage(tabId, {
-              action: 'INSERT_POST',
-              data: stored.pendingPost
-            });
-          } catch (e2) {
-            console.log('[닥터보이스] 재시도 실패:', e2.message);
-          }
-        }, 2000);
-      }
-    }, 3000);
+// ============================================================
+// 자동 업데이트 (팝업)
+//  - 개발자모드(압축해제) 설치는 무음 자동설치가 불가(크롬 정책).
+//  - 대신 주기적으로 version.json 확인 → 새 버전이면 웹사이트에 팝업 표시 신호.
+// ============================================================
+async function checkForUpdate() {
+  try {
+    const res = await fetch(UPDATE_URL + '?t=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) return { updateAvailable: false };
+    const data = await res.json();
+    const latest = data.version;
+    const updateAvailable = compareVersion(latest, VERSION) > 0;
+    await chrome.storage.local.set({
+      updateInfo: { current: VERSION, latest, updateAvailable, downloadUrl: data.downloadUrl, notes: data.notes || '', checkedAt: Date.now() },
+    });
+    if (updateAvailable) {
+      chrome.action.setBadgeText({ text: 'NEW' });
+      chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
+    } else {
+      chrome.action.setBadgeText({ text: '' });
+    }
+    return { updateAvailable, latest, downloadUrl: data.downloadUrl, notes: data.notes || '' };
+  } catch (e) {
+    log('업데이트 확인 실패', e.message);
+    return { updateAvailable: false, error: e.message };
   }
-});
+}
+function compareVersion(a, b) {
+  const pa = String(a || '0').split('.').map(Number);
+  const pb = String(b || '0').split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) > (pb[i] || 0)) return 1;
+    if ((pa[i] || 0) < (pb[i] || 0)) return -1;
+  }
+  return 0;
+}
 
-// 서비스 워커 유지
+// ============================================================
+// 라이프사이클
+// ============================================================
+chrome.runtime.onInstalled.addListener(() => { checkForUpdate(); });
+chrome.runtime.onStartup.addListener(() => { checkForUpdate(); });
 chrome.alarms.create('keepAlive', { periodInMinutes: 0.5 });
-chrome.alarms.onAlarm.addListener(() => {});
+chrome.alarms.create('updateCheck', { periodInMinutes: 180 }); // 3시간마다
+chrome.alarms.onAlarm.addListener((a) => {
+  if (a.name === 'updateCheck') checkForUpdate();
+});
+chrome.debugger.onDetach.addListener(() => { debuggerTabId = null; });
+
+log('백그라운드 v15 시작');

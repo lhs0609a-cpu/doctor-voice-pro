@@ -36,6 +36,11 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
   const [naverPw, setNaverPw] = useState('')
   const [saveLogin, setSaveLogin] = useState(true)
   const [images, setImages] = useState<{ file: File; preview: string }[]>([])
+  // 발행 방식 / 공개범위 / 예약시간 (확장 v15 job.finalAction·schedule·options 로 전달)
+  const [finalAction, setFinalAction] = useState<'draft' | 'publishNow' | 'schedule'>('draft')
+  const [openType, setOpenType] = useState<'public' | 'neighbor' | 'both' | 'private'>('public')
+  const [scheduleDate, setScheduleDate] = useState('')
+  const [scheduleTime, setScheduleTime] = useState('')
   const [publishing, setPublishing] = useState(false)
   const [extensionInstalled, setExtensionInstalled] = useState<boolean | null>(null)
   const [extensionId, setExtensionId] = useState<string | null>(null)
@@ -191,6 +196,26 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
       return
     }
 
+    // 예약발행 시간 검증
+    let scheduleISO: string | null = null
+    if (finalAction === 'schedule') {
+      if (!scheduleDate || !scheduleTime) {
+        toast.error('예약 날짜와 시간을 선택하세요')
+        return
+      }
+      // 로컬 기준 datetime (확장에서 new Date()로 파싱, 분은 10분 단위로 내림 처리됨)
+      const dt = new Date(`${scheduleDate}T${scheduleTime}`)
+      if (isNaN(dt.getTime())) {
+        toast.error('예약 시간 형식이 올바르지 않습니다')
+        return
+      }
+      if (dt.getTime() <= Date.now()) {
+        toast.error('예약 시간은 현재 시각 이후여야 합니다')
+        return
+      }
+      scheduleISO = `${scheduleDate}T${scheduleTime}`
+    }
+
     setPublishing(true)
     const loadingToast = toast.loading('발행 준비 중...')
 
@@ -208,13 +233,19 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
         imageBase64List.push(base64)
       }
 
-      // 3. 포스트 데이터 준비
+      // 3. 포스트 데이터 준비 (확장 v15 normalizeJob 규격: finalAction·schedule·options 포함)
       const postData = {
         title: post.title || post.suggested_titles?.[0] || '',
         content: post.generated_content || '',
         images: imageBase64List,
         keywords: post.seo_keywords || [],
         hashtags: post.hashtags || [],
+        finalAction, // 'draft' | 'publishNow' | 'schedule'
+        schedule: scheduleISO ? { datetime: scheduleISO } : null,
+        options: {
+          openType, // 'public' | 'neighbor' | 'both' | 'private'
+          search: true,
+        },
       }
 
       // 4. 확장 프로그램으로 데이터 전송 및 발행 시작
@@ -224,19 +255,20 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
         // 확장 프로그램이 설치된 경우 - 직접 통신
         const response = await sendMessageToExtension(extensionId, {
           action: 'ONE_CLICK_PUBLISH',
-          postData,
+          postData, // finalAction·schedule·options 포함 (확장 normalizeJob 규격)
           credentials: { id: naverId, pw: naverPw },
-          options: {
-            useQuote: true,
-            useHighlight: true,
-            useImages: true,
-          }
         })
 
         if (response?.success) {
-          toast.success('발행 시작됨!', {
+          const doneMsg =
+            finalAction === 'draft'
+              ? { title: '임시저장 시작됨!', desc: '새 탭에서 작성 후 임시저장됩니다' }
+              : finalAction === 'schedule'
+                ? { title: '예약발행 시작됨!', desc: `${scheduleDate} ${scheduleTime} 예약으로 등록됩니다` }
+                : { title: '발행 시작됨!', desc: '새 탭에서 자동으로 글이 작성·발행됩니다' }
+          toast.success(doneMsg.title, {
             id: loadingToast,
-            description: '새 탭에서 네이버 로그인 후 자동으로 글이 작성됩니다',
+            description: doneMsg.desc,
           })
           setOpen(false)
         } else {
@@ -253,6 +285,9 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
           images: imageBase64List,
           savedAt: Date.now(),
           pendingPublish: true,
+          finalAction,
+          schedule: scheduleISO ? { datetime: scheduleISO } : null,
+          options: { openType, search: true },
         }
 
         const postIndex = existingPosts.findIndex((p: any) => p.id === postToSave.id)
@@ -435,6 +470,69 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
               )}
             </div>
 
+            {/* 발행 방식 */}
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2">
+                <Send className="h-4 w-4" />
+                발행 방식
+              </Label>
+              <div className="grid grid-cols-3 gap-2">
+                {([
+                  { key: 'draft', label: '임시저장' },
+                  { key: 'publishNow', label: '즉시발행' },
+                  { key: 'schedule', label: '예약발행' },
+                ] as const).map((opt) => (
+                  <Button
+                    key={opt.key}
+                    type="button"
+                    variant={finalAction === opt.key ? 'default' : 'outline'}
+                    size="sm"
+                    className={finalAction === opt.key ? 'bg-green-600 hover:bg-green-700' : ''}
+                    onClick={() => setFinalAction(opt.key)}
+                  >
+                    {opt.label}
+                  </Button>
+                ))}
+              </div>
+
+              {/* 예약발행 시간 (분은 10분 단위) */}
+              {finalAction === 'schedule' && (
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <Input
+                    type="date"
+                    value={scheduleDate}
+                    onChange={(e) => setScheduleDate(e.target.value)}
+                  />
+                  <Input
+                    type="time"
+                    step={600}
+                    value={scheduleTime}
+                    onChange={(e) => setScheduleTime(e.target.value)}
+                  />
+                  <p className="col-span-2 text-[11px] text-gray-500">
+                    ※ 네이버 예약은 10분 단위만 가능 — 분은 자동으로 내림 처리됩니다
+                  </p>
+                </div>
+              )}
+
+              {/* 공개 범위 (발행 계열에서만) */}
+              {finalAction !== 'draft' && (
+                <div className="pt-1">
+                  <Label className="text-xs text-gray-500">공개 범위</Label>
+                  <select
+                    value={openType}
+                    onChange={(e) => setOpenType(e.target.value as typeof openType)}
+                    className="mt-1 w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  >
+                    <option value="public">전체 공개</option>
+                    <option value="neighbor">이웃 공개</option>
+                    <option value="both">서로이웃 공개</option>
+                    <option value="private">비공개</option>
+                  </select>
+                </div>
+              )}
+            </div>
+
             {/* 발행할 글 미리보기 */}
             <div className="p-3 bg-gray-50 rounded-lg space-y-1">
               <p className="text-sm font-medium truncate">
@@ -463,7 +561,7 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
               ) : (
                 <>
                   <Send className="h-4 w-4" />
-                  원클릭 발행
+                  {finalAction === 'draft' ? '임시저장' : finalAction === 'schedule' ? '예약발행' : '즉시발행'}
                 </>
               )}
             </Button>

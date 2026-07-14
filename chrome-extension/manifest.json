@@ -1,14 +1,16 @@
 {
   "manifest_version": 3,
   "name": "닥터보이스 프로 - 네이버 블로그 자동 포스팅",
-  "version": "14.0.0",
-  "description": "닥터보이스 프로 - 네이버 블로그 완전자동 포스팅",
+  "version": "15.0.1",
+  "description": "닥터보이스 프로 - 네이버 블로그 원클릭 자동 포스팅 (로그인→작성→이미지→임시저장/예약발행)",
   "permissions": [
     "activeTab",
     "storage",
     "scripting",
     "tabs",
-    "debugger"
+    "debugger",
+    "alarms",
+    "clipboardWrite"
   ],
   "host_permissions": [
     "https://nid.naver.com/*",
@@ -39,14 +41,14 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://blog.naver.com/*"],
-      "js": ["content-naver.js"],
+      "matches": ["https://blog.naver.com/*", "https://*.blog.naver.com/*"],
+      "js": ["naver-poster.js"],
       "css": ["content.css"],
       "run_at": "document_idle",
       "all_frames": true
     },
     {
-      "matches": ["https://nid.naver.com/*"],
+      "matches": ["https://nid.naver.com/*", "https://www.naver.com/*", "https://naver.com/*"],
       "js": ["content-login.js"],
       "run_at": "document_idle"
     },

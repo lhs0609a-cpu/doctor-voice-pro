@@ -6,3 +6,7 @@ backend/.env.production
 backend/api_key.txt
 *.env.local
 .env
+
+# temp/debug artifacts
+temp_api.json
+*.bak
