@@ -35,6 +35,33 @@ class PoolImage(Base):
     )
 
 
+class PoolCollection(Base):
+    """사진 목록(앨범). 예: '1목록' 에 사진 40장을 묶어두고 글마다 그 목록에서 배정."""
+    __tablename__ = "pool_collections"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    members = relationship(
+        "PoolCollectionMember", back_populates="collection", cascade="all, delete-orphan"
+    )
+
+
+class PoolCollectionMember(Base):
+    """목록 ↔ 풀 사진 연결(한 사진이 여러 목록에 속할 수 있음)."""
+    __tablename__ = "pool_collection_members"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    collection_id = Column(String(36), ForeignKey("pool_collections.id"), nullable=False, index=True)
+    pool_image_id = Column(String(36), ForeignKey("pool_images.id"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    collection = relationship("PoolCollection", back_populates="members")
+
+
 class ImageVariant(Base):
     """한 원본으로 생성한 유니크화 변형 이력 (해시만 보관, 바이트는 미보관)"""
     __tablename__ = "image_variants"

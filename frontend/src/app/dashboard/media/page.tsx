@@ -17,11 +17,17 @@ import {
   CheckCircle2,
   AlertTriangle,
   ImageOff,
+  FolderPlus,
+  Folder,
+  Pencil,
+  Check,
+  X,
 } from 'lucide-react'
 import {
   mediaPoolAPI,
   type PoolImageItem,
   type AssignedImage,
+  type PoolCollectionItem,
 } from '@/lib/api'
 import { toast } from 'sonner'
 
@@ -40,19 +46,87 @@ export default function MediaPoolPage() {
   const [assigned, setAssigned] = useState<AssignedImage[]>([])
   const [assignWarnings, setAssignWarnings] = useState<string[]>([])
 
+  // 목록(앨범)
+  const [collections, setCollections] = useState<PoolCollectionItem[]>([])
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null)
+  const [newCollectionName, setNewCollectionName] = useState('')
+  const [creatingCollection, setCreatingCollection] = useState(false)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+
   useEffect(() => {
     loadPool()
+    loadCollections()
   }, [])
 
-  const loadPool = async () => {
+  // 선택 목록이 바뀌면 그 목록의 사진만 로드(없으면 전체)
+  useEffect(() => {
+    loadPool(selectedCollectionId)
+  }, [selectedCollectionId])
+
+  const loadPool = async (collectionId?: string | null) => {
     try {
-      const data = await mediaPoolAPI.list()
+      const data = await mediaPoolAPI.list(collectionId || undefined)
       setImages(data.images)
     } catch (err) {
       console.error(err)
       toast.error('사진 풀을 불러오지 못했습니다')
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const loadCollections = async () => {
+    try {
+      const data = await mediaPoolAPI.listCollections()
+      setCollections(data.collections)
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleCreateCollection = async () => {
+    const name = newCollectionName.trim()
+    if (!name) { toast.error('목록 이름을 입력하세요'); return }
+    setCreatingCollection(true)
+    try {
+      const col = await mediaPoolAPI.createCollection(name)
+      setNewCollectionName('')
+      await loadCollections()
+      setSelectedCollectionId(col.id)
+      toast.success(`'${name}' 목록을 만들었어요. 이제 사진을 올리면 이 목록에 담깁니다`)
+    } catch (err) {
+      console.error(err)
+      toast.error('목록 생성 실패')
+    } finally {
+      setCreatingCollection(false)
+    }
+  }
+
+  const handleRenameCollection = async (id: string) => {
+    const name = renameValue.trim()
+    if (!name) { toast.error('이름을 입력하세요'); return }
+    try {
+      await mediaPoolAPI.renameCollection(id, name)
+      setRenamingId(null)
+      await loadCollections()
+      toast.success('이름을 변경했어요')
+    } catch (err) {
+      console.error(err)
+      toast.error('이름 변경 실패')
+    }
+  }
+
+  const handleDeleteCollection = async (id: string, name: string) => {
+    if (!confirm(`'${name}' 목록을 삭제할까요? (사진 원본은 풀에 남습니다)`)) return
+    try {
+      await mediaPoolAPI.deleteCollection(id)
+      if (selectedCollectionId === id) setSelectedCollectionId(null)
+      await loadCollections()
+      toast.success('목록을 삭제했어요')
+    } catch (err) {
+      console.error(err)
+      toast.error('삭제 실패')
     }
   }
 
@@ -63,13 +137,17 @@ export default function MediaPoolPage() {
     const arr = Array.from(files)
     setIsUploading(true)
     try {
-      const res = await mediaPoolAPI.upload(arr)
+      const res = await mediaPoolAPI.upload(arr, selectedCollectionId || undefined)
       if (res.uploaded > 0) {
-        toast.success(`${res.uploaded}장 업로드 완료${res.failed ? ` (실패 ${res.failed}장)` : ''}`)
+        const where = selectedCollectionId
+          ? ` → '${collections.find(c => c.id === selectedCollectionId)?.name || '목록'}'`
+          : ''
+        toast.success(`${res.uploaded}장 업로드 완료${where}${res.failed ? ` (실패 ${res.failed}장)` : ''}`)
       } else {
         toast.error(`업로드 실패 (${res.failed}장). 풀 상한(${MAX_POOL_SIZE}장) 또는 파일 형식을 확인하세요.`)
       }
-      await loadPool()
+      await loadPool(selectedCollectionId)
+      await loadCollections()
     } catch (err) {
       console.error(err)
       toast.error('업로드 중 오류가 발생했습니다')
@@ -102,7 +180,10 @@ export default function MediaPoolPage() {
     setAssigned([])
     setAssignWarnings([])
     try {
-      const res = await mediaPoolAPI.assign({ count: assignCount })
+      const res = await mediaPoolAPI.assign({
+        count: assignCount,
+        collection_id: selectedCollectionId || undefined,
+      })
       setAssigned(res.images)
       setAssignWarnings(res.warnings)
       if (res.all_passed) {
@@ -156,6 +237,110 @@ export default function MediaPoolPage() {
           </div>
         </div>
 
+        {/* 목록(앨범) */}
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Folder className="h-4 w-4" />
+              사진 목록
+            </CardTitle>
+            <CardDescription>
+              사진을 목록으로 묶어두면(예: &apos;1목록&apos; 40장) 글 발행 시 그 목록을 선택해 자동으로 사진이 들어갑니다.
+              목록을 고른 상태로 업로드하면 그 목록에 담깁니다.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* 새 목록 만들기 */}
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="flex-1 min-w-[200px] space-y-1">
+                <Label htmlFor="newCollection">새 목록 만들기</Label>
+                <Input
+                  id="newCollection"
+                  placeholder="예: 1목록, 병원외경, 시술후기"
+                  value={newCollectionName}
+                  onChange={(e) => setNewCollectionName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleCreateCollection() }}
+                />
+              </div>
+              <Button onClick={handleCreateCollection} disabled={creatingCollection}>
+                {creatingCollection ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <FolderPlus className="h-4 w-4 mr-2" />
+                )}
+                목록 추가
+              </Button>
+            </div>
+
+            {/* 목록 칩 */}
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setSelectedCollectionId(null)}
+                className={`px-3 py-1.5 rounded-full text-sm border transition-colors ${
+                  selectedCollectionId === null
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-background hover:bg-muted border-input'
+                }`}
+              >
+                전체 사진 ({images.length && selectedCollectionId === null ? images.length : '·'})
+              </button>
+              {collections.map((c) => (
+                <div key={c.id} className="flex items-center">
+                  {renamingId === c.id ? (
+                    <div className="flex items-center gap-1">
+                      <Input
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleRenameCollection(c.id) }}
+                        className="h-8 w-32"
+                        autoFocus
+                      />
+                      <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleRenameCollection(c.id)}>
+                        <Check className="h-4 w-4" />
+                      </Button>
+                      <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setRenamingId(null)}>
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <div
+                      className={`group flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-full text-sm border transition-colors cursor-pointer ${
+                        selectedCollectionId === c.id
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'bg-background hover:bg-muted border-input'
+                      }`}
+                      onClick={() => setSelectedCollectionId(c.id)}
+                    >
+                      <Folder className="h-3.5 w-3.5" />
+                      <span>{c.name}</span>
+                      <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">{c.count}</Badge>
+                      <button
+                        className="opacity-60 hover:opacity-100 p-0.5"
+                        onClick={(e) => { e.stopPropagation(); setRenamingId(c.id); setRenameValue(c.name) }}
+                        title="이름 변경"
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                      <button
+                        className="opacity-60 hover:opacity-100 p-0.5"
+                        onClick={(e) => { e.stopPropagation(); handleDeleteCollection(c.id, c.name) }}
+                        title="목록 삭제"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            {collections.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                아직 목록이 없습니다. 위에서 목록을 만들면 사진을 그룹으로 관리할 수 있어요.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
         {/* 업로드 */}
         <Card className="mt-6">
           <CardHeader>
@@ -163,13 +348,21 @@ export default function MediaPoolPage() {
               <span className="flex items-center gap-2">
                 <Upload className="h-4 w-4" />
                 사진 업로드
+                {selectedCollectionId && (
+                  <Badge variant="outline" className="gap-1 font-normal">
+                    <Folder className="h-3 w-3" />
+                    {collections.find(c => c.id === selectedCollectionId)?.name} 에 담기
+                  </Badge>
+                )}
               </span>
               <Badge variant="secondary">
                 {images.length} / {MAX_POOL_SIZE}장
               </Badge>
             </CardTitle>
             <CardDescription>
-              JPG/PNG 여러 장을 한 번에 올릴 수 있습니다. 원본은 서버에 보관되고, 글 배정 시마다 새로운 변형이 생성됩니다.
+              {selectedCollectionId
+                ? '선택한 목록에 담깁니다. 전체 풀에 담으려면 위에서 ‘전체 사진’을 선택하세요.'
+                : 'JPG/PNG 여러 장을 한 번에 올릴 수 있습니다. 목록을 먼저 고르면 그 목록에 담깁니다.'}
             </CardDescription>
           </CardHeader>
           <CardContent>

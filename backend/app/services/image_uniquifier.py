@@ -27,13 +27,16 @@ from PIL import Image, ImageEnhance, ImageOps, ImageDraw, ImageFilter
 
 # ---- 기본 파라미터 ----
 MIN_DISTANCE = 12          # 원본과의 최소 pHash Hamming 거리(64bit 중) — 엄격
-MIN_SIBLING_DISTANCE = 8   # 같은 원본의 과거 변형끼리 최소 거리 — dedup 임계(~5)보다 여유
+MIN_SIBLING_DISTANCE = 6   # 같은 원본의 과거 변형끼리 최소 거리 — dedup 추정임계(~5) 위 여유 1(여력 2배)
 MIN_SSIM = 0.95            # 인코딩(압축) 충실도 하한 — 저품질 방지 (1.0=무손실)
-MAX_ATTEMPTS = 12
+MAX_ATTEMPTS = 16          # 구조 모드가 늘어난 만큼 탐색 폭도 확대
 MAX_WIDTH = 1280           # 블로그 표시 최대폭 (하한 1080 유지)
 JPEG_Q_RANGE = (88, 92)
 
-FRAME_STYLES = ("white_margin", "rounded_shadow", "film")
+FRAME_STYLES = ("white_margin", "rounded_shadow", "film", "mat_canvas")
+
+# 구조 모드용 종횡비(재크롭) 후보 — None 은 원본 비율 유지
+REFRAME_RATIOS = (None, 1.0, 4 / 5, 5 / 4, 3 / 4, 4 / 3)
 
 _EXIF_MAKES = [
     ("Samsung", "SM-S928N"), ("Samsung", "SM-G998N"), ("Apple", "iPhone 15 Pro"),
@@ -193,11 +196,56 @@ def _frame_film(img: Image.Image, rng: random.Random, strength: float) -> Image.
     return out
 
 
+def _frame_mat_canvas(img: Image.Image, rng: random.Random, strength: float) -> Image.Image:
+    """사진을 더 큰 매트(배경 캔버스) 위에 얹어 레이아웃이 pHash를 지배하게 한다.
+    배경 톤/크기/위치/라운드를 매번 달리해 원본과 완전히 다른 해시 영역으로 이동."""
+    w, h = img.size
+    # 이미지가 캔버스에서 차지하는 비율(작을수록 여백↑, 해시 이동↑)
+    occupy = rng.uniform(0.78, 0.92) - 0.04 * strength
+    occupy = max(0.68, occupy)
+    cw, ch = int(w / occupy), int(h / occupy)
+    # 배경: 대체로 밝은 회색, 가끔 미세 파스텔
+    if rng.random() < 0.4:
+        color = (rng.randint(236, 255), rng.randint(236, 255), rng.randint(236, 255))
+    else:
+        t = rng.randint(240, 255)
+        color = (t, t, t)
+    canvas = Image.new("RGB", (cw, ch), color)
+    ox = int((cw - w) * rng.uniform(0.35, 0.65))
+    oy = int((ch - h) * rng.uniform(0.28, 0.60))
+    radius = int(min(w, h) * rng.uniform(0.0, 0.045))
+    if radius > 2:
+        mask = Image.new("L", (w, h), 0)
+        ImageDraw.Draw(mask).rounded_rectangle([0, 0, w, h], radius=radius, fill=255)
+        canvas.paste(img, (ox, oy), mask)
+    else:
+        canvas.paste(img, (ox, oy))
+    return canvas
+
+
 _FRAME_FUNCS = {
     "white_margin": _frame_white_margin,
     "rounded_shadow": _frame_rounded_shadow,
     "film": _frame_film,
+    "mat_canvas": _frame_mat_canvas,
 }
+
+
+def _recrop_ratio(img: Image.Image, ratio: float, rng: random.Random) -> Image.Image:
+    """중앙 근처에서 target 종횡비로 재크롭(구조 모드). 위치를 약간 흔들어 다양화."""
+    w, h = img.size
+    cur = w / h
+    if abs(cur - ratio) < 1e-3:
+        return img
+    if ratio >= cur:
+        # 목표가 더 넓음 → 높이를 자름
+        nh = max(1, min(h, int(w / ratio)))
+        top = int((h - nh) * rng.uniform(0.35, 0.65))
+        return img.crop((0, top, w, top + nh))
+    # 목표가 더 좁음 → 폭을 자름
+    nw = max(1, min(w, int(h * ratio)))
+    left = int((w - nw) * rng.uniform(0.35, 0.65))
+    return img.crop((left, 0, left + nw, h))
 
 
 # ============================================================
@@ -219,8 +267,19 @@ class UniquifyResult:
 # ============================================================
 # 코어 변형 (프레임 이전 본문)
 # ============================================================
-def _transform_body(src: Image.Image, rng: random.Random, strength: float, max_width: int) -> Image.Image:
+def _transform_body(
+    src: Image.Image, rng: random.Random, strength: float, max_width: int,
+    flip: bool = False, ratio: float | None = None,
+) -> Image.Image:
     img = ImageOps.exif_transpose(src).convert("RGB")
+
+    # 0) 구조 모드: 좌우 반전 — 새 해시 클러스터(거의 공짜, 눈엔 자연스러움)
+    if flip:
+        img = ImageOps.mirror(img)
+
+    # 0b) 구조 모드: 종횡비 재크롭 — 레이아웃 자체를 바꿔 해시 영역 이동
+    if ratio:
+        img = _recrop_ratio(img, ratio, rng)
 
     # 1) 미세 회전 후 경계 크롭
     ang = rng.uniform(0.4, 1.2) * (1 + 0.5 * strength) * rng.choice([-1, 1])
@@ -305,6 +364,8 @@ def uniquify(
     max_attempts: int = MAX_ATTEMPTS,
     max_width: int = MAX_WIDTH,
     frame_styles: Iterable[str] | None = None,
+    allow_flip: bool = True,
+    allow_reframe: bool = True,
     seed: int | None = None,
 ) -> UniquifyResult:
     """원본 바이트 → 유니크화된 JPEG + 검증 결과.
@@ -328,11 +389,18 @@ def uniquify(
     styles = list(frame_styles) if frame_styles else list(FRAME_STYLES)
     rng = random.Random(seed)
 
+    ratios = list(REFRAME_RATIOS) if allow_reframe else [None]
+
     best = None
     best_key = None
     for attempt in range(max_attempts):
         strength = attempt / 2.0  # 0, 0.5, 1.0, ... 강도 상승
-        body = _transform_body(src, rng, strength, max_width)
+        # 구조 모드 선택(반전×재크롭×프레임). 뒤로 갈수록 반전을 켜 먼 영역까지 탐색.
+        flip = bool(rng.getrandbits(1)) if allow_flip else False
+        if allow_flip and attempt >= max_attempts // 2:
+            flip = True  # 후반부: 반전 강제 → 확실히 다른 해시 클러스터로
+        ratio = rng.choice(ratios)
+        body = _transform_body(src, rng, strength, max_width, flip=flip, ratio=ratio)
         style = rng.choice(styles)
         framed = _FRAME_FUNCS[style](body, rng, strength)
 
@@ -350,10 +418,11 @@ def uniquify(
         q = ssim(framed, framed_dec)  # 압축 손실만 측정(정렬됨) → 저품질 여부
 
         passed = d_orig >= min_distance and d_sib >= min_sibling_distance and q >= min_ssim
+        mode_tag = style + ("|flip" if flip else "") + (f"|{ratio:.2f}" if ratio else "")
         result = UniquifyResult(
             image_bytes=data, phash=to_hex(ph), dhash=to_hex(dhash(framed_dec)),
             ssim=round(q, 4), min_distance=min(d_orig, d_sib), attempts=attempt + 1,
-            frame_style=style, passed=passed, quality=quality,
+            frame_style=mode_tag[:30], passed=passed, quality=quality,
         )
         if passed:
             return result

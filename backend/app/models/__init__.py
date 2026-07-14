@@ -82,7 +82,7 @@ from app.models.reputation import (
     MentionPlatform, MentionSentiment, RiskLevel, MentionStatus,
     ResponseStyle, CrawlJobStatus, AlertSeverity, SpreadStatus, GuideCategory
 )
-from app.models.media_pool import PoolImage, ImageVariant
+from app.models.media_pool import PoolImage, ImageVariant, PoolCollection, PoolCollectionMember
 from app.models.publish_queue import PublishBatch, QueuedPost
 
 __all__ = [
@@ -267,4 +267,6 @@ __all__ = [
     # Media Pool / Image Uniquifier (사진 풀 + 유니크화)
     "PoolImage",
     "ImageVariant",
+    "PoolCollection",
+    "PoolCollectionMember",
 ]

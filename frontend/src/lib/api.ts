@@ -571,17 +571,33 @@ export interface AssignResponse {
   warnings: string[]
 }
 
+export interface PoolCollectionItem {
+  id: string
+  name: string
+  count: number
+  created_at: string
+  cover_thumbnail: string | null
+}
+
+export interface CollectionListResponse {
+  total: number
+  collections: PoolCollectionItem[]
+}
+
 export const mediaPoolAPI = {
-  // 풀 목록 (썸네일 포함)
-  list: async (): Promise<PoolListResponse> => {
-    const response = await api.get<PoolListResponse>('/api/v1/media/pool')
+  // 풀 목록 (썸네일 포함). collectionId 지정 시 그 목록의 사진만.
+  list: async (collectionId?: string): Promise<PoolListResponse> => {
+    const response = await api.get<PoolListResponse>('/api/v1/media/pool', {
+      params: collectionId ? { collection_id: collectionId } : undefined,
+    })
     return response.data
   },
 
-  // 사진 풀에 여러 장 업로드
-  upload: async (files: File[]): Promise<PoolUploadResponse> => {
+  // 사진 풀에 여러 장 업로드 (collectionId 지정 시 해당 목록에도 담김)
+  upload: async (files: File[], collectionId?: string): Promise<PoolUploadResponse> => {
     const formData = new FormData()
     files.forEach(file => formData.append('files', file))
+    if (collectionId) formData.append('collection_id', collectionId)
     const response = await api.post<PoolUploadResponse>('/api/v1/media/pool/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 120000,
@@ -595,11 +611,46 @@ export const mediaPoolAPI = {
     return response.data
   },
 
-  // 자동 배정 + 유니크화
-  assign: async (params: { count: number; post_id?: string; max_width?: number }): Promise<AssignResponse> => {
+  // 자동 배정 + 유니크화 (collectionId 지정 시 그 목록에서만)
+  assign: async (params: { count: number; post_id?: string; max_width?: number; collection_id?: string }): Promise<AssignResponse> => {
     const response = await api.post<AssignResponse>('/api/v1/media/assign', params, {
       timeout: 120000,
     })
+    return response.data
+  },
+
+  // ===== 사진 목록(앨범) =====
+  listCollections: async (withCover = true): Promise<CollectionListResponse> => {
+    const response = await api.get<CollectionListResponse>('/api/v1/media/collections', {
+      params: { with_cover: withCover },
+    })
+    return response.data
+  },
+
+  createCollection: async (name: string, imageIds: string[] = []): Promise<PoolCollectionItem> => {
+    const response = await api.post<PoolCollectionItem>('/api/v1/media/collections', {
+      name, image_ids: imageIds,
+    })
+    return response.data
+  },
+
+  renameCollection: async (id: string, name: string): Promise<PoolCollectionItem> => {
+    const response = await api.patch<PoolCollectionItem>(`/api/v1/media/collections/${id}`, { name })
+    return response.data
+  },
+
+  deleteCollection: async (id: string): Promise<{ success: boolean }> => {
+    const response = await api.delete(`/api/v1/media/collections/${id}`)
+    return response.data
+  },
+
+  addToCollection: async (id: string, imageIds: string[]): Promise<{ success: boolean; added: number }> => {
+    const response = await api.post(`/api/v1/media/collections/${id}/members`, { image_ids: imageIds })
+    return response.data
+  },
+
+  removeFromCollection: async (id: string, imageId: string): Promise<{ success: boolean }> => {
+    const response = await api.delete(`/api/v1/media/collections/${id}/members/${imageId}`)
     return response.data
   },
 }
