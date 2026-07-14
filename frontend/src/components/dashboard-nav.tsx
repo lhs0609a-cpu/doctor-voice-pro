@@ -40,6 +40,7 @@ import {
   X,
   ChevronRight,
   Image as ImagesIcon,
+  Layers,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -148,6 +149,11 @@ export function DashboardNav() {
       href: '/dashboard/media',
       label: '사진 풀',
       icon: ImagesIcon,
+    },
+    {
+      href: '/dashboard/bulk',
+      label: '대량 발행',
+      icon: Layers,
     },
   ]
 

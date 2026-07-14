@@ -128,10 +128,24 @@
     } catch (e) { /* 서비스워커 미기동 등 */ }
   }
 
+  // ---------- 3) 배치 결과 릴레이 (background → 페이지) ----------
+  function relayJobResults() {
+    try {
+      chrome.runtime.onMessage.addListener((msg) => {
+        if (msg && msg.action === 'JOB_RESULT') {
+          window.dispatchEvent(new CustomEvent('doctorvoice-job-result', {
+            detail: { id: msg.id, ok: msg.ok, message: msg.message },
+          }));
+        }
+      });
+    } catch (e) { /* noop */ }
+  }
+
   // ---------- 초기화 ----------
   function init() {
     exposeExtensionId();
     checkUpdateAndNotify();
+    relayJobResults();
   }
 
   if (document.readyState === 'loading') {

@@ -4185,4 +4185,70 @@ export const reputationAPI = {
   },
 }
 
+// ==================== 대량 자동발행 큐 API ====================
+export interface FmtBlock { type: 'text' | 'image'; content?: string; keyword?: string | null }
+export interface FormattedPost {
+  title: string
+  keywords: string[]
+  hashtags: string[]
+  image_slots: number
+  blocks: FmtBlock[]
+}
+export interface QueuedItem {
+  id: string
+  title: string
+  keywords: string[]
+  image_slots: number
+  scheduled_at: string
+  status: string
+  order_index: number
+}
+export interface ExtJobBlock { type: 'text' | 'image'; content?: string; image?: string }
+export interface ExtJob {
+  id: string
+  title: string
+  content: string
+  blocks: ExtJobBlock[]
+  tags: string[]
+  finalAction: string
+  schedule: { datetime: string }
+  options: { openType: string; search: boolean }
+}
+
+const PQ = '/api/v1/publish'
+
+export const publishQueueAPI = {
+  preview: async (text: string, delimiter = '', topKeywords = 6): Promise<{ count: number; posts: FormattedPost[] }> => {
+    const res = await api.post(`${PQ}/queue/preview`, { text, delimiter, top_keywords: topKeywords })
+    return res.data
+  },
+  bulk: async (params: {
+    text: string; delimiter?: string; top_keywords?: number
+    start_at: string; interval_minutes: number; open_type?: string; assign_images?: boolean; name?: string
+  }): Promise<{ batch_id: string; created: number; first_at: string; last_at: string; items: QueuedItem[]; warnings: string[] }> => {
+    const res = await api.post(`${PQ}/queue/bulk`, params, { timeout: 120000 })
+    return res.data
+  },
+  list: async (status?: string): Promise<QueuedItem[]> => {
+    const res = await api.get(`${PQ}/queue`, { params: status ? { status } : {} })
+    return res.data
+  },
+  remove: async (id: string): Promise<{ success: boolean }> => {
+    const res = await api.delete(`${PQ}/queue/${id}`)
+    return res.data
+  },
+  removeBatch: async (batchId: string): Promise<{ success: boolean }> => {
+    const res = await api.delete(`${PQ}/queue/batch/${batchId}`)
+    return res.data
+  },
+  fetchJobs: async (limit = 20): Promise<ExtJob[]> => {
+    const res = await api.get(`${PQ}/queue/jobs`, { params: { limit }, timeout: 180000 })
+    return res.data
+  },
+  reportResult: async (id: string, ok: boolean, message?: string): Promise<{ success: boolean }> => {
+    const res = await api.post(`${PQ}/queue/${id}/result`, { ok, message })
+    return res.data
+  },
+}
+
 export default api

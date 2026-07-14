@@ -2,12 +2,14 @@
 // 닥터보이스 프로 - 백그라운드 서비스워커 v15
 // CDP(chrome.debugger) 기반 실제 입력 + 오케스트레이션 + 자동 업데이트
 // ============================================================
-const VERSION = '15.1.0';
+const VERSION = '15.2.0';
 const UPDATE_URL = 'https://doctor-voice-pro-ghwi.vercel.app/extension/version.json';
 const WRITE_URL = 'https://blog.naver.com/GoBlogWrite.naver';
 
 let currentJob = null;
 let debuggerTabId = null;
+let jobDoneResolver = null;   // 현재 job 자동화 완료 시 resolve
+let batchRunning = false;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log('[닥터보이스:bg]', ...a);
@@ -46,6 +48,13 @@ chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
           await startJob(normalizeJob(msg.job || msg.postData));
           sendResponse({ success: true });
           break;
+        case 'SUBMIT_BATCH': {
+          // 대량 예약: 여러 job 을 순차적으로 네이버 예약발행 등록
+          const jobs = (msg.jobs || []).map(normalizeJob).filter(Boolean);
+          sendResponse({ success: true, accepted: jobs.length });
+          startBatch(jobs, sender); // 백그라운드로 진행(응답 대기 안 함)
+          break;
+        }
         default:
           sendResponse({ success: false, error: 'unknown action' });
       }
@@ -98,11 +107,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ============================================================
 function normalizeJob(raw) {
   if (!raw) return null;
+  // blocks(글-이미지 인터리브)가 있으면 content/images 를 파생
+  let content = raw.content || raw.generated_content || '';
+  let images = raw.images || [];
+  let blocks = raw.blocks || null;
+  if (blocks && blocks.length) {
+    content = blocks.filter((b) => b.type === 'text' && b.content).map((b) => b.content).join('\n\n');
+    images = blocks.filter((b) => b.type === 'image' && b.image).map((b) => b.image);
+  }
   return {
     id: raw.id || String(Date.now()),
     title: raw.title || raw.suggested_titles?.[0] || '',
-    content: raw.content || raw.generated_content || '',
-    images: raw.images || [], // base64 data URL 배열 (EXIF는 프론트에서 제거됨)
+    content,
+    images, // base64 data URL 배열 (EXIF는 프론트에서 제거됨)
+    blocks, // [{type:'text',content} | {type:'image',image}] — 인터리브 삽입용(향후)
     tags: raw.tags || raw.keywords || raw.seo_keywords || [],
     options: {
       openType: raw.options?.openType || 'public',
@@ -128,6 +146,71 @@ async function startJob(job) {
   } else {
     await chrome.tabs.create({ url: WRITE_URL, active: true });
   }
+}
+
+// ============================================================
+// 대량 배치: 여러 job 을 순차적으로 예약발행 등록
+// ============================================================
+async function startBatch(jobs, sender) {
+  if (batchRunning) { log('배치가 이미 진행 중'); return; }
+  batchRunning = true;
+  log(`=== 배치 시작: ${jobs.length}건 ===`);
+  const webTabId = sender && sender.tab ? sender.tab.id : null;
+
+  for (let i = 0; i < jobs.length; i++) {
+    const job = jobs[i];
+    log(`배치 ${i + 1}/${jobs.length}: ${job.title}`);
+    let result;
+    try {
+      result = await runOne(job);
+    } catch (e) {
+      result = { ok: false, error: e.message };
+    }
+    // 결과를 웹사이트로 전달 → 백엔드에 보고
+    reportJobResult(webTabId, job.id, !!(result && result.ok), (result && (result.error || result.action)) || '');
+    await sleep(1500); // 연속 등록 사이 여유(봇 감지 완화)
+  }
+
+  batchRunning = false;
+  log('=== 배치 완료 ===');
+}
+
+// 단일 job 자동화를 실행하고 완료될 때 resolve
+function runOne(job) {
+  return new Promise((resolve) => {
+    // 안전장치: 3분 내 완료 신호 없으면 실패 처리하고 다음으로
+    const guard = setTimeout(() => {
+      if (jobDoneResolver) { const r = jobDoneResolver; jobDoneResolver = null; r({ ok: false, error: 'timeout' }); }
+    }, 180000);
+    jobDoneResolver = (res) => { clearTimeout(guard); resolve(res); };
+    startJob(job).catch((e) => {
+      if (jobDoneResolver) { const r = jobDoneResolver; jobDoneResolver = null; r({ ok: false, error: e.message }); }
+    });
+  });
+}
+
+function finishJob(result) {
+  if (jobDoneResolver) {
+    const r = jobDoneResolver;
+    jobDoneResolver = null;
+    r(result);
+  }
+}
+
+// 결과를 닥터보이스 웹 탭으로 전달(content-website 가 CustomEvent 로 페이지에 알림)
+function reportJobResult(webTabId, id, ok, message) {
+  const payload = { action: 'JOB_RESULT', id, ok, message };
+  try {
+    if (webTabId) {
+      chrome.tabs.sendMessage(webTabId, payload, () => void chrome.runtime.lastError);
+    } else {
+      // sender 탭을 모르면 닥터보이스 탭을 찾아 전달
+      chrome.tabs.query({}, (tabs) => {
+        const t = tabs.find((x) => x.url && (x.url.includes('doctor-voice') || x.url.includes('vercel.app') || x.url.includes('localhost')));
+        if (t) chrome.tabs.sendMessage(t.id, payload, () => void chrome.runtime.lastError);
+      });
+    }
+  } catch (_) {}
 }
 
 // ============================================================
@@ -191,11 +274,13 @@ async function runAutomation(tabId, job) {
       lastResult: { ok: !!(fin && fin.ok), action: job.finalAction, title: job.title, at: Date.now() },
     });
     log('=== 자동화 완료 ===');
+    finishJob({ ok: !!(fin && fin.ok), action: job.finalAction });
   } catch (e) {
     log('자동화 오류:', e);
     try { await detachDebugger(tabId); } catch (_) {}
     await sendToTab(tabId, { action: 'PROGRESS', text: '⚠️ 오류: ' + e.message, pct: 100 });
     await chrome.storage.local.set({ lastResult: { ok: false, error: e.message, at: Date.now() } });
+    finishJob({ ok: false, error: e.message });
   }
 }
 

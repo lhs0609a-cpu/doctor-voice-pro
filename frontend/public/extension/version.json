@@ -1,7 +1,7 @@
 {
-  "version": "15.1.0",
-  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v15.1.0.zip",
-  "notes": "v15.1.0 — 실시간 연동 신호등 / 자동 업데이트 알림 강화 / 발행 동선 간소화(로그인 없이 세션 재사용)",
+  "version": "15.2.0",
+  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v15.2.0.zip",
+  "notes": "v15.2.0 — 대량 예약발행(여러 글을 자동 포맷·사진 조합해 네이버 예약발행으로 일괄 등록)",
   "minVersion": "15.0.0",
   "releasedAt": "2026-07-14"
 }
