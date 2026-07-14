@@ -83,9 +83,12 @@ from app.models.reputation import (
     ResponseStyle, CrawlJobStatus, AlertSeverity, SpreadStatus, GuideCategory
 )
 from app.models.media_pool import PoolImage, ImageVariant
+from app.models.publish_queue import PublishBatch, QueuedPost
 
 __all__ = [
     "User",
+    "PublishBatch",
+    "QueuedPost",
     "DoctorProfile",
     "Post",
     "PostVersion",

@@ -10,6 +10,7 @@ from app.api import (
     demo,  # P0: 온보딩 데모 API
     reputation,  # 평판 모니터링
     media_pool,  # 사진 풀 + 이미지 유니크화
+    publish_queue,  # 대량 자동발행 큐
 )
 
 api_router = APIRouter()
@@ -62,3 +63,5 @@ api_router.include_router(demo.router, tags=["demo"])
 api_router.include_router(reputation.router, prefix="/reputation", tags=["reputation"])
 # Media Pool + Image Uniquifier (사진 풀 + 유니크화)
 api_router.include_router(media_pool.router, prefix="/media", tags=["media"])
+# 대량 자동발행 큐
+api_router.include_router(publish_queue.router, prefix="/publish", tags=["publish-queue"])

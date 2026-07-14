@@ -42,6 +42,8 @@ async def lifespan(app: FastAPI):
         )
         # 사진 풀 / 이미지 유니크화 모델
         from app.models.media_pool import PoolImage, ImageVariant
+        # 대량 자동발행 큐 모델
+        from app.models.publish_queue import PublishBatch, QueuedPost
 
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
