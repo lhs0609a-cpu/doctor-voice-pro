@@ -8,6 +8,10 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
+} from '@/components/ui/dialog'
 import { toast } from 'sonner'
 import {
   FileText,
@@ -25,6 +29,8 @@ import {
   FileEdit,
   Zap,
   PlayCircle,
+  Plus,
+  Layers,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { ExtensionStatusBadge, ExtensionStatusCard, EXTENSION_DOWNLOAD_URL } from '@/components/extension-status'
@@ -109,6 +115,10 @@ export function SavedPostsManager() {
   const [publishing, setPublishing] = useState(false)
   const [guideOpen, setGuideOpen] = useState(false)
 
+  // 글 붙여넣어 추가
+  const [addOpen, setAddOpen] = useState(false)
+  const [newText, setNewText] = useState('')
+
   // 저장된 글 로드 (샘플 항상 포함)
   useEffect(() => {
     const load = () => {
@@ -142,6 +152,30 @@ export function SavedPostsManager() {
     localStorage.setItem('saved-posts', JSON.stringify(updated))
     if (selectedPost?.id === id) setSelectedPost(null)
     toast.success('글이 삭제되었습니다')
+  }
+
+  // 붙여넣은 글 저장 (첫 줄 = 제목, 나머지 = 본문)
+  const addPastedPost = () => {
+    const lines = newText.replace(/\r\n/g, '\n').split('\n')
+    const firstIdx = lines.findIndex((l) => l.trim())
+    if (firstIdx < 0) { toast.error('내용을 입력하세요'); return }
+    const title = lines[firstIdx].trim()
+    const body = lines.slice(firstIdx + 1).join('\n').trim()
+    const post: SavedPost = {
+      id: `post-${Date.now()}`,
+      savedAt: new Date().toISOString(),
+      suggested_titles: [title],
+      generated_content: body || title,
+      seo_keywords: [],
+      original_content: '',
+    }
+    const updated = [post, ...savedPosts]
+    setSavedPosts(updated)
+    localStorage.setItem('saved-posts', JSON.stringify(updated))
+    setSelectedPost(post)
+    setNewText('')
+    setAddOpen(false)
+    toast.success('글이 저장되었습니다', { description: '오른쪽에서 사진 추가 후 발행하세요' })
   }
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -231,6 +265,14 @@ export function SavedPostsManager() {
         </div>
         <div className="flex items-center gap-2">
           <ExtensionStatusBadge />
+          <Button onClick={() => setAddOpen(true)} className="gap-2 bg-emerald-600 hover:bg-emerald-700">
+            <Plus className="w-4 h-4" />
+            글 붙여넣어 추가
+          </Button>
+          <Button variant="outline" onClick={() => router.push('/dashboard/bulk')} className="gap-2">
+            <Layers className="w-4 h-4" />
+            대량 발행
+          </Button>
           <Button variant="outline" onClick={() => setGuideOpen(true)} className="gap-2">
             <PlayCircle className="w-4 h-4" />
             발행 가이드
@@ -433,6 +475,36 @@ export function SavedPostsManager() {
           </CardContent>
         </Card>
       </div>
+
+      {/* 글 붙여넣어 추가 */}
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="w-5 h-5 text-emerald-600" /> 글 붙여넣어 추가
+            </DialogTitle>
+            <DialogDescription>
+              다른 곳에서 쓴 글을 붙여넣으세요. <b>첫 줄이 제목</b>, 나머지가 본문이 됩니다.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={newText}
+            onChange={(e) => setNewText(e.target.value)}
+            placeholder={'첫 줄 = 제목\n\n본문 내용을 붙여넣으세요...'}
+            className="min-h-[240px] text-sm"
+            autoFocus
+          />
+          <p className="text-xs text-muted-foreground">
+            여러 글을 한 번에 예약하려면 상단의 <b>대량 발행</b>을 이용하세요.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddOpen(false)}>취소</Button>
+            <Button onClick={addPastedPost} className="bg-emerald-600 hover:bg-emerald-700 gap-2">
+              <CheckCircle2 className="w-4 h-4" /> 저장
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 실시간 발행 가이드 */}
       <PublishGuide
