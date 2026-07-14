@@ -10,3 +10,6 @@ backend/api_key.txt
 # temp/debug artifacts
 temp_api.json
 *.bak
+
+# 확장 서명키(비공개 - 절대 커밋 금지)
+chrome-extension/keys/
