@@ -1,138 +1,94 @@
-// 팝업 스크립트 - 닥터보이스 프로 v11.0 - 단순화 버전
-document.addEventListener('DOMContentLoaded', async () => {
-  const statusIcon = document.getElementById('statusIcon');
-  const statusTitle = document.getElementById('statusTitle');
-  const statusDesc = document.getElementById('statusDesc');
-  const btnPublish = document.getElementById('btnPublish');
-  const btnOpenSite = document.getElementById('btnOpenSite');
-  const postPreview = document.getElementById('postPreview');
-  const postTitle = document.getElementById('postTitle');
-  const postLength = document.getElementById('postLength');
-  const postImages = document.getElementById('postImages');
+// 팝업 - 닥터보이스 프로 v15 · 실시간 연동 신호등 + 자동 업데이트
+const SITE_URL = 'https://doctor-voice-pro-ghwi.vercel.app/dashboard/saved';
 
-  // 저장된 데이터 확인
-  checkPendingPost();
+document.addEventListener('DOMContentLoaded', () => {
+  const VERSION = chrome.runtime.getManifest().version;
+  document.getElementById('verText').textContent = 'v' + VERSION;
 
-  // 발행 버튼 클릭
-  btnPublish.addEventListener('click', async () => {
-    const stored = await chrome.storage.local.get(['pendingPost', 'postOptions']);
-
-    if (!stored.pendingPost) {
-      setStatus('error', '❌', '발행할 글 없음', '웹사이트에서 글을 선택해주세요');
-      return;
-    }
-
-    // 자동 발행 활성화
-    await chrome.storage.local.set({ autoPostEnabled: true });
-
-    // 네이버 블로그 글쓰기 페이지로 이동
-    const tab = await chrome.tabs.create({
-      url: 'https://blog.naver.com/GoBlogWrite.naver',
-      active: true
-    });
-
-    // 탭 ID 저장
-    await chrome.storage.local.set({ blogTabId: tab.id });
-
-    setStatus('ready', '✅', '발행 시작!', '네이버 블로그에서 글이 자동 입력됩니다');
-
-    // 팝업 닫기
-    setTimeout(() => window.close(), 1000);
+  document.getElementById('btnOpenSite').addEventListener('click', () => {
+    chrome.tabs.create({ url: SITE_URL, active: true });
   });
+  document.getElementById('btnRefresh').addEventListener('click', () => refresh(VERSION));
 
-  // 웹사이트 열기 버튼
-  btnOpenSite.addEventListener('click', () => {
-    chrome.tabs.create({
-      url: 'https://doctor-voice-pro-ghwi.vercel.app/dashboard/saved',
-      active: true
-    });
-  });
-
-  // 저장된 발행 데이터 확인
-  async function checkPendingPost() {
-    try {
-      const stored = await chrome.storage.local.get(['pendingPost', 'postOptions']);
-
-      if (stored.pendingPost && stored.pendingPost.title) {
-        // 발행할 글이 있음
-        const post = stored.pendingPost;
-
-        postPreview.style.display = 'block';
-        postTitle.textContent = post.title || '(제목 없음)';
-        postLength.textContent = (post.content?.length || 0) + '자';
-        postImages.textContent = '이미지 ' + (post.imageUrls?.length || post.images?.length || 0) + '개';
-
-        setStatus('ready', '✅', '발행 준비 완료!', '아래 버튼을 클릭하여 발행하세요');
-        btnPublish.disabled = false;
-      } else {
-        // 발행할 글 없음 - 웹사이트에서 localStorage 확인
-        await checkWebsiteData();
-      }
-    } catch (error) {
-      console.error('데이터 확인 오류:', error);
-      setStatus('error', '⚠️', '오류 발생', '다시 시도해주세요');
-    }
-  }
-
-  // 웹사이트의 localStorage에서 데이터 가져오기
-  async function checkWebsiteData() {
-    try {
-      const tabs = await chrome.tabs.query({});
-
-      // 닥터보이스 프로 탭 찾기
-      const doctorVoiceTab = tabs.find(tab =>
-        tab.url && (
-          tab.url.includes('localhost') ||
-          tab.url.includes('vercel.app') ||
-          tab.url.includes('doctor-voice')
-        )
-      );
-
-      if (!doctorVoiceTab) {
-        setStatus('waiting', '⏳', '대기 중', '닥터보이스 프로 웹사이트를 열어주세요');
-        return;
-      }
-
-      // localStorage에서 발행 대기 데이터 확인
-      const result = await chrome.scripting.executeScript({
-        target: { tabId: doctorVoiceTab.id },
-        func: () => {
-          const pending = localStorage.getItem('doctorvoice-pending-post');
-          return pending ? JSON.parse(pending) : null;
-        }
-      });
-
-      const pendingPost = result?.[0]?.result;
-
-      if (pendingPost && pendingPost.title) {
-        // 데이터를 chrome.storage에 저장
-        await chrome.storage.local.set({
-          pendingPost: pendingPost,
-          postOptions: { useQuote: true, useHighlight: true, useImages: true }
-        });
-
-        postPreview.style.display = 'block';
-        postTitle.textContent = pendingPost.title || '(제목 없음)';
-        postLength.textContent = (pendingPost.content?.length || 0) + '자';
-        postImages.textContent = '이미지 ' + (pendingPost.imageUrls?.length || pendingPost.images?.length || 0) + '개';
-
-        setStatus('ready', '✅', '발행 준비 완료!', '아래 버튼을 클릭하여 발행하세요');
-        btnPublish.disabled = false;
-      } else {
-        setStatus('waiting', '⏳', '대기 중', '웹사이트에서 "네이버 블로그에 발행" 클릭');
-      }
-
-    } catch (error) {
-      console.log('웹사이트 데이터 확인 실패:', error);
-      setStatus('waiting', '⏳', '대기 중', '웹사이트에서 글을 선택해주세요');
-    }
-  }
-
-  // 상태 업데이트
-  function setStatus(type, icon, title, desc) {
-    statusIcon.className = 'status-icon ' + type;
-    statusIcon.textContent = icon;
-    statusTitle.textContent = title;
-    statusDesc.innerHTML = desc;
-  }
+  refresh(VERSION);
 });
+
+async function refresh(VERSION) {
+  const site = await checkSiteTab();
+  const upd = await checkUpdate();
+  render(VERSION, site, upd);
+}
+
+// 닥터보이스 웹사이트 탭이 열려 있는가
+async function checkSiteTab() {
+  try {
+    const tabs = await chrome.tabs.query({});
+    const found = tabs.find((t) => t.url && (
+      t.url.includes('doctor-voice-pro') || t.url.includes('vercel.app') || t.url.includes('localhost')
+    ));
+    return !!found;
+  } catch (e) { return false; }
+}
+
+// 업데이트 정보 (캐시 우선, 없으면 즉시 조회)
+async function checkUpdate() {
+  try {
+    const stored = await chrome.storage.local.get('updateInfo');
+    let info = stored.updateInfo;
+    if (!info || !info.checkedAt || Date.now() - info.checkedAt > 30 * 60 * 1000) {
+      // background 에 최신 확인 요청
+      info = await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ action: 'CHECK_UPDATE' }, (res) => {
+          if (chrome.runtime.lastError || !res) resolve(info || {});
+          else resolve(res);
+        });
+      });
+    }
+    return info || {};
+  } catch (e) { return {}; }
+}
+
+function setDot(id, cls) { document.getElementById(id).className = 'dot ' + cls; }
+function setVal(id, txt) { document.getElementById(id).textContent = txt; }
+
+function render(VERSION, siteConnected, upd) {
+  const updateAvailable = !!upd.updateAvailable;
+  const latest = upd.latest || VERSION;
+
+  // 체크리스트
+  setDot('dotExt', 'ok'); setVal('valExt', '정상');
+  setDot('dotSite', siteConnected ? 'ok' : 'off');
+  setVal('valSite', siteConnected ? '연결됨' : '열려 있지 않음');
+  setDot('dotVer', updateAvailable ? 'warn' : 'ok');
+  setVal('valVer', updateAvailable ? 'v' + latest + ' 있음' : '최신 (v' + VERSION + ')');
+
+  // 신호등 요약
+  const light = document.getElementById('beaconLight');
+  const title = document.getElementById('beaconTitle');
+  const desc = document.getElementById('beaconDesc');
+
+  if (updateAvailable) {
+    light.className = 'light amber';
+    title.textContent = '업데이트가 필요합니다';
+    desc.textContent = 'v' + VERSION + ' → v' + latest + ' · 아래에서 새 버전을 받으세요';
+  } else if (siteConnected) {
+    light.className = 'light green';
+    title.textContent = '실시간 연동 중';
+    desc.textContent = '발행 준비 완료 — 웹에서 발행 버튼을 누르세요';
+  } else {
+    light.className = 'light amber';
+    title.textContent = '웹사이트를 열어주세요';
+    desc.textContent = '닥터보이스 프로에 접속하면 자동 연동됩니다';
+  }
+
+  // 업데이트 카드
+  const card = document.getElementById('updateCard');
+  if (updateAvailable) {
+    card.classList.add('show');
+    document.getElementById('updateNotes').textContent = upd.notes || '새로운 기능과 안정성 개선이 포함되어 있습니다.';
+    const btn = document.getElementById('btnUpdate');
+    if (upd.downloadUrl) btn.href = upd.downloadUrl;
+  } else {
+    card.classList.remove('show');
+  }
+}

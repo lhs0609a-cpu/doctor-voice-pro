@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useAuthStore } from '@/store/auth'
 import { Button } from '@/components/ui/button'
 import { ThemeToggle } from '@/components/theme-toggle'
+import { ExtensionStatusBadge } from '@/components/extension-status'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -442,6 +443,7 @@ export function DashboardNav() {
         </div>
 
         <div className="flex items-center gap-3">
+          <ExtensionStatusBadge className="hidden md:inline-flex" />
           <div className="text-sm text-muted-foreground hidden sm:block">
             {user?.name || user?.email}
           </div>

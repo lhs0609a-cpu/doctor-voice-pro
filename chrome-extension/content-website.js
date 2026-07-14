@@ -8,7 +8,7 @@
   const TAG = '[닥터보이스:web]';
   const EXTENSION_ID = chrome.runtime.id;
 
-  // ---------- 1) 확장 ID 노출 ----------
+  // ---------- 1) 확장 ID 노출 + 준비 신호 ----------
   function exposeExtensionId() {
     try {
       localStorage.setItem('doctorvoice-extension-id', EXTENSION_ID);
@@ -23,6 +23,24 @@
       document.body.appendChild(indicator);
     }
     console.log(TAG, '확장 연결됨, ID:', EXTENSION_ID);
+
+    // 웹 신호등이 즉시 재확인하도록 준비 이벤트 발사 (버전 포함)
+    try {
+      chrome.runtime.sendMessage({ action: 'GET_VERSION' }, (res) => {
+        const version = (res && res.version) || null;
+        if (version) {
+          try { localStorage.setItem('doctorvoice-extension-version', version); } catch (e) {}
+          if (indicator) indicator.dataset.version = version;
+        }
+        window.dispatchEvent(new CustomEvent('doctorvoice-extension-ready', {
+          detail: { extensionId: EXTENSION_ID, version },
+        }));
+      });
+    } catch (e) {
+      window.dispatchEvent(new CustomEvent('doctorvoice-extension-ready', {
+        detail: { extensionId: EXTENSION_ID, version: null },
+      }));
+    }
   }
 
   // ---------- 2) 업데이트 팝업 ----------

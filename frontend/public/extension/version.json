@@ -1,7 +1,7 @@
 {
-  "version": "15.0.1",
-  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v15.0.1.zip",
-  "notes": "v15.0.1 — 로그인 후 글쓰기 자동복귀 / 예약발행 캘린더 정확 선택 / 캡차 감지·핸드오프",
-  "minVersion": "14.0.0",
-  "releasedAt": "2026-07-13"
+  "version": "15.1.0",
+  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v15.1.0.zip",
+  "notes": "v15.1.0 — 실시간 연동 신호등 / 자동 업데이트 알림 강화 / 발행 동선 간소화(로그인 없이 세션 재사용)",
+  "minVersion": "15.0.0",
+  "releasedAt": "2026-07-14"
 }

@@ -16,452 +16,162 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
-import { Send, Upload, Image as ImageIcon, X, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react'
+import { Send, Upload, Image as ImageIcon, X, Loader2, FileEdit, Zap, Clock } from 'lucide-react'
+import { ExtensionStatusCard } from '@/components/extension-status'
+import { useExtensionStatus } from '@/lib/use-extension-status'
 import type { Post } from '@/types'
 
-// 확장 프로그램 ID (manifest.json의 key로 고정됨)
-// 실제 배포 시 확장 프로그램 ID로 교체 필요
-const EXTENSION_IDS = [
-  'YOUR_EXTENSION_ID_HERE', // 실제 확장 프로그램 ID
-  // 개발 환경에서는 chrome://extensions에서 확인
+type FinalAction = 'draft' | 'publishNow' | 'schedule'
+type OpenType = 'public' | 'neighbor' | 'both' | 'private'
+
+const ACTIONS: { key: FinalAction; label: string; icon: any }[] = [
+  { key: 'draft', label: '임시저장', icon: FileEdit },
+  { key: 'publishNow', label: '즉시 발행', icon: Zap },
+  { key: 'schedule', label: '예약 발행', icon: Clock },
 ]
+
+function sendMessageToExtension(extId: string, message: any): Promise<any> {
+  return new Promise((resolve, reject) => {
+    if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) {
+      reject(new Error('Chrome API를 사용할 수 없습니다')); return
+    }
+    try {
+      chrome.runtime.sendMessage(extId, message, (res: any) => {
+        if (chrome.runtime.lastError) reject(chrome.runtime.lastError)
+        else resolve(res)
+      })
+    } catch (e) { reject(e) }
+  })
+}
+
+// 이미지 → EXIF 제거된 base64
+function imageToCleanBase64(file: File, maxWidth = 1280, quality = 0.9): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new window.Image()
+    img.onload = () => {
+      let w = img.width, h = img.height
+      if (w > maxWidth) { h = Math.round((h * maxWidth) / w); w = maxWidth }
+      const canvas = document.createElement('canvas')
+      canvas.width = w; canvas.height = h
+      const ctx = canvas.getContext('2d')
+      if (!ctx) { reject(new Error('canvas 미지원')); return }
+      ctx.drawImage(img, 0, 0, w, h)
+      resolve(canvas.toDataURL('image/jpeg', quality))
+    }
+    img.onerror = reject
+    img.src = URL.createObjectURL(file)
+  })
+}
 
 interface OneClickPublishProps {
   post: Post
 }
 
 export function OneClickPublish({ post }: OneClickPublishProps) {
+  const ext = useExtensionStatus()
   const [open, setOpen] = useState(false)
-  const [naverId, setNaverId] = useState('')
-  const [naverPw, setNaverPw] = useState('')
-  const [saveLogin, setSaveLogin] = useState(true)
   const [images, setImages] = useState<{ file: File; preview: string }[]>([])
-  // 발행 방식 / 공개범위 / 예약시간 (확장 v15 job.finalAction·schedule·options 로 전달)
-  const [finalAction, setFinalAction] = useState<'draft' | 'publishNow' | 'schedule'>('draft')
-  const [openType, setOpenType] = useState<'public' | 'neighbor' | 'both' | 'private'>('public')
+  const [finalAction, setFinalAction] = useState<FinalAction>('publishNow')
+  const [openType, setOpenType] = useState<OpenType>('public')
   const [scheduleDate, setScheduleDate] = useState('')
   const [scheduleTime, setScheduleTime] = useState('')
   const [publishing, setPublishing] = useState(false)
-  const [extensionInstalled, setExtensionInstalled] = useState<boolean | null>(null)
-  const [extensionId, setExtensionId] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // 저장된 로그인 정보 불러오기
-  const loadSavedCredentials = () => {
-    try {
-      const saved = localStorage.getItem('naver-credentials')
-      if (saved) {
-        const { id, pw } = JSON.parse(saved)
-        setNaverId(id || '')
-        setNaverPw(pw || '')
-      }
-    } catch (e) {
-      console.error('로그인 정보 로드 실패:', e)
-    }
-  }
-
-  // 확장 프로그램 설치 확인
-  const checkExtension = async () => {
-    // localStorage에서 저장된 확장 프로그램 ID 확인
-    const savedExtensionId = localStorage.getItem('doctorvoice-extension-id')
-    if (savedExtensionId) {
-      try {
-        const response = await sendMessageToExtension(savedExtensionId, { action: 'PING' })
-        if (response?.success) {
-          setExtensionInstalled(true)
-          setExtensionId(savedExtensionId)
-          return
-        }
-      } catch (e) {
-        // 저장된 ID가 더 이상 유효하지 않음
-        localStorage.removeItem('doctorvoice-extension-id')
-      }
-    }
-
-    // 알려진 확장 프로그램 ID들 시도
-    for (const id of EXTENSION_IDS) {
-      if (id === 'YOUR_EXTENSION_ID_HERE') continue
-      try {
-        const response = await sendMessageToExtension(id, { action: 'PING' })
-        if (response?.success) {
-          setExtensionInstalled(true)
-          setExtensionId(id)
-          localStorage.setItem('doctorvoice-extension-id', id)
-          return
-        }
-      } catch (e) {
-        continue
-      }
-    }
-
-    setExtensionInstalled(false)
-  }
-
-  // 확장 프로그램에 메시지 보내기
-  const sendMessageToExtension = (extId: string, message: any): Promise<any> => {
-    return new Promise((resolve, reject) => {
-      if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) {
-        reject(new Error('Chrome API not available'))
-        return
-      }
-
-      try {
-        chrome.runtime.sendMessage(extId, message, (response: any) => {
-          if (chrome.runtime.lastError) {
-            reject(chrome.runtime.lastError)
-          } else {
-            resolve(response)
-          }
-        })
-      } catch (e) {
-        reject(e)
-      }
-    })
-  }
-
-  // 모달 열기
-  const handleOpen = () => {
-    loadSavedCredentials()
-    checkExtension()
-    setOpen(true)
-  }
-
-  // 이미지 업로드
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || [])
-    const imageFiles = files.filter(f => f.type.startsWith('image/'))
-
-    const newImages = imageFiles.map(file => ({
-      file,
-      preview: URL.createObjectURL(file),
-    }))
-
-    setImages(prev => [...prev, ...newImages])
+    const files = Array.from(e.target.files || []).filter((f) => f.type.startsWith('image/'))
+    setImages((prev) => [...prev, ...files.map((file) => ({ file, preview: URL.createObjectURL(file) }))])
   }
-
-  // 이미지 제거
   const removeImage = (index: number) => {
-    setImages(prev => {
-      const newImages = [...prev]
-      URL.revokeObjectURL(newImages[index].preview)
-      newImages.splice(index, 1)
-      return newImages
+    setImages((prev) => {
+      URL.revokeObjectURL(prev[index].preview)
+      return prev.filter((_, i) => i !== index)
     })
   }
 
-  // 이미지를 Base64로 변환 (압축 포함)
-  const imageToBase64 = (file: File, maxWidth = 1200, quality = 0.8): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      // 이미지가 1MB 이하면 압축 없이 변환
-      if (file.size < 1024 * 1024) {
-        const reader = new FileReader()
-        reader.onload = () => resolve(reader.result as string)
-        reader.onerror = reject
-        reader.readAsDataURL(file)
-        return
-      }
-
-      // 큰 이미지는 압축
-      const img = new window.Image()
-      const canvas = document.createElement('canvas')
-      const ctx = canvas.getContext('2d')
-
-      img.onload = () => {
-        let width = img.width
-        let height = img.height
-
-        // 최대 너비 제한
-        if (width > maxWidth) {
-          height = (height * maxWidth) / width
-          width = maxWidth
-        }
-
-        canvas.width = width
-        canvas.height = height
-        ctx?.drawImage(img, 0, 0, width, height)
-
-        const compressedBase64 = canvas.toDataURL('image/jpeg', quality)
-        resolve(compressedBase64)
-      }
-
-      img.onerror = reject
-      img.src = URL.createObjectURL(file)
-    })
-  }
-
-  // 원클릭 발행 - 버튼 하나로 전체 자동화
-  const handleOneClickPublish = async () => {
-    if (!naverId || !naverPw) {
-      toast.error('네이버 아이디와 비밀번호를 입력하세요')
+  const publish = async () => {
+    if (!ext.connected || !ext.extensionId) {
+      toast.error('확장 프로그램이 연결되지 않았습니다')
       return
     }
-
-    // 예약발행 시간 검증
     let scheduleISO: string | null = null
     if (finalAction === 'schedule') {
-      if (!scheduleDate || !scheduleTime) {
-        toast.error('예약 날짜와 시간을 선택하세요')
-        return
-      }
-      // 로컬 기준 datetime (확장에서 new Date()로 파싱, 분은 10분 단위로 내림 처리됨)
+      if (!scheduleDate || !scheduleTime) { toast.error('예약 날짜와 시간을 선택하세요'); return }
       const dt = new Date(`${scheduleDate}T${scheduleTime}`)
-      if (isNaN(dt.getTime())) {
-        toast.error('예약 시간 형식이 올바르지 않습니다')
-        return
-      }
-      if (dt.getTime() <= Date.now()) {
-        toast.error('예약 시간은 현재 시각 이후여야 합니다')
-        return
-      }
+      if (isNaN(dt.getTime()) || dt.getTime() <= Date.now()) { toast.error('예약 시간은 현재 이후여야 합니다'); return }
       scheduleISO = `${scheduleDate}T${scheduleTime}`
     }
 
     setPublishing(true)
-    const loadingToast = toast.loading('발행 준비 중...')
-
+    const t = toast.loading('발행 준비 중...')
     try {
-      // 1. 로그인 정보 저장
-      if (saveLogin) {
-        localStorage.setItem('naver-credentials', JSON.stringify({ id: naverId, pw: naverPw }))
+      const imageList: string[] = []
+      if (images.length) {
+        toast.loading('사진 처리 중...', { id: t })
+        for (const img of images) imageList.push(await imageToCleanBase64(img.file))
       }
-
-      // 2. 이미지 Base64 변환
-      toast.loading('이미지 변환 중...', { id: loadingToast })
-      const imageBase64List: string[] = []
-      for (const img of images) {
-        const base64 = await imageToBase64(img.file)
-        imageBase64List.push(base64)
-      }
-
-      // 3. 포스트 데이터 준비 (확장 v15 normalizeJob 규격: finalAction·schedule·options 포함)
-      const postData = {
+      const job = {
         title: post.title || post.suggested_titles?.[0] || '',
         content: post.generated_content || '',
-        images: imageBase64List,
-        keywords: post.seo_keywords || [],
-        hashtags: post.hashtags || [],
-        finalAction, // 'draft' | 'publishNow' | 'schedule'
+        images: imageList,
+        tags: post.seo_keywords || post.hashtags || [],
+        options: { openType, search: true },
+        finalAction,
         schedule: scheduleISO ? { datetime: scheduleISO } : null,
-        options: {
-          openType, // 'public' | 'neighbor' | 'both' | 'private'
-          search: true,
-        },
       }
+      toast.loading('네이버 블로그로 전송 중...', { id: t })
+      const res = await sendMessageToExtension(ext.extensionId, { action: 'SUBMIT_JOB', job })
+      if (!res?.success) throw new Error(res?.error || '발행 전송 실패')
 
-      // 4. 확장 프로그램으로 데이터 전송 및 발행 시작
-      toast.loading('네이버 블로그 발행 시작...', { id: loadingToast })
-
-      if (extensionId) {
-        // 확장 프로그램이 설치된 경우 - 직접 통신
-        const response = await sendMessageToExtension(extensionId, {
-          action: 'ONE_CLICK_PUBLISH',
-          postData, // finalAction·schedule·options 포함 (확장 normalizeJob 규격)
-          credentials: { id: naverId, pw: naverPw },
-        })
-
-        if (response?.success) {
-          const doneMsg =
-            finalAction === 'draft'
-              ? { title: '임시저장 시작됨!', desc: '새 탭에서 작성 후 임시저장됩니다' }
-              : finalAction === 'schedule'
-                ? { title: '예약발행 시작됨!', desc: `${scheduleDate} ${scheduleTime} 예약으로 등록됩니다` }
-                : { title: '발행 시작됨!', desc: '새 탭에서 자동으로 글이 작성·발행됩니다' }
-          toast.success(doneMsg.title, {
-            id: loadingToast,
-            description: doneMsg.desc,
-          })
-          setOpen(false)
-        } else {
-          throw new Error(response?.error || '발행 시작 실패')
-        }
-      } else {
-        // 확장 프로그램이 없는 경우 - localStorage 방식 (팝업 필요)
-        const existingPosts = JSON.parse(localStorage.getItem('saved-posts') || '[]')
-        const postToSave = {
-          id: post.id || `post-${Date.now()}`,
-          title: postData.title,
-          content: postData.content,
-          generated_content: postData.content,
-          images: imageBase64List,
-          savedAt: Date.now(),
-          pendingPublish: true,
-          finalAction,
-          schedule: scheduleISO ? { datetime: scheduleISO } : null,
-          options: { openType, search: true },
-        }
-
-        const postIndex = existingPosts.findIndex((p: any) => p.id === postToSave.id)
-        if (postIndex >= 0) {
-          existingPosts[postIndex] = postToSave
-        } else {
-          existingPosts.unshift(postToSave)
-        }
-        localStorage.setItem('saved-posts', JSON.stringify(existingPosts))
-
-        toast.success('발행 준비 완료!', {
-          id: loadingToast,
-          description: '확장 프로그램 아이콘을 클릭하여 발행하세요',
-        })
-        setOpen(false)
-      }
-
-    } catch (error: any) {
-      console.error('발행 실패:', error)
-      toast.error('발행 실패', {
-        id: loadingToast,
-        description: error.message || '다시 시도해주세요',
-      })
+      const msg =
+        finalAction === 'draft' ? { title: '임시저장을 시작했어요', desc: '새 탭에서 초안이 저장됩니다' }
+          : finalAction === 'schedule' ? { title: '예약 발행을 등록했어요', desc: `${scheduleDate} ${scheduleTime} 예약` }
+            : { title: '발행을 시작했어요', desc: '새 탭에서 자동으로 작성·발행됩니다' }
+      toast.success(msg.title, { id: t, description: msg.desc })
+      setOpen(false)
+    } catch (e: any) {
+      toast.error('발행 실패', { id: t, description: e.message || '다시 시도해주세요' })
     } finally {
       setPublishing(false)
     }
   }
 
-  // 확장 프로그램 ID 직접 입력
-  const handleSetExtensionId = async () => {
-    const id = prompt('확장 프로그램 ID를 입력하세요 (chrome://extensions에서 확인)')
-    if (id) {
-      try {
-        const response = await sendMessageToExtension(id, { action: 'PING' })
-        if (response?.success) {
-          setExtensionInstalled(true)
-          setExtensionId(id)
-          localStorage.setItem('doctorvoice-extension-id', id)
-          toast.success('확장 프로그램 연결 성공!')
-        } else {
-          toast.error('확장 프로그램을 찾을 수 없습니다')
-        }
-      } catch (e) {
-        toast.error('확장 프로그램 연결 실패')
-      }
-    }
-  }
-
   return (
     <>
-      <Button
-        className="w-full bg-green-600 hover:bg-green-700 gap-2"
-        size="lg"
-        onClick={handleOpen}
-      >
+      <Button className="w-full bg-emerald-600 hover:bg-emerald-700 gap-2" size="lg" onClick={() => setOpen(true)}>
         <Send className="h-4 w-4" />
         네이버 블로그 발행
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Send className="h-5 w-5 text-green-600" />
-              네이버 블로그 원클릭 발행
+              <Send className="h-5 w-5 text-emerald-600" />
+              네이버 블로그 발행
             </DialogTitle>
-            <DialogDescription>
-              이미지 추가 후 발행 버튼 하나로 자동으로 글이 작성됩니다
-            </DialogDescription>
+            <DialogDescription>사진과 발행 방식만 고르면 자동으로 작성됩니다</DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-4">
-            {/* 확장 프로그램 상태 */}
-            {extensionInstalled === false && (
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                <div className="flex items-start gap-2">
-                  <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                  <div className="text-sm">
-                    <p className="font-medium text-amber-800">확장 프로그램 연결 필요</p>
-                    <p className="text-amber-600 mt-1">
-                      자동 발행을 위해 확장 프로그램을 설치하고 ID를 연결하세요
-                    </p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-2"
-                      onClick={handleSetExtensionId}
-                    >
-                      확장 프로그램 ID 입력
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            )}
+          <div className="space-y-4 py-2">
+            {/* 실시간 연동 신호등 */}
+            <ExtensionStatusCard />
 
-            {extensionInstalled === true && (
-              <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                <div className="flex items-center gap-2 text-green-700">
-                  <CheckCircle2 className="h-5 w-5" />
-                  <span className="text-sm font-medium">확장 프로그램 연결됨</span>
-                </div>
-              </div>
-            )}
-
-            {/* 네이버 로그인 정보 */}
-            <div className="space-y-3">
-              <div className="space-y-2">
-                <Label>네이버 아이디</Label>
-                <Input
-                  placeholder="네이버 아이디"
-                  value={naverId}
-                  onChange={(e) => setNaverId(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>비밀번호</Label>
-                <Input
-                  type="password"
-                  placeholder="비밀번호"
-                  value={naverPw}
-                  onChange={(e) => setNaverPw(e.target.value)}
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="saveLogin"
-                  checked={saveLogin}
-                  onChange={(e) => setSaveLogin(e.target.checked)}
-                  className="rounded"
-                />
-                <Label htmlFor="saveLogin" className="text-sm cursor-pointer">
-                  로그인 정보 저장
-                </Label>
-              </div>
-            </div>
-
-            {/* 이미지 업로드 */}
+            {/* 이미지 */}
             <div className="space-y-2">
-              <Label className="flex items-center gap-2">
-                <ImageIcon className="h-4 w-4" />
-                이미지 추가 (선택)
-              </Label>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept="image/*"
-                onChange={handleImageUpload}
-                className="hidden"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <Upload className="h-4 w-4 mr-2" />
-                이미지 업로드
+              <Label className="flex items-center gap-2"><ImageIcon className="h-4 w-4" />사진 추가 (선택)</Label>
+              <input ref={fileInputRef} type="file" multiple accept="image/*" onChange={handleImageUpload} className="hidden" />
+              <Button type="button" variant="outline" className="w-full" onClick={() => fileInputRef.current?.click()}>
+                <Upload className="h-4 w-4 mr-2" />사진 선택 (촬영정보 자동 제거)
               </Button>
-
               {images.length > 0 && (
                 <div className="grid grid-cols-4 gap-2 mt-2">
                   {images.map((img, index) => (
                     <div key={index} className="relative group">
-                      <img
-                        src={img.preview}
-                        alt=""
-                        className="w-full h-16 object-cover rounded border"
-                      />
-                      <button
-                        onClick={() => removeImage(index)}
-                        className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={img.preview} alt="" className="w-full h-16 object-cover rounded border" />
+                      <button onClick={() => removeImage(index)}
+                        className="absolute -top-1 -right-1 bg-rose-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition">
                         <X className="h-3 w-3" />
                       </button>
                     </div>
@@ -472,58 +182,36 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
 
             {/* 발행 방식 */}
             <div className="space-y-2">
-              <Label className="flex items-center gap-2">
-                <Send className="h-4 w-4" />
-                발행 방식
-              </Label>
+              <Label>발행 방식</Label>
               <div className="grid grid-cols-3 gap-2">
-                {([
-                  { key: 'draft', label: '임시저장' },
-                  { key: 'publishNow', label: '즉시발행' },
-                  { key: 'schedule', label: '예약발행' },
-                ] as const).map((opt) => (
-                  <Button
-                    key={opt.key}
-                    type="button"
-                    variant={finalAction === opt.key ? 'default' : 'outline'}
-                    size="sm"
-                    className={finalAction === opt.key ? 'bg-green-600 hover:bg-green-700' : ''}
-                    onClick={() => setFinalAction(opt.key)}
-                  >
-                    {opt.label}
-                  </Button>
-                ))}
+                {ACTIONS.map((opt) => {
+                  const Icon = opt.icon
+                  const active = finalAction === opt.key
+                  return (
+                    <button key={opt.key} onClick={() => setFinalAction(opt.key)}
+                      className={`flex flex-col items-center gap-1 rounded-lg border p-2.5 transition ${
+                        active ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500' : 'border-gray-200 hover:border-emerald-300'
+                      }`}>
+                      <Icon className={`w-4 h-4 ${active ? 'text-emerald-600' : 'text-gray-400'}`} />
+                      <span className="text-xs font-medium">{opt.label}</span>
+                    </button>
+                  )
+                })}
               </div>
 
-              {/* 예약발행 시간 (분은 10분 단위) */}
               {finalAction === 'schedule' && (
                 <div className="grid grid-cols-2 gap-2 pt-1">
-                  <Input
-                    type="date"
-                    value={scheduleDate}
-                    onChange={(e) => setScheduleDate(e.target.value)}
-                  />
-                  <Input
-                    type="time"
-                    step={600}
-                    value={scheduleTime}
-                    onChange={(e) => setScheduleTime(e.target.value)}
-                  />
-                  <p className="col-span-2 text-[11px] text-gray-500">
-                    ※ 네이버 예약은 10분 단위만 가능 — 분은 자동으로 내림 처리됩니다
-                  </p>
+                  <Input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} />
+                  <Input type="time" step={600} value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)} />
+                  <p className="col-span-2 text-[11px] text-gray-500">※ 네이버 예약은 10분 단위 — 분은 자동 내림</p>
                 </div>
               )}
 
-              {/* 공개 범위 (발행 계열에서만) */}
               {finalAction !== 'draft' && (
                 <div className="pt-1">
                   <Label className="text-xs text-gray-500">공개 범위</Label>
-                  <select
-                    value={openType}
-                    onChange={(e) => setOpenType(e.target.value as typeof openType)}
-                    className="mt-1 w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
-                  >
+                  <select value={openType} onChange={(e) => setOpenType(e.target.value as OpenType)}
+                    className="mt-1 w-full h-9 rounded-md border border-input bg-background px-3 text-sm">
                     <option value="public">전체 공개</option>
                     <option value="neighbor">이웃 공개</option>
                     <option value="both">서로이웃 공개</option>
@@ -533,35 +221,25 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
               )}
             </div>
 
-            {/* 발행할 글 미리보기 */}
+            {/* 글 미리보기 */}
             <div className="p-3 bg-gray-50 rounded-lg space-y-1">
-              <p className="text-sm font-medium truncate">
-                {post.title || post.suggested_titles?.[0] || '제목 없음'}
-              </p>
-              <p className="text-xs text-gray-500">
-                {(post.generated_content || '').slice(0, 100)}...
-              </p>
+              <p className="text-sm font-medium truncate">{post.title || post.suggested_titles?.[0] || '제목 없음'}</p>
+              <p className="text-xs text-gray-500">{(post.generated_content || '').slice(0, 100)}...</p>
             </div>
+
+            <p className="text-[11px] text-muted-foreground text-center">
+              브라우저에 네이버가 로그인되어 있어야 합니다(비밀번호 저장 안 함). 미로그인 시 로그인 창이 열립니다.
+            </p>
           </div>
 
           <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setOpen(false)}>
-              취소
-            </Button>
-            <Button
-              className="bg-green-600 hover:bg-green-700 gap-2"
-              onClick={handleOneClickPublish}
-              disabled={publishing || !naverId || !naverPw}
-            >
+            <Button variant="outline" onClick={() => setOpen(false)}>취소</Button>
+            <Button className="bg-emerald-600 hover:bg-emerald-700 gap-2" onClick={publish} disabled={publishing || !ext.connected}>
               {publishing ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  발행 중...
-                </>
+                <><Loader2 className="h-4 w-4 animate-spin" />발행 중...</>
               ) : (
-                <>
-                  <Send className="h-4 w-4" />
-                  {finalAction === 'draft' ? '임시저장' : finalAction === 'schedule' ? '예약발행' : '즉시발행'}
+                <><Send className="h-4 w-4" />
+                  {finalAction === 'draft' ? '임시저장' : finalAction === 'schedule' ? '예약 발행' : '지금 발행'}
                 </>
               )}
             </Button>

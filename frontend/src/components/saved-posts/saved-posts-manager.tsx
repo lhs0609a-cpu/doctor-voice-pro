@@ -6,41 +6,30 @@ declare const chrome: any
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
 import {
   FileText,
-  Download,
   Trash2,
-  Image,
-  Upload,
+  Image as ImageIcon,
   Sparkles,
-  Eye,
   Calendar,
-  Globe,
-  ExternalLink,
   Send,
   Edit3,
   Loader2,
   CheckCircle2,
-  AlertCircle,
   Database,
-  Cloud,
+  X,
+  Clock,
+  FileEdit,
+  Zap,
+  PlayCircle,
 } from 'lucide-react'
-import { imagesAPI } from '@/lib/api'
 import { useRouter } from 'next/navigation'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '@/components/ui/dialog'
+import { ExtensionStatusBadge, ExtensionStatusCard, EXTENSION_DOWNLOAD_URL } from '@/components/extension-status'
+import { useExtensionStatus } from '@/lib/use-extension-status'
 import { PublishGuide } from './publish-guide'
-import { HelpCircle, PlayCircle } from 'lucide-react'
 import type { SavedPost } from '@/types'
 
 // 샘플 글 (항상 유지)
@@ -52,1138 +41,437 @@ const SAMPLE_POST: SavedPost = {
 
 오늘은 정기 검진의 중요성에 대해 이야기해 볼까 합니다. 많은 분들이 "나는 건강하니까 괜찮아"라고 생각하시지만, 사실 대부분의 질병은 초기에 증상이 없는 경우가 많습니다.
 
-특히 고혈압, 당뇨, 암 같은 질환들은 초기에 발견하면 치료가 훨씬 쉽고, 완치율도 높아집니다. 하지만 증상이 나타난 후에 병원을 찾으시면 이미 병이 상당히 진행된 경우가 많죠.
-
-정기 검진을 통해 확인할 수 있는 주요 항목들:
-- 혈압 및 혈당 수치
-- 콜레스테롤 수치
-- 간 기능 검사
-- 신장 기능 검사
-- 암 표지자 검사
+특히 고혈압, 당뇨, 암 같은 질환들은 초기에 발견하면 치료가 훨씬 쉽고, 완치율도 높아집니다.
 
 40대 이상이시라면 최소 1년에 한 번, 50대 이상이시라면 6개월에 한 번은 검진을 받으시는 것을 권장드립니다.
-
-건강은 잃고 나서야 그 소중함을 알게 됩니다. 지금 바로 가까운 병원에서 검진 예약을 해보시는 건 어떨까요?
 
 여러분의 건강한 내일을 응원합니다!`,
   seo_keywords: ['정기검진', '건강검진', '예방의학', '건강관리', '암검진'],
   original_content: '',
 }
 
+type FinalAction = 'draft' | 'publishNow' | 'schedule'
+type OpenType = 'public' | 'neighbor' | 'both' | 'private'
+
+const ACTION_OPTIONS: { key: FinalAction; label: string; desc: string; icon: any }[] = [
+  { key: 'draft', label: '임시저장', desc: '네이버에 초안으로 저장', icon: FileEdit },
+  { key: 'publishNow', label: '즉시 발행', desc: '지금 바로 공개 발행', icon: Zap },
+  { key: 'schedule', label: '예약 발행', desc: '원하는 시간에 자동 발행', icon: Clock },
+]
+
+// 확장 프로그램에 메시지 (externally_connectable)
+function sendMessageToExtension(extId: string, message: any): Promise<any> {
+  return new Promise((resolve, reject) => {
+    if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) {
+      reject(new Error('Chrome API를 사용할 수 없습니다')); return
+    }
+    try {
+      chrome.runtime.sendMessage(extId, message, (res: any) => {
+        if (chrome.runtime.lastError) reject(chrome.runtime.lastError)
+        else resolve(res)
+      })
+    } catch (e) { reject(e) }
+  })
+}
+
+// 이미지 → EXIF 제거된 base64 (canvas 재인코딩)
+function imageToCleanBase64(file: File, maxWidth = 1280, quality = 0.9): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new window.Image()
+    img.onload = () => {
+      let w = img.width, h = img.height
+      if (w > maxWidth) { h = Math.round((h * maxWidth) / w); w = maxWidth }
+      const canvas = document.createElement('canvas')
+      canvas.width = w; canvas.height = h
+      const ctx = canvas.getContext('2d')
+      if (!ctx) { reject(new Error('canvas 미지원')); return }
+      ctx.drawImage(img, 0, 0, w, h)
+      resolve(canvas.toDataURL('image/jpeg', quality)) // 재인코딩으로 메타데이터 제거
+    }
+    img.onerror = reject
+    img.src = URL.createObjectURL(file)
+  })
+}
+
 export function SavedPostsManager() {
   const router = useRouter()
+  const ext = useExtensionStatus()
+
   const [savedPosts, setSavedPosts] = useState<SavedPost[]>([])
   const [selectedPost, setSelectedPost] = useState<SavedPost | null>(null)
   const [uploadedImages, setUploadedImages] = useState<File[]>([])
   const [imagePreview, setImagePreview] = useState<string[]>([])
-  const [distributionStrategy, setDistributionStrategy] = useState<'even' | 'paragraphs'>('even')
-  const [extensionInstalled, setExtensionInstalled] = useState(false)
 
-  // 원클릭 발행 관련 상태
-  const [publishDialogOpen, setPublishDialogOpen] = useState(false)
-  const [naverId, setNaverId] = useState('')
-  const [naverPw, setNaverPw] = useState('')
-  const [saveLogin, setSaveLogin] = useState(true)
+  const [finalAction, setFinalAction] = useState<FinalAction>('publishNow')
+  const [openType, setOpenType] = useState<OpenType>('public')
+  const [scheduleDate, setScheduleDate] = useState('')
+  const [scheduleTime, setScheduleTime] = useState('')
   const [publishing, setPublishing] = useState(false)
-  const [extensionId, setExtensionId] = useState<string | null>(null)
-  const [extensionConnected, setExtensionConnected] = useState<boolean | null>(null)
-
-  // 실시간 가이드 상태
   const [guideOpen, setGuideOpen] = useState(false)
 
-  // 크롬 확장 프로그램 설치 여부 확인
+  // 저장된 글 로드 (샘플 항상 포함)
   useEffect(() => {
-    // 확장 프로그램이 설치되면 window에 메시지를 보낼 수 있음
-    const checkExtension = () => {
-      if (typeof window !== 'undefined' && (window as any).doctorvoiceExtension) {
-        setExtensionInstalled(true)
-      }
-    }
-    checkExtension()
-    window.addEventListener('message', (e) => {
-      if (e.data?.type === 'DOCTORVOICE_EXTENSION_READY') {
-        setExtensionInstalled(true)
-      }
-    })
-  }, [])
-
-  // 로컬 스토리지에서 저장된 글 로드 (샘플 글 항상 포함)
-  useEffect(() => {
-    const loadSavedPosts = () => {
+    const load = () => {
       try {
         const saved = localStorage.getItem('saved-posts')
         let posts: SavedPost[] = saved ? JSON.parse(saved) : []
-
-        // 샘플 글이 없으면 추가
-        const hasSamplePost = posts.some(p => p.id === SAMPLE_POST.id)
-        if (!hasSamplePost) {
+        if (!posts.some((p) => p.id === SAMPLE_POST.id)) {
           posts = [...posts, SAMPLE_POST]
           localStorage.setItem('saved-posts', JSON.stringify(posts))
         }
-
         setSavedPosts(posts)
-
-        // 자동 선택할 글이 있는지 확인
         const selectId = localStorage.getItem('saved-posts-select')
         if (selectId) {
-          const postToSelect = posts.find(p => p.id === selectId)
-          if (postToSelect) {
-            setSelectedPost(postToSelect)
-            // 사용 후 제거
-            localStorage.removeItem('saved-posts-select')
-          }
+          const p = posts.find((x) => x.id === selectId)
+          if (p) setSelectedPost(p)
+          localStorage.removeItem('saved-posts-select')
         }
-      } catch (error) {
-        console.error('저장된 글 로드 실패:', error)
-        // 오류 시 샘플 글만이라도 표시
+      } catch {
         setSavedPosts([SAMPLE_POST])
-        localStorage.setItem('saved-posts', JSON.stringify([SAMPLE_POST]))
       }
     }
-
-    loadSavedPosts()
-
-    // 다른 탭에서 저장한 경우를 위한 이벤트 리스너
-    window.addEventListener('storage', loadSavedPosts)
-    return () => window.removeEventListener('storage', loadSavedPosts)
+    load()
+    window.addEventListener('storage', load)
+    return () => window.removeEventListener('storage', load)
   }, [])
 
-  // 글 저장 함수 (create page에서 호출)
-  const savePost = (post: Partial<SavedPost>) => {
-    const savedPost: SavedPost = {
-      ...post,
-      id: `post-${Date.now()}`,
-      savedAt: new Date().toISOString(),
-    }
-
-    const updated = [savedPost, ...savedPosts]
-    setSavedPosts(updated)
-    localStorage.setItem('saved-posts', JSON.stringify(updated))
-
-    toast.success('글이 저장되었습니다', {
-      description: '저장된 글 탭에서 확인하세요',
-    })
-  }
-
-  // 글 삭제 (샘플 글은 삭제 불가)
   const deletePost = (id: string) => {
-    // 샘플 글은 삭제 불가
-    if (id === SAMPLE_POST.id) {
-      toast.error('샘플 글은 삭제할 수 없습니다')
-      return
-    }
-
+    if (id === SAMPLE_POST.id) { toast.error('샘플 글은 삭제할 수 없습니다'); return }
     const updated = savedPosts.filter((p) => p.id !== id)
     setSavedPosts(updated)
     localStorage.setItem('saved-posts', JSON.stringify(updated))
-
-    if (selectedPost?.id === id) {
-      setSelectedPost(null)
-    }
-
+    if (selectedPost?.id === id) setSelectedPost(null)
     toast.success('글이 삭제되었습니다')
   }
 
-  // 이미지 폴더 선택
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || [])
-    const imageFiles = files.filter((file) =>
-      /\.(jpg|jpeg|png|gif|webp)$/i.test(file.name)
-    )
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []).filter((f) => f.type.startsWith('image/'))
+    if (files.length === 0) { toast.error('이미지 파일만 업로드 가능합니다'); return }
+    setUploadedImages(files)
+    setImagePreview(files.map((f) => URL.createObjectURL(f)))
+    toast.success(`사진 ${files.length}장 준비 완료`)
+  }
 
-    if (imageFiles.length === 0) {
-      toast.error('이미지 파일만 업로드 가능합니다', {
-        description: 'JPG, PNG, GIF, WEBP 형식만 지원됩니다',
+  const removeImage = (idx: number) => {
+    setUploadedImages((prev) => prev.filter((_, i) => i !== idx))
+    setImagePreview((prev) => {
+      URL.revokeObjectURL(prev[idx])
+      return prev.filter((_, i) => i !== idx)
+    })
+  }
+
+  // ── 핵심: 확장 프로그램으로 발행 (세션 재사용, 로그인 정보 없음) ──
+  const publish = async () => {
+    if (!selectedPost) { toast.error('발행할 글을 먼저 선택하세요'); return }
+    if (!ext.connected || !ext.extensionId) {
+      toast.error('확장 프로그램이 연결되지 않았습니다', {
+        description: '상단 안내에서 확장 프로그램을 설치/실행한 뒤 다시 시도하세요',
       })
       return
     }
 
-    setUploadedImages(imageFiles)
-
-    // 미리보기 생성
-    const previews = imageFiles.map((file) => URL.createObjectURL(file))
-    setImagePreview(previews)
-
-    toast.success(`${imageFiles.length}개의 이미지가 준비되었습니다`, {
-      description: '네이버 블로그 발행 버튼을 클릭하세요'
-    })
-  }
-
-  // 블로그 자동 포스팅용 데이터 전송
-  const sendToExtension = (post: SavedPost) => {
-    const postData = {
-      title: post.suggested_titles?.[0] || '',
-      content: post.generated_content || '',
-      keywords: post.seo_keywords || [],
-      images: imagePreview || [],
-    }
-
-    // localStorage에 저장 (확장 프로그램에서 읽음)
-    localStorage.setItem('doctorvoice-pending-post', JSON.stringify(postData))
-
-    // 확장 프로그램에 메시지 전송 시도
-    try {
-      window.postMessage({
-        type: 'DOCTORVOICE_POST_DATA',
-        data: postData
-      }, '*')
-    } catch (e) {
-      console.log('Extension message failed, using localStorage fallback')
-    }
-
-    toast.success('포스팅 데이터가 준비되었습니다!', {
-      description: '크롬 확장 프로그램 아이콘을 클릭하여 포스팅을 시작하세요'
-    })
-  }
-
-  // 확장 프로그램 다운로드
-  const downloadExtension = () => {
-    const link = document.createElement('a')
-    link.href = '/doctorvoice-chrome-extension.zip'
-    link.download = 'doctorvoice-chrome-extension.zip'
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    toast.success('확장 프로그램 다운로드 시작', {
-      description: 'ZIP 파일을 압축 해제 후 크롬에 설치하세요'
-    })
-  }
-
-  // ============================================
-  // 원클릭 발행 관련 함수들
-  // ============================================
-
-  // 저장된 로그인 정보 로드
-  const loadSavedCredentials = () => {
-    try {
-      const saved = localStorage.getItem('naver-credentials')
-      if (saved) {
-        const { id, pw } = JSON.parse(saved)
-        setNaverId(id || '')
-        setNaverPw(pw || '')
+    let scheduleISO: string | null = null
+    if (finalAction === 'schedule') {
+      if (!scheduleDate || !scheduleTime) { toast.error('예약 날짜와 시간을 선택하세요'); return }
+      const dt = new Date(`${scheduleDate}T${scheduleTime}`)
+      if (isNaN(dt.getTime()) || dt.getTime() <= Date.now()) {
+        toast.error('예약 시간은 현재 이후여야 합니다'); return
       }
-    } catch (e) {
-      console.error('로그인 정보 로드 실패:', e)
-    }
-  }
-
-  // 확장 프로그램 연결 확인
-  const checkExtensionConnection = async () => {
-    const savedExtensionId = localStorage.getItem('doctorvoice-extension-id')
-    if (savedExtensionId) {
-      try {
-        const response = await sendMessageToExtension(savedExtensionId, { action: 'PING' })
-        if (response?.success) {
-          setExtensionConnected(true)
-          setExtensionId(savedExtensionId)
-          return
-        }
-      } catch (e) {
-        localStorage.removeItem('doctorvoice-extension-id')
-      }
-    }
-    setExtensionConnected(false)
-  }
-
-  // 확장 프로그램에 메시지 보내기
-  const sendMessageToExtension = (extId: string, message: any): Promise<any> => {
-    return new Promise((resolve, reject) => {
-      if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) {
-        reject(new Error('Chrome API not available'))
-        return
-      }
-      try {
-        chrome.runtime.sendMessage(extId, message, (response: any) => {
-          if (chrome.runtime.lastError) {
-            reject(chrome.runtime.lastError)
-          } else {
-            resolve(response)
-          }
-        })
-      } catch (e) {
-        reject(e)
-      }
-    })
-  }
-
-  // 발행 다이얼로그 열기
-  const openPublishDialog = (post: SavedPost) => {
-    setSelectedPost(post)
-    loadSavedCredentials()
-    checkExtensionConnection()
-    setPublishDialogOpen(true)
-  }
-
-  // 이미지를 Base64로 변환 (압축 포함)
-  const imageToBase64 = (file: File, maxWidth = 1200, quality = 0.8): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      // 이미지가 1MB 이하면 압축 없이 변환
-      if (file.size < 1024 * 1024) {
-        const reader = new FileReader()
-        reader.onload = () => resolve(reader.result as string)
-        reader.onerror = reject
-        reader.readAsDataURL(file)
-        return
-      }
-
-      // 큰 이미지는 압축
-      const img = new window.Image()
-      const canvas = document.createElement('canvas')
-      const ctx = canvas.getContext('2d')
-
-      img.onload = () => {
-        let width = img.width
-        let height = img.height
-
-        // 최대 너비 제한
-        if (width > maxWidth) {
-          height = (height * maxWidth) / width
-          width = maxWidth
-        }
-
-        canvas.width = width
-        canvas.height = height
-        ctx?.drawImage(img, 0, 0, width, height)
-
-        const compressedBase64 = canvas.toDataURL('image/jpeg', quality)
-        resolve(compressedBase64)
-      }
-
-      img.onerror = reject
-      img.src = URL.createObjectURL(file)
-    })
-  }
-
-  // 원클릭 발행 실행
-  const handleOneClickPublish = async () => {
-    if (!selectedPost) return
-    if (!naverId || !naverPw) {
-      toast.error('네이버 아이디와 비밀번호를 입력하세요')
-      return
+      scheduleISO = `${scheduleDate}T${scheduleTime}`
     }
 
     setPublishing(true)
-    const loadingToast = toast.loading('발행 준비 중...')
-
+    const t = toast.loading('발행 준비 중...')
     try {
-      // 로그인 정보 저장
-      if (saveLogin) {
-        localStorage.setItem('naver-credentials', JSON.stringify({ id: naverId, pw: naverPw }))
+      // 이미지 EXIF 제거 후 base64
+      const images: string[] = []
+      if (uploadedImages.length) {
+        toast.loading('사진 처리 중...', { id: t })
+        for (const f of uploadedImages) images.push(await imageToCleanBase64(f))
       }
 
-      // 이미지 Base64 변환
-      toast.loading('이미지 변환 중...', { id: loadingToast })
-      const imageBase64List: string[] = []
-      for (const file of uploadedImages) {
-        const base64 = await imageToBase64(file)
-        imageBase64List.push(base64)
-      }
-
-      // 포스트 데이터 준비
-      const postData = {
+      const job = {
+        id: selectedPost.id || `post-${Date.now()}`,
         title: selectedPost.suggested_titles?.[0] || selectedPost.title || '',
         content: selectedPost.generated_content || selectedPost.content || '',
-        images: imageBase64List,
-        keywords: selectedPost.seo_keywords || [],
+        images,
+        tags: selectedPost.seo_keywords || selectedPost.hashtags || [],
+        options: { openType, search: true },
+        finalAction,
+        schedule: scheduleISO ? { datetime: scheduleISO } : null,
       }
 
-      toast.loading('네이버 블로그 발행 시작...', { id: loadingToast })
+      toast.loading('네이버 블로그로 전송 중...', { id: t })
+      const res = await sendMessageToExtension(ext.extensionId, { action: 'SUBMIT_JOB', job })
+      if (!res?.success) throw new Error(res?.error || '발행 전송 실패')
 
-      if (extensionId) {
-        // 확장 프로그램으로 직접 발행
-        const response = await sendMessageToExtension(extensionId, {
-          action: 'ONE_CLICK_PUBLISH',
-          postData,
-          credentials: { id: naverId, pw: naverPw },
-          options: { useQuote: true, useHighlight: true, useImages: true }
-        })
-
-        if (response?.success) {
-          toast.success('발행 시작됨!', {
-            id: loadingToast,
-            description: '새 탭에서 네이버 로그인 후 자동으로 글이 작성됩니다',
-          })
-          setPublishDialogOpen(false)
-        } else {
-          throw new Error(response?.error || '발행 시작 실패')
-        }
-      } else {
-        // 확장 프로그램 없음 - localStorage 방식
-        const existingPosts = JSON.parse(localStorage.getItem('saved-posts') || '[]')
-        const postToSave = {
-          ...selectedPost,
-          images: imageBase64List,
-          pendingPublish: true,
-        }
-        const postIndex = existingPosts.findIndex((p: any) => p.id === selectedPost.id)
-        if (postIndex >= 0) {
-          existingPosts[postIndex] = postToSave
-        }
-        localStorage.setItem('saved-posts', JSON.stringify(existingPosts))
-
-        toast.success('발행 준비 완료!', {
-          id: loadingToast,
-          description: '확장 프로그램 아이콘을 클릭하여 발행하세요',
-        })
-        setPublishDialogOpen(false)
-      }
-
-    } catch (error: any) {
-      console.error('발행 실패:', error)
-      toast.error('발행 실패', {
-        id: loadingToast,
-        description: error.message || '다시 시도해주세요',
-      })
+      const msg =
+        finalAction === 'draft' ? { title: '임시저장을 시작했어요', desc: '새 탭에서 자동으로 초안이 저장됩니다' }
+          : finalAction === 'schedule' ? { title: '예약 발행을 등록했어요', desc: `${scheduleDate} ${scheduleTime} 예약으로 자동 발행됩니다` }
+            : { title: '발행을 시작했어요', desc: '새 탭에서 자동으로 글이 작성·발행됩니다' }
+      toast.success(msg.title, { id: t, description: msg.desc })
+    } catch (e: any) {
+      toast.error('발행 실패', { id: t, description: e.message || '다시 시도해주세요' })
     } finally {
       setPublishing(false)
     }
   }
 
-  // 확장 프로그램 ID 직접 입력
-  const handleSetExtensionId = async () => {
-    const id = prompt('확장 프로그램 ID를 입력하세요 (chrome://extensions에서 확인)')
-    if (id) {
-      try {
-        const response = await sendMessageToExtension(id, { action: 'PING' })
-        if (response?.success) {
-          setExtensionConnected(true)
-          setExtensionId(id)
-          localStorage.setItem('doctorvoice-extension-id', id)
-          toast.success('확장 프로그램 연결 성공!')
-        } else {
-          toast.error('확장 프로그램을 찾을 수 없습니다')
-        }
-      } catch (e) {
-        toast.error('확장 프로그램 연결 실패')
-      }
-    }
-  }
-
-  // 이미지를 imgBB에 업로드 (3개씩 병렬 + 재시도)
-  const uploadImagesToImgBB = async (files: File[]): Promise<string[]> => {
-    const urls: string[] = []
-    const total = files.length
-    let completed = 0
-    let failed = 0
-
-    // 단일 이미지 업로드 (재시도 포함)
-    const uploadWithRetry = async (file: File): Promise<string | null> => {
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          const result = await imagesAPI.upload(file)
-          if (result.success && result.url) return result.url
-        } catch (e) {
-          if (attempt < 1) await new Promise(r => setTimeout(r, 500))
-        }
-      }
-      return null
-    }
-
-    // 3개씩 병렬 업로드
-    const BATCH_SIZE = 3
-    for (let i = 0; i < files.length; i += BATCH_SIZE) {
-      const batch = files.slice(i, i + BATCH_SIZE)
-      toast.loading(`이미지 업로드 중... (${Math.min(i + BATCH_SIZE, total)}/${total})`, { id: 'img-upload' })
-
-      const results = await Promise.all(batch.map(f => uploadWithRetry(f)))
-
-      results.forEach(url => {
-        completed++
-        if (url) urls.push(url)
-        else failed++
-      })
-    }
-
-    if (failed > 0) {
-      toast.warning(`${urls.length}개 성공, ${failed}개 실패`, { id: 'img-upload' })
-    } else {
-      toast.success(`${urls.length}개 업로드 완료!`, { id: 'img-upload' })
-    }
-
-    return urls
-  }
-
-  // 네이버 블로그 자동 발행 - localStorage에 저장 후 이동
-  const handleNaverAutoPublish = async () => {
-    if (!selectedPost) {
-      toast.error('발행할 글을 선택해주세요')
-      return
-    }
-
-    const loadingToast = toast.loading('발행 데이터 준비 중...')
-
-    try {
-      // 이미지를 imgBB에 업로드하고 URL 가져오기
-      let imageUrls: string[] = []
-      if (uploadedImages.length > 0) {
-        imageUrls = await uploadImagesToImgBB(uploadedImages)
-
-        if (imageUrls.length === 0 && uploadedImages.length > 0) {
-          toast.error('이미지 업로드에 실패했습니다', { id: loadingToast })
-          return
-        }
-      }
-
-      // 발행 데이터 준비 (이미지 URL 사용)
-      const postData = {
-        title: selectedPost.suggested_titles?.[0] || selectedPost.title || '',
-        content: selectedPost.generated_content || selectedPost.content || '',
-        imageUrls: imageUrls,
-        keywords: selectedPost.seo_keywords || [],
-      }
-
-      // localStorage에 저장 후 네이버 블로그로 이동
-      await fallbackManualPublish(postData, loadingToast)
-
-    } catch (error: any) {
-      console.error('발행 준비 실패:', error)
-      toast.error('발행 준비 실패', {
-        id: loadingToast,
-        description: error.message || '다시 시도해주세요',
-      })
-    }
-  }
-
-  // 자동 발행 (확장 프로그램 통신 후 네이버 블로그로 이동)
-  const fallbackManualPublish = async (postData: any, loadingToast: string | number) => {
-    // localStorage에 데이터 저장 (백업용)
-    localStorage.setItem('doctorvoice-pending-post', JSON.stringify(postData))
-    localStorage.setItem('doctorvoice-auto-publish', 'true')
-
-    // 확장 프로그램이 연결되어 있으면 content script를 통해 데이터 전송
-    const extensionConnected = checkExtensionViaContentScript()
-
-    if (extensionConnected) {
-      toast.loading('확장 프로그램에 데이터 전송 중...', { id: loadingToast })
-
-      const success = await sendDataViaContentScript(postData, {
-        useQuote: true,
-        useHighlight: true,
-        useImages: true
-      })
-
-      if (success) {
-        toast.success('발행 데이터 전송 완료!', {
-          id: loadingToast,
-          description: '네이버 블로그 글쓰기 페이지로 이동합니다...',
-        })
-      } else {
-        toast.success('발행 데이터 준비 완료!', {
-          id: loadingToast,
-          description: '네이버 블로그 글쓰기 페이지로 이동합니다...',
-        })
-      }
-    } else {
-      toast.success('발행 데이터 준비 완료!', {
-        id: loadingToast,
-        description: '네이버 블로그 글쓰기 페이지로 이동합니다...',
-      })
-    }
-
-    // 1초 후 네이버 블로그 글쓰기 페이지로 이동
-    setTimeout(() => {
-      window.open('https://blog.naver.com/GoBlogWrite.naver', '_blank')
-    }, 1000)
-  }
-
-  // 확장 프로그램 연결 확인 (content script 통신)
-  const checkExtensionViaContentScript = (): boolean => {
-    const indicator = document.getElementById('doctorvoice-extension-indicator')
-    if (indicator && indicator.dataset.extensionId) {
-      setExtensionInstalled(true)
-      return true
-    }
-    return false
-  }
-
-  // 확장 프로그램에 발행 데이터 전송 (content script 통해)
-  const sendDataViaContentScript = (postData: any, options: any): Promise<boolean> => {
-    return new Promise((resolve) => {
-      // 응답 리스너 설정
-      const handleResponse = (event: MessageEvent) => {
-        if (event.data?.type === 'DOCTORVOICE_PUBLISH_RESPONSE') {
-          window.removeEventListener('message', handleResponse)
-          resolve(event.data.success)
-        }
-      }
-      window.addEventListener('message', handleResponse)
-
-      // 요청 전송
-      window.postMessage({
-        type: 'DOCTORVOICE_PUBLISH_REQUEST',
-        data: postData,
-        options: options
-      }, '*')
-
-      // 3초 타임아웃
-      setTimeout(() => {
-        window.removeEventListener('message', handleResponse)
-        resolve(false)
-      }, 3000)
-    })
-  }
-
-  // 자동 다운로드용 함수 (이미지 파일 직접 전달)
-  const exportWithImagesAuto = async (images: File[]) => {
-    if (!selectedPost) return
-
-    const loadingToast = toast.loading('이미지와 함께 워드 문서를 생성하고 있습니다...')
-
-    try {
-      const formData = new FormData()
-      formData.append('content', selectedPost.generated_content || '')
-      formData.append('title', selectedPost.suggested_titles?.[0] || '')
-      formData.append('keywords', JSON.stringify(selectedPost.seo_keywords || []))
-      formData.append('emphasis_phrases', JSON.stringify([]))
-      formData.append('distribution_strategy', distributionStrategy)
-
-      // 이미지 추가
-      images.forEach((file) => {
-        formData.append('images', file)
-      })
-
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/export/with-images`,
-        {
-          method: 'POST',
-          body: formData,
-        }
-      )
-
-      if (!response.ok) {
-        throw new Error('워드 문서 생성 실패')
-      }
-
-      // 파일 다운로드
-      const blob = await response.blob()
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${selectedPost.suggested_titles?.[0] || 'blog'}_with_images.docx`
-      document.body.appendChild(a)
-      a.click()
-      window.URL.revokeObjectURL(url)
-      document.body.removeChild(a)
-
-      toast.success('워드 문서 다운로드 완료!', {
-        id: loadingToast,
-        description: '이미지가 포함된 워드 파일이 저장되었습니다'
-      })
-    } catch (error) {
-      console.error('Export error:', error)
-      toast.error('워드 문서 생성 실패', {
-        id: loadingToast,
-      })
-    }
-  }
-
+  const title = (p: SavedPost) => p.suggested_titles?.[0] || p.title || '제목 없음'
+  const body = (p: SavedPost) => p.generated_content || p.content || ''
+  const canPublish = !!selectedPost && ext.connected && !publishing
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="container mx-auto p-6 space-y-5 max-w-6xl">
+      {/* 헤더 */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold">저장된 글 관리</h1>
-          <p className="text-gray-600 mt-2">
-            AI가 생성한 글을 저장하고 이미지와 함께 네이버 블로그용으로 내보내세요
-          </p>
+          <h1 className="text-3xl font-bold">네이버 블로그 자동 발행</h1>
+          <p className="text-muted-foreground mt-1">글 선택 → 사진 → 발행 방식, 순서대로 3단계면 끝납니다</p>
         </div>
-        <div className="flex gap-2">
-          <Button
-            onClick={() => setGuideOpen(true)}
-            className="gap-2 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700"
-          >
+        <div className="flex items-center gap-2">
+          <ExtensionStatusBadge />
+          <Button variant="outline" onClick={() => setGuideOpen(true)} className="gap-2">
             <PlayCircle className="w-4 h-4" />
-            발행 가이드 시작
-          </Button>
-          <Button
-            variant="outline"
-            onClick={downloadExtension}
-            className="gap-2"
-          >
-            <Globe className="w-4 h-4" />
-            확장프로그램
+            발행 가이드
           </Button>
         </div>
       </div>
 
-      {/* 확장 프로그램 안내 카드 */}
-      <Card className="border-purple-200 bg-gradient-to-r from-purple-50 to-blue-50">
-        <CardContent className="pt-6">
-          <div className="flex items-start gap-4">
-            <div className="p-3 bg-purple-100 rounded-lg">
-              <Globe className="w-8 h-8 text-purple-600" />
-            </div>
-            <div className="flex-1">
-              <h3 className="font-bold text-lg text-purple-900">네이버 블로그 자동 포스팅</h3>
-              <p className="text-sm text-purple-700 mt-1">
-                크롬 확장 프로그램을 설치하면 클릭 한 번으로 네이버 블로그에 자동 포스팅할 수 있습니다.
-                인용구, 배경색, 이미지가 자동으로 적용됩니다.
-              </p>
-              <div className="flex gap-3 mt-3">
-                <Button size="sm" onClick={downloadExtension} className="gap-2 bg-purple-600 hover:bg-purple-700">
-                  <Download className="w-4 h-4" />
-                  다운로드 (.zip)
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => window.open('chrome://extensions', '_blank')} className="gap-2">
-                  <ExternalLink className="w-4 h-4" />
-                  설치 방법 보기
-                </Button>
-              </div>
-              <div className="mt-4 p-3 bg-white/60 rounded-lg">
-                <p className="text-xs font-medium text-purple-900 mb-2">설치 방법 (간단 3단계)</p>
-                <ol className="text-xs text-purple-800 space-y-1 list-decimal list-inside">
-                  <li>ZIP 파일 다운로드 후 압축 해제</li>
-                  <li>크롬 주소창에 <code className="bg-purple-100 px-1 rounded">chrome://extensions</code> 입력</li>
-                  <li>"개발자 모드" 켜고 → "압축해제된 확장 프로그램 로드" → 폴더 선택</li>
-                </ol>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      {/* 실시간 연동 신호등 + 버전 + 자동 업데이트 */}
+      <ExtensionStatusCard />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* 왼쪽: 저장된 글 목록 */}
-        <Card className="lg:col-span-1">
-          <CardHeader>
-            <CardTitle>저장된 글 ({savedPosts.length})</CardTitle>
-            <CardDescription>클릭해서 선택하세요</CardDescription>
+      {/* 본문: 좌 글목록 / 우 3단계 발행 */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+        {/* STEP 1. 글 선택 */}
+        <Card className="lg:col-span-2">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <StepDot n={1} done={!!selectedPost} />
+              발행할 글 선택
+            </CardTitle>
+            <CardDescription>저장된 글 {savedPosts.length}개</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-2 max-h-[600px] overflow-y-auto">
+          <CardContent className="space-y-2 max-h-[560px] overflow-y-auto">
             {savedPosts.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
-                <FileText className="w-12 h-12 mx-auto mb-3 opacity-50" />
+              <div className="text-center py-10 text-muted-foreground">
+                <FileText className="w-10 h-10 mx-auto mb-2 opacity-50" />
                 <p>저장된 글이 없습니다</p>
-                <p className="text-sm mt-1">글 생성 페이지에서 저장하세요</p>
               </div>
             ) : (
-              savedPosts.map((post) => (
-                <div
-                  key={post.id}
-                  onClick={() => {
-                    setSelectedPost(post)
-                    // 확장 프로그램 연동을 위해 선택된 글 정보 저장
-                    const previewData = {
-                      title: post.suggested_titles?.[0] || post.title || '',
-                      content: post.generated_content || post.content || '',
-                      imageUrls: [],
-                      keywords: post.seo_keywords || [],
-                    }
-                    localStorage.setItem('doctorvoice-pending-post', JSON.stringify(previewData))
-                  }}
-                  className={`p-4 border rounded-lg cursor-pointer transition-all ${
-                    selectedPost?.id === post.id
-                      ? 'border-blue-500 bg-blue-50'
-                      : post.sourceType === 'database'
-                      ? 'border-green-200 hover:border-green-300 bg-green-50/30'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <h3 className="font-semibold text-sm line-clamp-2 flex-1">
-                      {post.suggested_titles?.[0] || post.title || '제목 없음'}
-                    </h3>
-                    {post.sourceType === 'database' && (
-                      <span className="flex-shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-medium rounded">
-                        <Database className="w-2.5 h-2.5" />
-                        DB
-                      </span>
-                    )}
+              savedPosts.map((post) => {
+                const active = selectedPost?.id === post.id
+                return (
+                  <div
+                    key={post.id}
+                    onClick={() => setSelectedPost(post)}
+                    className={`p-3 border rounded-lg cursor-pointer transition-all ${
+                      active ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500'
+                        : 'border-gray-200 hover:border-emerald-300 hover:bg-emerald-50/40'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="font-semibold text-sm line-clamp-2 flex-1">{title(post)}</h3>
+                      {active && <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-none" />}
+                      {post.sourceType === 'database' && !active && (
+                        <span className="flex-none inline-flex items-center gap-1 px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-medium rounded">
+                          <Database className="w-2.5 h-2.5" />DB
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1.5 text-xs text-muted-foreground">
+                      <Calendar className="w-3 h-3" />
+                      {new Date(post.savedAt).toLocaleDateString('ko-KR')}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 mt-2.5">
+                      <Button size="sm" variant="outline" className="h-7 text-xs"
+                        onClick={(e) => { e.stopPropagation(); router.push(`/dashboard/editor/${post.id}`) }}>
+                        <Edit3 className="w-3 h-3 mr-1" />편집
+                      </Button>
+                      <Button size="sm" variant="destructive" className="h-7 text-xs px-2"
+                        onClick={(e) => { e.stopPropagation(); deletePost(post.id) }}>
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 mt-2 text-xs text-gray-500">
-                    <Calendar className="w-3 h-3" />
-                    {new Date(post.savedAt).toLocaleDateString('ko-KR')}
-                  </div>
-                  <div className="flex flex-wrap gap-2 mt-3">
-                    <Button
-                      size="sm"
-                      variant="default"
-                      className="bg-blue-600 hover:bg-blue-700"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        router.push(`/dashboard/editor/${post.id}`)
-                      }}
-                    >
-                      <Edit3 className="w-3 h-3 mr-1" />
-                      에디터
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setSelectedPost(post)
-                      }}
-                    >
-                      <Eye className="w-3 h-3 mr-1" />
-                      보기
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        deletePost(post.id)
-                      }}
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </Button>
-                  </div>
-                </div>
-              ))
+                )
+              })
             )}
           </CardContent>
         </Card>
 
-        {/* 오른쪽: 선택된 글 + 이미지 업로드 */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>블로그 포스팅 준비</CardTitle>
+        {/* STEP 2·3. 사진 + 발행 방식 */}
+        <Card className="lg:col-span-3">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">발행 준비</CardTitle>
             <CardDescription>
-              이미지를 업로드하면 자동으로 콘텐츠에 배치됩니다
+              {selectedPost ? `선택됨: ${title(selectedPost)}` : '왼쪽에서 글을 먼저 선택하세요'}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             {!selectedPost ? (
-              <div className="text-center py-12 text-gray-500">
-                <Sparkles className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                <p className="text-lg">왼쪽에서 글을 선택하세요</p>
+              <div className="text-center py-16 text-muted-foreground">
+                <Sparkles className="w-14 h-14 mx-auto mb-3 opacity-40" />
+                <p className="text-lg">글을 선택하면 발행 준비가 시작됩니다</p>
               </div>
             ) : (
-              <Tabs defaultValue="content">
-                <TabsList className="w-full">
-                  <TabsTrigger value="content" className="flex-1">
-                    <FileText className="w-4 h-4 mr-2" />
-                    콘텐츠
-                  </TabsTrigger>
-                  <TabsTrigger value="images" className="flex-1">
-                    <Image className="w-4 h-4 mr-2" />
-                    이미지 업로드 ({uploadedImages.length})
-                  </TabsTrigger>
-                </TabsList>
+              <>
+                {/* 글 미리보기 */}
+                <div className="rounded-lg bg-gray-50 p-4 max-h-40 overflow-y-auto">
+                  <p className="text-sm whitespace-pre-line leading-relaxed text-gray-700">
+                    {body(selectedPost).slice(0, 300)}{body(selectedPost).length > 300 ? '…' : ''}
+                  </p>
+                </div>
 
-                {/* 콘텐츠 탭 */}
-                <TabsContent value="content" className="space-y-4">
-                  <div>
-                    <h3 className="font-semibold text-lg mb-2">
-                      {selectedPost.suggested_titles?.[0]}
-                    </h3>
-                    <div className="prose prose-sm max-w-none bg-gray-50 p-4 rounded-lg max-h-[400px] overflow-y-auto">
-                      {(selectedPost.generated_content || '').split('\n').map((para, i) => (
-                        <p key={i}>{para}</p>
+                {/* STEP 2. 사진 */}
+                <section className="space-y-3">
+                  <div className="flex items-center gap-2 font-semibold">
+                    <StepDot n={2} done={uploadedImages.length > 0} />
+                    사진 추가 <span className="text-xs font-normal text-muted-foreground">(선택)</span>
+                  </div>
+                  <label className="flex items-center justify-center gap-2 h-11 rounded-lg border-2 border-dashed border-gray-300 cursor-pointer hover:border-emerald-400 hover:bg-emerald-50/40 text-sm text-gray-600">
+                    <ImageIcon className="w-4 h-4" />
+                    사진 선택 (여러 장 가능 · 촬영정보 자동 제거)
+                    <input type="file" multiple accept="image/*" onChange={handleImageUpload} className="hidden" />
+                  </label>
+                  {uploadedImages.length > 0 && (
+                    <div className="grid grid-cols-5 gap-2">
+                      {imagePreview.map((src, i) => (
+                        <div key={i} className="relative group">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={src} alt="" className="w-full h-16 object-cover rounded-md border" />
+                          <button onClick={() => removeImage(i)}
+                            className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition">
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
                       ))}
                     </div>
+                  )}
+                </section>
+
+                {/* STEP 3. 발행 방식 */}
+                <section className="space-y-3">
+                  <div className="flex items-center gap-2 font-semibold">
+                    <StepDot n={3} done={false} />
+                    발행 방식 선택
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {ACTION_OPTIONS.map((opt) => {
+                      const Icon = opt.icon
+                      const active = finalAction === opt.key
+                      return (
+                        <button key={opt.key} onClick={() => setFinalAction(opt.key)}
+                          className={`flex flex-col items-center gap-1 rounded-lg border p-3 text-center transition ${
+                            active ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500'
+                              : 'border-gray-200 hover:border-emerald-300'
+                          }`}>
+                          <Icon className={`w-5 h-5 ${active ? 'text-emerald-600' : 'text-gray-400'}`} />
+                          <span className="text-sm font-medium">{opt.label}</span>
+                          <span className="text-[11px] text-muted-foreground leading-tight">{opt.desc}</span>
+                        </button>
+                      )
+                    })}
                   </div>
 
-                  <div className="flex gap-2">
-                    <div className="text-sm text-gray-600">
-                      키워드: {selectedPost.seo_keywords?.join(', ') || '없음'}
+                  {/* 예약 시간 */}
+                  {finalAction === 'schedule' && (
+                    <div className="grid grid-cols-2 gap-2 rounded-lg bg-amber-50 border border-amber-200 p-3">
+                      <div>
+                        <Label className="text-xs text-amber-800">날짜</Label>
+                        <Input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} className="mt-1" />
+                      </div>
+                      <div>
+                        <Label className="text-xs text-amber-800">시간</Label>
+                        <Input type="time" step={600} value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)} className="mt-1" />
+                      </div>
+                      <p className="col-span-2 text-[11px] text-amber-700">※ 네이버 예약은 10분 단위 — 분은 자동 내림 처리됩니다</p>
                     </div>
-                  </div>
-                </TabsContent>
+                  )}
 
-                {/* 이미지 탭 */}
-                <TabsContent value="images" className="space-y-4">
-                  <div>
-                    <Label>이미지 폴더 업로드 (폴더 전체 선택 가능)</Label>
-                    <input
-                      type="file"
-                      multiple
-                      {...({webkitdirectory: "", directory: ""} as any)}
-                      accept="image/*,.jpg,.jpeg,.png,.gif,.webp"
-                      onChange={handleImageUpload}
-                      className="mt-2 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      JPG, PNG, GIF, WEBP 형식 지원. 폴더를 선택하면 안에 있는 모든 이미지가 자동으로 업로드됩니다.
-                    </p>
-                  </div>
-
-                  {uploadedImages.length > 0 && (
+                  {/* 공개 범위 (발행 계열) */}
+                  {finalAction !== 'draft' && (
                     <div>
-                      <Label>업로드된 이미지 ({uploadedImages.length}개)</Label>
-                      <div className="grid grid-cols-3 gap-3 mt-2">
-                        {imagePreview.map((preview, i) => (
-                          <div key={i} className="relative">
-                            <img
-                              src={preview}
-                              alt={uploadedImages[i].name}
-                              className="w-full h-32 object-cover rounded-lg"
-                            />
-                            <p className="text-xs mt-1 truncate">
-                              {uploadedImages[i].name}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
+                      <Label className="text-xs text-muted-foreground">공개 범위</Label>
+                      <select value={openType} onChange={(e) => setOpenType(e.target.value as OpenType)}
+                        className="mt-1 w-full h-10 rounded-md border border-input bg-background px-3 text-sm">
+                        <option value="public">전체 공개</option>
+                        <option value="neighbor">이웃 공개</option>
+                        <option value="both">서로이웃 공개</option>
+                        <option value="private">비공개</option>
+                      </select>
                     </div>
                   )}
+                </section>
 
-                  <div>
-                    <Label>이미지 배치 전략</Label>
-                    <div className="flex gap-3 mt-2">
-                      <Button
-                        variant={distributionStrategy === 'paragraphs' ? 'default' : 'outline'}
-                        onClick={() => setDistributionStrategy('paragraphs')}
-                        size="sm"
-                      >
-                        문단 사이 (추천)
-                      </Button>
-                      <Button
-                        variant={distributionStrategy === 'even' ? 'default' : 'outline'}
-                        onClick={() => setDistributionStrategy('even')}
-                        size="sm"
-                      >
-                        균등 분포
-                      </Button>
-                    </div>
-                    <p className="text-xs text-gray-500 mt-2">
-                      {distributionStrategy === 'paragraphs'
-                        ? '2-3 문단마다 이미지를 자동으로 배치합니다'
-                        : '전체 글에 이미지를 균등하게 분포시킵니다'}
+                {/* 발행 버튼 */}
+                <div className="pt-1">
+                  <Button size="lg" disabled={!canPublish} onClick={publish}
+                    className="w-full h-12 text-base gap-2 bg-emerald-600 hover:bg-emerald-700">
+                    {publishing ? (
+                      <><Loader2 className="w-5 h-5 animate-spin" />발행 중...</>
+                    ) : (
+                      <><Send className="w-5 h-5" />
+                        {finalAction === 'draft' ? '임시저장하기' : finalAction === 'schedule' ? '예약 발행하기' : '지금 발행하기'}
+                      </>
+                    )}
+                  </Button>
+                  {!ext.connected && (
+                    <p className="mt-2 text-center text-xs text-rose-600">
+                      확장 프로그램이 연결되어야 발행할 수 있어요 —{' '}
+                      <a href={EXTENSION_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer" className="underline font-medium">
+                        설치하기
+                      </a>
                     </p>
-                  </div>
-
-                  {/* 이미지 업로드 완료 시 발행 옵션 */}
-                  {uploadedImages.length > 0 && (
-                    <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-4">
-                      <h4 className="font-semibold text-green-900 flex items-center gap-2">
-                        <CheckCircle2 className="h-5 w-5" />
-                        이미지 {uploadedImages.length}개가 업로드되었습니다!
-                      </h4>
-
-                      {/* 네이버 블로그 자동 발행 버튼 */}
-                      <div className="bg-white rounded-lg p-4 border border-green-300">
-                        <h5 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                          <Globe className="h-4 w-4 text-green-600" />
-                          네이버 블로그 자동 발행
-                        </h5>
-                        <p className="text-sm text-gray-600 mb-3">
-                          버튼을 클릭하면 네이버 로그인 후 자동으로 글과 이미지가 입력됩니다.
-                        </p>
-                        <Button
-                          className="w-full bg-green-600 hover:bg-green-700 gap-2"
-                          onClick={handleNaverAutoPublish}
-                          disabled={!selectedPost}
-                        >
-                          <Send className="h-4 w-4" />
-                          네이버 블로그에 발행하기
-                        </Button>
-                      </div>
-
-                      {/* 워드 다운로드 옵션 */}
-                      <div className="pt-3 border-t border-green-300">
-                        <p className="text-xs text-green-900 font-semibold mb-2">📋 또는 워드 파일로 복붙하기:</p>
-                        <ol className="text-xs text-green-800 space-y-1 list-decimal list-inside mb-2">
-                          <li>워드 문서가 자동 생성됩니다</li>
-                          <li>다운로드된 .docx 파일 열기</li>
-                          <li>전체 선택 (Ctrl+A) → 복사 (Ctrl+C)</li>
-                          <li>네이버 블로그에 붙여넣기 (Ctrl+V)</li>
-                        </ol>
-                      </div>
-                    </div>
                   )}
-                </TabsContent>
-              </Tabs>
+                  <p className="mt-2 text-center text-[11px] text-muted-foreground">
+                    브라우저에 네이버가 로그인되어 있어야 합니다(비밀번호는 저장하지 않아요). 미로그인 시 로그인 창이 열립니다.
+                  </p>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
       </div>
-
-      {/* 원클릭 발행 다이얼로그 */}
-      <Dialog open={publishDialogOpen} onOpenChange={setPublishDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Send className="h-5 w-5 text-green-600" />
-              네이버 블로그 원클릭 발행
-            </DialogTitle>
-            <DialogDescription>
-              선택한 글을 네이버 블로그에 자동으로 발행합니다
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            {/* 확장 프로그램 상태 */}
-            {extensionConnected === false && (
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                <div className="flex items-start gap-2">
-                  <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                  <div className="text-sm">
-                    <p className="font-medium text-amber-800">확장 프로그램 연결 필요</p>
-                    <p className="text-amber-600 mt-1">
-                      자동 발행을 위해 확장 프로그램 ID를 연결하세요
-                    </p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-2"
-                      onClick={handleSetExtensionId}
-                    >
-                      확장 프로그램 ID 입력
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {extensionConnected === true && (
-              <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                <div className="flex items-center gap-2 text-green-700">
-                  <CheckCircle2 className="h-5 w-5" />
-                  <span className="text-sm font-medium">확장 프로그램 연결됨</span>
-                </div>
-              </div>
-            )}
-
-            {/* 네이버 로그인 정보 */}
-            <div className="space-y-3">
-              <div className="space-y-2">
-                <Label>네이버 아이디</Label>
-                <Input
-                  placeholder="네이버 아이디"
-                  value={naverId}
-                  onChange={(e) => setNaverId(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>비밀번호</Label>
-                <Input
-                  type="password"
-                  placeholder="비밀번호"
-                  value={naverPw}
-                  onChange={(e) => setNaverPw(e.target.value)}
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="saveLoginDialog"
-                  checked={saveLogin}
-                  onChange={(e) => setSaveLogin(e.target.checked)}
-                  className="rounded"
-                />
-                <Label htmlFor="saveLoginDialog" className="text-sm cursor-pointer">
-                  로그인 정보 저장
-                </Label>
-              </div>
-            </div>
-
-            {/* 이미지 업로드 */}
-            <div className="space-y-2">
-              <Label className="flex items-center gap-2">
-                <Image className="h-4 w-4" />
-                이미지 추가 (선택)
-              </Label>
-              <input
-                type="file"
-                multiple
-                accept="image/*"
-                onChange={handleImageUpload}
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-              />
-              {uploadedImages.length > 0 && (
-                <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                  <p className="text-sm text-blue-800">
-                    {uploadedImages.length}개의 이미지가 함께 발행됩니다
-                  </p>
-                  <div className="grid grid-cols-4 gap-2 mt-2">
-                    {imagePreview.slice(0, 4).map((preview, i) => (
-                      <img
-                        key={i}
-                        src={preview}
-                        alt=""
-                        className="w-full h-12 object-cover rounded"
-                      />
-                    ))}
-                    {uploadedImages.length > 4 && (
-                      <div className="w-full h-12 bg-gray-200 rounded flex items-center justify-center text-xs text-gray-600">
-                        +{uploadedImages.length - 4}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* 발행할 글 미리보기 */}
-            {selectedPost && (
-              <div className="p-3 bg-gray-50 rounded-lg space-y-1">
-                <p className="text-sm font-medium truncate">
-                  {selectedPost.suggested_titles?.[0] || selectedPost.title || '제목 없음'}
-                </p>
-                <p className="text-xs text-gray-500">
-                  {(selectedPost.generated_content || selectedPost.content || '').slice(0, 100)}...
-                </p>
-              </div>
-            )}
-          </div>
-
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setPublishDialogOpen(false)}>
-              취소
-            </Button>
-            <Button
-              className="bg-green-600 hover:bg-green-700 gap-2"
-              onClick={handleOneClickPublish}
-              disabled={publishing || !naverId || !naverPw}
-            >
-              {publishing ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  발행 중...
-                </>
-              ) : (
-                <>
-                  <Send className="h-4 w-4" />
-                  원클릭 발행
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* 실시간 발행 가이드 */}
       <PublishGuide
         isOpen={guideOpen}
         onClose={() => setGuideOpen(false)}
-        onDownloadExtension={downloadExtension}
-        hasExtension={extensionInstalled}
+        onDownloadExtension={() => window.open(EXTENSION_DOWNLOAD_URL, '_blank')}
+        hasExtension={ext.connected}
         hasSelectedPost={!!selectedPost}
         hasImages={uploadedImages.length > 0}
-        onStartPublish={handleNaverAutoPublish}
+        onStartPublish={publish}
       />
     </div>
   )
 }
 
-// 전역 함수로 내보내기 (다른 컴포넌트에서 사용)
+function StepDot({ n, done }: { n: number; done: boolean }) {
+  return (
+    <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${
+      done ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-600'
+    }`}>
+      {done ? <CheckCircle2 className="w-4 h-4" /> : n}
+    </span>
+  )
+}
+
+// 전역 저장 훅 (다른 컴포넌트에서 사용)
 export function useSavePost() {
   const savePost = (post: Record<string, any>) => {
-    const savedPost = {
-      ...post,
-      id: `post-${Date.now()}`,
-      savedAt: new Date().toISOString(),
-    }
-
+    const savedPost = { ...post, id: `post-${Date.now()}`, savedAt: new Date().toISOString() }
     try {
       const existing = localStorage.getItem('saved-posts')
       const posts = existing ? JSON.parse(existing) : []
-      const updated = [savedPost, ...posts]
-      localStorage.setItem('saved-posts', JSON.stringify(updated))
-
-      toast.success('글이 저장되었습니다', {
-        description: '저장된 글 탭에서 확인하세요',
-      })
-
+      localStorage.setItem('saved-posts', JSON.stringify([savedPost, ...posts]))
+      toast.success('글이 저장되었습니다', { description: '저장된 글 탭에서 확인하세요' })
       return true
-    } catch (error) {
-      console.error('저장 실패:', error)
+    } catch {
       toast.error('글 저장에 실패했습니다')
       return false
     }
   }
-
   return { savePost }
 }

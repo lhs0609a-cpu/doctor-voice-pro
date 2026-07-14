@@ -2,7 +2,7 @@
 // 닥터보이스 프로 - 백그라운드 서비스워커 v15
 // CDP(chrome.debugger) 기반 실제 입력 + 오케스트레이션 + 자동 업데이트
 // ============================================================
-const VERSION = '15.0.1';
+const VERSION = '15.1.0';
 const UPDATE_URL = 'https://doctor-voice-pro-ghwi.vercel.app/extension/version.json';
 const WRITE_URL = 'https://blog.naver.com/GoBlogWrite.naver';
 
@@ -19,9 +19,23 @@ chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       switch (msg.action) {
-        case 'PING':
-          sendResponse({ success: true, version: VERSION });
+        case 'PING': {
+          // 캐시된 업데이트 정보를 함께 반환 (웹사이트 신호등이 1회 왕복으로 버전/업데이트 파악)
+          const cached = (await chrome.storage.local.get('updateInfo')).updateInfo || {};
+          sendResponse({
+            success: true,
+            version: VERSION,
+            updateAvailable: !!cached.updateAvailable,
+            latest: cached.latest || VERSION,
+            downloadUrl: cached.downloadUrl || '',
+            notes: cached.notes || '',
+          });
+          // 오래된 캐시면 백그라운드로 갱신 (응답은 지연시키지 않음)
+          if (!cached.checkedAt || Date.now() - cached.checkedAt > 30 * 60 * 1000) {
+            checkForUpdate().catch(() => {});
+          }
           break;
+        }
         case 'CHECK_UPDATE': {
           const info = await checkForUpdate();
           sendResponse({ success: true, current: VERSION, ...info });
