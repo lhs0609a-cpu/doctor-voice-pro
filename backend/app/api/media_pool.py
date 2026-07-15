@@ -145,11 +145,11 @@ async def upload_pool_images(
 ):
     """사진을 풀에 업로드 (여러 장). collection_id 지정 시 해당 목록에도 담는다."""
     if collection_id:
-        await _get_owned_collection(db, current_user.id, collection_id)
+        await _get_owned_collection(db, str(current_user.id), collection_id)
 
     count_res = await db.execute(
         select(func.count()).select_from(PoolImage).where(
-            PoolImage.user_id == current_user.id, PoolImage.active == True  # noqa: E712
+            PoolImage.user_id == str(current_user.id), PoolImage.active == True  # noqa: E712
         )
     )
     current = count_res.scalar() or 0
@@ -166,7 +166,7 @@ async def upload_pool_images(
             w, h = im.size
             ph = uniq.to_hex(uniq.phash(im))
             row = PoolImage(
-                user_id=current_user.id, filename=f.filename,
+                user_id=str(current_user.id), filename=f.filename,
                 content_type=f.content_type or "image/jpeg", data=data,
                 original_phash=ph, width=w, height=h, size_bytes=len(data),
             )
@@ -175,7 +175,7 @@ async def upload_pool_images(
             if collection_id:
                 db.add(PoolCollectionMember(
                     collection_id=collection_id, pool_image_id=row.id,
-                    user_id=current_user.id,
+                    user_id=str(current_user.id),
                 ))
             items.append(_to_item(row, with_thumb=True))
             uploaded += 1
@@ -193,7 +193,7 @@ async def list_pool(
 ):
     """풀 목록 (썸네일 포함). collection_id 지정 시 그 목록의 사진만."""
     stmt = select(PoolImage).where(
-        PoolImage.user_id == current_user.id, PoolImage.active == True  # noqa: E712
+        PoolImage.user_id == str(current_user.id), PoolImage.active == True  # noqa: E712
     )
     if collection_id:
         stmt = stmt.join(
@@ -239,7 +239,7 @@ async def list_collections(
 ):
     """내 사진 목록(앨범) 전체."""
     res = await db.execute(
-        select(PoolCollection).where(PoolCollection.user_id == current_user.id)
+        select(PoolCollection).where(PoolCollection.user_id == str(current_user.id))
         .order_by(PoolCollection.created_at.desc())
     )
     cols = res.scalars().all()
@@ -262,13 +262,13 @@ async def create_collection(
     name = (req.name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="목록 이름을 입력하세요")
-    col = PoolCollection(user_id=current_user.id, name=name)
+    col = PoolCollection(user_id=str(current_user.id), name=name)
     db.add(col)
     await db.flush()
     # 생성과 동시에 기존 사진 담기(옵션)
     for iid in req.image_ids:
         db.add(PoolCollectionMember(
-            collection_id=col.id, pool_image_id=iid, user_id=current_user.id,
+            collection_id=col.id, pool_image_id=iid, user_id=str(current_user.id),
         ))
     await db.commit()
     return CollectionItem(
@@ -284,7 +284,7 @@ async def rename_collection(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    col = await _get_owned_collection(db, current_user.id, collection_id)
+    col = await _get_owned_collection(db, str(current_user.id), collection_id)
     name = (req.name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="목록 이름을 입력하세요")
@@ -304,7 +304,7 @@ async def delete_collection(
     db: AsyncSession = Depends(get_db),
 ):
     """목록만 삭제(사진 원본은 풀에 남김)."""
-    col = await _get_owned_collection(db, current_user.id, collection_id)
+    col = await _get_owned_collection(db, str(current_user.id), collection_id)
     await db.execute(
         sa_delete(PoolCollectionMember).where(
             PoolCollectionMember.collection_id == collection_id
@@ -323,7 +323,7 @@ async def add_collection_members(
     db: AsyncSession = Depends(get_db),
 ):
     """기존 풀 사진을 목록에 추가(중복은 건너뜀)."""
-    await _get_owned_collection(db, current_user.id, collection_id)
+    await _get_owned_collection(db, str(current_user.id), collection_id)
     existing_res = await db.execute(
         select(PoolCollectionMember.pool_image_id).where(
             PoolCollectionMember.collection_id == collection_id
@@ -335,7 +335,7 @@ async def add_collection_members(
         if iid in existing:
             continue
         db.add(PoolCollectionMember(
-            collection_id=collection_id, pool_image_id=iid, user_id=current_user.id,
+            collection_id=collection_id, pool_image_id=iid, user_id=str(current_user.id),
         ))
         added += 1
     await db.commit()
@@ -350,7 +350,7 @@ async def remove_collection_member(
     db: AsyncSession = Depends(get_db),
 ):
     """목록에서 사진 하나 빼기(원본은 풀에 유지)."""
-    await _get_owned_collection(db, current_user.id, collection_id)
+    await _get_owned_collection(db, str(current_user.id), collection_id)
     await db.execute(
         sa_delete(PoolCollectionMember).where(
             PoolCollectionMember.collection_id == collection_id,
@@ -368,7 +368,7 @@ async def delete_pool_image(
     db: AsyncSession = Depends(get_db),
 ):
     res = await db.execute(
-        select(PoolImage).where(PoolImage.id == image_id, PoolImage.user_id == current_user.id)
+        select(PoolImage).where(PoolImage.id == image_id, PoolImage.user_id == str(current_user.id))
     )
     row = res.scalar_one_or_none()
     if not row:
@@ -394,10 +394,10 @@ async def assign_and_uniquify(
 
     # 후보: 적게 쓴 순으로 넉넉히 확보(대체 여지). 목록 지정 시 그 목록에서만.
     stmt = select(PoolImage).where(
-        PoolImage.user_id == current_user.id, PoolImage.active == True  # noqa: E712
+        PoolImage.user_id == str(current_user.id), PoolImage.active == True  # noqa: E712
     )
     if req.collection_id:
-        await _get_owned_collection(db, current_user.id, req.collection_id)
+        await _get_owned_collection(db, str(current_user.id), req.collection_id)
         stmt = stmt.join(
             PoolCollectionMember, PoolCollectionMember.pool_image_id == PoolImage.id
         ).where(PoolCollectionMember.collection_id == req.collection_id)
@@ -434,7 +434,7 @@ async def assign_and_uniquify(
 
         # 변형 이력 기록 + 사용 카운트 증가
         db.add(ImageVariant(
-            pool_image_id=p.id, user_id=current_user.id,
+            pool_image_id=p.id, user_id=str(current_user.id),
             phash=result.phash, dhash=result.dhash, frame_style=result.frame_style,
             ssim=result.ssim, min_distance=result.min_distance, passed=result.passed,
             post_id=req.post_id,

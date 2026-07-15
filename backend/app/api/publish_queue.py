@@ -115,7 +115,7 @@ async def bulk_create(
     # 큐 상한 확인
     cnt_res = await db.execute(
         select(func.count()).select_from(QueuedPost).where(
-            QueuedPost.user_id == current_user.id, QueuedPost.status == "queued"
+            QueuedPost.user_id == str(current_user.id), QueuedPost.status == "queued"
         )
     )
     existing = cnt_res.scalar() or 0
@@ -129,7 +129,7 @@ async def bulk_create(
     if req.assign_images:
         pres = await db.execute(
             select(PoolImage.id).where(
-                PoolImage.user_id == current_user.id, PoolImage.active == True  # noqa: E712
+                PoolImage.user_id == str(current_user.id), PoolImage.active == True  # noqa: E712
             ).order_by(PoolImage.use_count.asc(), PoolImage.created_at.asc())
         )
         pool_ids = [r for (r,) in pres.all()]
@@ -137,7 +137,7 @@ async def bulk_create(
         warnings.append("사진 풀이 비어 있어 이미지 없이 저장됩니다. 먼저 사진 풀에 업로드하세요.")
 
     batch = PublishBatch(
-        user_id=current_user.id, name=req.name or f"대량발행 {len(chunks)}건",
+        user_id=str(current_user.id), name=req.name or f"대량발행 {len(chunks)}건",
         start_at=req.start_at, interval_minutes=req.interval_minutes,
         open_type=req.open_type, total=len(chunks),
     )
@@ -158,7 +158,7 @@ async def bulk_create(
                 ptr += 1
 
         row = QueuedPost(
-            user_id=current_user.id, batch_id=batch.id,
+            user_id=str(current_user.id), batch_id=batch.id,
             title=p.title,
             blocks=[{"type": b.type, "content": b.content, "keyword": b.keyword} for b in p.blocks],
             keywords=p.keywords, hashtags=p.hashtags,
@@ -187,7 +187,7 @@ async def list_queue(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    q = select(QueuedPost).where(QueuedPost.user_id == current_user.id)
+    q = select(QueuedPost).where(QueuedPost.user_id == str(current_user.id))
     if status:
         q = q.where(QueuedPost.status == status)
     q = q.order_by(QueuedPost.scheduled_at.asc())
@@ -208,7 +208,7 @@ async def delete_queued(
     db: AsyncSession = Depends(get_db),
 ):
     res = await db.execute(
-        select(QueuedPost).where(QueuedPost.id == post_id, QueuedPost.user_id == current_user.id)
+        select(QueuedPost).where(QueuedPost.id == post_id, QueuedPost.user_id == str(current_user.id))
     )
     row = res.scalar_one_or_none()
     if not row:
@@ -226,12 +226,12 @@ async def delete_batch(
 ):
     await db.execute(
         sa_delete(QueuedPost).where(
-            QueuedPost.batch_id == batch_id, QueuedPost.user_id == current_user.id
+            QueuedPost.batch_id == batch_id, QueuedPost.user_id == str(current_user.id)
         )
     )
     await db.execute(
         sa_delete(PublishBatch).where(
-            PublishBatch.id == batch_id, PublishBatch.user_id == current_user.id
+            PublishBatch.id == batch_id, PublishBatch.user_id == str(current_user.id)
         )
     )
     await db.commit()
@@ -266,7 +266,7 @@ async def fetch_jobs(
     반환된 글은 registered 로 표시(중복 등록 방지)."""
     res = await db.execute(
         select(QueuedPost).where(
-            QueuedPost.user_id == current_user.id, QueuedPost.status == "queued"
+            QueuedPost.user_id == str(current_user.id), QueuedPost.status == "queued"
         ).order_by(QueuedPost.scheduled_at.asc()).limit(limit)
     )
     rows = res.scalars().all()
@@ -304,7 +304,7 @@ async def fetch_jobs(
                         if result:
                             data_url = "data:image/jpeg;base64," + base64.b64encode(result.image_bytes).decode()
                             db.add(ImageVariant(
-                                pool_image_id=pid, user_id=current_user.id,
+                                pool_image_id=pid, user_id=str(current_user.id),
                                 phash=result.phash, dhash=result.dhash, frame_style=result.frame_style,
                                 ssim=result.ssim, min_distance=result.min_distance, passed=result.passed,
                                 post_id=r.id,
@@ -344,7 +344,7 @@ async def report_result(
     db: AsyncSession = Depends(get_db),
 ):
     res = await db.execute(
-        select(QueuedPost).where(QueuedPost.id == post_id, QueuedPost.user_id == current_user.id)
+        select(QueuedPost).where(QueuedPost.id == post_id, QueuedPost.user_id == str(current_user.id))
     )
     row = res.scalar_one_or_none()
     if not row:
