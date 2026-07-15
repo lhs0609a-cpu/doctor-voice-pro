@@ -64,6 +64,7 @@ interface PreparedItem {
   title: string
   content: string
   images: string[]
+  fixedImage?: string        // 유니크화된 고정 하단 이미지
   tags: string[]
   emphasize: string[]
   openType: OpenType
@@ -201,6 +202,10 @@ export function SavedPostsManager() {
   const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null)
   const [collectionCount, setCollectionCount] = useState(12) // 이 글에 넣을 장수(기억됨)
 
+  // 고정 하단 이미지: 모든 글 맨 아래에 항상(유니크화되어) 들어감
+  const [fixedImage, setFixedImage] = useState<string | null>(null)      // base64 data URL
+  const [fixedSiblings, setFixedSiblings] = useState<string[]>([])        // 과거 변형 pHash(중복 회피)
+
   const [finalAction, setFinalAction] = useState<FinalAction>('publishNow')
   const [openType, setOpenType] = useState<OpenType>('public')
 
@@ -265,6 +270,12 @@ export function SavedPostsManager() {
     try {
       const prep = JSON.parse(localStorage.getItem('doctorvoice-prepared') || '[]')
       if (Array.isArray(prep)) setPrepared(prep)
+    } catch { /* noop */ }
+    try {
+      const fx = localStorage.getItem('doctorvoice-fixed-image')
+      if (fx) setFixedImage(fx)
+      const fs = JSON.parse(localStorage.getItem('doctorvoice-fixed-siblings') || '[]')
+      if (Array.isArray(fs)) setFixedSiblings(fs)
     } catch { /* noop */ }
     mediaPoolAPI.listCollections().then((data) => {
       setCollections(data.collections)
@@ -350,6 +361,40 @@ export function SavedPostsManager() {
     })
   }
 
+  // 고정 하단 이미지 등록(원본 base64 저장 → 발행마다 유니크화해 맨 아래 삽입)
+  const handleFixedImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = (e.target.files || [])[0]
+    if (!f || !f.type.startsWith('image/')) { toast.error('이미지 파일을 선택하세요'); return }
+    try {
+      const b64 = await imageToCleanBase64(f)
+      setFixedImage(b64)
+      setFixedSiblings([])
+      localStorage.setItem('doctorvoice-fixed-image', b64)
+      localStorage.setItem('doctorvoice-fixed-siblings', '[]')
+      toast.success('고정 하단 이미지를 등록했어요', { description: '모든 글 맨 아래에 자동으로(유니크화되어) 들어갑니다' })
+    } catch { toast.error('이미지 처리 실패') }
+    e.target.value = ''
+  }
+  const removeFixedImage = () => {
+    setFixedImage(null); setFixedSiblings([])
+    localStorage.removeItem('doctorvoice-fixed-image')
+    localStorage.removeItem('doctorvoice-fixed-siblings')
+    toast.success('고정 이미지를 해제했어요')
+  }
+  // 고정 이미지를 유니크화해 반환(없으면 null). siblings 누적으로 글마다 다른 변형.
+  const resolveFixedImage = async (): Promise<string | null> => {
+    if (!fixedImage) return null
+    try {
+      const r = await mediaPoolAPI.uniquifyOne(fixedImage, fixedSiblings)
+      const nextSib = [...fixedSiblings, r.phash].slice(-60)
+      setFixedSiblings(nextSib)
+      localStorage.setItem('doctorvoice-fixed-siblings', JSON.stringify(nextSib))
+      return r.image
+    } catch {
+      return fixedImage // 유니크화 실패 시 원본이라도 삽입
+    }
+  }
+
   // 간격 예약: (마지막 예약 or 지금) + intervalHours, 10분 내림, 과거면 지금 기준
   const computeIntervalSlot = (): Date => {
     const now = Date.now()
@@ -425,12 +470,18 @@ export function SavedPostsManager() {
         for (const f of uploadedImages) images.push(await imageToCleanBase64(f))
       }
 
+      // 고정 하단 이미지(유니크화) — 맨 아래에 항상
+      const fixedUniq = await resolveFixedImage()
+      const blocks = buildInterleavedBlocks(finalBody || finalTitle, images)
+      if (fixedUniq) blocks.push({ type: 'image', image: fixedUniq })
+      const allImages = fixedUniq ? [...images, fixedUniq] : images
+
       const job = {
         id: savedId || `post-${Date.now()}`,
         title: finalTitle,
         content: finalBody || finalTitle,
-        images,
-        blocks: buildInterleavedBlocks(finalBody || finalTitle, images), // 글-이미지-글-이미지
+        images: allImages,
+        blocks, // 글-이미지-글-이미지 + 맨 아래 고정 이미지
         tags,
         emphasize: extractKeywords(finalBody || finalTitle), // 핵심 키워드 자동 굵게
         options: { openType, search: true },
@@ -498,10 +549,12 @@ export function SavedPostsManager() {
       } else if (uploadedImages.length) {
         for (const f of uploadedImages) images.push(await imageToCleanBase64(f))
       }
+      const fixedUniq = await resolveFixedImage()
       const item: PreparedItem = {
         id: savedId || `post-${Date.now()}`,
         title: finalTitle, content: finalBody || finalTitle,
-        images, tags, emphasize: extractKeywords(finalBody || finalTitle),
+        images, fixedImage: fixedUniq || undefined,
+        tags, emphasize: extractKeywords(finalBody || finalTitle),
         openType, scheduleISO,
       }
       const nextCount = prepared.length + 1
@@ -530,13 +583,18 @@ export function SavedPostsManager() {
     setPublishing(true)
     const t = toast.loading(`준비한 ${prepared.length}건 예약 등록 시작...`)
     try {
-      const jobs = prepared.map((p) => ({
-        id: p.id, title: p.title, content: p.content, images: p.images,
-        blocks: buildInterleavedBlocks(p.content, p.images), // 글-이미지-글-이미지
+      const jobs = prepared.map((p) => {
+        const blocks = buildInterleavedBlocks(p.content, p.images)
+        if (p.fixedImage) blocks.push({ type: 'image', image: p.fixedImage })
+        return {
+        id: p.id, title: p.title, content: p.content,
+        images: p.fixedImage ? [...p.images, p.fixedImage] : p.images,
+        blocks, // 글-이미지-글-이미지 + 맨 아래 고정 이미지
         tags: p.tags, emphasize: p.emphasize,
         options: { openType: p.openType, search: true },
         finalAction: 'schedule', schedule: { datetime: p.scheduleISO },
-      }))
+        }
+      })
       const res = await sendMessageToExtension(ext.extensionId, { action: 'SUBMIT_BATCH', jobs })
       if (!res?.success) throw new Error(res?.error || '발행 전송 실패')
       // 준비함 → 예약 기록으로 이동
@@ -813,6 +871,36 @@ export function SavedPostsManager() {
                   )}
                 </div>
               )}
+
+              {/* 고정 하단 이미지 — 모든 글 맨 아래에 항상(유니크화되어) */}
+              <div className="rounded-lg border border-dashed border-gray-300 p-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-medium flex items-center gap-1.5">
+                    <ImageIcon className="w-4 h-4 text-emerald-600" /> 고정 하단 이미지 <span className="text-xs font-normal text-muted-foreground">(선택 · 모든 글 맨 아래)</span>
+                  </div>
+                  {fixedImage ? (
+                    <button onClick={removeFixedImage} className="text-xs text-rose-500 hover:text-rose-600 underline">해제</button>
+                  ) : (
+                    <label className="text-xs text-emerald-600 hover:text-emerald-700 underline cursor-pointer">
+                      등록
+                      <input type="file" accept="image/*" onChange={handleFixedImageUpload} className="hidden" />
+                    </label>
+                  )}
+                </div>
+                {fixedImage ? (
+                  <div className="flex items-center gap-2 mt-2">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={fixedImage} alt="고정" className="w-16 h-16 object-cover rounded border" />
+                    <p className="text-xs text-muted-foreground">
+                      등록됨 — 발행할 때마다 <b>유니크화(보정)</b>되어 본문 맨 아래에 자동으로 들어갑니다.
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    로고·연락처·안내 이미지 등을 등록하면, 랜덤 사진 외에 모든 글 하단에 항상 붙습니다(매번 다른 변형).
+                  </p>
+                )}
+              </div>
             </section>
 
             {/* STEP 3. 발행 방식 */}

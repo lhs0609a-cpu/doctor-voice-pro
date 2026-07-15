@@ -462,3 +462,44 @@ async def assign_and_uniquify(
         all_passed=all(a.passed for a in out) if out else False,
         images=out, warnings=warnings,
     )
+
+
+# ==================== 고정 이미지 유니크화 (본문 하단 고정 삽입용) ====================
+class UniquifyOneRequest(BaseModel):
+    image: str                       # data URL 또는 base64
+    sibling_hashes: List[str] = []   # 과거 변형 pHash(글마다 다르게)
+    max_width: int = uniq.MAX_WIDTH
+
+
+class UniquifyOneResponse(BaseModel):
+    image: str                       # 유니크화된 data URL
+    phash: str
+    passed: bool
+    min_distance: int
+
+
+@router.post("/uniquify-one", response_model=UniquifyOneResponse)
+async def uniquify_one(
+    req: UniquifyOneRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """임의 이미지 1장을 유니크화해서 반환(고정 하단 이미지가 글마다 다른 변형으로 들어가도록).
+    DB 미사용 — 클라이언트가 sibling_hashes 를 누적 전달해 글 간 중복 회피."""
+    raw = req.image or ""
+    if "," in raw and raw.strip().startswith("data:"):
+        raw = raw.split(",", 1)[1]
+    try:
+        data = base64.b64decode(raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="이미지 디코딩 실패")
+
+    result = await run_in_threadpool(
+        uniq.uniquify, data, sibling_hashes=req.sibling_hashes, max_width=req.max_width,
+    )
+    if result is None:
+        raise HTTPException(status_code=400, detail="유니크화 실패(이미지 확인)")
+
+    return UniquifyOneResponse(
+        image="data:image/jpeg;base64," + base64.b64encode(result.image_bytes).decode(),
+        phash=result.phash, passed=result.passed, min_distance=result.min_distance,
+    )

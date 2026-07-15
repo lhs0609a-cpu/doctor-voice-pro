@@ -619,6 +619,12 @@ export const mediaPoolAPI = {
     return response.data
   },
 
+  // 임의 이미지 1장 유니크화(고정 하단 이미지가 글마다 다른 변형으로 들어가도록)
+  uniquifyOne: async (image: string, siblingHashes: string[] = []): Promise<{ image: string; phash: string; passed: boolean; min_distance: number }> => {
+    const response = await api.post('/api/v1/media/uniquify-one', { image, sibling_hashes: siblingHashes }, { timeout: 60000 })
+    return response.data
+  },
+
   // ===== 사진 목록(앨범) =====
   listCollections: async (withCover = true): Promise<CollectionListResponse> => {
     const response = await api.get<CollectionListResponse>('/api/v1/media/collections', {
