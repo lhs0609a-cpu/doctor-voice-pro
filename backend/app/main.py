@@ -97,6 +97,8 @@ async def lifespan(app: FastAPI):
     try:
         from app.db.database import engine, Base
         from sqlalchemy import text
+        from sqlalchemy import Enum as SQLEnum
+        import enum as _enum
 
         async with engine.begin() as conn:
             for table in Base.metadata.sorted_tables:
@@ -115,9 +117,10 @@ async def lifespan(app: FastAPI):
                     except Exception:
                         coltype = "TEXT"
                     ddl = f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {coltype}'
-                    # 리터럴 기본값만 반영(콜러블 default 는 생략 → nullable 로 추가)
+                    # 리터럴 기본값만 반영. Enum 은 저장형(이름)과 값이 달라 기본값 생략(→ NULL 로 추가)
                     dflt = getattr(col, "default", None)
-                    if dflt is not None and getattr(dflt, "is_scalar", False):
+                    is_enum = isinstance(col.type, SQLEnum)
+                    if not is_enum and dflt is not None and getattr(dflt, "is_scalar", False):
                         v = dflt.arg
                         if isinstance(v, bool):
                             ddl += f" DEFAULT {1 if v else 0}"
@@ -135,6 +138,39 @@ async def lifespan(app: FastAPI):
         print("[OK] Auto column sync completed")
     except Exception as e:
         print(f"[WARNING] Auto column sync error: {e}")
+
+    # 1.7. Enum 값 복구 — SQLAlchemy Enum 은 '이름'(예: MEDICAL)으로 저장하는데
+    #      과거 잘못된 마이그레이션으로 '값'(예: medical)이 들어간 행을 올바른 이름으로 교정.
+    try:
+        from app.db.database import engine, Base
+        from sqlalchemy import text, Enum as SQLEnum
+
+        async with engine.begin() as conn:
+            for table in Base.metadata.sorted_tables:
+                try:
+                    rows = (await conn.execute(text(f"PRAGMA table_info('{table.name}')"))).fetchall()
+                except Exception:
+                    continue
+                existing = {r[1] for r in rows}
+                for col in table.columns:
+                    if col.name not in existing or not isinstance(col.type, SQLEnum):
+                        continue
+                    ec = getattr(col.type, "enum_class", None)
+                    if ec is None:
+                        continue
+                    for member in ec:
+                        # 값(member.value)으로 저장된 행 → 이름(member.name)으로 교정
+                        if member.value != member.name:
+                            try:
+                                await conn.execute(
+                                    text(f'UPDATE "{table.name}" SET "{col.name}"=:n WHERE "{col.name}"=:v'),
+                                    {"n": member.name, "v": member.value},
+                                )
+                            except Exception:
+                                pass
+        print("[OK] Enum value repair completed")
+    except Exception as e:
+        print(f"[WARNING] Enum repair error: {e}")
 
     # 2. 기본 계정들 자동 생성
     try:
