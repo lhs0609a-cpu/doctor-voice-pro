@@ -148,7 +148,7 @@ export function SavedPostsManager() {
   const [photoMode, setPhotoMode] = useState<'upload' | 'collection'>('upload')
   const [collections, setCollections] = useState<PoolCollectionItem[]>([])
   const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null)
-  const [collectionCount, setCollectionCount] = useState(6) // 이 글에 넣을 장수(기억됨)
+  const [collectionCount, setCollectionCount] = useState(12) // 이 글에 넣을 장수(기억됨)
 
   const [finalAction, setFinalAction] = useState<FinalAction>('publishNow')
   const [openType, setOpenType] = useState<OpenType>('public')
@@ -594,21 +594,39 @@ export function SavedPostsManager() {
                           </button>
                         ))}
                       </div>
-                      {/* 장수 입력(기억됨) */}
-                      <div className="flex items-center gap-2">
-                        <Label htmlFor="colCount" className="text-sm text-gray-600">이 글에 넣을 사진 수</Label>
-                        <Input
-                          id="colCount"
-                          type="number"
-                          min={1}
-                          max={20}
-                          value={collectionCount}
-                          onChange={(e) => setCollectionCount(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
-                          className="w-20 h-9"
-                        />
-                        <span className="text-xs text-muted-foreground">
-                          장 · 발행할 때마다 &lsquo;적게 쓴 사진&rsquo;부터 골라 자동 유니크화됩니다
-                        </span>
+                      {/* 장수 입력(기억됨) + 빠른 선택 */}
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor="colCount" className="text-sm text-gray-600">이 글에 넣을 사진 수</Label>
+                          <Input
+                            id="colCount"
+                            type="number"
+                            min={1}
+                            max={30}
+                            value={collectionCount}
+                            onChange={(e) => setCollectionCount(Math.max(1, Math.min(30, Number(e.target.value) || 1)))}
+                            className="w-20 h-9"
+                          />
+                          <span className="text-xs text-muted-foreground">장</span>
+                          <div className="flex gap-1">
+                            {[8, 10, 12, 15].map((n) => (
+                              <button
+                                key={n}
+                                onClick={() => setCollectionCount(n)}
+                                className={`px-2.5 h-8 rounded-md text-xs border transition ${
+                                  collectionCount === n
+                                    ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
+                                    : 'border-gray-200 text-gray-600 hover:border-emerald-300'
+                                }`}
+                              >
+                                {n}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          발행할 때마다 &lsquo;적게 쓴 사진&rsquo;부터 골라 자동 유니크화 — 40~60장 담아두면 글마다 알아서 다른 사진이 들어갑니다.
+                        </p>
                       </div>
                       {selectedCollectionId && (
                         <p className="text-xs text-emerald-700 bg-emerald-50 rounded-md px-3 py-2">
