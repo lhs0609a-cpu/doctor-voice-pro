@@ -92,6 +92,50 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[WARNING] Migration error (may be normal): {e}")
 
+    # 1.6. 자동 컬럼 동기화 — 모델에 있는데 DB에 없는 컬럼을 자동 ADD COLUMN
+    #      (배포 시 스키마 드리프트로 'no such column' 500 방지. SQLite 전용, 멱등)
+    try:
+        from app.db.database import engine, Base
+        from sqlalchemy import text
+
+        async with engine.begin() as conn:
+            for table in Base.metadata.sorted_tables:
+                try:
+                    rows = (await conn.execute(text(f"PRAGMA table_info('{table.name}')"))).fetchall()
+                except Exception:
+                    continue
+                existing = {r[1] for r in rows}
+                if not existing:
+                    continue  # 테이블 자체가 없으면 create_all 이 이미 생성
+                for col in table.columns:
+                    if col.name in existing:
+                        continue
+                    try:
+                        coltype = col.type.compile(dialect=conn.dialect)
+                    except Exception:
+                        coltype = "TEXT"
+                    ddl = f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {coltype}'
+                    # 리터럴 기본값만 반영(콜러블 default 는 생략 → nullable 로 추가)
+                    dflt = getattr(col, "default", None)
+                    if dflt is not None and getattr(dflt, "is_scalar", False):
+                        v = dflt.arg
+                        if isinstance(v, bool):
+                            ddl += f" DEFAULT {1 if v else 0}"
+                        elif isinstance(v, (int, float)):
+                            ddl += f" DEFAULT {v}"
+                        elif isinstance(v, str):
+                            ddl += " DEFAULT '" + v.replace("'", "''") + "'"
+                    try:
+                        await conn.execute(text(ddl))
+                        print(f"[OK] AutoMigrate: {table.name}.{col.name}")
+                    except Exception as e:
+                        msg = str(e).lower()
+                        if "duplicate column" not in msg and "already exists" not in msg:
+                            print(f"[SKIP] AutoMigrate {table.name}.{col.name}: {str(e)[:60]}")
+        print("[OK] Auto column sync completed")
+    except Exception as e:
+        print(f"[WARNING] Auto column sync error: {e}")
+
     # 2. 기본 계정들 자동 생성
     try:
         from app.db.database import get_db
