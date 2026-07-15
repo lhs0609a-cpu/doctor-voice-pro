@@ -1,6 +1,6 @@
 {
   "version": "15.3.0",
-  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension.crx",
+  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v15.3.0.zip",
   "notes": "v15.3.0 — 핵심 키워드 자동 굵게 + 예약 준비함(여러 글 모아서 한 번에 예약발행)",
   "minVersion": "15.0.0",
   "releasedAt": "2026-07-15"
