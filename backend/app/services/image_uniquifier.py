@@ -364,7 +364,7 @@ def uniquify(
     max_attempts: int = MAX_ATTEMPTS,
     max_width: int = MAX_WIDTH,
     frame_styles: Iterable[str] | None = None,
-    allow_flip: bool = True,
+    allow_flip: bool = False,  # 좌우 반전 금지(글씨/제품 이미지가 뒤집혀 보임)
     allow_reframe: bool = True,
     seed: int | None = None,
 ) -> UniquifyResult:

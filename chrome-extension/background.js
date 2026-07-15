@@ -2,7 +2,7 @@
 // 닥터보이스 프로 - 백그라운드 서비스워커 v15
 // CDP(chrome.debugger) 기반 실제 입력 + 오케스트레이션 + 자동 업데이트
 // ============================================================
-const VERSION = '15.3.0';
+const VERSION = '15.4.0';
 const UPDATE_URL = 'https://doctor-voice-pro-ghwi.vercel.app/extension/version.json';
 const WRITE_URL = 'https://blog.naver.com/GoBlogWrite.naver';
 
@@ -250,17 +250,23 @@ async function runAutomation(tabId, job) {
     await sleep(250);
     await ctrlA(tabId);
     await sleep(80);
-    await typeBody(tabId, job.content, job.emphasize);
-    await sleep(400);
 
-    // CDP 해제 (이미지 드롭/버튼 클릭은 일반 DOM으로)
-    await detachDebugger(tabId);
-    await sleep(300);
-
-    // 이미지 삽입
-    if (job.images && job.images.length) {
-      await progress(tabId, `이미지 삽입 중... (${job.images.length}개)`, 60);
-      await sendToTab(tabId, { action: 'INSERT_IMAGES', images: job.images });
+    // 인터리브(글-이미지-글-이미지) 블록이 있으면 순서대로, 없으면 기존 방식
+    const hasImageBlocks = Array.isArray(job.blocks) && job.blocks.some((b) => b.type === 'image' && b.image);
+    if (hasImageBlocks) {
+      await typeBlocksInterleaved(tabId, job);
+      await sleep(300);
+      try { await detachDebugger(tabId); } catch (_) {}
+      await sleep(200);
+    } else {
+      await typeBody(tabId, job.content, job.emphasize);
+      await sleep(400);
+      await detachDebugger(tabId);
+      await sleep(300);
+      if (job.images && job.images.length) {
+        await progress(tabId, `이미지 삽입 중... (${job.images.length}개)`, 60);
+        await sendToTab(tabId, { action: 'INSERT_IMAGES', images: job.images });
+      }
     }
 
     // 최종 동작 (임시저장 / 발행 / 예약)
@@ -315,6 +321,34 @@ async function typeBody(tabId, content, emphasize) {
       }
     }
     if (i < lines.length - 1) { await pressEnter(tabId); await sleep(30); }
+  }
+}
+
+// 블록 순서대로 입력: 글 → 이미지 → 글 → 이미지 (문단 사이 삽입)
+// 텍스트는 CDP 타이핑, 이미지는 CDP 분리 후 커서 위치에 드롭 → 재부착.
+async function typeBlocksInterleaved(tabId, job) {
+  const blocks = job.blocks || [];
+  let first = true;
+  let cleared = false;
+  for (const b of blocks) {
+    if (b.type === 'text' && b.content) {
+      if (!first) { await pressEnter(tabId); await sleep(40); }
+      await typeBody(tabId, b.content, job.emphasize);
+      first = false; cleared = true;
+    } else if (b.type === 'image' && b.image) {
+      if (!cleared) { await insertText(tabId, ''); cleared = true; } // ctrlA 선택분 제거
+      if (!first) { await pressEnter(tabId); await sleep(40); }
+      await progress(tabId, '이미지 삽입 중...', 60);
+      // 이미지 드롭은 일반 DOM → CDP 분리
+      try { await detachDebugger(tabId); } catch (_) {}
+      await sleep(150);
+      await sendToTab(tabId, { action: 'INSERT_IMAGES', images: [b.image], atCaret: true });
+      await sleep(1900);
+      // 다음 문단 타이핑을 위해 CDP 재부착 + 본문 포커스 복귀
+      await attachDebugger(tabId);
+      await sleep(200);
+      first = false;
+    }
   }
 }
 

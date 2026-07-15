@@ -133,6 +133,24 @@ function extractKeywords(text: string, topN = 6): string[] {
   return repeated.slice(0, topN)
 }
 
+// 본문을 문단으로 나눠 이미지를 고르게 끼운 블록(글-이미지-글-이미지)
+function buildInterleavedBlocks(content: string, images: string[]): { type: 'text' | 'image'; content?: string; image?: string }[] {
+  const text = (content || '').replace(/\r\n/g, '\n').trim()
+  let paras = text.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean)
+  if (paras.length <= 1) paras = text.split(/\n/).map((p) => p.trim()).filter(Boolean)
+  if (paras.length === 0) paras = [text || '']
+  const n = images.length
+  const blocks: { type: 'text' | 'image'; content?: string; image?: string }[] = []
+  let imgIdx = 0
+  for (let p = 0; p < paras.length; p++) {
+    blocks.push({ type: 'text', content: paras[p] })
+    const upto = Math.round(((p + 1) * n) / paras.length)
+    while (imgIdx < upto) { blocks.push({ type: 'image', image: images[imgIdx] }); imgIdx++ }
+  }
+  while (imgIdx < n) { blocks.push({ type: 'image', image: images[imgIdx] }); imgIdx++ }
+  return blocks
+}
+
 // 텍스트에서 첫 비어있지 않은 줄
 function firstLine(text: string): string {
   const line = text.replace(/\r\n/g, '\n').split('\n').find((l) => l.trim())
@@ -412,6 +430,7 @@ export function SavedPostsManager() {
         title: finalTitle,
         content: finalBody || finalTitle,
         images,
+        blocks: buildInterleavedBlocks(finalBody || finalTitle, images), // 글-이미지-글-이미지
         tags,
         emphasize: extractKeywords(finalBody || finalTitle), // 핵심 키워드 자동 굵게
         options: { openType, search: true },
@@ -513,6 +532,7 @@ export function SavedPostsManager() {
     try {
       const jobs = prepared.map((p) => ({
         id: p.id, title: p.title, content: p.content, images: p.images,
+        blocks: buildInterleavedBlocks(p.content, p.images), // 글-이미지-글-이미지
         tags: p.tags, emphasize: p.emphasize,
         options: { openType: p.openType, search: true },
         finalAction: 'schedule', schedule: { datetime: p.scheduleISO },

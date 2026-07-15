@@ -115,7 +115,21 @@
   }
 
   // ---------- 이미지 드롭 삽입 ----------
-  async function dropImage(file) {
+  // 현재 캐럿(커서) 위치의 화면 좌표. 인터리브 삽입 시 문단 사이에 떨어뜨리기 위함.
+  function caretPoint() {
+    try {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount) {
+        const rect = sel.getRangeAt(0).getBoundingClientRect();
+        if (rect && (rect.top || rect.left) && rect.top > 0) {
+          return { x: rect.left + 2, y: rect.top + rect.height / 2 };
+        }
+      }
+    } catch (e) { /* noop */ }
+    return null;
+  }
+
+  async function dropImage(file, atCaret) {
     const target =
       document.querySelector('.se-content .se-components-wrap') ||
       document.querySelector('.se-content') ||
@@ -125,23 +139,24 @@
 
     const dt = new DataTransfer();
     dt.items.add(file);
-    const r = target.getBoundingClientRect();
-    const opts = {
-      bubbles: true, cancelable: true, composed: true, dataTransfer: dt,
-      clientX: r.left + r.width / 2, clientY: r.top + r.height - 8,
-    };
+    // atCaret 이면 커서 위치, 아니면 에디터 하단(기존 동작)
+    let x, y;
+    const cp = atCaret ? caretPoint() : null;
+    if (cp) { x = cp.x; y = cp.y; }
+    else { const r = target.getBoundingClientRect(); x = r.left + r.width / 2; y = r.top + r.height - 8; }
+    const opts = { bubbles: true, cancelable: true, composed: true, dataTransfer: dt, clientX: x, clientY: y };
     target.dispatchEvent(new DragEvent('dragenter', opts));
     target.dispatchEvent(new DragEvent('dragover', opts));
     target.dispatchEvent(new DragEvent('drop', opts));
   }
 
-  async function insertImages(images) {
+  async function insertImages(images, atCaret) {
     if (!images || !images.length) return { inserted: 0 };
     let ok = 0;
     for (let i = 0; i < images.length; i++) {
       try {
         const file = base64ToFile(images[i], `image_${Date.now()}_${i}.jpg`);
-        await dropImage(file);
+        await dropImage(file, atCaret);
         ok++;
         showOverlay(`🖼️ 이미지 삽입 중... (${ok}/${images.length})`, 60 + (i / images.length) * 20);
         await sleep(1800); // 네이버 업로드 처리 대기
@@ -356,7 +371,7 @@
             break;
           }
           case 'INSERT_IMAGES': {
-            const res = await insertImages(msg.images);
+            const res = await insertImages(msg.images, msg.atCaret);
             sendResponse({ ok: true, ...res });
             break;
           }
