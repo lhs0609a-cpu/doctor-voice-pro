@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "닥터보이스 프로 - 네이버 블로그 자동 포스팅",
-  "version": "15.2.0",
+  "version": "15.3.0",
   "description": "닥터보이스 프로 - 네이버 블로그 원클릭 자동 포스팅 (로그인→작성→이미지→임시저장/예약발행)",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAw15bHHlo+oAu4V9dLtO33fs5EF3eA2vo933KPqtdzVVoSsMV5T+MRjYUvEzQa77TZgtI4ptK2sv7srtHW3XOmWlp6pcbJn2lQVfmqN17lIND3h1SjWUJcRJKr/eZjTUcmFwW0tHqNZM9MeFRNxisxqvBnKmhnwiRVIXdKwgaj/AtQBI0r+eJkd0Sjev2h4o1fR6toT60frJJ89rpZbpGm8MpODg4vyYrx7IqNlRaXxkvea+EjqBX2PCgOTgRvOVdHNZjkhIP5B6/a3MI8mHHY0dJgLFDP3UvgRb/Rn+c2HZfgSjna3cy6DQPG/rM8wbGvIIXXPszaHTYrIBwgwXIvwIDAQAB",
   "update_url": "https://doctor-voice-pro-ghwi.vercel.app/extension/updates.xml",

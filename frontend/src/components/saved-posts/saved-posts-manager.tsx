@@ -58,6 +58,18 @@ type FinalAction = 'draft' | 'publishNow' | 'schedule'
 type OpenType = 'public' | 'neighbor' | 'both' | 'private'
 type ScheduleMode = 'manual' | 'interval'
 
+// 예약 준비함 항목 (이미지는 base64로 확정 저장 → 나중에 한 번에 발행)
+interface PreparedItem {
+  id: string
+  title: string
+  content: string
+  images: string[]
+  tags: string[]
+  emphasize: string[]
+  openType: OpenType
+  scheduleISO: string
+}
+
 const ACTION_OPTIONS: { key: FinalAction; label: string; desc: string; icon: any }[] = [
   { key: 'draft', label: '임시저장', desc: '네이버에 초안으로 저장', icon: FileEdit },
   { key: 'publishNow', label: '즉시 발행', desc: '지금 바로 공개 발행', icon: Zap },
@@ -98,6 +110,27 @@ function imageToCleanBase64(file: File, maxWidth = 1280, quality = 0.9): Promise
     img.onerror = reject
     img.src = URL.createObjectURL(file)
   })
+}
+
+// 본문에서 자동 강조할 키워드(반복 단어) 추출 — 조사 제거 + 불용어 제외 + 빈도순
+const _JOSA = ['으로써','으로서','이라고','라고','에서는','에서도','으로','에서','에게','한테','부터','까지','처럼','같이','마다','조차','밖에','이나','라도','이란','은','는','이','가','을','를','에','와','과','도','만','의','로']
+const _STOP = new Set(['그리고','그러나','하지만','그래서','또한','또는','그런데','때문','위해','통해','대해','경우','정도','우리','여러분','있습니다','합니다','입니다','습니다','됩니다','있는','하는','되는','매우','정말','너무','아주','가장','모든','다양한','오늘','안녕하세요','감사합니다'])
+function stripJosa(w: string): string {
+  if (!/[가-힣]$/.test(w)) return w
+  for (const j of _JOSA) if (w.endsWith(j) && w.length - j.length >= 2) return w.slice(0, -j.length)
+  return w
+}
+function extractKeywords(text: string, topN = 6): string[] {
+  const counts = new Map<string, number>()
+  const words = (text || '').match(/[가-힣A-Za-z0-9]+/g) || []
+  for (const raw of words) {
+    const w = stripJosa(raw)
+    if (w.length < 2 || _STOP.has(w) || /^[0-9]+$/.test(w)) continue
+    counts.set(w, (counts.get(w) || 0) + 1)
+  }
+  const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1])
+  const repeated = sorted.filter(([, c]) => c >= 2).map(([w]) => w)
+  return repeated.slice(0, topN)
 }
 
 // 텍스트에서 첫 비어있지 않은 줄
@@ -164,6 +197,10 @@ export function SavedPostsManager() {
   const [publishing, setPublishing] = useState(false)
   const [guideOpen, setGuideOpen] = useState(false)
 
+  // 예약 준비함: 발행하지 않고 담아뒀다가 나중에 한 번에 처리
+  const [prepared, setPrepared] = useState<PreparedItem[]>([])
+  const [preparing, setPreparing] = useState(false)
+
   // 저장된 글 로드 (샘플 항상 포함) + 선택 요청 반영
   useEffect(() => {
     const load = () => {
@@ -206,6 +243,10 @@ export function SavedPostsManager() {
     try {
       const log = JSON.parse(localStorage.getItem('doctorvoice-schedule-log') || '[]')
       if (Array.isArray(log)) setScheduleLog(log)
+    } catch { /* noop */ }
+    try {
+      const prep = JSON.parse(localStorage.getItem('doctorvoice-prepared') || '[]')
+      if (Array.isArray(prep)) setPrepared(prep)
     } catch { /* noop */ }
     mediaPoolAPI.listCollections().then((data) => {
       setCollections(data.collections)
@@ -372,6 +413,7 @@ export function SavedPostsManager() {
         content: finalBody || finalTitle,
         images,
         tags,
+        emphasize: extractKeywords(finalBody || finalTitle), // 핵심 키워드 자동 굵게
         options: { openType, search: true },
         finalAction,
         schedule: scheduleISO ? { datetime: scheduleISO } : null,
@@ -405,6 +447,102 @@ export function SavedPostsManager() {
     } finally {
       setPublishing(false)
     }
+  }
+
+  // 현재 편집 중인 글을 '예약 준비함'에 담기 (발행하지 않음)
+  const preparePost = async () => {
+    const { title: finalTitle, body: finalBody } = splitTitleBody(draftTitle, draftBody)
+    if (!finalBody && !finalTitle) { toast.error('담을 글을 입력하세요'); return }
+    let dt: Date
+    if (scheduleMode === 'interval') {
+      dt = computeIntervalSlot()
+    } else {
+      if (!scheduleDate || !scheduleTime) { toast.error('예약 날짜와 시간을 선택하세요'); return }
+      dt = new Date(`${scheduleDate}T${scheduleTime}`)
+    }
+    if (isNaN(dt.getTime()) || dt.getTime() <= Date.now()) { toast.error('예약 시간은 현재 이후여야 합니다'); return }
+    const scheduleISO = toLocalInput(dt)
+
+    const savedId = saveDraft(true)
+    const src = savedPosts.find((p) => p.id === selectedId)
+    const tags = src?.seo_keywords || src?.hashtags || []
+
+    setPreparing(true)
+    const t = toast.loading('준비함에 담는 중... (사진 처리 포함)')
+    try {
+      const images: string[] = []
+      if (photoMode === 'collection' && selectedCollectionId) {
+        const res = await mediaPoolAPI.assign({
+          count: collectionCount, collection_id: selectedCollectionId, post_id: savedId || undefined,
+        })
+        for (const a of res.images) images.push(a.image)
+      } else if (uploadedImages.length) {
+        for (const f of uploadedImages) images.push(await imageToCleanBase64(f))
+      }
+      const item: PreparedItem = {
+        id: savedId || `post-${Date.now()}`,
+        title: finalTitle, content: finalBody || finalTitle,
+        images, tags, emphasize: extractKeywords(finalBody || finalTitle),
+        openType, scheduleISO,
+      }
+      const nextCount = prepared.length + 1
+      setPrepared((prev) => {
+        const next = [...prev, item].sort((a, b) => a.scheduleISO.localeCompare(b.scheduleISO))
+        try { localStorage.setItem('doctorvoice-prepared', JSON.stringify(next)) }
+        catch { toast.warning('저장 공간 부족 — 사진이 많으면 사진 풀(목록)을 쓰는 걸 권장해요') }
+        return next
+      })
+      // 다음 글이 겹치지 않도록 예약 기준 갱신
+      localStorage.setItem('doctorvoice-last-schedule', scheduleISO)
+      setLastScheduledAt(scheduleISO)
+      toast.success('예약 준비함에 담았어요', { id: t, description: `${fmtKo(dt)} 예약 · 준비 ${nextCount}건` })
+      newDraft() // 다음 글 작성 준비
+    } catch (e: any) {
+      toast.error('담기 실패', { id: t, description: e.message || '다시 시도해주세요' })
+    } finally {
+      setPreparing(false)
+    }
+  }
+
+  // 준비함의 모든 글을 확장으로 한 번에 예약 발행
+  const publishAllPrepared = async () => {
+    if (!ext.connected || !ext.extensionId) { toast.error('확장 프로그램이 연결되지 않았습니다'); return }
+    if (prepared.length === 0) return
+    setPublishing(true)
+    const t = toast.loading(`준비한 ${prepared.length}건 예약 등록 시작...`)
+    try {
+      const jobs = prepared.map((p) => ({
+        id: p.id, title: p.title, content: p.content, images: p.images,
+        tags: p.tags, emphasize: p.emphasize,
+        options: { openType: p.openType, search: true },
+        finalAction: 'schedule', schedule: { datetime: p.scheduleISO },
+      }))
+      const res = await sendMessageToExtension(ext.extensionId, { action: 'SUBMIT_BATCH', jobs })
+      if (!res?.success) throw new Error(res?.error || '발행 전송 실패')
+      // 준비함 → 예약 기록으로 이동
+      setScheduleLog((prev) => {
+        const next = [...prev, ...prepared.map((p) => ({ title: p.title, at: p.scheduleISO }))]
+          .sort((a, b) => a.at.localeCompare(b.at)).slice(-50)
+        localStorage.setItem('doctorvoice-schedule-log', JSON.stringify(next))
+        return next
+      })
+      setPrepared([]); localStorage.removeItem('doctorvoice-prepared')
+      toast.success(`${jobs.length}건 예약 등록을 시작했어요`, {
+        id: t, description: '새 탭에서 순차적으로 네이버 예약발행됩니다. 완료까지 창을 열어두세요.',
+      })
+    } catch (e: any) {
+      toast.error('발행 실패', { id: t, description: e.message || '다시 시도해주세요' })
+    } finally {
+      setPublishing(false)
+    }
+  }
+
+  const removePrepared = (id: string) => {
+    setPrepared((prev) => {
+      const next = prev.filter((p) => p.id !== id)
+      localStorage.setItem('doctorvoice-prepared', JSON.stringify(next))
+      return next
+    })
   }
 
   const listTitle = (p: SavedPost) => p.suggested_titles?.[0] || p.title || '제목 없음'
@@ -828,6 +966,16 @@ export function SavedPostsManager() {
                   )}
                 </Button>
               </div>
+
+              {/* 예약 준비함에 담기 (지금 발행하지 않고 모아두기) */}
+              {finalAction === 'schedule' && (
+                <Button variant="outline" onClick={preparePost} disabled={!hasContent || preparing}
+                  className="w-full mt-2 h-11 gap-2 border-amber-300 text-amber-700 hover:bg-amber-50">
+                  {preparing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Layers className="w-4 h-4" />}
+                  예약 준비함에 담기 (지금 발행 안 함)
+                </Button>
+              )}
+
               {!ext.connected && (
                 <p className="mt-2 text-center text-xs text-rose-600">
                   확장 프로그램이 연결되어야 발행할 수 있어요 —{' '}
@@ -839,6 +987,37 @@ export function SavedPostsManager() {
               <p className="mt-2 text-center text-[11px] text-muted-foreground">
                 브라우저에 네이버가 로그인되어 있어야 합니다(비밀번호는 저장하지 않아요). 미로그인 시 로그인 창이 열립니다.
               </p>
+
+              {/* 예약 준비함 — 모아둔 글을 한 번에 발행 */}
+              {prepared.length > 0 && (
+                <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50/60 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-semibold text-amber-900 flex items-center gap-1.5">
+                      <Layers className="w-4 h-4" /> 예약 준비함 {prepared.length}건
+                    </span>
+                    <Button size="sm" onClick={publishAllPrepared} disabled={!ext.connected || publishing}
+                      className="h-8 gap-1.5 bg-emerald-600 hover:bg-emerald-700">
+                      {publishing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                      준비한 {prepared.length}건 한번에 발행
+                    </Button>
+                  </div>
+                  <div className="max-h-52 overflow-y-auto divide-y divide-amber-100">
+                    {prepared.map((p) => (
+                      <div key={p.id} className="flex items-center gap-2 py-1.5 text-xs">
+                        <span className="tabular-nums text-amber-800 w-36 shrink-0">{fmtKo(new Date(p.scheduleISO))}</span>
+                        <span className="flex-1 truncate text-gray-700">{p.title || '(제목 없음)'}</span>
+                        <span className="text-[11px] text-muted-foreground shrink-0">사진 {p.images.length}</span>
+                        <button onClick={() => removePrepared(p.id)} className="text-rose-500 hover:text-rose-600 shrink-0">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-[11px] text-amber-700">
+                    담아둔 글은 여기 저장돼요. 다 모은 뒤 &lsquo;한번에 발행&rsquo;을 누르면 확장이 순서대로 네이버 예약발행에 등록합니다.
+                  </p>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>

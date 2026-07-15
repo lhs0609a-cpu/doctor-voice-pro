@@ -2,7 +2,7 @@
 // 닥터보이스 프로 - 백그라운드 서비스워커 v15
 // CDP(chrome.debugger) 기반 실제 입력 + 오케스트레이션 + 자동 업데이트
 // ============================================================
-const VERSION = '15.2.0';
+const VERSION = '15.3.0';
 const UPDATE_URL = 'https://doctor-voice-pro-ghwi.vercel.app/extension/version.json';
 const WRITE_URL = 'https://blog.naver.com/GoBlogWrite.naver';
 
@@ -121,6 +121,7 @@ function normalizeJob(raw) {
     content,
     images, // base64 data URL 배열 (EXIF는 프론트에서 제거됨)
     blocks, // [{type:'text',content} | {type:'image',image}] — 인터리브 삽입용(향후)
+    emphasize: Array.isArray(raw.emphasize) ? raw.emphasize : [], // 자동 굵게할 키워드
     tags: raw.tags || raw.keywords || raw.seo_keywords || [],
     options: {
       openType: raw.options?.openType || 'public',
@@ -249,7 +250,7 @@ async function runAutomation(tabId, job) {
     await sleep(250);
     await ctrlA(tabId);
     await sleep(80);
-    await typeBody(tabId, job.content);
+    await typeBody(tabId, job.content, job.emphasize);
     await sleep(400);
 
     // CDP 해제 (이미지 드롭/버튼 클릭은 일반 DOM으로)
@@ -284,11 +285,35 @@ async function runAutomation(tabId, job) {
   }
 }
 
-// 본문: 줄바꿈을 문단으로 처리
-async function typeBody(tabId, content) {
+// 본문: 줄바꿈을 문단으로 처리. emphasize(키워드) 는 Ctrl+B 로 자동 굵게.
+function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+async function typeBody(tabId, content, emphasize) {
+  const words = (Array.isArray(emphasize) ? emphasize : [])
+    .filter((w) => typeof w === 'string' && w.trim().length >= 2)
+    .map((w) => w.trim());
+  // 긴 단어부터 매칭(부분매칭 방지)
+  const uniq = [...new Set(words)].sort((a, b) => b.length - a.length);
+  const re = uniq.length ? new RegExp('(' + uniq.map(escapeRe).join('|') + ')') : null;
+  const wordSet = new Set(uniq);
+
   const lines = (content || '').split('\n');
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].length) await insertText(tabId, lines[i]);
+    const line = lines[i];
+    if (line.length) {
+      if (re) {
+        for (const part of line.split(re)) {
+          if (!part) continue;
+          if (wordSet.has(part)) {
+            await ctrlB(tabId); await insertText(tabId, part); await ctrlB(tabId);
+          } else {
+            await insertText(tabId, part);
+          }
+        }
+      } else {
+        await insertText(tabId, line);
+      }
+    }
     if (i < lines.length - 1) { await pressEnter(tabId); await sleep(30); }
   }
 }
@@ -337,6 +362,14 @@ async function ctrlA(tabId) {
   await cdp(tabId, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
   await sleep(40);
   await cdp(tabId, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
+  await cdp(tabId, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'Control', code: 'ControlLeft', windowsVirtualKeyCode: 17, modifiers: 0 });
+}
+// Ctrl+B 토글 (굵게 켜기/끄기)
+async function ctrlB(tabId) {
+  await cdp(tabId, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'Control', code: 'ControlLeft', windowsVirtualKeyCode: 17, modifiers: 2 });
+  await cdp(tabId, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'b', code: 'KeyB', windowsVirtualKeyCode: 66, modifiers: 2 });
+  await sleep(30);
+  await cdp(tabId, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'b', code: 'KeyB', windowsVirtualKeyCode: 66, modifiers: 2 });
   await cdp(tabId, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'Control', code: 'ControlLeft', windowsVirtualKeyCode: 17, modifiers: 0 });
 }
 

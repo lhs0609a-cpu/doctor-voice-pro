@@ -1,7 +1,7 @@
 {
-  "version": "15.2.0",
-  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v15.2.0.zip",
-  "notes": "v15.2.0 — 대량 예약발행(여러 글을 자동 포맷·사진 조합해 네이버 예약발행으로 일괄 등록)",
+  "version": "15.3.0",
+  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension.crx",
+  "notes": "v15.3.0 — 핵심 키워드 자동 굵게 + 예약 준비함(여러 글 모아서 한 번에 예약발행)",
   "minVersion": "15.0.0",
-  "releasedAt": "2026-07-14"
+  "releasedAt": "2026-07-15"
 }
