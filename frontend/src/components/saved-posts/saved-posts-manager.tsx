@@ -159,6 +159,7 @@ export function SavedPostsManager() {
   const [scheduleTime, setScheduleTime] = useState('')
   const [intervalHours, setIntervalHours] = useState(3)
   const [lastScheduledAt, setLastScheduledAt] = useState<string | null>(null)
+  const [scheduleLog, setScheduleLog] = useState<{ title: string; at: string }[]>([]) // 잡아둔 예약 기록
 
   const [publishing, setPublishing] = useState(false)
   const [guideOpen, setGuideOpen] = useState(false)
@@ -202,6 +203,10 @@ export function SavedPostsManager() {
     if (savedInterval >= 1) setIntervalHours(savedInterval)
     const lastSched = localStorage.getItem('doctorvoice-last-schedule')
     if (lastSched) setLastScheduledAt(lastSched)
+    try {
+      const log = JSON.parse(localStorage.getItem('doctorvoice-schedule-log') || '[]')
+      if (Array.isArray(log)) setScheduleLog(log)
+    } catch { /* noop */ }
     mediaPoolAPI.listCollections().then((data) => {
       setCollections(data.collections)
       if (savedCol && data.collections.some((c) => c.id === savedCol)) {
@@ -299,9 +304,14 @@ export function SavedPostsManager() {
 
   const resetSchedule = () => {
     localStorage.removeItem('doctorvoice-last-schedule')
+    localStorage.removeItem('doctorvoice-schedule-log')
     setLastScheduledAt(null)
-    toast.success('예약 기준을 초기화했어요')
+    setScheduleLog([])
+    toast.success('예약 기준과 현황을 초기화했어요')
   }
+
+  // 지나간(과거) 예약은 현황에서 정리
+  const upcomingLog = scheduleLog.filter((x) => new Date(x.at).getTime() > Date.now())
 
   // ── 핵심: 확장 프로그램으로 발행 (세션 재사용, 로그인 정보 없음) ──
   const publish = async () => {
@@ -371,10 +381,17 @@ export function SavedPostsManager() {
       const res = await sendMessageToExtension(ext.extensionId, { action: 'SUBMIT_JOB', job })
       if (!res?.success) throw new Error(res?.error || '발행 전송 실패')
 
-      // 예약이면 다음 글 간격 계산 기준으로 기억
+      // 예약이면 다음 글 간격 계산 기준으로 기억 + 예약 현황에 기록
       if (finalAction === 'schedule' && scheduleISO) {
         localStorage.setItem('doctorvoice-last-schedule', scheduleISO)
         setLastScheduledAt(scheduleISO)
+        setScheduleLog((prev) => {
+          const next = [...prev, { title: finalTitle || '(제목 없음)', at: scheduleISO! }]
+            .sort((a, b) => a.at.localeCompare(b.at))
+            .slice(-50) // 최근 50건만 유지
+          localStorage.setItem('doctorvoice-schedule-log', JSON.stringify(next))
+          return next
+        })
       }
 
       const when = scheduleISO ? scheduleISO.replace('T', ' ') : ''
@@ -753,6 +770,26 @@ export function SavedPostsManager() {
                           ? `마지막 예약(${fmtKo(new Date(lastScheduledAt))}) 기준 ${intervalHours}시간 뒤로 잡힙니다. 발행할 때마다 다음 글이 자동으로 ${intervalHours}시간씩 밀려요.`
                           : `첫 예약이에요. 지금부터 ${intervalHours}시간 뒤로 잡히고, 이후 글은 자동으로 ${intervalHours}시간 간격이 됩니다.`}
                       </p>
+
+                      {/* 예약 현황 — 이미 잡아둔 예약들(중복 방지 확인용) */}
+                      {upcomingLog.length > 0 && (
+                        <div className="rounded-md bg-white border border-amber-200 p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-semibold text-amber-900">
+                              예약 대기 {upcomingLog.length}건
+                            </span>
+                            <span className="text-[11px] text-amber-600">다음 글은 맨 아래 예약 다음으로 잡힙니다</span>
+                          </div>
+                          <div className="max-h-40 overflow-y-auto divide-y divide-amber-50">
+                            {upcomingLog.map((x, i) => (
+                              <div key={i} className="flex items-center gap-2 py-1.5 text-xs">
+                                <span className="tabular-nums text-amber-800 w-40 shrink-0">{fmtKo(new Date(x.at))}</span>
+                                <span className="truncate text-gray-700">{x.title}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
