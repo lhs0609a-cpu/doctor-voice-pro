@@ -6,7 +6,7 @@
 import uuid
 from datetime import datetime
 from sqlalchemy import (
-    Column, String, Integer, Float, Boolean, DateTime, ForeignKey, LargeBinary
+    Column, String, Integer, Float, Boolean, DateTime, ForeignKey, LargeBinary, Text
 )
 from sqlalchemy.orm import relationship
 from app.db.database import Base
@@ -20,7 +20,10 @@ class PoolImage(Base):
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     filename = Column(String(255))
     content_type = Column(String(50), default="image/jpeg")
-    data = Column(LargeBinary, nullable=False)          # 원본 바이트
+    data = Column(LargeBinary, nullable=False)          # 표시 최대폭(1280)으로 정규화된 JPEG 바이트
+    # 목록 조회 전용 썸네일(data URL). 업로드 시 미리 만들어 둔다.
+    # 목록에서 data 를 읽어 매번 디코딩하면 전체 BLOB 이 메모리에 올라와 OOM 이 난다.
+    thumbnail = Column(Text, nullable=True)
     original_phash = Column(String(16), index=True)     # 원본 pHash(hex)
     width = Column(Integer)
     height = Column(Integer)

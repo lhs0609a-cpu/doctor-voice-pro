@@ -116,19 +116,19 @@ class AssignResponse(BaseModel):
 
 
 # ==================== Helpers ====================
-def _thumb_data_url(data: bytes) -> Optional[str]:
+def _thumb_from_image(im: Image.Image) -> Optional[str]:
     try:
-        im = Image.open(io.BytesIO(data))
-        im.thumbnail((THUMB_WIDTH, THUMB_WIDTH))
+        t = im.copy()
+        t.thumbnail((THUMB_WIDTH, THUMB_WIDTH))
         buf = io.BytesIO()
-        im.convert("RGB").save(buf, "JPEG", quality=70)
+        t.convert("RGB").save(buf, "JPEG", quality=70)
         return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
     except Exception:
         return None
 
 
 def _normalize_upload(data: bytes) -> tuple:
-    """업로드 원본 → 표시 최대폭 JPEG 로 축소. (bytes, width, height, phash) 반환.
+    """업로드 원본 → 표시 최대폭 JPEG 로 축소. (bytes, width, height, phash, thumbnail) 반환.
 
     CPU 작업이므로 반드시 threadpool 에서 호출할 것.
     """
@@ -139,16 +139,17 @@ def _normalize_upload(data: bytes) -> tuple:
         h = max(1, round(im.height * uniq.MAX_WIDTH / im.width))
         im = im.resize((uniq.MAX_WIDTH, h), Image.Resampling.LANCZOS)
     ph = uniq.to_hex(uniq.phash(im))
+    thumb = _thumb_from_image(im)        # 목록 조회용으로 미리 생성해 둔다
     buf = io.BytesIO()
     im.save(buf, "JPEG", quality=UPLOAD_JPEG_QUALITY, optimize=True)
-    return buf.getvalue(), im.width, im.height, ph
+    return buf.getvalue(), im.width, im.height, ph, thumb
 
 
 def _to_item(p: PoolImage, with_thumb: bool = False) -> PoolItem:
     return PoolItem(
         id=p.id, filename=p.filename, width=p.width, height=p.height,
         size_bytes=p.size_bytes, use_count=p.use_count or 0, created_at=p.created_at,
-        thumbnail=_thumb_data_url(p.data) if with_thumb else None,
+        thumbnail=p.thumbnail if with_thumb else None,
     )
 
 
@@ -192,13 +193,13 @@ async def upload_pool_images(
             continue
         try:
             raw = await f.read()
-            data, w, h, ph = await run_in_threadpool(_normalize_upload, raw)
+            data, w, h, ph, thumb = await run_in_threadpool(_normalize_upload, raw)
         except Exception:
             continue                 # 이미지가 아닌 파일 등 — 세션은 멀쩡하므로 다음 장으로
 
         row = PoolImage(
             user_id=str(current_user.id), filename=f.filename,
-            content_type="image/jpeg", data=data,
+            content_type="image/jpeg", data=data, thumbnail=thumb,
             original_phash=ph, width=w, height=h, size_bytes=len(data),
         )
         try:
@@ -244,8 +245,17 @@ async def list_pool(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """풀 목록 (썸네일 포함). collection_id 지정 시 그 목록의 사진만."""
-    stmt = select(PoolImage).where(
+    """풀 목록 (썸네일 포함). collection_id 지정 시 그 목록의 사진만.
+
+    주의: 원본 BLOB(PoolImage.data)은 절대 SELECT 하지 않는다.
+    전체 행을 로드하면 풀 크기에 비례해 메모리가 늘어 1GB 머신에서 OOM 이 난다(실측 95장=484MB).
+    미리 만들어둔 thumbnail 컬럼만 읽어 조회 비용을 풀 크기와 무관하게 유지한다.
+    """
+    stmt = select(
+        PoolImage.id, PoolImage.filename, PoolImage.width, PoolImage.height,
+        PoolImage.size_bytes, PoolImage.use_count, PoolImage.created_at,
+        PoolImage.thumbnail,
+    ).where(
         PoolImage.user_id == str(current_user.id), PoolImage.active == True  # noqa: E712
     )
     if collection_id:
@@ -254,8 +264,18 @@ async def list_pool(
         ).where(PoolCollectionMember.collection_id == collection_id)
     stmt = stmt.order_by(PoolImage.use_count.asc(), PoolImage.created_at.desc())
     res = await db.execute(stmt)
-    rows = res.scalars().all()
-    return PoolListResponse(total=len(rows), images=[_to_item(r, with_thumb=True) for r in rows])
+    rows = res.all()
+    return PoolListResponse(
+        total=len(rows),
+        images=[
+            PoolItem(
+                id=r.id, filename=r.filename, width=r.width, height=r.height,
+                size_bytes=r.size_bytes, use_count=r.use_count or 0,
+                created_at=r.created_at, thumbnail=r.thumbnail,
+            )
+            for r in rows
+        ],
+    )
 
 
 # ==================== 목록(컬렉션) ====================
@@ -272,16 +292,16 @@ async def _collection_count(db: AsyncSession, collection_id: str) -> int:
 
 
 async def _collection_cover(db: AsyncSession, collection_id: str) -> Optional[str]:
+    # list_pool 과 같은 이유로 data 는 읽지 않고 미리 만들어둔 썸네일만 읽는다.
     res = await db.execute(
-        select(PoolImage).join(
+        select(PoolImage.thumbnail).join(
             PoolCollectionMember, PoolCollectionMember.pool_image_id == PoolImage.id
         ).where(
             PoolCollectionMember.collection_id == collection_id,
             PoolImage.active == True,  # noqa: E712
         ).order_by(PoolCollectionMember.created_at.asc()).limit(1)
     )
-    img = res.scalar_one_or_none()
-    return _thumb_data_url(img.data) if img else None
+    return res.scalar_one_or_none()
 
 
 @router.get("/collections", response_model=CollectionListResponse)
