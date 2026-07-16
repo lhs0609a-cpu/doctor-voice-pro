@@ -550,6 +550,7 @@ export interface PoolUploadResponse {
   uploaded: number
   failed: number
   images: PoolImageItem[]
+  message?: string | null   // 중단 사유(저장 공간 부족 등)
 }
 
 export interface AssignedImage {
@@ -600,7 +601,7 @@ export const mediaPoolAPI = {
     if (collectionId) formData.append('collection_id', collectionId)
     const response = await api.post<PoolUploadResponse>('/api/v1/media/pool/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 120000,
+      timeout: 300000,   // 수십 장 원본 전송 + 서버 리사이즈 시간 (서버 idle_timeout 과 동일)
     })
     return response.data
   },

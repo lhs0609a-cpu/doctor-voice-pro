@@ -142,9 +142,14 @@ export default function MediaPoolPage() {
         const where = selectedCollectionId
           ? ` → '${collections.find(c => c.id === selectedCollectionId)?.name || '목록'}'`
           : ''
-        toast.success(`${res.uploaded}장 업로드 완료${where}${res.failed ? ` (실패 ${res.failed}장)` : ''}`)
+        toast.success(`${res.uploaded}장 업로드 완료${where}${res.failed ? ` (실패 ${res.failed}장)` : ''}`, {
+          description: res.message || undefined,
+        })
       } else {
-        toast.error(`업로드 실패 (${res.failed}장). 풀 상한(${MAX_POOL_SIZE}장) 또는 파일 형식을 확인하세요.`)
+        toast.error(
+          res.message ||
+          `업로드 실패 (${res.failed}장). 풀 상한(${MAX_POOL_SIZE}장) 또는 파일 형식을 확인하세요.`
+        )
       }
       await loadPool(selectedCollectionId)
       await loadCollections()

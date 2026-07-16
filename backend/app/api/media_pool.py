@@ -12,8 +12,9 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy import select, func, delete as sa_delete
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
-from PIL import Image
+from PIL import Image, ImageOps
 
 from app.api.deps import get_current_user, get_db
 from app.models import User
@@ -26,6 +27,16 @@ router = APIRouter()
 
 MAX_POOL_SIZE = 200            # 사용자당 풀 상한
 THUMB_WIDTH = 200
+
+# 업로드 시 원본을 그대로 두지 않고 표시 최대폭(1280) JPEG 로 정규화해서 보관한다.
+# 배정(assign) 단계에서 어차피 MAX_WIDTH 로 축소하므로 원본 해상도는 저장할 이유가 없고,
+# 6MB PNG 70장(=420MB)이 볼륨을 채워 SQLite 가 disk-full 로 죽는 것을 막는다.
+UPLOAD_JPEG_QUALITY = 88
+COMMIT_BATCH = 10              # 이만큼씩 커밋 — 중간 실패해도 앞부분은 살린다
+DISK_FULL_MESSAGE = (
+    "서버 저장 공간이 부족해 업로드를 중단했습니다. "
+    "풀에서 쓰지 않는 사진을 정리한 뒤 다시 시도해주세요."
+)
 
 
 # ==================== Schemas ====================
@@ -49,6 +60,7 @@ class UploadResponse(BaseModel):
     uploaded: int
     failed: int
     images: List[PoolItem]
+    message: Optional[str] = None      # 중단 사유(디스크 부족 등) — 있으면 프론트에 그대로 노출
 
 
 class CollectionItem(BaseModel):
@@ -115,6 +127,23 @@ def _thumb_data_url(data: bytes) -> Optional[str]:
         return None
 
 
+def _normalize_upload(data: bytes) -> tuple:
+    """업로드 원본 → 표시 최대폭 JPEG 로 축소. (bytes, width, height, phash) 반환.
+
+    CPU 작업이므로 반드시 threadpool 에서 호출할 것.
+    """
+    im = Image.open(io.BytesIO(data))
+    im = ImageOps.exif_transpose(im)     # 회전 정보를 픽셀에 반영(EXIF 는 버려짐)
+    im = im.convert("RGB")
+    if im.width > uniq.MAX_WIDTH:
+        h = max(1, round(im.height * uniq.MAX_WIDTH / im.width))
+        im = im.resize((uniq.MAX_WIDTH, h), Image.Resampling.LANCZOS)
+    ph = uniq.to_hex(uniq.phash(im))
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=UPLOAD_JPEG_QUALITY, optimize=True)
+    return buf.getvalue(), im.width, im.height, ph
+
+
 def _to_item(p: PoolImage, with_thumb: bool = False) -> PoolItem:
     return PoolItem(
         id=p.id, filename=p.filename, width=p.width, height=p.height,
@@ -154,22 +183,25 @@ async def upload_pool_images(
     )
     current = count_res.scalar() or 0
 
-    uploaded, failed, items = 0, 0, []
+    committed: List[PoolItem] = []   # 커밋까지 끝난 것만
+    pending: List[PoolItem] = []     # flush 됐지만 아직 커밋 전
+    message: Optional[str] = None
+
     for f in files:
-        if current + uploaded >= MAX_POOL_SIZE:
-            failed += 1
+        if current + len(committed) + len(pending) >= MAX_POOL_SIZE:
             continue
         try:
-            data = await f.read()
-            im = Image.open(io.BytesIO(data))
-            im.load()
-            w, h = im.size
-            ph = uniq.to_hex(uniq.phash(im))
-            row = PoolImage(
-                user_id=str(current_user.id), filename=f.filename,
-                content_type=f.content_type or "image/jpeg", data=data,
-                original_phash=ph, width=w, height=h, size_bytes=len(data),
-            )
+            raw = await f.read()
+            data, w, h, ph = await run_in_threadpool(_normalize_upload, raw)
+        except Exception:
+            continue                 # 이미지가 아닌 파일 등 — 세션은 멀쩡하므로 다음 장으로
+
+        row = PoolImage(
+            user_id=str(current_user.id), filename=f.filename,
+            content_type="image/jpeg", data=data,
+            original_phash=ph, width=w, height=h, size_bytes=len(data),
+        )
+        try:
             db.add(row)
             await db.flush()
             if collection_id:
@@ -177,12 +209,33 @@ async def upload_pool_images(
                     collection_id=collection_id, pool_image_id=row.id,
                     user_id=str(current_user.id),
                 ))
-            items.append(_to_item(row, with_thumb=True))
-            uploaded += 1
-        except Exception:
-            failed += 1
-    await db.commit()
-    return UploadResponse(uploaded=uploaded, failed=failed, images=items)
+                await db.flush()
+            # 썸네일은 커밋 전에 만들어 둔다(커밋 후엔 row 속성이 만료됨)
+            pending.append(_to_item(row, with_thumb=True))
+            if len(pending) >= COMMIT_BATCH:
+                await db.commit()
+                committed.extend(pending)
+                pending.clear()
+        except OperationalError:
+            # 디스크 부족 등 — 세션이 롤백 대기 상태가 되므로 계속 돌리면 안 된다.
+            # (이 처리를 건너뛰면 이후 전 장이 실패하고 마지막 commit 이 PendingRollbackError 로 터진다)
+            await db.rollback()
+            pending.clear()
+            message = DISK_FULL_MESSAGE
+            break
+
+    if pending:
+        try:
+            await db.commit()
+            committed.extend(pending)
+        except OperationalError:
+            await db.rollback()
+            message = DISK_FULL_MESSAGE
+
+    return UploadResponse(
+        uploaded=len(committed), failed=len(files) - len(committed),
+        images=committed, message=message,
+    )
 
 
 @router.get("/pool", response_model=PoolListResponse)
