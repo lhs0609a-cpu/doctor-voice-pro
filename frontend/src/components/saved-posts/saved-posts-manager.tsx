@@ -33,7 +33,7 @@ import { useRouter } from 'next/navigation'
 import { ExtensionStatusBadge, ExtensionStatusCard, EXTENSION_DOWNLOAD_URL } from '@/components/extension-status'
 import { useExtensionStatus } from '@/lib/use-extension-status'
 import { PublishGuide } from './publish-guide'
-import { mediaPoolAPI, type PoolCollectionItem } from '@/lib/api'
+import { mediaPoolAPI, publishQueueAPI, type PoolCollectionItem, type NaverCategory } from '@/lib/api'
 import type { SavedPost } from '@/types'
 
 // 샘플 글 (항상 유지)
@@ -68,6 +68,7 @@ interface PreparedItem {
   tags: string[]
   emphasize: string[]
   openType: OpenType
+  category?: string          // 네이버 카테고리 번호. 없으면 기본 카테고리
   scheduleISO: string
 }
 
@@ -209,6 +210,11 @@ export function SavedPostsManager() {
   const [finalAction, setFinalAction] = useState<FinalAction>('publishNow')
   const [openType, setOpenType] = useState<OpenType>('public')
 
+  // 네이버 카테고리: 확장이 에디터에서 읽어와 서버에 저장해 둔 목록으로 고른다.
+  const [categories, setCategories] = useState<NaverCategory[]>([])
+  const [category, setCategory] = useState('')      // '' = 네이버 기본 카테고리
+  const [syncingCats, setSyncingCats] = useState(false)
+
   // 예약 발행: 직접 지정 | 간격 예약
   const [scheduleMode, setScheduleMode] = useState<ScheduleMode>('manual')
   const [scheduleDate, setScheduleDate] = useState('')
@@ -277,6 +283,14 @@ export function SavedPostsManager() {
     mediaPoolAPI.getFixedImage()
       .then((r) => { if (r.image) setFixedImage(r.image) })
       .catch(() => { /* 미등록 */ })
+
+    // 카테고리: 캐시를 먼저 보여주고, 없으면 확장이 네이버에 다녀와 자동으로 채운다.
+    publishQueueAPI.getCategories()
+      .then((r) => {
+        if (r.categories?.length) setCategories(r.categories)
+        else syncCategories(true)
+      })
+      .catch(() => { /* 캐시 없음 */ })
     try {
       const fs = JSON.parse(localStorage.getItem('doctorvoice-fixed-siblings') || '[]')
       if (Array.isArray(fs)) setFixedSiblings(fs)
@@ -363,6 +377,30 @@ export function SavedPostsManager() {
       URL.revokeObjectURL(prev[idx])
       return prev.filter((_, i) => i !== idx)
     })
+  }
+
+  // 카테고리 목록 확보: 확장이 스스로 네이버 글쓰기를 열어 읽어오고 서버에 저장한다.
+  // silent=true 는 첫 진입 자동 확보 — 실패해도 조용히 두고 사용자가 직접 누를 수 있게 한다.
+  const syncCategories = async (silent = false) => {
+    if (!ext.extensionId) {
+      if (!silent) toast.error('확장 프로그램이 연결되어 있지 않습니다')
+      return
+    }
+    setSyncingCats(true)
+    try {
+      const res = await sendMessageToExtension(ext.extensionId, { action: 'SYNC_CATEGORIES' })
+      if (!res?.success || !res.categories?.length) {
+        if (!silent || res?.needLogin) toast.error(res?.error || '카테고리를 불러오지 못했습니다')
+        return
+      }
+      await publishQueueAPI.setCategories(res.categories)
+      setCategories(res.categories)
+      if (!silent) toast.success(`카테고리 ${res.categories.length}개를 불러왔습니다`)
+    } catch {
+      if (!silent) toast.error('카테고리 동기화 실패')
+    } finally {
+      setSyncingCats(false)
+    }
   }
 
   // 고정 하단 이미지 등록(원본 base64 저장 → 발행마다 유니크화해 맨 아래 삽입)
@@ -492,7 +530,7 @@ export function SavedPostsManager() {
         blocks, // 글-이미지-글-이미지 + 맨 아래 고정 이미지
         tags,
         emphasize: extractKeywords(finalBody || finalTitle), // 핵심 키워드 자동 굵게
-        options: { openType, search: true },
+        options: { openType, search: true, category: category || null },
         finalAction,
         schedule: scheduleISO ? { datetime: scheduleISO } : null,
       }
@@ -563,7 +601,7 @@ export function SavedPostsManager() {
         title: finalTitle, content: finalBody || finalTitle,
         images, fixedImage: fixedUniq || undefined,
         tags, emphasize: extractKeywords(finalBody || finalTitle),
-        openType, scheduleISO,
+        openType, category: category || undefined, scheduleISO,
       }
       const nextCount = prepared.length + 1
       setPrepared((prev) => {
@@ -599,7 +637,7 @@ export function SavedPostsManager() {
         images: p.fixedImage ? [...p.images, p.fixedImage] : p.images,
         blocks, // 글-이미지-글-이미지 + 맨 아래 고정 이미지
         tags: p.tags, emphasize: p.emphasize,
-        options: { openType: p.openType, search: true },
+        options: { openType: p.openType, search: true, category: p.category || null },
         finalAction: 'schedule', schedule: { datetime: p.scheduleISO },
         }
       })
@@ -1060,6 +1098,32 @@ export function SavedPostsManager() {
                     <option value="both">서로이웃 공개</option>
                     <option value="private">비공개</option>
                   </select>
+                </div>
+              )}
+
+              {/* 카테고리 (발행 계열) — 목록은 확장이 네이버 에디터에서 읽어온다 */}
+              {finalAction !== 'draft' && (
+                <div>
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs text-muted-foreground">카테고리</Label>
+                    <button type="button" onClick={() => syncCategories(false)} disabled={syncingCats}
+                      className="text-xs text-emerald-700 hover:underline disabled:opacity-50">
+                      {syncingCats ? '불러오는 중...' : '목록 새로고침'}
+                    </button>
+                  </div>
+                  <select value={category} onChange={(e) => setCategory(e.target.value)}
+                    disabled={syncingCats}
+                    className="mt-1 w-full h-10 rounded-md border border-input bg-background px-3 text-sm disabled:opacity-60">
+                    <option value="">네이버 기본 카테고리</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                  {!syncingCats && categories.length === 0 && (
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      카테고리를 불러오지 못했습니다. 네이버 로그인 상태를 확인한 뒤 &lsquo;목록 새로고침&rsquo;을 눌러주세요.
+                    </p>
+                  )}
                 </div>
               )}
             </section>

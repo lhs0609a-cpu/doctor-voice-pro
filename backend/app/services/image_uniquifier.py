@@ -231,6 +231,40 @@ _FRAME_FUNCS = {
 }
 
 
+def _edge_fill(img: Image.Image) -> tuple:
+    """가장자리 픽셀의 중앙값. 패딩 색으로 쓰면 이어붙인 티가 덜 난다."""
+    a = np.asarray(img.convert("RGB"))
+    if a.shape[0] < 2 or a.shape[1] < 2:
+        return (255, 255, 255)
+    edges = np.concatenate([a[0, :, :], a[-1, :, :], a[:, 0, :], a[:, -1, :]], axis=0)
+    return tuple(int(v) for v in np.median(edges, axis=0))
+
+
+def _repad_ratio(img: Image.Image, ratio: float, rng: random.Random, fill: tuple) -> Image.Image:
+    """target 종횡비를 '패딩'으로 맞춘다(재크롭 대신).
+
+    사진 안에 글씨/제품 같은 내용이 있으면 잘려나가면 안 되므로 자르지 않고 여백을 덧댄다.
+    레이아웃이 바뀌어 해시 영역은 그대로 이동하므로 유니크화 효과는 유지된다.
+    """
+    w, h = img.size
+    cur = w / h
+    if abs(cur - ratio) < 1e-3:
+        return img
+    if ratio > cur:
+        # 목표가 더 넓음 → 좌우에 여백
+        nw = max(w, int(round(h * ratio)))
+        left = int((nw - w) * rng.uniform(0.35, 0.65))
+        canvas = Image.new("RGB", (nw, h), fill)
+        canvas.paste(img, (left, 0))
+        return canvas
+    # 목표가 더 좁음 → 상하에 여백
+    nh = max(h, int(round(w / ratio)))
+    top = int((nh - h) * rng.uniform(0.35, 0.65))
+    canvas = Image.new("RGB", (w, nh), fill)
+    canvas.paste(img, (0, top))
+    return canvas
+
+
 def _recrop_ratio(img: Image.Image, ratio: float, rng: random.Random) -> Image.Image:
     """중앙 근처에서 target 종횡비로 재크롭(구조 모드). 위치를 약간 흔들어 다양화."""
     w, h = img.size
@@ -269,7 +303,7 @@ class UniquifyResult:
 # ============================================================
 def _transform_body(
     src: Image.Image, rng: random.Random, strength: float, max_width: int,
-    flip: bool = False, ratio: float | None = None,
+    flip: bool = False, ratio: float | None = None, allow_crop: bool = False,
 ) -> Image.Image:
     img = ImageOps.exif_transpose(src).convert("RGB")
 
@@ -277,24 +311,38 @@ def _transform_body(
     if flip:
         img = ImageOps.mirror(img)
 
-    # 0b) 구조 모드: 종횡비 재크롭 — 레이아웃 자체를 바꿔 해시 영역 이동
+    fill = _edge_fill(img)
+
+    # 0b) 구조 모드: 종횡비 조정 — 레이아웃을 바꿔 해시 영역 이동.
+    #     allow_crop=False(기본)면 자르지 않고 여백을 덧대 내용을 100% 보존한다.
     if ratio:
-        img = _recrop_ratio(img, ratio, rng)
+        img = _recrop_ratio(img, ratio, rng) if allow_crop else _repad_ratio(img, ratio, rng, fill)
 
-    # 1) 미세 회전 후 경계 크롭
+    # 1) 미세 회전. 크롭 금지면 expand+여백으로 모서리를 살린다(잘라내지 않음).
     ang = rng.uniform(0.4, 1.2) * (1 + 0.5 * strength) * rng.choice([-1, 1])
-    img = img.rotate(ang, resample=Image.Resampling.BICUBIC, expand=False)
-    w, h = img.size
-    cut = int(min(w, h) * (0.02 + 0.01 * strength))
-    img = img.crop((cut, cut, w - cut, h - cut))
+    if allow_crop:
+        img = img.rotate(ang, resample=Image.Resampling.BICUBIC, expand=False)
+        w, h = img.size
+        cut = int(min(w, h) * (0.02 + 0.01 * strength))
+        img = img.crop((cut, cut, w - cut, h - cut))
+    else:
+        img = img.rotate(ang, resample=Image.Resampling.BICUBIC, expand=True, fillcolor=fill)
 
-    # 2) 랜덤 크롭 (가장자리 1~4% + 강도)
+    # 2) 가장자리 흔들기. 크롭 금지면 '자르기' 대신 '비대칭 여백'으로 같은 효과를 낸다.
     w, h = img.size
-    fx1 = rng.uniform(0.01, 0.04) + 0.01 * strength
-    fx2 = rng.uniform(0.01, 0.04) + 0.01 * strength
-    fy1 = rng.uniform(0.01, 0.04) + 0.01 * strength
-    fy2 = rng.uniform(0.01, 0.04) + 0.01 * strength
-    img = img.crop((int(w * fx1), int(h * fy1), int(w * (1 - fx2)), int(h * (1 - fy2))))
+    if allow_crop:
+        fx1 = rng.uniform(0.01, 0.04) + 0.01 * strength
+        fx2 = rng.uniform(0.01, 0.04) + 0.01 * strength
+        fy1 = rng.uniform(0.01, 0.04) + 0.01 * strength
+        fy2 = rng.uniform(0.01, 0.04) + 0.01 * strength
+        img = img.crop((int(w * fx1), int(h * fy1), int(w * (1 - fx2)), int(h * (1 - fy2))))
+    else:
+        # 프레임이 모서리를 최대 6%(=_frame_* 의 radius 상한) 깎으므로, 그 이상으로 여백을 확보해
+        # 둥근 모서리가 사진 내용까지 파고들지 않게 한다. p >= 0.06*(M+2p) → p >= 0.069*M.
+        m = min(w, h)
+        floor = int(m * 0.07)
+        pad = lambda base: max(floor, int(base * (rng.uniform(0.01, 0.04) + 0.01 * strength)))
+        img = ImageOps.expand(img, border=(pad(w), pad(h), pad(w), pad(h)), fill=fill)
 
     # 3) 리스케일 (96~104%) → 최대폭 제한 (원본이 작으면 업스케일 안 함)
     scale = rng.uniform(0.96, 1.04)
@@ -366,6 +414,7 @@ def uniquify(
     frame_styles: Iterable[str] | None = None,
     allow_flip: bool = False,  # 좌우 반전 금지(글씨/제품 이미지가 뒤집혀 보임)
     allow_reframe: bool = True,
+    allow_crop: bool = False,  # 크롭 금지(사진 속 글씨/내용이 잘림). 대신 패딩으로 변형한다
     seed: int | None = None,
 ) -> UniquifyResult:
     """원본 바이트 → 유니크화된 JPEG + 검증 결과.
@@ -400,7 +449,7 @@ def uniquify(
         if allow_flip and attempt >= max_attempts // 2:
             flip = True  # 후반부: 반전 강제 → 확실히 다른 해시 클러스터로
         ratio = rng.choice(ratios)
-        body = _transform_body(src, rng, strength, max_width, flip=flip, ratio=ratio)
+        body = _transform_body(src, rng, strength, max_width, flip=flip, ratio=ratio, allow_crop=allow_crop)
         style = rng.choice(styles)
         framed = _FRAME_FUNCS[style](body, rng, strength)
 
