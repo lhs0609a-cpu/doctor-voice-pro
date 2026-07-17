@@ -1,7 +1,7 @@
 {
-  "version": "15.5.0",
-  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v15.5.0.zip",
-  "notes": "v15.5.0 — 카테고리 지정 발행(목록 자동 동기화) + 고정 하단 이미지 서버 저장",
+  "version": "15.6.0",
+  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v15.6.0.zip",
+  "notes": "v15.6.0 — 대량 발행 실패(64MiB 초과) 수정: 사진을 글 한 건씩 나눠 전송 + 카테고리 지정 발행",
   "minVersion": "15.0.0",
   "releasedAt": "2026-07-17"
 }

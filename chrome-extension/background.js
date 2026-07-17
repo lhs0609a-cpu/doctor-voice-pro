@@ -2,7 +2,7 @@
 // 닥터보이스 프로 - 백그라운드 서비스워커 v15
 // CDP(chrome.debugger) 기반 실제 입력 + 오케스트레이션 + 자동 업데이트
 // ============================================================
-const VERSION = '15.5.0';
+const VERSION = '15.6.0';
 const UPDATE_URL = 'https://doctor-voice-pro-ghwi.vercel.app/extension/version.json';
 const WRITE_URL = 'https://blog.naver.com/GoBlogWrite.naver';
 
@@ -49,8 +49,10 @@ chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
           sendResponse({ success: true });
           break;
         case 'SUBMIT_BATCH': {
-          // 대량 예약: 여러 job 을 순차적으로 네이버 예약발행 등록
-          const jobs = (msg.jobs || []).map(normalizeJob).filter(Boolean);
+          // 대량 예약: 여러 job 을 순차적으로 네이버 예약발행 등록.
+          // 사진이 빠진 메타데이터만 올 수 있다(64MiB 한계 회피) — 정규화는 실제 payload 를
+          // 손에 쥔 뒤 startBatch 안에서 한다.
+          const jobs = (msg.jobs || []).filter(Boolean);
           sendResponse({ success: true, accepted: jobs.length });
           startBatch(jobs, sender); // 백그라운드로 진행(응답 대기 안 함)
           break;
@@ -239,23 +241,43 @@ async function syncCategories() {
 // ============================================================
 // 대량 배치: 여러 job 을 순차적으로 예약발행 등록
 // ============================================================
-async function startBatch(jobs, sender) {
+/** 메타데이터에 본문/사진이 이미 들어있는가(구버전 페이지는 통째로 보낸다). */
+function hasPayload(m) {
+  return !!(m && ((m.blocks && m.blocks.length) || (m.images && m.images.length) || m.content));
+}
+
+/**
+ * 사진이 담긴 실제 job 을 페이지에서 한 건만 받아온다.
+ * 배치 전체(58건 × 사진 10장 ≈ 수백 MB)를 한 메시지에 담으면 크롬의 64MiB 한계에
+ * 걸려 전송 자체가 실패하므로, 처리 직전에 그 글만 끌어온다(≈5MB).
+ */
+async function requestJobPayload(webTabId, id) {
+  if (!webTabId) return null;
+  const res = await sendToTab(webTabId, { action: 'REQUEST_JOB', id });
+  return res && res.job ? res.job : null;
+}
+
+async function startBatch(metas, sender) {
   if (batchRunning) { log('배치가 이미 진행 중'); return; }
   batchRunning = true;
-  log(`=== 배치 시작: ${jobs.length}건 ===`);
+  log(`=== 배치 시작: ${metas.length}건 ===`);
   const webTabId = sender && sender.tab ? sender.tab.id : null;
 
-  for (let i = 0; i < jobs.length; i++) {
-    const job = jobs[i];
-    log(`배치 ${i + 1}/${jobs.length}: ${job.title}`);
+  for (let i = 0; i < metas.length; i++) {
+    const meta = metas[i];
+    log(`배치 ${i + 1}/${metas.length}: ${meta.title}`);
     let result;
     try {
+      // 구버전 페이지는 payload 를 통째로 보낸다 — 그대로 쓰고, 아니면 지금 받아온다.
+      const raw = hasPayload(meta) ? meta : await requestJobPayload(webTabId, meta.id);
+      const job = normalizeJob(raw);
+      if (!job) throw new Error('글 데이터를 받지 못했습니다(닥터보이스 탭이 닫혔을 수 있습니다)');
       result = await runOne(job);
     } catch (e) {
       result = { ok: false, error: e.message };
     }
     // 결과를 웹사이트로 전달 → 백엔드에 보고
-    reportJobResult(webTabId, job.id, !!(result && result.ok), (result && (result.error || result.action)) || '');
+    reportJobResult(webTabId, meta.id, !!(result && result.ok), (result && (result.error || result.action)) || '');
     await sleep(1500); // 연속 등록 사이 여유(봇 감지 완화)
   }
 

@@ -3,7 +3,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 declare const chrome: any
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -229,6 +229,24 @@ export function SavedPostsManager() {
   // 예약 준비함: 발행하지 않고 담아뒀다가 나중에 한 번에 처리
   const [prepared, setPrepared] = useState<PreparedItem[]>([])
   const [preparing, setPreparing] = useState(false)
+
+  // 배치 발행 중 확장이 한 건씩 요청해 가는 job payload 보관소.
+  // 준비함을 비운 뒤에도 남아 있어야 하므로 state 가 아니라 ref 에 둔다.
+  const batchPayloadsRef = useRef<Record<string, any>>({})
+
+  // 확장이 각 글을 처리하기 직전에 그 글의 사진을 요청한다 → 한 건만 넘겨준다.
+  // (58건을 한꺼번에 보내면 크롬의 64MiB 메시지 한계에 걸려 전송 자체가 실패한다)
+  useEffect(() => {
+    const onRequest = (e: any) => {
+      const { id, token } = e.detail || {}
+      const job = batchPayloadsRef.current[id] || null
+      window.dispatchEvent(new CustomEvent('doctorvoice-job-payload', { detail: { token, job } }))
+      // 넘긴 건 바로 비운다 — 사진 수백 장을 계속 들고 있으면 탭이 메모리로 죽는다.
+      if (job) delete batchPayloadsRef.current[id]
+    }
+    window.addEventListener('doctorvoice-job-request', onRequest)
+    return () => window.removeEventListener('doctorvoice-job-request', onRequest)
+  }, [])
 
   // 저장된 글 로드 (샘플 항상 포함) + 선택 요청 반영
   useEffect(() => {
@@ -634,14 +652,25 @@ export function SavedPostsManager() {
         if (p.fixedImage) blocks.push({ type: 'image', image: p.fixedImage })
         return {
         id: p.id, title: p.title, content: p.content,
-        images: p.fixedImage ? [...p.images, p.fixedImage] : p.images,
+        // images 는 싣지 않는다 — 확장의 normalizeJob 이 blocks 에서 본문과 사진을
+        // 모두 파생시키므로, 따로 보내면 같은 base64 가 두 번 실려 전송량만 2배가 된다.
         blocks, // 글-이미지-글-이미지 + 맨 아래 고정 이미지
         tags: p.tags, emphasize: p.emphasize,
         options: { openType: p.openType, search: true, category: p.category || null },
         finalAction: 'schedule', schedule: { datetime: p.scheduleISO },
         }
       })
-      const res = await sendMessageToExtension(ext.extensionId, { action: 'SUBMIT_BATCH', jobs })
+
+      // 사진이 담긴 payload 는 확장이 글을 처리하기 직전에 한 건씩 받아간다.
+      // 여기서는 사진이 빠진 메타데이터만 보낸다(58건이어도 수십 KB).
+      const payloads: Record<string, any> = {}
+      for (const j of jobs) payloads[j.id] = j
+      batchPayloadsRef.current = payloads
+      const metas = jobs.map((j) => ({
+        id: j.id, title: j.title, options: j.options,
+        finalAction: j.finalAction, schedule: j.schedule,
+      }))
+      const res = await sendMessageToExtension(ext.extensionId, { action: 'SUBMIT_BATCH', jobs: metas })
       if (!res?.success) throw new Error(res?.error || '발행 전송 실패')
       // 준비함 → 예약 기록으로 이동
       setScheduleLog((prev) => {

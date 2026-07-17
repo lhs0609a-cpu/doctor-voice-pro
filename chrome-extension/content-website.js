@@ -141,11 +141,48 @@
     } catch (e) { /* noop */ }
   }
 
+  // ---------- 4) job payload 릴레이 (background → 페이지 → background) ----------
+  // 배치는 메타데이터만 먼저 받고, 사진이 담긴 실제 payload 는 그 글을 처리하기
+  // 직전에 한 건씩 받아온다. 58건 × 사진 10장을 한 메시지에 담으면 크롬의
+  // 64MiB 메시지 한계를 넘어 전송 자체가 실패하기 때문이다.
+  const PAYLOAD_TIMEOUT = 15000;
+
+  function relayJobRequests() {
+    try {
+      chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+        if (!msg || msg.action !== 'REQUEST_JOB') return;
+        // 응답이 어느 요청의 것인지 구분한다(배치가 연달아 돌 때 섞이지 않도록).
+        const token = 'dvjob-' + Math.random().toString(36).slice(2) + '-' + Date.now();
+        let settled = false;
+        const finish = (job) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          window.removeEventListener('doctorvoice-job-payload', onPayload);
+          sendResponse({ job: job || null });
+        };
+        const onPayload = (e) => {
+          const d = (e && e.detail) || {};
+          if (d.token !== token) return;
+          finish(d.job);
+        };
+        // 페이지가 응답하지 않으면(다른 화면으로 이동 등) 배치 전체가 멈추지 않도록 끊는다.
+        const timer = setTimeout(() => finish(null), PAYLOAD_TIMEOUT);
+        window.addEventListener('doctorvoice-job-payload', onPayload);
+        window.dispatchEvent(new CustomEvent('doctorvoice-job-request', {
+          detail: { id: msg.id, token },
+        }));
+        return true; // 비동기 응답
+      });
+    } catch (e) { /* noop */ }
+  }
+
   // ---------- 초기화 ----------
   function init() {
     exposeExtensionId();
     checkUpdateAndNotify();
     relayJobResults();
+    relayJobRequests();
   }
 
   if (document.readyState === 'loading') {
