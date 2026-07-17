@@ -3,7 +3,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 declare const chrome: any
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -19,6 +19,7 @@ import { toast } from 'sonner'
 import { Send, Upload, Image as ImageIcon, X, Loader2, FileEdit, Zap, Clock } from 'lucide-react'
 import { ExtensionStatusCard } from '@/components/extension-status'
 import { useExtensionStatus } from '@/lib/use-extension-status'
+import { publishQueueAPI, type NaverCategory } from '@/lib/api'
 import type { Post } from '@/types'
 
 type FinalAction = 'draft' | 'publishNow' | 'schedule'
@@ -76,7 +77,55 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
   const [scheduleDate, setScheduleDate] = useState('')
   const [scheduleTime, setScheduleTime] = useState('')
   const [publishing, setPublishing] = useState(false)
+  const [categories, setCategories] = useState<NaverCategory[]>([])
+  const [category, setCategory] = useState('')        // '' = 네이버 기본 카테고리
+  const [syncingCats, setSyncingCats] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // 확장이 스스로 네이버 글쓰기를 열어 카테고리를 읽어오고 서버에 저장한다.
+  // silent=true 면 자동 확보(첫 진입) — 실패해도 조용히 넘어가고 사용자가 직접 누를 수 있게 둔다.
+  const syncCategories = useCallback(async (silent = false) => {
+    if (!ext.extensionId) {
+      if (!silent) toast.error('확장 프로그램이 연결되어 있지 않습니다')
+      return
+    }
+    setSyncingCats(true)
+    try {
+      const res = await new Promise<any>((resolve) => {
+        chrome.runtime.sendMessage(ext.extensionId, { action: 'SYNC_CATEGORIES' }, resolve)
+      })
+      if (!res?.success || !res.categories?.length) {
+        if (!silent || res?.needLogin) {
+          toast.error(res?.error || '카테고리를 불러오지 못했습니다')
+        }
+        return
+      }
+      await publishQueueAPI.setCategories(res.categories)
+      setCategories(res.categories)
+      if (!silent) toast.success(`카테고리 ${res.categories.length}개를 불러왔습니다`)
+    } catch {
+      if (!silent) toast.error('카테고리 동기화 실패')
+    } finally {
+      setSyncingCats(false)
+    }
+  }, [ext.extensionId])
+
+  // 발행창을 열면: 캐시를 먼저 보여주고, 비어 있으면 확장이 네이버에 다녀와 자동으로 채운다.
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    ;(async () => {
+      let cached: NaverCategory[] = []
+      try {
+        const res = await publishQueueAPI.getCategories()
+        cached = res.categories || []
+      } catch { /* 캐시 없음 → 아래에서 자동 확보 */ }
+      if (cancelled) return
+      setCategories(cached)
+      if (cached.length === 0) await syncCategories(true)
+    })()
+    return () => { cancelled = true }
+  }, [open, syncCategories])
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []).filter((f) => f.type.startsWith('image/'))
@@ -115,7 +164,7 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
         content: post.generated_content || '',
         images: imageList,
         tags: post.seo_keywords || post.hashtags || [],
-        options: { openType, search: true },
+        options: { openType, search: true, category: category || null },
         finalAction,
         schedule: scheduleISO ? { datetime: scheduleISO } : null,
       }
@@ -217,6 +266,35 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
                     <option value="both">서로이웃 공개</option>
                     <option value="private">비공개</option>
                   </select>
+                </div>
+              )}
+
+              {/* 카테고리 — 목록은 확장이 네이버 에디터에서 읽어와 서버에 캐시해 둔 것 */}
+              {finalAction !== 'draft' && (
+                <div className="pt-1">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs text-gray-500">카테고리</Label>
+                    <button type="button" onClick={() => syncCategories(false)} disabled={syncingCats}
+                      className="text-xs text-blue-600 hover:underline disabled:opacity-50">
+                      {syncingCats ? '불러오는 중...' : '목록 새로고침'}
+                    </button>
+                  </div>
+                  <select value={category} onChange={(e) => setCategory(e.target.value)}
+                    disabled={syncingCats}
+                    className="mt-1 w-full h-9 rounded-md border border-input bg-background px-3 text-sm disabled:opacity-60">
+                    <option value="">네이버 기본 카테고리</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                  {syncingCats && categories.length === 0 && (
+                    <p className="mt-1 text-[11px] text-gray-500">네이버에서 카테고리를 불러오는 중...</p>
+                  )}
+                  {!syncingCats && categories.length === 0 && (
+                    <p className="mt-1 text-[11px] text-gray-500">
+                      카테고리를 불러오지 못했습니다. 네이버 로그인 상태를 확인한 뒤 &lsquo;목록 새로고침&rsquo;을 눌러주세요.
+                    </p>
+                  )}
                 </div>
               )}
             </div>

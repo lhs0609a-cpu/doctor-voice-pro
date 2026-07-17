@@ -38,6 +38,23 @@ class PoolImage(Base):
     )
 
 
+class FixedFooterImage(Base):
+    """모든 글 맨 아래에 항상 들어가는 고정 이미지 (사용자당 1장).
+
+    한 번 등록하면 계속 재사용하므로 서버에 보관한다.
+    풀 이미지와 같은 이유로 원본이 아니라 표시 최대폭(1280) JPEG 로 정규화해 저장한다.
+    """
+    __tablename__ = "fixed_footer_images"
+
+    user_id = Column(String(36), ForeignKey("users.id"), primary_key=True)
+    filename = Column(String(255))
+    data = Column(LargeBinary, nullable=False)     # 1280px JPEG
+    width = Column(Integer)
+    height = Column(Integer)
+    size_bytes = Column(Integer)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
 class PoolCollection(Base):
     """사진 목록(앨범). 예: '1목록' 에 사진 40장을 묶어두고 글마다 그 목록에서 배정."""
     __tablename__ = "pool_collections"

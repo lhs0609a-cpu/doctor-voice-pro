@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.models import User
-from app.models.publish_queue import PublishBatch, QueuedPost
+from app.models.publish_queue import PublishBatch, QueuedPost, NaverCategoryCache
 from app.models.media_pool import PoolImage, ImageVariant
 from app.services import post_formatter as fmt
 from app.services import image_uniquifier as uniq
@@ -62,6 +62,8 @@ class BulkRequest(BaseModel):
     start_at: datetime                 # 첫 글 예약시각
     interval_minutes: int = 120        # 글 사이 간격
     open_type: str = "public"
+    # 네이버 카테고리 번호(예: "24"). None 이면 네이버 기본 카테고리로 발행.
+    category: Optional[str] = None
     assign_images: bool = True         # 사진 풀에서 자동 배정
     name: Optional[str] = None
 
@@ -139,7 +141,7 @@ async def bulk_create(
     batch = PublishBatch(
         user_id=str(current_user.id), name=req.name or f"대량발행 {len(chunks)}건",
         start_at=req.start_at, interval_minutes=req.interval_minutes,
-        open_type=req.open_type, total=len(chunks),
+        open_type=req.open_type, category=req.category, total=len(chunks),
     )
     db.add(batch)
     await db.flush()
@@ -164,6 +166,7 @@ async def bulk_create(
             keywords=p.keywords, hashtags=p.hashtags,
             image_pool_ids=assigned, image_slots=p.image_slots,
             scheduled_at=sched, open_type=req.open_type, search=True,
+            category=req.category,
             status="queued", order_index=i,
         )
         db.add(row)
@@ -324,11 +327,72 @@ async def fetch_jobs(
             tags=r.hashtags or r.keywords or [],
             finalAction="schedule",
             schedule={"datetime": r.scheduled_at.isoformat()},
-            options={"openType": r.open_type or "public", "search": bool(r.search)},
+            options={
+                "openType": r.open_type or "public",
+                "search": bool(r.search),
+                "category": r.category or None,
+            },
         ))
 
     await db.commit()
     return jobs
+
+
+# ==================== 카테고리 목록 (확장이 읽어와 캐시) ====================
+class CategoryItem(BaseModel):
+    id: str
+    name: str
+
+
+class CategoriesResponse(BaseModel):
+    categories: List[CategoryItem] = []
+    updated_at: Optional[datetime] = None
+
+
+class CategoriesRequest(BaseModel):
+    categories: List[CategoryItem]
+
+
+@router.get("/categories", response_model=CategoriesResponse)
+async def get_categories(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """앱 드롭다운용 카테고리 목록. 비어 있으면 아직 동기화 전이다."""
+    res = await db.execute(
+        select(NaverCategoryCache).where(NaverCategoryCache.user_id == str(current_user.id))
+    )
+    row = res.scalar_one_or_none()
+    if not row:
+        return CategoriesResponse()
+    return CategoriesResponse(categories=row.categories or [], updated_at=row.updated_at)
+
+
+@router.post("/categories", response_model=CategoriesResponse)
+async def put_categories(
+    req: CategoriesRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """(확장용) 네이버 에디터에서 읽은 카테고리 목록을 저장."""
+    if not req.categories:
+        raise HTTPException(status_code=400, detail="카테고리 목록이 비어 있습니다")
+
+    items = [{"id": c.id, "name": c.name} for c in req.categories]
+    res = await db.execute(
+        select(NaverCategoryCache).where(NaverCategoryCache.user_id == str(current_user.id))
+    )
+    row = res.scalar_one_or_none()
+    if row:
+        row.categories = items
+        row.updated_at = datetime.utcnow()
+    else:
+        row = NaverCategoryCache(
+            user_id=str(current_user.id), categories=items, updated_at=datetime.utcnow()
+        )
+        db.add(row)
+    await db.commit()
+    return CategoriesResponse(categories=req.categories, updated_at=row.updated_at)
 
 
 class ResultRequest(BaseModel):

@@ -82,13 +82,14 @@ from app.models.reputation import (
     MentionPlatform, MentionSentiment, RiskLevel, MentionStatus,
     ResponseStyle, CrawlJobStatus, AlertSeverity, SpreadStatus, GuideCategory
 )
-from app.models.media_pool import PoolImage, ImageVariant, PoolCollection, PoolCollectionMember
-from app.models.publish_queue import PublishBatch, QueuedPost
+from app.models.media_pool import PoolImage, ImageVariant, PoolCollection, PoolCollectionMember, FixedFooterImage
+from app.models.publish_queue import PublishBatch, QueuedPost, NaverCategoryCache
 
 __all__ = [
     "User",
     "PublishBatch",
     "QueuedPost",
+    "NaverCategoryCache",
     "DoctorProfile",
     "Post",
     "PostVersion",
@@ -269,4 +270,5 @@ __all__ = [
     "ImageVariant",
     "PoolCollection",
     "PoolCollectionMember",
+    "FixedFooterImage",
 ]

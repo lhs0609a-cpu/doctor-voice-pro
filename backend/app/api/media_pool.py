@@ -19,7 +19,7 @@ from PIL import Image, ImageOps
 from app.api.deps import get_current_user, get_db
 from app.models import User
 from app.models.media_pool import (
-    PoolImage, ImageVariant, PoolCollection, PoolCollectionMember,
+    PoolImage, ImageVariant, PoolCollection, PoolCollectionMember, FixedFooterImage,
 )
 from app.services import image_uniquifier as uniq
 
@@ -535,6 +535,92 @@ async def assign_and_uniquify(
         all_passed=all(a.passed for a in out) if out else False,
         images=out, warnings=warnings,
     )
+
+
+# ==================== 고정 하단 이미지 (등록해두고 계속 재사용) ====================
+class FixedImageResponse(BaseModel):
+    image: Optional[str] = None          # data URL. None = 등록 안 됨
+    filename: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+
+class SetFixedImageRequest(BaseModel):
+    image: str                           # data URL 또는 base64
+    filename: Optional[str] = None
+
+
+def _decode_data_url(raw: str) -> bytes:
+    s = raw or ""
+    if "," in s and s.strip().startswith("data:"):
+        s = s.split(",", 1)[1]
+    return base64.b64decode(s)
+
+
+@router.get("/fixed-image", response_model=FixedImageResponse)
+async def get_fixed_image(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """등록해둔 고정 하단 이미지. 없으면 image=None."""
+    res = await db.execute(
+        select(FixedFooterImage).where(FixedFooterImage.user_id == str(current_user.id))
+    )
+    row = res.scalar_one_or_none()
+    if not row:
+        return FixedImageResponse()
+    return FixedImageResponse(
+        image="data:image/jpeg;base64," + base64.b64encode(row.data).decode(),
+        filename=row.filename, updated_at=row.updated_at,
+    )
+
+
+@router.put("/fixed-image", response_model=FixedImageResponse)
+async def set_fixed_image(
+    req: SetFixedImageRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """고정 하단 이미지 등록/교체. 풀과 동일하게 1280px JPEG 로 정규화해 저장한다."""
+    try:
+        raw = _decode_data_url(req.image)
+    except Exception:
+        raise HTTPException(status_code=400, detail="이미지 디코딩 실패")
+    try:
+        data, w, h, _ph, _thumb = await run_in_threadpool(_normalize_upload, raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="이미지 형식을 확인해주세요")
+
+    res = await db.execute(
+        select(FixedFooterImage).where(FixedFooterImage.user_id == str(current_user.id))
+    )
+    row = res.scalar_one_or_none()
+    if row:
+        row.filename, row.data = req.filename, data
+        row.width, row.height, row.size_bytes = w, h, len(data)
+        row.updated_at = datetime.utcnow()
+    else:
+        row = FixedFooterImage(
+            user_id=str(current_user.id), filename=req.filename, data=data,
+            width=w, height=h, size_bytes=len(data), updated_at=datetime.utcnow(),
+        )
+        db.add(row)
+    await db.commit()
+    return FixedImageResponse(
+        image="data:image/jpeg;base64," + base64.b64encode(data).decode(),
+        filename=req.filename, updated_at=row.updated_at,
+    )
+
+
+@router.delete("/fixed-image")
+async def delete_fixed_image(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await db.execute(
+        sa_delete(FixedFooterImage).where(FixedFooterImage.user_id == str(current_user.id))
+    )
+    await db.commit()
+    return {"success": True}
 
 
 # ==================== 고정 이미지 유니크화 (본문 하단 고정 삽입용) ====================

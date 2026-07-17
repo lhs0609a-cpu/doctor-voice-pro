@@ -620,6 +620,20 @@ export const mediaPoolAPI = {
     return response.data
   },
 
+  // ===== 고정 하단 이미지 (한 번 등록하면 서버에 저장되어 계속 재사용) =====
+  getFixedImage: async (): Promise<{ image: string | null; filename?: string | null; updated_at?: string | null }> => {
+    const response = await api.get('/api/v1/media/fixed-image')
+    return response.data
+  },
+  setFixedImage: async (image: string, filename?: string): Promise<{ image: string }> => {
+    const response = await api.put('/api/v1/media/fixed-image', { image, filename }, { timeout: 60000 })
+    return response.data
+  },
+  clearFixedImage: async (): Promise<{ success: boolean }> => {
+    const response = await api.delete('/api/v1/media/fixed-image')
+    return response.data
+  },
+
   // 임의 이미지 1장 유니크화(고정 하단 이미지가 글마다 다른 변형으로 들어가도록)
   uniquifyOne: async (image: string, siblingHashes: string[] = []): Promise<{ image: string; phash: string; passed: boolean; min_distance: number }> => {
     const response = await api.post('/api/v1/media/uniquify-one', { image, sibling_hashes: siblingHashes }, { timeout: 60000 })
@@ -4270,7 +4284,18 @@ export interface ExtJob {
   tags: string[]
   finalAction: string
   schedule: { datetime: string }
-  options: { openType: string; search: boolean }
+  options: { openType: string; search: boolean; category?: string | null }
+}
+
+// 네이버 카테고리. id 는 카테고리 번호("24") — 이름은 바뀔 수 있어 번호로 저장한다.
+export interface NaverCategory {
+  id: string
+  name: string
+}
+
+export interface NaverCategoriesResponse {
+  categories: NaverCategory[]
+  updated_at?: string | null
 }
 
 const PQ = '/api/v1/publish'
@@ -4283,8 +4308,19 @@ export const publishQueueAPI = {
   bulk: async (params: {
     text: string; delimiter?: string; top_keywords?: number
     start_at: string; interval_minutes: number; open_type?: string; assign_images?: boolean; name?: string
+    category?: string | null   // 네이버 카테고리 번호. 미지정 시 네이버 기본 카테고리
   }): Promise<{ batch_id: string; created: number; first_at: string; last_at: string; items: QueuedItem[]; warnings: string[] }> => {
     const res = await api.post(`${PQ}/queue/bulk`, params, { timeout: 120000 })
+    return res.data
+  },
+
+  // 확장이 네이버 에디터에서 읽어와 캐시해둔 카테고리 목록(드롭다운용)
+  getCategories: async (): Promise<NaverCategoriesResponse> => {
+    const res = await api.get<NaverCategoriesResponse>(`${PQ}/categories`)
+    return res.data
+  },
+  setCategories: async (categories: NaverCategory[]): Promise<NaverCategoriesResponse> => {
+    const res = await api.post<NaverCategoriesResponse>(`${PQ}/categories`, { categories })
     return res.data
   },
   list: async (status?: string): Promise<QueuedItem[]> => {

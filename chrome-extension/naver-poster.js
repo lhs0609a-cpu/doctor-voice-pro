@@ -185,6 +185,121 @@
     if (el && !el.checked) { el.click(); }
   }
 
+  // ---------- 카테고리 ----------
+  // 주의: 네이버 클래스명(selectbox_button__jb1Dt 등)은 배포마다 바뀌는 해시라 절대 쓰지 말 것.
+  //       data-click-area / data-testid 만 사용한다.
+  const CATEGORY_BTN = '[data-click-area="tpb*i.category"], button[aria-label="카테고리 목록 버튼"]';
+  const CATEGORY_ITEM = '[role="menu"] input[data-testid^="categoryBtn_"]';
+
+  function normText(s) {
+    // JS 의 \s 는 NBSP(U+00A0)를 포함한다. 카테고리명에 NBSP 가 섞여 있어도(예: 'PLT 지급대행 서비스')
+    // 이 한 줄로 일반 공백과 동일하게 정규화된다.
+    return (s || '').replace(/\s+/g, ' ').trim();
+  }
+
+  // 버튼 안의 현재 카테고리명. 목록 항목과 data-testid 가 겹치므로 반드시 버튼 하위로 스코프를 좁힌다.
+  function currentCategoryName() {
+    const el = document.querySelector(CATEGORY_BTN)?.querySelector('[data-testid^="categoryItemText_"]');
+    return normText(el && el.textContent);
+  }
+
+  // 열린 레이어에서 [{id, name, label}] 수집. [role="menu"] 로 스코프를 좁혀 버튼 자신을 제외한다.
+  function readCategoryItems() {
+    return [...document.querySelectorAll(CATEGORY_ITEM)].map((inp) => {
+      const id = (inp.dataset.testid || '').replace('categoryBtn_', '');
+      const li = inp.closest('li') || inp.parentElement;
+      const nameEl = li && li.querySelector('[data-testid^="categoryItemText_"]');
+      return { id, name: normText(nameEl && nameEl.textContent), label: li && li.querySelector('label'), input: inp };
+    }).filter((c) => c.id && c.name);
+  }
+
+  async function openCategoryLayer(btn) {
+    if (btn.getAttribute('aria-expanded') === 'true') return true;
+    btn.click();
+    const ok = await waitFor(CATEGORY_ITEM, { timeout: 5000 });
+    await sleep(150);
+    return !!ok;
+  }
+
+  async function closeCategoryLayer(btn) {
+    if (btn.getAttribute('aria-expanded') === 'true') { btn.click(); await sleep(150); }
+  }
+
+  /** 목록만 읽고 원래 상태로 되돌린다. → [{id, name}] */
+  async function readCategories() {
+    const btn = document.querySelector(CATEGORY_BTN);
+    if (!btn) return [];
+    const wasOpen = btn.getAttribute('aria-expanded') === 'true';
+    if (!(await openCategoryLayer(btn))) return [];
+    const list = readCategoryItems().map(({ id, name }) => ({ id, name }));
+    if (!wasOpen) await closeCategoryLayer(btn);
+    return list;
+  }
+
+  /**
+   * 카테고리 선택. category 는 번호("24") 또는 이름("대표작성 칼럼(노하우,생각)").
+   * 번호를 우선 매칭한다 — 이름은 사용자가 언제든 바꿀 수 있지만 번호는 유지되기 때문.
+   * @returns {{ok:boolean, categories:{id,name}[], current:string, error?:string}}
+   */
+  async function selectCategory(category) {
+    const want = normText(String(category));
+    const btn = document.querySelector(CATEGORY_BTN);
+    if (!btn) return { ok: false, categories: [], current: '', error: '카테고리 버튼을 찾지 못했습니다' };
+
+    if (!(await openCategoryLayer(btn))) {
+      return { ok: false, categories: [], current: currentCategoryName(), error: '카테고리 목록을 열지 못했습니다' };
+    }
+
+    const items = readCategoryItems();
+    const categories = items.map(({ id, name }) => ({ id, name }));
+    const hit = items.find((c) => c.id === want) || items.find((c) => c.name === want);
+    if (!hit) {
+      await closeCategoryLayer(btn);
+      return { ok: false, categories, current: currentCategoryName(), error: `카테고리 '${want}' 를 찾지 못했습니다` };
+    }
+
+    // input 은 role="none" tabindex="-1" 이라 클릭 핸들러가 없다. label[role="button"] 을 클릭해야 반영된다.
+    (hit.label || hit.input).click();
+    await sleep(400);
+
+    // 버튼 텍스트가 실제로 바뀌었는지 확인 — 조용히 기본 카테고리로 발행되는 것을 막는다.
+    const after = currentCategoryName();
+    if (after !== hit.name) {
+      return { ok: false, categories, current: after, error: `카테고리 반영 실패 (현재 '${after || '?'}')` };
+    }
+    return { ok: true, categories, current: after };
+  }
+
+  /**
+   * 앱의 '카테고리 동기화'용. 발행 레이어가 닫혀 있으면 열어서 목록만 읽고 원래대로 되돌린다.
+   * 첫 발행 전에도 앱 드롭다운을 채울 수 있게 하는 용도라 글을 발행하지는 않는다.
+   */
+  async function syncCategories() {
+    const alreadyOpen = !!document.querySelector(CATEGORY_BTN);
+    if (!alreadyOpen) {
+      const openBtn =
+        document.querySelector('[data-click-area="tpb.publish"]') ||
+        [...document.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === '발행');
+      if (!openBtn) return { ok: false, categories: [], error: '발행 버튼을 찾지 못했습니다(에디터가 열려 있어야 합니다)' };
+      openBtn.click();
+      if (!(await waitFor(CATEGORY_BTN, { timeout: 8000 }))) {
+        return { ok: false, categories: [], error: '발행 레이어를 열지 못했습니다' };
+      }
+      await sleep(300);
+    }
+
+    const categories = await readCategories();
+
+    // 우리가 연 경우에만 닫는다. 사용자가 이미 열어둔 레이어는 건드리지 않는다.
+    if (!alreadyOpen) {
+      const closeBtn = document.querySelector('[data-click-area="tpb.publish"]');
+      if (closeBtn) closeBtn.click();
+      else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await sleep(200);
+    }
+    return { ok: categories.length > 0, categories, error: categories.length ? undefined : '카테고리를 읽지 못했습니다' };
+  }
+
   // ---------- 캡차 감지 / 사용자 핸드오프 ----------
   function captchaPresent() {
     return !!document.querySelector(
@@ -291,6 +406,19 @@
       if (s && s.checked) s.click();
     }
 
+    // 카테고리 반영. 미지정이면 손대지 않고 네이버 기본 카테고리로 둔다.
+    let categories = [];
+    if (job.options?.category) {
+      showOverlay('🗂️ 카테고리 설정 중...', 90);
+      const r = await selectCategory(job.options.category);
+      categories = r.categories;
+      // 엉뚱한 카테고리로 공개 발행되면 수동으로 되돌려야 하므로, 못 찾으면 발행하지 않는다.
+      if (!r.ok) {
+        const avail = r.categories.map((c) => `${c.name}(${c.id})`).join(', ');
+        throw new Error(`${r.error}. 사용 가능한 카테고리: ${avail || '목록을 읽지 못했습니다'}`);
+      }
+    }
+
     if (action === 'schedule' && job.schedule?.datetime) {
       showOverlay('⏰ 예약 시간 설정 중...', 92);
       // 예약 라디오 켜기
@@ -324,7 +452,7 @@
     if (!captchaOk) return { done: false, action, error: '캡차 시간 초과' };
 
     await clickConfirmIfAny();
-    return { done: true, action };
+    return { done: true, action, categories };
   }
 
   async function clickConfirmIfAny() {
@@ -343,7 +471,7 @@
     if (!msg || !msg.action) return;
 
     // 에디터 프레임만 처리하는 명령들
-    const editorOnly = ['GET_POSITIONS', 'DISMISS_POPUP', 'INSERT_IMAGES', 'FINALIZE', 'PROGRESS'];
+    const editorOnly = ['GET_POSITIONS', 'DISMISS_POPUP', 'INSERT_IMAGES', 'FINALIZE', 'PROGRESS', 'READ_CATEGORIES'];
     if (editorOnly.includes(msg.action) && !isEditorFrame()) return; // 다른 프레임은 무시
 
     (async () => {
@@ -379,6 +507,11 @@
             const res = await finalize(msg.job);
             hideOverlay();
             sendResponse({ ok: true, ...res });
+            break;
+          }
+          case 'READ_CATEGORIES': {
+            const res = await syncCategories();
+            sendResponse(res);
             break;
           }
           case 'HIDE_OVERLAY':

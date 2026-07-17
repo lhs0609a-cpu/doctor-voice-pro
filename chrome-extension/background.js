@@ -55,6 +55,12 @@ chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
           startBatch(jobs, sender); // 백그라운드로 진행(응답 대기 안 함)
           break;
         }
+        case 'SYNC_CATEGORIES': {
+          // 확장이 스스로 네이버 글쓰기를 열어 카테고리를 읽고 원래대로 정리한다.
+          const r = await syncCategories();
+          sendResponse(r);
+          break;
+        }
         default:
           sendResponse({ success: false, error: 'unknown action' });
       }
@@ -126,6 +132,8 @@ function normalizeJob(raw) {
     options: {
       openType: raw.options?.openType || 'public',
       search: raw.options?.search !== false,
+      // 카테고리 번호("24") 또는 이름. 미지정이면 네이버 기본 카테고리로 발행된다.
+      category: raw.options?.category || null,
     },
     finalAction: raw.finalAction || 'draft', // 'draft' | 'publishNow' | 'schedule'
     schedule: raw.schedule || null, // { datetime: ISOString }
@@ -146,6 +154,85 @@ async function startJob(job) {
     await chrome.tabs.reload(existing.id);
   } else {
     await chrome.tabs.create({ url: WRITE_URL, active: true });
+  }
+}
+
+// ============================================================
+// 카테고리 동기화: 확장이 스스로 네이버에 다녀온다
+// (사용자가 글쓰기 화면을 미리 열어둘 필요 없이, 앱에서 바로 목록을 받게 하기 위함)
+// ============================================================
+const NAVER_WRITE_MATCH = (u) =>
+  !!u && u.includes('blog.naver.com') &&
+  (u.includes('Write') || u.includes('editor') || u.includes('PostWriteForm'));
+
+/** 에디터 프레임이 준비될 때까지 대기.
+ *  PING 은 editorOnly 가 아니라 모든 프레임이 답한다 — 최상위 프레임이 먼저 답하면
+ *  editor:false 를 받아 헛돈다. editorOnly 이면서 부작용 없는 GET_POSITIONS 로 확인한다.
+ */
+async function waitForEditorReady(tabId, timeout = 25000) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    // 로그인 페이지로 튕겼는지 먼저 확인 — 여기서 계속 기다려봐야 의미 없다.
+    let tab;
+    try {
+      tab = await chrome.tabs.get(tabId);
+    } catch (e) {
+      return { ok: false, error: '탭이 닫혔습니다' };
+    }
+    if (tab.url && tab.url.includes('nid.naver.com')) return { ok: false, needLogin: true };
+
+    const r = await sendToTab(tabId, { action: 'GET_POSITIONS' });
+    if (r && r.ok) return { ok: true };   // 에디터 프레임만 응답 = 본문까지 로드됨
+    await sleep(500);
+  }
+  return { ok: false, error: '에디터가 준비되지 않았습니다' };
+}
+
+/**
+ * 네이버 글쓰기 탭을 (없으면) 열어 카테고리 목록을 읽고, 우리가 연 탭이면 닫는다.
+ * @returns {{success:boolean, categories?:Array, error?:string, needLogin?:boolean}}
+ */
+async function syncCategories() {
+  const tabs = await chrome.tabs.query({});
+  const existing = tabs.find((t) => NAVER_WRITE_MATCH(t.url));
+
+  let tabId;
+  const opened = !existing;
+  let keepTab = false;   // 로그인 등 사용자 조작이 필요하면 탭을 남긴다
+  if (existing) {
+    tabId = existing.id;
+  } else {
+    // 사용자 작업을 방해하지 않도록 비활성 탭으로 연다.
+    const tab = await chrome.tabs.create({ url: WRITE_URL, active: false });
+    tabId = tab.id;
+  }
+
+  try {
+    const ready = await waitForEditorReady(tabId);
+    if (!ready.ok) {
+      if (ready.needLogin) {
+        // 로그인 필요 → 탭을 사용자에게 보여주고 직접 로그인하게 한다(세션 재사용 설계).
+        // 이 탭을 닫으면 로그인할 방법이 사라지므로 반드시 남겨야 한다.
+        keepTab = true;
+        await chrome.tabs.update(tabId, { active: true });
+        return { success: false, needLogin: true, error: '네이버 로그인이 필요합니다. 열린 탭에서 로그인한 뒤 다시 시도해주세요.' };
+      }
+      return { success: false, error: ready.error };
+    }
+
+    // 새 글쓰기를 열면 '작성 중인 글이 있습니다' 팝업이 떠 레이어 조작을 막는다(발행 흐름과 동일).
+    await sendToTab(tabId, { action: 'DISMISS_POPUP' });
+    await sleep(300);
+
+    const res = await sendToTab(tabId, { action: 'READ_CATEGORIES' });
+    if (!res || !res.ok || !res.categories?.length) {
+      return { success: false, error: (res && res.error) || '카테고리를 읽지 못했습니다' };
+    }
+    log(`카테고리 ${res.categories.length}개 수집`);
+    return { success: true, categories: res.categories };
+  } finally {
+    // 우리가 연 탭만 닫는다. 사용자가 쓰던 탭이나 로그인해야 할 탭은 건드리지 않는다.
+    if (opened && !keepTab) { try { await chrome.tabs.remove(tabId); } catch (e) {} }
   }
 }
 

@@ -271,9 +271,13 @@ export function SavedPostsManager() {
       const prep = JSON.parse(localStorage.getItem('doctorvoice-prepared') || '[]')
       if (Array.isArray(prep)) setPrepared(prep)
     } catch { /* noop */ }
+    // 고정 하단 이미지는 서버에 보관한다.
+    // (localStorage 는 한도가 약 5MB 라 사진 base64 가 QuotaExceededError 로 저장에 실패했다
+    //  → 등록은 된 것처럼 보이지만 새로고침하면 사라졌다.)
+    mediaPoolAPI.getFixedImage()
+      .then((r) => { if (r.image) setFixedImage(r.image) })
+      .catch(() => { /* 미등록 */ })
     try {
-      const fx = localStorage.getItem('doctorvoice-fixed-image')
-      if (fx) setFixedImage(fx)
       const fs = JSON.parse(localStorage.getItem('doctorvoice-fixed-siblings') || '[]')
       if (Array.isArray(fs)) setFixedSiblings(fs)
     } catch { /* noop */ }
@@ -367,18 +371,22 @@ export function SavedPostsManager() {
     if (!f || !f.type.startsWith('image/')) { toast.error('이미지 파일을 선택하세요'); return }
     try {
       const b64 = await imageToCleanBase64(f)
-      setFixedImage(b64)
+      // 서버가 1280px JPEG 로 정규화해 보관하고, 정규화된 이미지를 돌려준다.
+      const saved = await mediaPoolAPI.setFixedImage(b64, f.name)
+      setFixedImage(saved.image)
       setFixedSiblings([])
-      localStorage.setItem('doctorvoice-fixed-image', b64)
       localStorage.setItem('doctorvoice-fixed-siblings', '[]')
-      toast.success('고정 하단 이미지를 등록했어요', { description: '모든 글 맨 아래에 자동으로(유니크화되어) 들어갑니다' })
+      toast.success('고정 하단 이미지를 등록했어요', { description: '저장되어 다음에 열어도 그대로 있습니다' })
     } catch { toast.error('이미지 처리 실패') }
     e.target.value = ''
   }
-  const removeFixedImage = () => {
+  const removeFixedImage = async () => {
+    try {
+      await mediaPoolAPI.clearFixedImage()
+    } catch { toast.error('해제 실패'); return }
     setFixedImage(null); setFixedSiblings([])
-    localStorage.removeItem('doctorvoice-fixed-image')
     localStorage.removeItem('doctorvoice-fixed-siblings')
+    localStorage.removeItem('doctorvoice-fixed-image')   // 예전 버전이 남긴 값 정리
     toast.success('고정 이미지를 해제했어요')
   }
   // 고정 이미지를 유니크화해 반환(없으면 null). siblings 누적으로 글마다 다른 변형.
