@@ -7,12 +7,16 @@
  * 실제 자동화는 확장 프로그램이 하고, 이 화면은 지시와 진행 상황만 담당한다.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Upload, FileSpreadsheet, Play, Square, Trash2, Save, Copy, Download,
-  AlertCircle, CheckCircle2, Loader2, Settings2, Plus,
+  AlertCircle, CheckCircle2, Loader2, Settings2, Plus, RotateCcw,
+  ChevronDown, ChevronRight,
 } from 'lucide-react';
+
+import { useExtensionStatus } from '@/lib/use-extension-status';
+import { ExtensionStatusCard } from '@/components/extension-status';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -53,6 +57,10 @@ export function KeywordBatchManager() {
   const [options, setOptions] = useState<GenOptions>(DEFAULT_GEN_OPTIONS);
   const [showOptions, setShowOptions] = useState(false);
   const [running, setRunning] = useState(false);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+
+  // 확장이 연결돼야 아무것도 시작할 수 없다 → 화면에 들어오자마자 알려준다.
+  const { connected } = useExtensionStatus();
 
   useEffect(() => {
     const list = loadTemplates();
@@ -193,8 +201,9 @@ export function KeywordBatchManager() {
     return off;
   }, []);
 
-  const run = async () => {
-    if (!targets.length) {
+  /** 주어진 목록으로 생성을 시작한다. 전체 실행과 실패분 재시도가 같은 경로를 쓴다. */
+  const launch = async (list: GenItem[], label: string) => {
+    if (!list.length) {
       toast.error('생성할 키워드가 없습니다');
       return;
     }
@@ -202,7 +211,7 @@ export function KeywordBatchManager() {
       toast.error('프롬프트에 {{키워드}} 가 없습니다. 모든 글이 같은 내용으로 나옵니다.');
       return;
     }
-    const items = targets.map((r) => ({
+    const items = list.map((r) => ({
       id: r.id,
       keyword: r.keyword,
       prompt: renderPrompt(draft, { 키워드: r.keyword, keyword: r.keyword }),
@@ -213,19 +222,35 @@ export function KeywordBatchManager() {
         toast.error(res.error || '시작하지 못했습니다');
         return;
       }
+      const ids = new Set(list.map((r) => r.id));
       setRows((prev) =>
         prev.map((r) =>
-          targets.some((t) => t.id === r.id)
-            ? { ...r, status: 'running', text: undefined, error: undefined }
-            : r,
+          ids.has(r.id) ? { ...r, status: 'running', text: undefined, error: undefined } : r,
         ),
       );
       setRunning(true);
-      toast.success(`${res.accepted}건 생성을 시작합니다. Gemini 탭에서 진행됩니다.`);
+      toast.success(`${label} ${res.accepted}건을 시작합니다. Gemini 탭에서 진행됩니다.`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : '확장 프로그램 호출 실패');
     }
   };
+
+  const run = () => launch(targets, '생성');
+  const retryFailed = () => launch(rows.filter((r) => r.status === 'failed'), '재시도');
+
+  // 생성 중에 페이지를 벗어나면 이후 결과를 못 받는다(이미 저장된 건은 남는다).
+  useEffect(() => {
+    if (!running) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [running]);
+
+  // 결과는 보낸 순서대로 돌아온다 → 아직 running 인 첫 행이 지금 처리 중인 건이다.
+  const currentId = running ? rows.find((r) => r.status === 'running')?.id ?? null : null;
 
   const stop = async () => {
     try {
@@ -266,6 +291,9 @@ export function KeywordBatchManager() {
   // ============================================================
   return (
     <div className="space-y-6">
+      {/* 확장이 없으면 아무것도 못 한다 — 버튼을 누르기 전에 알려준다 */}
+      {!connected && <ExtensionStatusCard />}
+
       {/* 1. 키워드 업로드 */}
       <Card>
         <CardHeader className="pb-3">
@@ -349,26 +377,61 @@ export function KeywordBatchManager() {
                   <tbody>
                     {rows.map((r) => {
                       const included = (r.volume ?? 0) >= minVolume;
+                      const isCurrent = r.id === currentId;
+                      const open = previewId === r.id;
+                      const canPreview = r.status === 'done' && !!r.text;
                       return (
-                        <tr
-                          key={r.id}
-                          className={`border-t ${included ? '' : 'opacity-40'}`}
-                        >
-                          <td className="p-2">{r.keyword}</td>
-                          <td className="p-2 text-right tabular-nums text-muted-foreground">
-                            {r.volume?.toLocaleString() ?? '—'}
-                          </td>
-                          <td className="p-2 text-center">
-                            <StatusCell item={r} included={included} />
-                          </td>
-                          <td className="p-2 text-right">
-                            {r.status === 'done' && (
-                              <Button variant="ghost" size="sm" onClick={() => copyOne(r)}>
-                                <Copy className="h-3.5 w-3.5" />
-                              </Button>
-                            )}
-                          </td>
-                        </tr>
+                        <Fragment key={r.id}>
+                          <tr
+                            onClick={() => canPreview && setPreviewId(open ? null : r.id)}
+                            className={`border-t ${included ? '' : 'opacity-40'} ${
+                              isCurrent ? 'bg-blue-50 dark:bg-blue-950/30' : ''
+                            } ${canPreview ? 'cursor-pointer hover:bg-muted/50' : ''}`}
+                          >
+                            <td className="p-2">
+                              <span className="inline-flex items-center gap-1.5">
+                                {canPreview &&
+                                  (open ? (
+                                    <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                                  ) : (
+                                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                                  ))}
+                                {r.keyword}
+                              </span>
+                            </td>
+                            <td className="p-2 text-right tabular-nums text-muted-foreground">
+                              {r.volume?.toLocaleString() ?? '—'}
+                            </td>
+                            <td className="p-2 text-center">
+                              <StatusCell item={r} included={included} isCurrent={isCurrent} />
+                            </td>
+                            <td className="p-2 text-right">
+                              {canPreview && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={(e) => { e.stopPropagation(); void copyOne(r); }}
+                                >
+                                  <Copy className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                            </td>
+                          </tr>
+                          {open && r.text && (
+                            <tr className="border-t bg-muted/30">
+                              <td colSpan={4} className="p-3">
+                                <PreviewBody text={r.text} />
+                              </td>
+                            </tr>
+                          )}
+                          {r.status === 'failed' && r.error && (
+                            <tr className="border-t bg-red-50 dark:bg-red-950/20">
+                              <td colSpan={4} className="px-3 py-1.5 text-xs text-red-700 dark:text-red-400">
+                                {r.error}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
                       );
                     })}
                   </tbody>
@@ -519,9 +582,16 @@ export function KeywordBatchManager() {
                 <Square className="mr-1.5 h-4 w-4" /> 중단
               </Button>
             ) : (
-              <Button onClick={run} disabled={!targets.length}>
-                <Play className="mr-1.5 h-4 w-4" /> {targets.length}건 생성 시작
-              </Button>
+              <>
+                <Button onClick={run} disabled={!targets.length || !connected}>
+                  <Play className="mr-1.5 h-4 w-4" /> {targets.length}건 생성 시작
+                </Button>
+                {failCount > 0 && (
+                  <Button variant="outline" onClick={retryFailed} disabled={!connected}>
+                    <RotateCcw className="mr-1.5 h-4 w-4" /> 실패 {failCount}건만 재시도
+                  </Button>
+                )}
+              </>
             )}
             <Button variant="outline" onClick={downloadAll} disabled={!doneCount}>
               <Download className="mr-1.5 h-4 w-4" /> 결과 내려받기 ({doneCount})
@@ -553,14 +623,37 @@ export function KeywordBatchManager() {
 }
 
 // ============================================================
-function StatusCell({ item, included }: { item: GenItem; included: boolean }) {
+/** 생성된 글 미리보기. 제목과 본문을 나눠 보여준다(저장될 형태 그대로). */
+function PreviewBody({ text }: { text: string }) {
+  const { title, content } = splitTitleBody(text);
+  return (
+    <div className="space-y-2">
+      <div className="flex items-baseline gap-2">
+        <span className="shrink-0 text-[11px] font-medium text-muted-foreground">제목</span>
+        <span className="text-sm font-semibold">{title}</span>
+      </div>
+      <div className="flex gap-2">
+        <span className="shrink-0 pt-0.5 text-[11px] font-medium text-muted-foreground">본문</span>
+        <pre className="max-h-72 flex-1 overflow-auto whitespace-pre-wrap rounded-md border bg-background p-3 text-xs leading-relaxed">
+          {content}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+function StatusCell({
+  item, included, isCurrent,
+}: { item: GenItem; included: boolean; isCurrent?: boolean }) {
   if (!included) return <span className="text-xs text-muted-foreground">제외</span>;
   switch (item.status) {
     case 'running':
-      return (
-        <span className="inline-flex items-center gap-1 text-xs text-blue-600">
-          <Loader2 className="h-3 w-3 animate-spin" /> 대기/생성
+      return isCurrent ? (
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-blue-600">
+          <Loader2 className="h-3 w-3 animate-spin" /> 생성 중
         </span>
+      ) : (
+        <span className="text-xs text-muted-foreground">대기</span>
       );
     case 'done':
       return (
