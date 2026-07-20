@@ -34,6 +34,7 @@ import { ExtensionStatusBadge, ExtensionStatusCard, EXTENSION_DOWNLOAD_URL } fro
 import { useExtensionStatus } from '@/lib/use-extension-status'
 import { PublishGuide } from './publish-guide'
 import { mediaPoolAPI, publishQueueAPI, type PoolCollectionItem, type NaverCategory } from '@/lib/api'
+import { preparedStore, requestPersistentStorage, storageHeadroom } from '@/lib/prepared-store'
 import type { SavedPost } from '@/types'
 
 // 샘플 글 (항상 유지)
@@ -58,18 +59,74 @@ type FinalAction = 'draft' | 'publishNow' | 'schedule'
 type OpenType = 'public' | 'neighbor' | 'both' | 'private'
 type ScheduleMode = 'manual' | 'interval'
 
-// 예약 준비함 항목 (이미지는 base64로 확정 저장 → 나중에 한 번에 발행)
+// 예약 준비함 항목 — 가벼운 메타데이터만 담는다.
+// 사진 base64 는 IndexedDB(preparedStore)에 id 로 따로 보관하고, 확장이 그 글을
+// 처리하기 직전에 한 건씩 꺼낸다. (예전엔 여기에 images 를 통째로 넣어 100건 = 400MB+ 가
+// state 와 localStorage 에 동시에 올라가 탭이 죽거나 저장이 실패했다)
 interface PreparedItem {
   id: string
   title: string
   content: string
-  images: string[]
-  fixedImage?: string        // 유니크화된 고정 하단 이미지
+  imageCount: number         // 실제 사진은 preparedStore 에
+  hasFixed?: boolean         // 유니크화된 고정 하단 이미지 보유 여부
   tags: string[]
   emphasize: string[]
   openType: OpenType
   category?: string          // 네이버 카테고리 번호. 없으면 기본 카테고리
   scheduleISO: string
+}
+
+// ── 블로그별 저장소 ──
+// 예약 기준·예약 현황·준비함은 블로그(네이버 계정)마다 완전히 분리해야 한다.
+// 예전엔 전역 키 하나를 공유해서, 계정 A 로 잡아둔 기준이 계정 B 의 예약 계산에 그대로
+// 쓰였고(→ B 블로그가 비어 있는데 엉뚱한 시각부터 잡힘), 반대로 B 가 A 의 기준을 덮어썼다.
+const SCHED_KEYS = ['doctorvoice-last-schedule', 'doctorvoice-schedule-log', 'doctorvoice-prepared'] as const
+const scopedKey = (base: string, blogId: string | null) => (blogId ? `${base}::${blogId}` : base)
+
+// 마지막으로 확인된 블로그. 확장이 아직 안 붙었어도 이 값으로 예약 기준을 먼저 복원한다.
+// 이게 없으면 확장 연결이 늦어지는 동안 blogId 가 null 이라 "예약이 하나도 없는" 화면이 뜨고,
+// 그 상태에서 간격 예약을 걸면 기준이 지금 시각으로 리셋돼 기존 예약 위에 겹쳐 잡혔다.
+const BLOGID_KEY = 'doctorvoice-last-blogid'
+
+/**
+ * 계정을 처음 확인한 시점에, 전역으로 남아 있던 예전 데이터를 그 블로그 것으로 넘긴다.
+ * 스코프 키가 이미 있으면 '병합'한다 — 예전엔 덮어쓰기 없이 legacy 를 그냥 지워서,
+ * blogId 확정 전에 담아둔 준비함·예약이 조용히 사라졌다.
+ */
+function migrateLegacyScope(blogId: string) {
+  for (const base of SCHED_KEYS) {
+    const legacy = localStorage.getItem(base)
+    if (legacy === null) continue
+    const scoped = scopedKey(base, blogId)
+    const cur = localStorage.getItem(scoped)
+    if (cur === null) {
+      localStorage.setItem(scoped, legacy)
+    } else if (base === 'doctorvoice-last-schedule') {
+      // ISO 문자열 — 더 늦은 쪽이 기준(커서는 뒤로 물리면 안 된다)
+      const a = new Date(cur).getTime(), b = new Date(legacy).getTime()
+      if (!isNaN(b) && (isNaN(a) || b > a)) localStorage.setItem(scoped, legacy)
+    } else {
+      // 배열 — 합치고 id(준비함) 또는 at+title(예약 현황) 으로 중복 제거
+      try {
+        const arr = [...JSON.parse(cur), ...JSON.parse(legacy)]
+        const seen = new Set<string>()
+        const merged = arr.filter((x: any) => {
+          const k = x?.id ?? `${x?.at}|${x?.title}`
+          if (seen.has(k)) return false
+          seen.add(k)
+          return true
+        })
+        localStorage.setItem(scoped, JSON.stringify(merged))
+      } catch { /* 깨진 값이면 기존 것을 지킨다 */ }
+    }
+    localStorage.removeItem(base) // 다른 블로그가 이 값을 물려받으면 안 된다
+  }
+}
+
+// 준비함 목록 저장(가벼움 — 100건이어도 수십 KB)
+function persistPreparedFor(blogId: string | null, items: PreparedItem[]) {
+  try { localStorage.setItem(scopedKey('doctorvoice-prepared', blogId), JSON.stringify(items)) }
+  catch { /* 메타데이터만이라 사실상 넘칠 일이 없다 */ }
 }
 
 const ACTION_OPTIONS: { key: FinalAction; label: string; desc: string; icon: any }[] = [
@@ -230,23 +287,280 @@ export function SavedPostsManager() {
   const [prepared, setPrepared] = useState<PreparedItem[]>([])
   const [preparing, setPreparing] = useState(false)
 
-  // 배치 발행 중 확장이 한 건씩 요청해 가는 job payload 보관소.
-  // 준비함을 비운 뒤에도 남아 있어야 하므로 state 가 아니라 ref 에 둔다.
-  const batchPayloadsRef = useRef<Record<string, any>>({})
+  // 현재 로그인된 네이버 블로그. null = 확장으로 아직 확인 못 함
+  const [blogId, setBlogId] = useState<string | null>(null)
+  const [blogChecking, setBlogChecking] = useState(false)
+  // 지난 세션에서 확인됐던 블로그(localStorage). 확장이 붙기 전의 임시 기준.
+  const [cachedBlogId, setCachedBlogId] = useState<string | null>(null)
+  const [scopeLoaded, setScopeLoaded] = useState(false) // 캐시 읽기를 시도했는가
 
-  // 확장이 각 글을 처리하기 직전에 그 글의 사진을 요청한다 → 한 건만 넘겨준다.
-  // (58건을 한꺼번에 보내면 크롬의 64MiB 메시지 한계에 걸려 전송 자체가 실패한다)
+  // 읽기·쓰기에 실제로 쓰는 스코프. 확장 확인값이 있으면 그게 우선, 없으면 캐시.
+  const scopeId = blogId ?? cachedBlogId
+  // 확장이 지금 이 순간 확인해 준 값인가. 간격 예약 허용 여부를 여기서 가른다.
+  const blogConfirmed = !!blogId
+
+  // 배치 결과 리스너는 deps [] 라 state 를 직접 읽으면 초기값(null)에 묶인다 → 거울 ref 로 읽는다.
+  const blogIdRef = useRef<string | null>(null)
+  useEffect(() => { blogIdRef.current = blogId }, [blogId])
+  // 저장은 '읽을 때 쓰는 키'와 반드시 같아야 한다 → scopeId 를 따라간다.
+  const scopeIdRef = useRef<string | null>(null)
+  useEffect(() => { scopeIdRef.current = scopeId }, [scopeId])
+  const lastSchedRef = useRef<string | null>(null)
+  useEffect(() => { lastSchedRef.current = lastScheduledAt }, [lastScheduledAt])
+
+  const persistPrepared = (items: PreparedItem[]) => persistPreparedFor(scopeIdRef.current, items)
+
+  // 실패한 건의 사유 (준비함에 남겨두고 표시 → 다시 시도 가능)
+  const [failedIds, setFailedIds] = useState<Record<string, string>>({})
+  // 진행 중인 배치 상태 (총 건수/완료 건수)
+  const [batchProgress, setBatchProgress] = useState<{ total: number; done: number; ok: number } | null>(null)
+
+  // 이벤트 리스너에서 최신 준비함을 읽기 위한 거울 (stale closure 방지)
+  const preparedRef = useRef<PreparedItem[]>([])
+  useEffect(() => { preparedRef.current = prepared }, [prepared])
+
+  // 배치 진행 카운터. 리스너가 매번 최신값을 봐야 하므로 ref.
+  const batchRef = useRef<{ total: number; done: number; ok: number }>({ total: 0, done: 0, ok: 0 })
+  // 결과가 한참 안 오면(탭 닫힘 등) 버튼이 영구히 잠기지 않도록 푸는 감시 타이머
+  const stallTimerRef = useRef<any>(null)
+
+  // 확장이 각 글을 처리하기 직전에 그 글의 payload 를 요청한다 → 그때 한 건만 만들어 넘긴다.
+  // 미리 다 만들어두면 100건 × 4~5MB ≈ 500MB 가 탭 메모리에 한꺼번에 올라가 죽는다.
   useEffect(() => {
-    const onRequest = (e: any) => {
+    const onRequest = async (e: any) => {
       const { id, token } = e.detail || {}
-      const job = batchPayloadsRef.current[id] || null
-      window.dispatchEvent(new CustomEvent('doctorvoice-job-payload', { detail: { token, job } }))
-      // 넘긴 건 바로 비운다 — 사진 수백 장을 계속 들고 있으면 탭이 메모리로 죽는다.
-      if (job) delete batchPayloadsRef.current[id]
+      const reply = (job: any) =>
+        window.dispatchEvent(new CustomEvent('doctorvoice-job-payload', { detail: { token, job } }))
+      try {
+        const item = preparedRef.current.find((p) => p.id === id)
+        if (!item) { reply(null); return }
+        // 사진은 지금 IndexedDB 에서 꺼낸다 → 이 한 건만 잠깐 메모리에 올라간다.
+        // get() 이 throw 하면 아래 catch 가 reply(null) → 확장은 이 건을 실패로 처리하고
+        // 준비함에 그대로 남는다. 사진 없이 나가는 것보다 실패가 낫다.
+        const payload = await preparedStore.get(id)
+        const images = payload?.images || []
+
+        // 담을 때 기록해 둔 장수와 대조한다. 어긋나면 사진이 유실된 것이므로 발행하지 않는다.
+        // (예전엔 대조가 없어서, imageCount 12 인 글이 0장으로 나가도 '성공'으로 보고되고
+        //  준비함 항목과 IndexedDB 사진이 함께 지워져 복구가 불가능했다)
+        if (images.length !== item.imageCount) {
+          throw new Error(`사진 유실: ${item.imageCount}장 중 ${images.length}장만 읽힘`)
+        }
+        if (item.hasFixed && !payload?.fixedImage) {
+          throw new Error('고정 하단 이미지 유실')
+        }
+
+        const blocks = buildInterleavedBlocks(item.content, images)
+        if (payload?.fixedImage) blocks.push({ type: 'image', image: payload.fixedImage })
+        reply({
+          id: item.id, title: item.title, content: item.content,
+          // images 는 싣지 않는다 — 확장의 normalizeJob 이 blocks 에서 본문과 사진을
+          // 모두 파생시키므로, 따로 보내면 같은 base64 가 두 번 실려 전송량만 2배가 된다.
+          blocks,
+          tags: item.tags, emphasize: item.emphasize,
+          options: { openType: item.openType, search: true, category: item.category || null },
+          finalAction: 'schedule', schedule: { datetime: item.scheduleISO },
+          expectedBlogId: blogIdRef.current,
+        })
+      } catch (err: any) {
+        // 왜 건너뛰었는지 남긴다 — 조용히 실패하면 사용자는 '왜 이 글만 안 올라갔지'만 남는다.
+        console.error('[doctorvoice] payload 준비 실패', id, err)
+        toast.error('사진을 준비하지 못해 이 글을 건너뛰었어요', {
+          description: `${err?.message || '알 수 없는 오류'} — 준비함에 남겨뒀으니 다시 담아주세요.`,
+        })
+        reply(null)
+      }
     }
     window.addEventListener('doctorvoice-job-request', onRequest)
     return () => window.removeEventListener('doctorvoice-job-request', onRequest)
   }, [])
+
+  // 확장이 글 한 건을 끝낼 때마다 결과를 보낸다.
+  // 성공한 건만 준비함에서 빼고, 실패한 건은 사유와 함께 남겨 다시 시도할 수 있게 한다.
+  // (예전엔 전송 직후 준비함을 통째로 비워서 실패한 글이 흔적 없이 사라졌다)
+  useEffect(() => {
+    const onResult = (e: any) => {
+      const { id, ok, message, uncertain } = e.detail || {}
+      if (!id) return
+      const b = batchRef.current
+      if (!b.total) return // 이 화면이 시작한 배치가 아님
+
+      b.done += 1
+      if (ok) {
+        b.ok += 1
+        const item = preparedRef.current.find((p) => p.id === id)
+        setPrepared((prev) => {
+          const next = prev.filter((p) => p.id !== id)
+          persistPrepared(next)
+          return next
+        })
+        preparedStore.remove(id)
+        if (item) {
+          advanceCursor(item.scheduleISO)
+          setScheduleLog((prev) => {
+            const next = [...prev, { title: item.title || '(제목 없음)', at: item.scheduleISO }]
+              .sort((a, b2) => a.at.localeCompare(b2.at)).slice(-200)
+            localStorage.setItem(scopedKey('doctorvoice-schedule-log', scopeIdRef.current), JSON.stringify(next))
+            return next
+          })
+        }
+      } else if (uncertain) {
+        // 시간 초과로 끝난 건 — 실제로는 발행됐을 수 있다. 그냥 다시 발행하면 중복 예약이 되므로
+        // 사용자가 네이버에서 확인하고 판단하도록 따로 표시한다.
+        setFailedIds((prev) => ({
+          ...prev,
+          [id]: '⚠️ 응답 시간 초과 — 네이버에 이미 예약됐을 수 있어요. 확인 후 다시 발행하세요(중복 주의)',
+        }))
+      } else {
+        setFailedIds((prev) => ({ ...prev, [id]: message || '실패' }))
+      }
+      setBatchProgress({ total: b.total, done: b.done, ok: b.ok })
+      try { localStorage.setItem(BATCH_KEY, JSON.stringify({ ...b, at: Date.now() })) } catch { /* noop */ }
+      armStallTimer()
+
+      if (b.done >= b.total) {
+        const failed = b.total - b.ok
+        if (failed > 0) {
+          toast.warning(`예약 등록 완료 — ${b.ok}건 성공, ${failed}건 실패`, {
+            description: '실패한 글은 준비함에 남겨뒀어요. 사유를 확인하고 다시 발행하세요.',
+          })
+        } else {
+          toast.success(`${b.ok}건 모두 예약 등록했어요`)
+        }
+        endBatch()
+      }
+    }
+    window.addEventListener('doctorvoice-job-result', onResult)
+    return () => window.removeEventListener('doctorvoice-job-result', onResult)
+  }, [])
+
+  // 배치 시작/종료를 localStorage 에도 남긴다.
+  // 발행 도중 새로고침하면 확장은 계속 도는데 이 화면이 결과를 무시해버려,
+  // 이미 등록된 글이 준비함에 남고 사용자가 다시 눌러 중복 발행되는 문제가 있었다.
+  const BATCH_KEY = 'doctorvoice-batch-active'
+
+  const beginBatch = (total: number) => {
+    batchRef.current = { total, done: 0, ok: 0 }
+    setBatchProgress({ total, done: 0, ok: 0 })
+    try { localStorage.setItem(BATCH_KEY, JSON.stringify({ total, done: 0, ok: 0, at: Date.now() })) } catch { /* noop */ }
+    setPublishing(true)
+    armStallTimer()
+  }
+
+  const endBatch = () => {
+    batchRef.current = { total: 0, done: 0, ok: 0 }
+    if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null }
+    try { localStorage.removeItem(BATCH_KEY) } catch { /* noop */ }
+    setBatchProgress(null)
+    setPublishing(false)
+  }
+
+  // 새로고침 후 진행 중이던 배치 이어받기 (7분 넘게 조용했으면 죽은 것으로 보고 버린다)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(BATCH_KEY)
+      if (!raw) return
+      const s = JSON.parse(raw)
+      if (!s?.total || Date.now() - (s.at || 0) > 7 * 60 * 1000) { localStorage.removeItem(BATCH_KEY); return }
+      batchRef.current = { total: s.total, done: s.done || 0, ok: s.ok || 0 }
+      setBatchProgress({ total: s.total, done: s.done || 0, ok: s.ok || 0 })
+      setPublishing(true)
+      armStallTimer()
+    } catch { /* noop */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // 한 건당 최대 3분(확장 가드) + 여유. 그 두 배 동안 아무 결과도 없으면 멈춘 것으로 본다.
+  const armStallTimer = () => {
+    if (stallTimerRef.current) clearTimeout(stallTimerRef.current)
+    stallTimerRef.current = setTimeout(() => {
+      const b = batchRef.current
+      if (!b.total) return
+      toast.error('발행이 응답하지 않아 중단했어요', {
+        description: `${b.ok}건 완료. 남은 글은 준비함에 있으니 다시 발행하세요.`,
+      })
+      endBatch()
+    }, 7 * 60 * 1000)
+  }
+
+  // 어느 블로그에 로그인돼 있는지 확장에 물어본다. 이게 정해져야 예약 기준을 계산할 수 있다.
+  const detectBlog = async (silent = true) => {
+    if (!ext.connected || !ext.extensionId) return null
+    setBlogChecking(true)
+    try {
+      const res = await sendMessageToExtension(ext.extensionId, { action: 'SYNC_BLOG' })
+      if (res?.success && res.blogId) {
+        setBlogId((prev) => {
+          if (prev && prev !== res.blogId) {
+            toast.info(`블로그가 '${res.blogId}' 로 바뀌었어요`, {
+              description: '예약 기준과 준비함이 이 블로그 것으로 전환됩니다.',
+            })
+          }
+          return res.blogId
+        })
+        // 다음 방문 때 확장이 붙기 전에도 이 블로그 기준으로 복원할 수 있게 기억해 둔다.
+        try { localStorage.setItem(BLOGID_KEY, res.blogId) } catch { /* noop */ }
+        return res.blogId as string
+      }
+      if (!silent) toast.error('블로그 확인 실패', { description: res?.error || '다시 시도해주세요' })
+    } catch (e: any) {
+      if (!silent) toast.error('블로그 확인 실패', { description: e.message })
+    } finally {
+      setBlogChecking(false)
+    }
+    return null
+  }
+
+  useEffect(() => { if (ext.connected) detectBlog(true) }, [ext.connected]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 확장 연결과 무관하게, 마지막으로 알던 블로그를 먼저 읽는다. 이게 있어야 복원이
+  // 확장 연결 체인(ext.connected → SYNC_BLOG → 네이버 탭)에 묶이지 않는다.
+  useEffect(() => {
+    try { setCachedBlogId(localStorage.getItem(BLOGID_KEY)) } catch { /* noop */ }
+    setScopeLoaded(true)
+  }, [])
+
+  // 스코프가 정해지면 그 블로그의 예약 기준·현황·준비함을 불러온다.
+  // scopeId 가 null 이어도(= 한 번도 블로그를 확인한 적 없음) 비스코프 키에서 복원한다 —
+  // 예전엔 여기서 조기 반환해, 데이터가 localStorage 에 멀쩡히 있어도 화면엔 안 나왔다.
+  useEffect(() => {
+    if (!scopeLoaded) return
+    if (scopeId) migrateLegacyScope(scopeId)
+
+    setLastScheduledAt(localStorage.getItem(scopedKey('doctorvoice-last-schedule', scopeId)))
+    try {
+      const log = JSON.parse(localStorage.getItem(scopedKey('doctorvoice-schedule-log', scopeId)) || '[]')
+      setScheduleLog(Array.isArray(log) ? log : [])
+    } catch { setScheduleLog([]) }
+
+    // 준비함 복원. 예전 버전은 사진(images)까지 localStorage 에 넣었으므로 IndexedDB 로 옮긴다.
+    ;(async () => {
+      let prep: any[] = []
+      try {
+        const raw = JSON.parse(localStorage.getItem(scopedKey('doctorvoice-prepared', scopeId)) || '[]')
+        if (Array.isArray(raw)) prep = raw
+      } catch { /* noop */ }
+      const items: PreparedItem[] = []
+      for (const p of prep) {
+        if (Array.isArray(p.images)) {
+          // 구버전 항목 → 사진을 IndexedDB 로 이관하고 메타데이터만 남긴다
+          try { await preparedStore.put(p.id, { images: p.images, fixedImage: p.fixedImage }) }
+          catch { continue } // 옮기지 못한 건 버린다(사진 없이 발행되면 안 되므로)
+          items.push({
+            id: p.id, title: p.title, content: p.content,
+            imageCount: p.images.length, hasFixed: !!p.fixedImage,
+            tags: p.tags || [], emphasize: p.emphasize || [],
+            openType: p.openType, category: p.category, scheduleISO: p.scheduleISO,
+          })
+        } else {
+          items.push(p as PreparedItem)
+        }
+      }
+      setPrepared(items)
+      persistPreparedFor(scopeId, items)
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeId, scopeLoaded])
 
   // 저장된 글 로드 (샘플 항상 포함) + 선택 요청 반영
   useEffect(() => {
@@ -285,17 +599,23 @@ export function SavedPostsManager() {
     const savedCol = localStorage.getItem('doctorvoice-collection-id')
     const savedInterval = Number(localStorage.getItem('doctorvoice-schedule-interval'))
     if (savedInterval >= 1) setIntervalHours(savedInterval)
-    const lastSched = localStorage.getItem('doctorvoice-last-schedule')
-    if (lastSched) setLastScheduledAt(lastSched)
+    // 예약 기준·현황·준비함은 블로그마다 다르므로 blogId 를 확인한 뒤 따로 불러온다(아래 효과).
+
+    // 어느 블로그 준비함에도 없는 사진 찌꺼기 정리(발행 도중 탭이 닫힌 경우 등).
+    // 블로그별로 지우면 다른 블로그 준비함의 사진까지 날아가므로 전체를 모아 한 번에 판단한다.
     try {
-      const log = JSON.parse(localStorage.getItem('doctorvoice-schedule-log') || '[]')
-      if (Array.isArray(log)) setScheduleLog(log)
+      const alive: string[] = []
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)
+        if (!k || !k.startsWith('doctorvoice-prepared')) continue
+        const arr = JSON.parse(localStorage.getItem(k) || '[]')
+        if (Array.isArray(arr)) for (const it of arr) if (it?.id) alive.push(it.id)
+      }
+      preparedStore.prune(alive)
     } catch { /* noop */ }
-    try {
-      const prep = JSON.parse(localStorage.getItem('doctorvoice-prepared') || '[]')
-      if (Array.isArray(prep)) setPrepared(prep)
-    } catch { /* noop */ }
+
     // 고정 하단 이미지는 서버에 보관한다.
+    // (이 아래는 블로그와 무관한 항목들)
     // (localStorage 는 한도가 약 5MB 라 사진 base64 가 QuotaExceededError 로 저장에 실패했다
     //  → 등록은 된 것처럼 보이지만 새로고침하면 사라졌다.)
     mediaPoolAPI.getFixedImage()
@@ -450,29 +770,76 @@ export function SavedPostsManager() {
     if (!fixedImage) return null
     try {
       const r = await mediaPoolAPI.uniquifyOne(fixedImage, fixedSiblings)
-      const nextSib = [...fixedSiblings, r.phash].slice(-60)
+      // 회피셋 상한. 60이면 100건 준비 시 61번째부터 앞의 변형을 잊어버려
+      // 뒷부분이 앞부분과 같은 변형으로 나왔다 → 100건 배치를 덮도록 넉넉히 잡는다.
+      const nextSib = [...fixedSiblings, r.phash].slice(-300)
       setFixedSiblings(nextSib)
       localStorage.setItem('doctorvoice-fixed-siblings', JSON.stringify(nextSib))
       return r.image
-    } catch {
-      return fixedImage // 유니크화 실패 시 원본이라도 삽입
+    } catch (e: any) {
+      // 예전엔 조용히 원본을 반환했다 — 100건 전부에 똑같은 이미지가 박혀
+      // 네이버 중복 감지에 걸리는데도 사용자는 알 방법이 없었다. 담기를 실패시킨다.
+      throw new Error(`고정 하단 이미지 유니크화 실패: ${e?.message || '알 수 없는 오류'}`)
     }
   }
 
-  // 간격 예약: (마지막 예약 or 지금) + intervalHours, 10분 내림, 과거면 지금 기준
+  // 이 블로그에서 우리가 아는 '가장 늦은 예약' 시각(ms). 0 = 아는 예약 없음.
+  //
+  // 예전엔 doctorvoice-last-schedule 키 하나만 봤는데, 그 값은 '가장 늦은 예약'이 아니라
+  // '가장 최근에 누른 예약'이라 수동 모드로 이전 날짜를 하나 잡으면 기준이 뒤로 후퇴했다.
+  // → 그 다음 간격 예약이 이미 잡아둔 예약들 위에 겹쳐 잡혔다.
+  // 이제 알고 있는 모든 출처의 최댓값을 쓴다.
+  const knownLatestMs = (): number => {
+    // 주의: 여기 없는 출처가 하나 있다 — 네이버에 직접(우리 앱을 거치지 않고) 잡아둔 예약.
+    // 확장에 그걸 읽어오는 기능이 없어서 알 수 없다. 그래서 아래 knownLatest 는 어디까지나
+    // '우리가 아는' 최댓값이고, 사용자가 네이버에서 직접 잡은 예약과는 겹칠 수 있다.
+    const times = [
+      lastScheduledAt,
+      ...scheduleLog.map((s) => s.at),      // 우리가 등록한 예약 현황
+      ...prepared.map((p) => p.scheduleISO), // 아직 발행 안 한 준비함(서로 겹치면 안 된다)
+    ]
+      .filter(Boolean)
+      .map((s) => new Date(s as string).getTime())
+      .filter((n) => !isNaN(n))
+    return times.length ? Math.max(...times) : 0
+  }
+
+  // 간격 예약: (아는 가장 늦은 예약 or 지금) + intervalHours, 10분 내림
   const computeIntervalSlot = (): Date => {
     const now = Date.now()
-    const base = lastScheduledAt ? new Date(lastScheduledAt).getTime() : now
-    let t = base + intervalHours * 3600_000
-    if (t <= now) t = now + intervalHours * 3600_000
-    const d = new Date(t)
+    const base = Math.max(knownLatestMs(), now)
+    const d = new Date(base + intervalHours * 3600_000)
     d.setMinutes(Math.floor(d.getMinutes() / 10) * 10, 0, 0)
     return d
   }
 
+  // 간격 예약은 '이 블로그의 마지막 예약'을 알아야 성립한다. 스코프를 모르면
+  // knownLatestMs() 가 0 이 되고 기준이 지금 시각으로 리셋돼 기존 예약 위에 겹쳐 잡힌다.
+  // 조용히 틀리느니 막는다. (한 번이라도 블로그를 확인했으면 캐시로 복원되므로 통과)
+  const intervalReady = !!scopeId
+  const guardInterval = (): boolean => {
+    if (intervalReady) return true
+    toast.error('기준 블로그를 아직 확인하지 못했어요', {
+      description: '확장 프로그램을 연결하고 네이버 블로그에 로그인한 뒤 "다시 확인"을 눌러주세요. 기준을 모르면 기존 예약과 겹칠 수 있어 막았습니다.',
+    })
+    return false
+  }
+
+  // 기준 커서는 앞으로만 간다. 뒤로 물리면 기존 예약과 겹친다.
+  // (배치 결과 리스너에서도 불리므로 state 가 아니라 ref 를 읽는다)
+  const advanceCursor = (iso: string) => {
+    const next = new Date(iso).getTime()
+    const curIso = lastSchedRef.current
+    const cur = curIso ? new Date(curIso).getTime() : 0
+    if (isNaN(next) || next <= cur) return
+    lastSchedRef.current = iso
+    localStorage.setItem(scopedKey('doctorvoice-last-schedule', scopeIdRef.current), iso)
+    setLastScheduledAt(iso)
+  }
+
   const resetSchedule = () => {
-    localStorage.removeItem('doctorvoice-last-schedule')
-    localStorage.removeItem('doctorvoice-schedule-log')
+    localStorage.removeItem(scopedKey('doctorvoice-last-schedule', scopeId))
+    localStorage.removeItem(scopedKey('doctorvoice-schedule-log', scopeId))
     setLastScheduledAt(null)
     setScheduleLog([])
     toast.success('예약 기준과 현황을 초기화했어요')
@@ -496,6 +863,7 @@ export function SavedPostsManager() {
     if (finalAction === 'schedule') {
       let dt: Date
       if (scheduleMode === 'interval') {
+        if (!guardInterval()) return
         dt = computeIntervalSlot()
       } else {
         if (!scheduleDate || !scheduleTime) { toast.error('예약 날짜와 시간을 선택하세요'); return }
@@ -551,6 +919,7 @@ export function SavedPostsManager() {
         options: { openType, search: true, category: category || null },
         finalAction,
         schedule: scheduleISO ? { datetime: scheduleISO } : null,
+        expectedBlogId: blogId, // 발행 직전 실제 로그인 계정과 대조 → 다르면 중단
       }
 
       toast.loading('네이버 블로그로 전송 중...', { id: t })
@@ -559,13 +928,12 @@ export function SavedPostsManager() {
 
       // 예약이면 다음 글 간격 계산 기준으로 기억 + 예약 현황에 기록
       if (finalAction === 'schedule' && scheduleISO) {
-        localStorage.setItem('doctorvoice-last-schedule', scheduleISO)
-        setLastScheduledAt(scheduleISO)
+        advanceCursor(scheduleISO)
         setScheduleLog((prev) => {
           const next = [...prev, { title: finalTitle || '(제목 없음)', at: scheduleISO! }]
             .sort((a, b) => a.at.localeCompare(b.at))
-            .slice(-50) // 최근 50건만 유지
-          localStorage.setItem('doctorvoice-schedule-log', JSON.stringify(next))
+            .slice(-200)
+          localStorage.setItem(scopedKey('doctorvoice-schedule-log', scopeId), JSON.stringify(next))
           return next
         })
       }
@@ -589,6 +957,7 @@ export function SavedPostsManager() {
     if (!finalBody && !finalTitle) { toast.error('담을 글을 입력하세요'); return }
     let dt: Date
     if (scheduleMode === 'interval') {
+      if (!guardInterval()) return
       dt = computeIntervalSlot()
     } else {
       if (!scheduleDate || !scheduleTime) { toast.error('예약 날짜와 시간을 선택하세요'); return }
@@ -610,27 +979,56 @@ export function SavedPostsManager() {
           count: collectionCount, collection_id: selectedCollectionId, post_id: savedId || undefined,
         })
         for (const a of res.images) images.push(a.image)
+        // 즉시발행(publish)에는 있던 검사가 여기엔 빠져 있었다 — 풀이 부족하거나 유니크화가
+        // 전부 실패하면 서버가 200 + warnings 로 돌려주므로, 안 보면 사진 0장으로 조용히 담긴다.
+        if (images.length === 0) {
+          throw new Error('목록에서 사진을 가져오지 못했습니다. 목록에 사진이 있는지 확인하세요.')
+        }
+        if (images.length < collectionCount) {
+          throw new Error(`사진이 부족합니다 — ${collectionCount}장 중 ${images.length}장만 배정됐어요. 목록에 사진을 더 넣거나 장수를 줄여주세요.`)
+        }
+        if (res.warnings?.length) {
+          toast.warning('사진 배정에 유의사항이 있어요', { description: res.warnings[0] })
+        }
       } else if (uploadedImages.length) {
         for (const f of uploadedImages) images.push(await imageToCleanBase64(f))
       }
       const fixedUniq = await resolveFixedImage()
+      const itemId = savedId || `post-${Date.now()}`
+
+      // 저장 여유가 바닥나면 put 이 성공해도 나중에 축출될 수 있다 → 미리 승격 요청하고 경고한다.
+      await requestPersistentStorage()
+      const headroom = await storageHeadroom()
+      const need = images.reduce((n, s) => n + s.length, 0) + (fixedUniq?.length || 0)
+      if (headroom !== null && headroom < need * 2) {
+        throw new Error('브라우저 저장 공간이 부족해 사진을 안전하게 담을 수 없습니다. 준비함을 일부 발행하거나 비운 뒤 다시 시도하세요.')
+      }
+
+      // 사진은 IndexedDB 로 (한도가 사실상 없다). 저장에 실패하면 담기 자체를 실패시킨다 —
+      // 조용히 넘어가면 발행 때 사진 없는 글이 나간다.
+      await preparedStore.put(itemId, { images, fixedImage: fixedUniq || undefined })
+
+      // 방금 쓴 걸 즉시 되읽어 확인한다. 여기서 걸리면 100건 돌린 뒤가 아니라 지금 알 수 있다.
+      const verify = await preparedStore.get(itemId)
+      if (!verify || verify.images.length !== images.length) {
+        throw new Error('사진 저장을 확인하지 못했습니다. 다시 시도해주세요.')
+      }
       const item: PreparedItem = {
-        id: savedId || `post-${Date.now()}`,
+        id: itemId,
         title: finalTitle, content: finalBody || finalTitle,
-        images, fixedImage: fixedUniq || undefined,
+        imageCount: images.length, hasFixed: !!fixedUniq,
         tags, emphasize: extractKeywords(finalBody || finalTitle),
         openType, category: category || undefined, scheduleISO,
       }
       const nextCount = prepared.length + 1
       setPrepared((prev) => {
-        const next = [...prev, item].sort((a, b) => a.scheduleISO.localeCompare(b.scheduleISO))
-        try { localStorage.setItem('doctorvoice-prepared', JSON.stringify(next)) }
-        catch { toast.warning('저장 공간 부족 — 사진이 많으면 사진 풀(목록)을 쓰는 걸 권장해요') }
+        const next = [...prev.filter((p) => p.id !== itemId), item]
+          .sort((a, b) => a.scheduleISO.localeCompare(b.scheduleISO))
+        persistPrepared(next)
         return next
       })
-      // 다음 글이 겹치지 않도록 예약 기준 갱신
-      localStorage.setItem('doctorvoice-last-schedule', scheduleISO)
-      setLastScheduledAt(scheduleISO)
+      // 다음 글이 겹치지 않도록 예약 기준 갱신(앞으로만 이동)
+      advanceCursor(scheduleISO)
       toast.success('예약 준비함에 담았어요', { id: t, description: `${fmtKo(dt)} 예약 · 준비 ${nextCount}건` })
       newDraft() // 다음 글 작성 준비
     } catch (e: any) {
@@ -644,58 +1042,40 @@ export function SavedPostsManager() {
   const publishAllPrepared = async () => {
     if (!ext.connected || !ext.extensionId) { toast.error('확장 프로그램이 연결되지 않았습니다'); return }
     if (prepared.length === 0) return
-    setPublishing(true)
+    setFailedIds({})
     const t = toast.loading(`준비한 ${prepared.length}건 예약 등록 시작...`)
     try {
-      const jobs = prepared.map((p) => {
-        const blocks = buildInterleavedBlocks(p.content, p.images)
-        if (p.fixedImage) blocks.push({ type: 'image', image: p.fixedImage })
-        return {
-        id: p.id, title: p.title, content: p.content,
-        // images 는 싣지 않는다 — 확장의 normalizeJob 이 blocks 에서 본문과 사진을
-        // 모두 파생시키므로, 따로 보내면 같은 base64 가 두 번 실려 전송량만 2배가 된다.
-        blocks, // 글-이미지-글-이미지 + 맨 아래 고정 이미지
-        tags: p.tags, emphasize: p.emphasize,
+      // 사진이 빠진 메타데이터만 보낸다(100건이어도 수십 KB).
+      // 실제 payload 는 확장이 글을 처리하기 직전에 doctorvoice-job-request 로 한 건씩 받아간다.
+      const metas = prepared.map((p) => ({
+        id: p.id, title: p.title,
         options: { openType: p.openType, search: true, category: p.category || null },
         finalAction: 'schedule', schedule: { datetime: p.scheduleISO },
-        }
-      })
-
-      // 사진이 담긴 payload 는 확장이 글을 처리하기 직전에 한 건씩 받아간다.
-      // 여기서는 사진이 빠진 메타데이터만 보낸다(58건이어도 수십 KB).
-      const payloads: Record<string, any> = {}
-      for (const j of jobs) payloads[j.id] = j
-      batchPayloadsRef.current = payloads
-      const metas = jobs.map((j) => ({
-        id: j.id, title: j.title, options: j.options,
-        finalAction: j.finalAction, schedule: j.schedule,
+        expectedBlogId: blogId,
       }))
-      const res = await sendMessageToExtension(ext.extensionId, { action: 'SUBMIT_BATCH', jobs: metas })
-      if (!res?.success) throw new Error(res?.error || '발행 전송 실패')
-      // 준비함 → 예약 기록으로 이동
-      setScheduleLog((prev) => {
-        const next = [...prev, ...prepared.map((p) => ({ title: p.title, at: p.scheduleISO }))]
-          .sort((a, b) => a.at.localeCompare(b.at)).slice(-50)
-        localStorage.setItem('doctorvoice-schedule-log', JSON.stringify(next))
-        return next
+      const res = await sendMessageToExtension(ext.extensionId, {
+        action: 'SUBMIT_BATCH', jobs: metas, expectedBlogId: blogId,
       })
-      setPrepared([]); localStorage.removeItem('doctorvoice-prepared')
-      toast.success(`${jobs.length}건 예약 등록을 시작했어요`, {
-        id: t, description: '새 탭에서 순차적으로 네이버 예약발행됩니다. 완료까지 창을 열어두세요.',
+      if (!res?.success) throw new Error(res?.error || '발행 전송 실패')
+
+      // 준비함은 비우지 않는다 — 각 글의 결과를 받아 성공한 것만 하나씩 뺀다.
+      beginBatch(metas.length)
+      toast.success(`${metas.length}건 예약 등록을 시작했어요`, {
+        id: t, description: '새 탭에서 순서대로 등록됩니다. 완료까지 이 창을 열어두세요.',
       })
     } catch (e: any) {
       toast.error('발행 실패', { id: t, description: e.message || '다시 시도해주세요' })
-    } finally {
-      setPublishing(false)
+      endBatch()
     }
   }
 
   const removePrepared = (id: string) => {
     setPrepared((prev) => {
       const next = prev.filter((p) => p.id !== id)
-      localStorage.setItem('doctorvoice-prepared', JSON.stringify(next))
+      persistPrepared(next)
       return next
     })
+    preparedStore.remove(id) // 사진도 같이 정리
   }
 
   const listTitle = (p: SavedPost) => p.suggested_titles?.[0] || p.title || '제목 없음'
@@ -1071,6 +1451,27 @@ export function SavedPostsManager() {
                         <span className="text-xs text-amber-800">시간마다</span>
                       </div>
 
+                      {/* 어느 블로그 기준인지 — 계정마다 예약 기준이 따로 관리된다 */}
+                      <div className="flex items-center justify-between rounded-md bg-white border border-amber-200 px-3 py-1.5 text-xs">
+                        <span className="text-amber-900">
+                          기준 블로그{' '}
+                          {blogConfirmed ? (
+                            <b className="font-semibold">{blogId}</b>
+                          ) : cachedBlogId ? (
+                            <>
+                              <b className="font-semibold">{cachedBlogId}</b>
+                              <span className="ml-1 text-amber-600">(지난 기록 · 확인 전)</span>
+                            </>
+                          ) : (
+                            <span className="text-red-600">확인 안 됨 — 간격 예약을 쓸 수 없습니다</span>
+                          )}
+                        </span>
+                        <button onClick={() => detectBlog(false)} disabled={blogChecking}
+                          className="text-amber-700 underline underline-offset-2 disabled:opacity-50">
+                          {blogChecking ? '확인 중...' : '다시 확인'}
+                        </button>
+                      </div>
+
                       {/* 다음 예약 시각 */}
                       <div className="flex items-center justify-between rounded-md bg-white border border-amber-200 px-3 py-2">
                         <div className="flex items-center gap-2">
@@ -1087,7 +1488,9 @@ export function SavedPostsManager() {
                       </div>
 
                       <p className="text-[11px] text-amber-700">
-                        {lastScheduledAt
+                        {!intervalReady
+                          ? '기준 블로그를 확인해야 간격 예약을 쓸 수 있어요. 기준을 모르면 이미 잡아둔 예약 위에 겹쳐 잡힙니다.'
+                          : lastScheduledAt
                           ? `마지막 예약(${fmtKo(new Date(lastScheduledAt))}) 기준 ${intervalHours}시간 뒤로 잡힙니다. 발행할 때마다 다음 글이 자동으로 ${intervalHours}시간씩 밀려요.`
                           : `첫 예약이에요. 지금부터 ${intervalHours}시간 뒤로 잡히고, 이후 글은 자동으로 ${intervalHours}시간 간격이 됩니다.`}
                       </p>
@@ -1210,12 +1613,29 @@ export function SavedPostsManager() {
                       준비한 {prepared.length}건 한번에 발행
                     </Button>
                   </div>
+                  {batchProgress && (
+                    <div className="mb-2">
+                      <div className="flex items-center justify-between text-[11px] text-amber-800 mb-1">
+                        <span>등록 중… {batchProgress.done}/{batchProgress.total}건</span>
+                        <span>성공 {batchProgress.ok}건{batchProgress.done > batchProgress.ok && ` · 실패 ${batchProgress.done - batchProgress.ok}건`}</span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-amber-100 overflow-hidden">
+                        <div className="h-full bg-emerald-500 transition-all"
+                          style={{ width: `${Math.round((batchProgress.done / batchProgress.total) * 100)}%` }} />
+                      </div>
+                    </div>
+                  )}
                   <div className="max-h-52 overflow-y-auto divide-y divide-amber-100">
                     {prepared.map((p) => (
                       <div key={p.id} className="flex items-center gap-2 py-1.5 text-xs">
                         <span className="tabular-nums text-amber-800 w-36 shrink-0">{fmtKo(new Date(p.scheduleISO))}</span>
                         <span className="flex-1 truncate text-gray-700">{p.title || '(제목 없음)'}</span>
-                        <span className="text-[11px] text-muted-foreground shrink-0">사진 {p.images.length}</span>
+                        {failedIds[p.id] && (
+                          <span className="text-[11px] text-rose-600 shrink-0 max-w-40 truncate" title={failedIds[p.id]}>
+                            실패: {failedIds[p.id]}
+                          </span>
+                        )}
+                        <span className="text-[11px] text-muted-foreground shrink-0">사진 {p.imageCount}</span>
                         <button onClick={() => removePrepared(p.id)} className="text-rose-500 hover:text-rose-600 shrink-0">
                           <X className="w-3.5 h-3.5" />
                         </button>
@@ -1223,7 +1643,8 @@ export function SavedPostsManager() {
                     ))}
                   </div>
                   <p className="mt-2 text-[11px] text-amber-700">
-                    담아둔 글은 여기 저장돼요. 다 모은 뒤 &lsquo;한번에 발행&rsquo;을 누르면 확장이 순서대로 네이버 예약발행에 등록합니다.
+                    담아둔 글은 여기 저장돼요(새로고침해도 유지). 다 모은 뒤 &lsquo;한번에 발행&rsquo;을 누르면 확장이 순서대로
+                    네이버 예약발행에 등록하고, 등록에 성공한 글만 목록에서 빠집니다.
                   </p>
                 </div>
               )}

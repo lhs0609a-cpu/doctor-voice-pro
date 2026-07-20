@@ -41,6 +41,7 @@ import {
   ChevronRight,
   Image as ImagesIcon,
   Layers,
+  FileSpreadsheet,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -76,6 +77,11 @@ export function DashboardNav() {
       href: '/dashboard/create',
       label: '글 작성',
       icon: PenTool,
+    },
+    {
+      href: '/dashboard/keywords',
+      label: '키워드 대량 생성',
+      icon: FileSpreadsheet,
     },
     {
       href: '/dashboard/saved',

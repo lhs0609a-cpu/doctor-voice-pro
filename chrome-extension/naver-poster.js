@@ -150,21 +150,68 @@
     target.dispatchEvent(new DragEvent('drop', opts));
   }
 
+  // 에디터에 실제로 올라간 이미지 수. 드롭 성공 여부를 이걸로 확인한다.
+  //
+  // 주의: SELECTORS.md 기준 이미지 컴포넌트의 정확한 클래스는 아직 실측되지 않았다
+  // (문서에 확보된 건 se-documentTitle / se-text 뿐). 그래서 클래스 하나에 걸지 않고
+  // 여러 신호의 최댓값을 쓴다 — 하나가 빗나가도 나머지가 잡아준다.
+  // 특히 마지막 img 세기는 클래스명이 바뀌어도 유효하다(업로드되면 결국 img 가 생긴다).
+  function imageComponentCount() {
+    const counts = [
+      document.querySelectorAll('.se-component.se-image').length,
+      document.querySelectorAll('.se-component[class*="image" i]').length,
+      document.querySelectorAll('.se-content img, .se-components-wrap img').length,
+    ];
+    return Math.max.apply(null, counts);
+  }
+
+  // 드롭 후 '이미지 컴포넌트가 실제로 늘었는지'까지 확인한다.
+  // 예전엔 DragEvent 3개를 쏘고 sleep(1800) 만 기다렸다 — 네이버가 업로드를 거부하거나
+  // 1.8초 안에 못 끝내면 0장이 들어갔는데도 성공으로 셌다.
+  async function dropImageVerified(file, atCaret, timeoutMs) {
+    const before = imageComponentCount();
+    await dropImage(file, atCaret);
+    const deadline = Date.now() + (timeoutMs || 25000);
+    while (Date.now() < deadline) {
+      await sleep(300);
+      if (imageComponentCount() > before) return true;
+    }
+    return false;
+  }
+
   async function insertImages(images, atCaret) {
-    if (!images || !images.length) return { inserted: 0 };
+    if (!images || !images.length) return { inserted: 0, expected: 0, failed: [] };
     let ok = 0;
+    const failed = [];
     for (let i = 0; i < images.length; i++) {
-      try {
-        const file = base64ToFile(images[i], `image_${Date.now()}_${i}.jpg`);
-        await dropImage(file, atCaret);
+      let placed = false;
+      let lastErr = '';
+      // 업로드는 네트워크·서버 사정으로 곧잘 실패한다 → 3회까지 재시도.
+      for (let attempt = 1; attempt <= 3 && !placed; attempt++) {
+        try {
+          const file = base64ToFile(images[i], `image_${Date.now()}_${i}_${attempt}.jpg`);
+          placed = await dropImageVerified(file, atCaret);
+          if (!placed) lastErr = '업로드 확인 실패(시간 초과)';
+        } catch (e) {
+          lastErr = e.message;
+        }
+        if (!placed && attempt < 3) {
+          console.warn(TAG, `이미지 ${i} 삽입 재시도 ${attempt}/3`, lastErr);
+          showOverlay(`🖼️ 이미지 재시도 중... (${i + 1}/${images.length})`, 60);
+          await sleep(2000 * attempt); // 점증 대기
+        }
+      }
+      if (placed) {
         ok++;
         showOverlay(`🖼️ 이미지 삽입 중... (${ok}/${images.length})`, 60 + (i / images.length) * 20);
-        await sleep(1800); // 네이버 업로드 처리 대기
-      } catch (e) {
-        console.warn(TAG, '이미지 삽입 실패', i, e.message);
+        await sleep(600); // 다음 드롭 전 안정화(업로드 완료는 위에서 이미 확인)
+      } else {
+        console.error(TAG, '이미지 삽입 최종 실패', i, lastErr);
+        failed.push({ index: i, error: lastErr });
       }
     }
-    return { inserted: ok };
+    // 호출부(background)가 이 값을 보고 발행을 중단한다. 사진 빠진 글이 나가면 안 된다.
+    return { inserted: ok, expected: images.length, failed };
   }
 
   // ---------- React 제어 select 값 설정 ----------
@@ -176,6 +223,28 @@
     if (setter) setter.call(el, value); else el.value = value;
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  // ---------- 블로그 식별 ----------
+  // 예약 기준 시각은 블로그마다 따로 관리해야 한다. 계정을 바꿔도 같은 기준을 쓰면
+  // 남의 블로그 예약 위에 겹쳐 잡히고, 반대로 이 블로그 예약이 저 블로그 기준을 오염시킨다.
+  function readBlogId() {
+    const fromUrl = (u) => {
+      const m = /[?&]blogId=([^&]+)/.exec(u || '');
+      return m ? decodeURIComponent(m[1]) : '';
+    };
+    // 1) 현재 URL (PostWriteForm.naver?blogId=...)
+    let id = fromUrl(location.href);
+    if (id) return id;
+    // 2) 에디터 iframe 의 src
+    for (const f of document.querySelectorAll('iframe')) {
+      id = fromUrl(f.getAttribute('src'));
+      if (id) return id;
+    }
+    // 3) blog.naver.com/<blogId> 형태. 뒤에 /?끝 이 와야 하므로 'GoBlogWrite.naver' 같은
+    //    페이지 이름은 걸리지 않는다.
+    const m = /blog\.naver\.com\/([A-Za-z0-9_-]+)(?:[/?#]|$)/.exec(location.href);
+    return m ? m[1] : '';
   }
 
   // ---------- 공개설정 라디오 ----------
@@ -429,16 +498,19 @@
       const dt = new Date(job.schedule.datetime);
 
       // 날짜: jQuery UI datepicker 로 정확히 선택 (당일이 아니어도 지원)
+      // 실패하면 여기서 멈춘다 — 예전엔 경고만 찍고 계속 진행해 네이버 기본값(오늘/지금)으로
+      // 즉시 발행돼버렸다. 100건 배치라면 예약해둔 글이 전부 한꺼번에 나간다.
       const dateOk = await selectScheduleDate(dt);
-      if (!dateOk) console.warn(TAG, '예약 날짜 선택 실패 — 당일 기본값으로 진행될 수 있음');
+      if (!dateOk) throw new Error('예약 날짜를 지정하지 못했습니다(네이버 화면 변경 가능). 즉시 발행을 막기 위해 중단합니다');
 
       // 시/분 (분은 10분 단위만 허용 → 내림)
       const hh = String(dt.getHours()).padStart(2, '0');
       const mm = String(Math.floor(dt.getMinutes() / 10) * 10).padStart(2, '0');
       const hourSel = document.querySelector('select.hour_option__J_heO, .hour__ckNMb select');
       const minSel = document.querySelector('select.minute_option__Vb3xB, .minute__KXXvZ select');
-      if (hourSel) setNativeValue(hourSel, hh);
-      if (minSel) setNativeValue(minSel, mm);
+      if (!hourSel || !minSel) throw new Error('예약 시각 입력란을 찾지 못했습니다(네이버 화면 변경 가능). 즉시 발행을 막기 위해 중단합니다');
+      setNativeValue(hourSel, hh);
+      setNativeValue(minSel, mm);
       await sleep(300);
     }
 
@@ -474,6 +546,10 @@
     const editorOnly = ['GET_POSITIONS', 'DISMISS_POPUP', 'INSERT_IMAGES', 'FINALIZE', 'PROGRESS', 'READ_CATEGORIES'];
     if (editorOnly.includes(msg.action) && !isEditorFrame()) return; // 다른 프레임은 무시
 
+    // blogId 는 프레임마다 알 수 있고 없고가 갈린다(에디터 iframe 의 src 에 들어 있다).
+    // 모르는 프레임이 빈 값으로 먼저 답해버리면 그 답이 채택되므로, 찾은 프레임만 답한다.
+    if (msg.action === 'READ_BLOG_ID' && !readBlogId()) return;
+
     (async () => {
       try {
         switch (msg.action) {
@@ -506,12 +582,18 @@
           case 'FINALIZE': {
             const res = await finalize(msg.job);
             hideOverlay();
-            sendResponse({ ok: true, ...res });
+            // ok 를 res 로 덮어쓰지 않도록 뒤에 둔다 — 예전엔 { ok:true, ...res } 라
+            // 캡차 시간 초과(done:false) 같은 실패가 성공으로 보고됐다.
+            sendResponse({ ...res, ok: res.done !== false });
             break;
           }
           case 'READ_CATEGORIES': {
             const res = await syncCategories();
             sendResponse(res);
+            break;
+          }
+          case 'READ_BLOG_ID': {
+            sendResponse({ ok: true, blogId: readBlogId() });
             break;
           }
           case 'HIDE_OVERLAY':

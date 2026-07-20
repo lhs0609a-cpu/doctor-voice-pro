@@ -134,7 +134,25 @@
       chrome.runtime.onMessage.addListener((msg) => {
         if (msg && msg.action === 'JOB_RESULT') {
           window.dispatchEvent(new CustomEvent('doctorvoice-job-result', {
-            detail: { id: msg.id, ok: msg.ok, message: msg.message },
+            detail: { id: msg.id, ok: msg.ok, message: msg.message, uncertain: !!msg.uncertain },
+          }));
+        }
+      });
+    } catch (e) { /* noop */ }
+  }
+
+  // ---------- 3-2) 글 생성 결과 릴레이 (background → 페이지) ----------
+  // 키워드 1건이 끝날 때마다 온다. id === '__done__' 이면 배치 전체 종료 신호.
+  function relayGenResults() {
+    try {
+      chrome.runtime.onMessage.addListener((msg) => {
+        if (msg && msg.action === 'GEN_RESULT') {
+          window.dispatchEvent(new CustomEvent('doctorvoice-gen-result', {
+            detail: {
+              id: msg.id, ok: !!msg.ok, keyword: msg.keyword || '',
+              text: msg.text || '', chars: msg.chars || 0,
+              error: msg.error || '', done: !!msg.done, fatal: !!msg.fatal,
+            },
           }));
         }
       });
@@ -143,9 +161,10 @@
 
   // ---------- 4) job payload 릴레이 (background → 페이지 → background) ----------
   // 배치는 메타데이터만 먼저 받고, 사진이 담긴 실제 payload 는 그 글을 처리하기
-  // 직전에 한 건씩 받아온다. 58건 × 사진 10장을 한 메시지에 담으면 크롬의
+  // 직전에 한 건씩 받아온다. 100건 × 사진 10장을 한 메시지에 담으면 크롬의
   // 64MiB 메시지 한계를 넘어 전송 자체가 실패하기 때문이다.
-  const PAYLOAD_TIMEOUT = 15000;
+  // 페이지가 IndexedDB 에서 사진을 꺼내 blocks 를 만드는 시간까지 감안해 넉넉히 잡는다.
+  const PAYLOAD_TIMEOUT = 30000;
 
   function relayJobRequests() {
     try {
@@ -182,6 +201,7 @@
     exposeExtensionId();
     checkUpdateAndNotify();
     relayJobResults();
+    relayGenResults();
     relayJobRequests();
   }
 

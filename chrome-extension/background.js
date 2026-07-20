@@ -2,7 +2,7 @@
 // 닥터보이스 프로 - 백그라운드 서비스워커 v15
 // CDP(chrome.debugger) 기반 실제 입력 + 오케스트레이션 + 자동 업데이트
 // ============================================================
-const VERSION = '15.6.0';
+const VERSION = '16.0.0';
 const UPDATE_URL = 'https://doctor-voice-pro-ghwi.vercel.app/extension/version.json';
 const WRITE_URL = 'https://blog.naver.com/GoBlogWrite.naver';
 
@@ -10,6 +10,9 @@ let currentJob = null;
 let debuggerTabId = null;
 let jobDoneResolver = null;   // 현재 job 자동화 완료 시 resolve
 let batchRunning = false;
+let genRunning = false;       // Gemini 글 생성 배치 진행 중
+let genCancel = false;        // 사용자가 중단을 눌렀는가
+let geminiTabId = null;       // 생성에 쓰는 Gemini 탭
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log('[닥터보이스:bg]', ...a);
@@ -53,8 +56,51 @@ chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
           // 사진이 빠진 메타데이터만 올 수 있다(64MiB 한계 회피) — 정규화는 실제 payload 를
           // 손에 쥔 뒤 startBatch 안에서 한다.
           const jobs = (msg.jobs || []).filter(Boolean);
+          // 이미 돌고 있으면 조용히 무시하지 않고 알려준다 — 예전엔 페이지가 성공 토스트를
+          // 띄운 채 아무 일도 안 일어나 "발행이 안 된다"로 보였다.
+          if (batchRunning) {
+            sendResponse({ success: false, error: '이미 발행이 진행 중입니다. 끝난 뒤 다시 시도하세요.' });
+            break;
+          }
+          // 시작 전에 계정부터 확인한다 — 다른 블로그에 100건이 통째로 올라가는 걸 막는다.
+          if (msg.expectedBlogId) {
+            const who = await syncBlogId();
+            if (who.success && who.blogId !== msg.expectedBlogId) {
+              sendResponse({
+                success: false,
+                error: `로그인된 블로그가 다릅니다(예상 '${msg.expectedBlogId}', 현재 '${who.blogId}'). 발행을 중단했습니다.`,
+              });
+              break;
+            }
+          }
           sendResponse({ success: true, accepted: jobs.length });
           startBatch(jobs, sender); // 백그라운드로 진행(응답 대기 안 함)
+          break;
+        }
+        case 'SUBMIT_GEN_BATCH': {
+          // 키워드 대량 생성: Gemini 탭을 열어 프롬프트를 넣고 글을 수확한다.
+          const items = (msg.items || []).filter((x) => x && x.prompt);
+          if (genRunning) {
+            sendResponse({ success: false, error: '이미 글 생성이 진행 중입니다. 끝난 뒤 다시 시도하세요.' });
+            break;
+          }
+          if (!items.length) {
+            sendResponse({ success: false, error: '생성할 키워드가 없습니다.' });
+            break;
+          }
+          sendResponse({ success: true, accepted: items.length });
+          startGenBatch(items, sender, msg.options || {});
+          break;
+        }
+        case 'CANCEL_GEN_BATCH': {
+          genCancel = true;
+          sendResponse({ success: true, running: genRunning });
+          break;
+        }
+        case 'SYNC_BLOG': {
+          // 앱이 "지금 어느 블로그인지" 물어본다 → 예약 기준/준비함을 블로그별로 나눈다.
+          const r = await syncBlogId();
+          sendResponse(r);
           break;
         }
         case 'SYNC_CATEGORIES': {
@@ -139,6 +185,8 @@ function normalizeJob(raw) {
     },
     finalAction: raw.finalAction || 'draft', // 'draft' | 'publishNow' | 'schedule'
     schedule: raw.schedule || null, // { datetime: ISOString }
+    // 앱이 예약을 계산할 때 기준으로 삼은 블로그. 발행 직전 실제 로그인 계정과 대조한다.
+    expectedBlogId: raw.expectedBlogId || null,
   };
 }
 
@@ -188,6 +236,61 @@ async function waitForEditorReady(tabId, timeout = 25000) {
     await sleep(500);
   }
   return { ok: false, error: '에디터가 준비되지 않았습니다' };
+}
+
+/** 현재 로그인된 네이버 블로그 ID. 못 읽으면 ''. */
+async function readBlogId(tabId) {
+  const r = await sendToTab(tabId, { action: 'READ_BLOG_ID' });
+  return (r && r.blogId) || '';
+}
+
+/**
+ * 지금 로그인된 블로그가 앱이 기대한 블로그와 같은지 확인한다.
+ * 발행 도중 다른 계정으로 로그인하면 예전엔 그대로 진행돼 엉뚱한 블로그에 글이 올라갔다.
+ * @returns {{ok:boolean, blogId:string, error?:string}}
+ */
+async function assertBlog(tabId, expected) {
+  const blogId = await readBlogId(tabId);
+  if (!expected || !blogId) return { ok: true, blogId }; // 확인할 수 없으면 막지 않는다
+  if (blogId !== expected) {
+    return {
+      ok: false, blogId,
+      error: `로그인된 블로그가 다릅니다(예상 '${expected}', 현재 '${blogId}'). 엉뚱한 블로그에 발행되지 않도록 중단했습니다.`,
+    };
+  }
+  return { ok: true, blogId };
+}
+
+/**
+ * 네이버 글쓰기 탭을 (없으면) 열어 현재 블로그 ID 를 읽는다.
+ * 앱이 예약 기준·준비함을 블로그별로 나누기 위해 쓴다.
+ */
+async function syncBlogId() {
+  const tabs = await chrome.tabs.query({});
+  const existing = tabs.find((t) => NAVER_WRITE_MATCH(t.url));
+  let tabId;
+  const opened = !existing;
+  let keepTab = false;
+  if (existing) tabId = existing.id;
+  else tabId = (await chrome.tabs.create({ url: WRITE_URL, active: false })).id;
+
+  try {
+    const ready = await waitForEditorReady(tabId);
+    if (!ready.ok) {
+      if (ready.needLogin) {
+        keepTab = true;
+        await chrome.tabs.update(tabId, { active: true });
+        return { success: false, needLogin: true, error: '네이버 로그인이 필요합니다. 열린 탭에서 로그인해주세요.' };
+      }
+      return { success: false, error: ready.error };
+    }
+    const blogId = await readBlogId(tabId);
+    if (!blogId) return { success: false, error: '블로그 ID를 읽지 못했습니다' };
+    log('블로그 확인:', blogId);
+    return { success: true, blogId };
+  } finally {
+    if (opened && !keepTab) { try { await chrome.tabs.remove(tabId); } catch (e) {} }
+  }
 }
 
 /**
@@ -253,45 +356,94 @@ function hasPayload(m) {
  */
 async function requestJobPayload(webTabId, id) {
   if (!webTabId) return null;
-  const res = await sendToTab(webTabId, { action: 'REQUEST_JOB', id });
-  return res && res.job ? res.job : null;
+  // 페이지가 IndexedDB 에서 사진을 꺼내오므로 한 번쯤 늦을 수 있다 → 한 번 더 시도한다.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const res = await sendToTab(webTabId, { action: 'REQUEST_JOB', id });
+      if (res && res.job) return res.job;
+    } catch (e) {
+      log(`payload 요청 실패(${attempt}/2)`, e && e.message);
+    }
+    if (attempt === 1) await sleep(1000);
+  }
+  return null;
 }
 
 async function startBatch(metas, sender) {
   if (batchRunning) { log('배치가 이미 진행 중'); return; }
   batchRunning = true;
-  log(`=== 배치 시작: ${metas.length}건 ===`);
   const webTabId = sender && sender.tab ? sender.tab.id : null;
+  let missStreak = 0; // payload 를 연속으로 못 받은 횟수(= 닥터보이스 탭이 사라졌다는 신호)
 
-  for (let i = 0; i < metas.length; i++) {
-    const meta = metas[i];
-    log(`배치 ${i + 1}/${metas.length}: ${meta.title}`);
-    let result;
-    try {
-      // 구버전 페이지는 payload 를 통째로 보낸다 — 그대로 쓰고, 아니면 지금 받아온다.
-      const raw = hasPayload(meta) ? meta : await requestJobPayload(webTabId, meta.id);
-      const job = normalizeJob(raw);
-      if (!job) throw new Error('글 데이터를 받지 못했습니다(닥터보이스 탭이 닫혔을 수 있습니다)');
-      result = await runOne(job);
-    } catch (e) {
-      result = { ok: false, error: e.message };
+  try {
+    log(`=== 배치 시작: ${metas.length}건 ===`);
+    for (let i = 0; i < metas.length; i++) {
+      const meta = metas[i];
+      log(`배치 ${i + 1}/${metas.length}: ${meta.title}`);
+      let result;
+      try {
+        // 구버전 페이지는 payload 를 통째로 보낸다 — 그대로 쓰고, 아니면 지금 받아온다.
+        const raw = hasPayload(meta) ? meta : await requestJobPayload(webTabId, meta.id);
+        const job = normalizeJob(raw);
+        if (!job) throw new Error('글 데이터를 받지 못했습니다(닥터보이스 탭이 닫혔을 수 있습니다)');
+        missStreak = 0;
+        result = await runOne(job);
+      } catch (e) {
+        result = { ok: false, error: e.message };
+        missStreak++;
+      }
+      // 결과를 웹사이트로 전달 → 준비함에서 성공한 건만 제거 + 백엔드에 보고
+      reportJobResult(
+        webTabId, meta.id, !!(result && result.ok),
+        (result && (result.error || result.action)) || '',
+        !!(result && result.uncertain)
+      );
+
+      // 탭이 닫혔다면 남은 수십 건을 헛돌릴 필요가 없다 — 남은 건 실패로 알리고 끝낸다.
+      // (준비함에 그대로 남으므로 탭을 다시 열어 이어서 발행할 수 있다)
+      if (missStreak >= 3 && i + 1 < metas.length) {
+        log(`payload 를 ${missStreak}건 연속 못 받아 배치를 중단합니다`);
+        for (let k = i + 1; k < metas.length; k++) {
+          reportJobResult(webTabId, metas[k].id, false, '닥터보이스 탭이 닫혀 중단됨');
+        }
+        break;
+      }
+      await sleep(1500); // 연속 등록 사이 여유(봇 감지 완화)
     }
-    // 결과를 웹사이트로 전달 → 백엔드에 보고
-    reportJobResult(webTabId, meta.id, !!(result && result.ok), (result && (result.error || result.action)) || '');
-    await sleep(1500); // 연속 등록 사이 여유(봇 감지 완화)
+  } catch (e) {
+    log('배치 오류', e);
+  } finally {
+    // 중간에 무슨 일이 있어도 반드시 푼다 — 안 그러면 다음 발행이 영영 막힌다.
+    batchRunning = false;
+    log('=== 배치 완료 ===');
   }
+}
 
-  batchRunning = false;
-  log('=== 배치 완료 ===');
+// 이 건이 끝나기까지 최대 얼마나 기다릴지. 사진이 많을수록 오래 걸린다.
+// 고정 180초였을 때 문제:
+//  - 사진 30장이면 삽입만 120초가 넘어 정상 작업이 timeout 으로 찍혔다
+//  - finalize 안의 캡차 대기가 정확히 180초라, 캡차가 뜨면 반드시 가드가 먼저 터졌다
+// 가드가 터져도 runAutomation 은 계속 돌아 실제로는 발행이 끝나므로, 프론트가 실패로 알고
+// 재시도하면 같은 글이 두 번 예약된다 → 가드는 '진짜 멈춤'에서만 터지도록 넉넉히 잡는다.
+function jobGuardMs(job) {
+  const imgs = (job.blocks || []).filter((b) => b.type === 'image' && b.image).length
+    || (job.images || []).length;
+  const base = 180000;          // 페이지 로드 + 타이핑 + finalize
+  const captcha = 200000;       // 캡차 대기(180초)보다 반드시 길게
+  return base + captcha + imgs * 30000; // 이미지 1장당 30초(재시도 3회 여유 포함)
 }
 
 // 단일 job 자동화를 실행하고 완료될 때 resolve
 function runOne(job) {
   return new Promise((resolve) => {
-    // 안전장치: 3분 내 완료 신호 없으면 실패 처리하고 다음으로
+    // 안전장치: 이 시간 내 완료 신호가 없으면 멈춘 것으로 보고 다음으로 넘어간다.
+    // 이 경로로 끝난 건은 '발행됐을 수도 있음'이라 프론트가 자동 재시도하면 안 된다.
     const guard = setTimeout(() => {
-      if (jobDoneResolver) { const r = jobDoneResolver; jobDoneResolver = null; r({ ok: false, error: 'timeout' }); }
-    }, 180000);
+      if (jobDoneResolver) {
+        const r = jobDoneResolver; jobDoneResolver = null;
+        r({ ok: false, error: 'timeout', uncertain: true });
+      }
+    }, jobGuardMs(job));
     jobDoneResolver = (res) => { clearTimeout(guard); resolve(res); };
     startJob(job).catch((e) => {
       if (jobDoneResolver) { const r = jobDoneResolver; jobDoneResolver = null; r({ ok: false, error: e.message }); }
@@ -308,8 +460,10 @@ function finishJob(result) {
 }
 
 // 결과를 닥터보이스 웹 탭으로 전달(content-website 가 CustomEvent 로 페이지에 알림)
-function reportJobResult(webTabId, id, ok, message) {
-  const payload = { action: 'JOB_RESULT', id, ok, message };
+// uncertain = 가드 시간 초과로 끝난 건. 실제로는 발행됐을 수 있으므로 프론트가
+// 그냥 재시도하면 중복 예약이 된다 → 별도로 표시해 사용자가 네이버에서 확인하게 한다.
+function reportJobResult(webTabId, id, ok, message, uncertain) {
+  const payload = { action: 'JOB_RESULT', id, ok, message, uncertain: !!uncertain };
   try {
     if (webTabId) {
       chrome.tabs.sendMessage(webTabId, payload, () => void chrome.runtime.lastError);
@@ -324,11 +478,214 @@ function reportJobResult(webTabId, id, ok, message) {
 }
 
 // ============================================================
+// Gemini 글 생성 배치
+//  키워드 1건 = 새 채팅 1개. 같은 대화에서 계속 쓰면 앞 글의 문체·구조를 따라가
+//  글이 갈수록 비슷해지고 짧아지기 때문에, 매번 문맥을 비우고 프롬프트 전문을 다시 넣는다.
+//  (건당 5초쯤 손해지만 100건 품질이 균일해지는 편이 훨씬 남는다)
+// ============================================================
+const GEMINI_URL = 'https://gemini.google.com/app';
+
+const GEN_DEFAULTS = {
+  newChatEvery: 1,     // N건마다 새 채팅 (1 = 매번)
+  reloadEvery: 20,     // N건마다 탭 통째로 재로드 (SPA 메모리 누수/좀비 상태 방지)
+  minChars: 800,       // 이보다 짧으면 실패로 보고 재시도
+  retries: 1,          // 품질 미달 시 재시도 횟수
+  tempChat: true,      // 임시 채팅(사이드바에 기록 안 남김)
+  gapMs: 1500,         // 건 사이 여유
+};
+
+/** 생성용 Gemini 탭을 확보한다. 이미 있으면 재사용, 없으면 새로 연다. */
+async function ensureGeminiTab() {
+  if (geminiTabId) {
+    try {
+      const t = await chrome.tabs.get(geminiTabId);
+      if (t && t.url && t.url.includes('gemini.google.com')) return geminiTabId;
+    } catch (_) { /* 닫힘 */ }
+    geminiTabId = null;
+  }
+  // 사용자가 이미 열어둔 Gemini 탭이 있으면 그걸 쓴다
+  const found = await chrome.tabs.query({ url: 'https://gemini.google.com/*' });
+  if (found && found.length) {
+    geminiTabId = found[0].id;
+    return geminiTabId;
+  }
+  const tab = await chrome.tabs.create({ url: GEMINI_URL, active: false });
+  geminiTabId = tab.id;
+  await waitForGeminiReady(geminiTabId, 45000, true);
+  return geminiTabId;
+}
+
+/** content script 가 응답할 때까지(=앱이 뜰 때까지) 기다린다. */
+async function waitForGeminiReady(tabId, timeout, tempChat) {
+  const started = Date.now();
+  while (Date.now() - started < timeout) {
+    const r = await sendToTab(tabId, { action: 'GEM_PING' });
+    if (r && r.ok && r.ready) {
+      if (!r.loggedIn) throw new Error('Gemini 에 로그인되어 있지 않습니다. 탭에서 로그인 후 다시 시도하세요.');
+      if (tempChat) await sendToTab(tabId, { action: 'GEM_WAIT_READY', tempChat: true, timeout: 5000 });
+      return true;
+    }
+    await sleep(700);
+  }
+  throw new Error('Gemini 페이지가 준비되지 않았습니다(로딩 실패 또는 로그인 필요)');
+}
+
+async function reloadGeminiTab(tabId, tempChat) {
+  await chrome.tabs.reload(tabId);
+  await sleep(2000);
+  await waitForGeminiReady(tabId, 45000, tempChat);
+}
+
+/**
+ * 프롬프트 1건을 보내고 글을 수확한다.
+ * 입력은 CDP(Input.insertText) — Quill 은 DOM 직접 대입을 무시한다.
+ * 전송은 Enter — 입력창에 enterkeyhint="send" 가 걸려 있어 버튼을 찾을 필요가 없고,
+ * 버튼 위치가 바뀌어도 안 깨진다.
+ */
+async function genOne(tabId, prompt, timeoutMs) {
+  const pos = await sendToTab(tabId, { action: 'GEM_INPUT_POS' });
+  if (!pos || !pos.ok || !pos.pos) throw new Error((pos && pos.error) || '입력창을 찾지 못했습니다');
+
+  await attachDebugger(tabId);
+  try {
+    await clickAt(tabId, pos.pos.x, pos.pos.y);
+    await sleep(200);
+    await insertText(tabId, prompt);
+    await sleep(400); // Quill 이 Delta 를 반영할 여유
+    await pressEnter(tabId);
+  } finally {
+    // 수확은 DOM 감시라 디버거가 필요 없다. 상단 '디버깅 중' 배너를 오래 띄우지 않는다.
+    try { await detachDebugger(tabId); } catch (_) {}
+  }
+
+  const r = await sendToTab(tabId, {
+    action: 'GEM_HARVEST',
+    expectIndex: pos.count || 0,
+    timeout: timeoutMs,
+  });
+  if (!r) throw new Error('Gemini 탭이 응답하지 않습니다');
+  return r; // { ok, text, chars, error? }
+}
+
+async function startGenBatch(items, sender, options) {
+  if (genRunning) { log('생성 배치가 이미 진행 중'); return; }
+  genRunning = true;
+  genCancel = false;
+  const webTabId = sender && sender.tab ? sender.tab.id : null;
+  const opt = { ...GEN_DEFAULTS, ...(options || {}) };
+  let sinceReload = 0;
+
+  try {
+    log(`=== 글 생성 시작: ${items.length}건 ===`, opt);
+    const tabId = await ensureGeminiTab();
+    await waitForGeminiReady(tabId, 45000, opt.tempChat);
+
+    for (let i = 0; i < items.length; i++) {
+      if (genCancel) {
+        log('사용자 중단');
+        for (let k = i; k < items.length; k++) {
+          reportGenResult(webTabId, items[k].id, false, { error: '사용자가 중단했습니다' });
+        }
+        break;
+      }
+      const item = items[i];
+      const label = item.keyword || item.id;
+      log(`생성 ${i + 1}/${items.length}: ${label}`);
+
+      let result = null;
+      let lastError = '';
+      for (let attempt = 0; attempt <= opt.retries; attempt++) {
+        try {
+          // 재로드가 우선 — 재로드하면 새 채팅도 자동으로 된 셈이다.
+          if (sinceReload >= opt.reloadEvery) {
+            await sendToTab(tabId, { action: 'GEM_PROGRESS', text: 'Gemini 새로고침 중…', pct: 5 });
+            await reloadGeminiTab(tabId, opt.tempChat);
+            sinceReload = 0;
+          } else if (i > 0 || attempt > 0) {
+            // 매 건 새 채팅으로 문맥을 비운다(품질 균일화의 핵심).
+            if ((i % opt.newChatEvery === 0) || attempt > 0) {
+              const nc = await sendToTab(tabId, { action: 'GEM_NEW_CHAT' });
+              if (!nc || !nc.ok) throw new Error((nc && nc.error) || '새 채팅 실패');
+            }
+          }
+
+          await sendToTab(tabId, {
+            action: 'GEM_PROGRESS',
+            text: `${i + 1}/${items.length} · ${label}${attempt ? ` (재시도 ${attempt})` : ''}`,
+            pct: Math.round(((i + 1) / items.length) * 100),
+          });
+
+          const r = await genOne(tabId, item.prompt, genTimeoutMs(item.prompt));
+          sinceReload++;
+
+          // 완료 신호를 못 받았어도 글이 충분히 길면 성공으로 인정한다.
+          // 반대로 신호는 왔는데 짧으면(= 거절/축약 응답) 실패다.
+          if ((r.chars || 0) >= opt.minChars) { result = r; break; }
+          lastError = r.ok
+            ? `글이 너무 짧습니다(${r.chars || 0}자 < ${opt.minChars}자)`
+            : (r.error || '생성 실패');
+        } catch (e) {
+          lastError = e.message;
+          // 탭이 죽었을 수 있다 → 다음 시도 전에 되살린다.
+          try { await waitForGeminiReady(tabId, 20000, opt.tempChat); } catch (_) {}
+        }
+      }
+
+      if (result) {
+        reportGenResult(webTabId, item.id, true, {
+          keyword: item.keyword || '',
+          text: result.text,
+          chars: result.chars,
+        });
+      } else {
+        reportGenResult(webTabId, item.id, false, { keyword: item.keyword || '', error: lastError });
+      }
+      await sleep(opt.gapMs);
+    }
+  } catch (e) {
+    log('생성 배치 오류', e);
+    // 시작 자체가 실패하면(로그인 안 됨 등) 전건을 실패로 알려 화면이 멈춰 보이지 않게 한다.
+    for (const it of items) reportGenResult(webTabId, it.id, false, { error: e.message, fatal: true });
+  } finally {
+    genRunning = false;
+    genCancel = false;
+    if (geminiTabId) { try { await sendToTab(geminiTabId, { action: 'GEM_HIDE_OVERLAY' }); } catch (_) {} }
+    reportGenResult(webTabId, '__done__', true, { done: true });
+    log('=== 글 생성 완료 ===');
+  }
+}
+
+// 프롬프트가 길수록 답도 길어진다 → 대기 상한도 같이 늘린다.
+function genTimeoutMs(prompt) {
+  const base = 180000;
+  return base + Math.min(120000, Math.floor((prompt || '').length / 10) * 1000);
+}
+
+function reportGenResult(webTabId, id, ok, extra) {
+  const payload = { action: 'GEN_RESULT', id, ok, ...(extra || {}) };
+  try {
+    if (webTabId) {
+      chrome.tabs.sendMessage(webTabId, payload, () => void chrome.runtime.lastError);
+    } else {
+      chrome.tabs.query({}, (tabs) => {
+        const t = tabs.find((x) => x.url && (x.url.includes('doctor-voice') || x.url.includes('vercel.app') || x.url.includes('localhost')));
+        if (t) chrome.tabs.sendMessage(t.id, payload, () => void chrome.runtime.lastError);
+      });
+    }
+  } catch (_) {}
+}
+
+// ============================================================
 // 자동화 시퀀스 (CDP)
 // ============================================================
 async function runAutomation(tabId, job) {
   log('=== 자동화 시작 ===', tabId);
   try {
+    // 글을 쓰기 전에 계정부터 확인한다. 세션이 끊겨 로그인 창이 떴을 때 사용자가
+    // 다른 계정으로 로그인하면, 예전엔 그대로 진행돼 남의 블로그에 글이 올라갔다.
+    const who = await assertBlog(tabId, job.expectedBlogId);
+    if (!who.ok) throw new Error(who.error);
+
     await progress(tabId, '팝업 정리 중...', 8);
     await sendToTab(tabId, { action: 'DISMISS_POPUP' });
 
@@ -374,7 +731,8 @@ async function runAutomation(tabId, job) {
       await sleep(300);
       if (job.images && job.images.length) {
         await progress(tabId, `이미지 삽입 중... (${job.images.length}개)`, 60);
-        await sendToTab(tabId, { action: 'INSERT_IMAGES', images: job.images });
+        const r = await sendToTab(tabId, { action: 'INSERT_IMAGES', images: job.images });
+        assertImagesInserted(r, job.images.length);
       }
     }
 
@@ -433,6 +791,18 @@ async function typeBody(tabId, content, emphasize) {
   }
 }
 
+// 이미지가 요청한 만큼 실제로 들어갔는지 확인한다. 아니면 throw —
+// runAutomation 의 catch 가 이 건을 실패로 보고하고, 글은 준비함에 남아 다시 시도할 수 있다.
+// (예전엔 반환값을 버려서, 사진이 한 장도 안 들어가도 그대로 예약 등록되고 성공으로 보고됐다)
+function assertImagesInserted(res, expected) {
+  if (!res) throw new Error('이미지 삽입 응답 없음 (탭이 닫혔거나 에디터가 응답하지 않음)');
+  const got = res.inserted || 0;
+  if (got < expected) {
+    const why = (res.failed && res.failed[0] && res.failed[0].error) || '원인 불명';
+    throw new Error(`이미지 ${expected}장 중 ${got}장만 삽입됨 — ${why}`);
+  }
+}
+
 // 블록 순서대로 입력: 글 → 이미지 → 글 → 이미지 (문단 사이 삽입)
 // 텍스트는 CDP 타이핑, 이미지는 CDP 분리 후 커서 위치에 드롭 → 재부착.
 async function typeBlocksInterleaved(tabId, job) {
@@ -451,8 +821,9 @@ async function typeBlocksInterleaved(tabId, job) {
       // 이미지 드롭은 일반 DOM → CDP 분리
       try { await detachDebugger(tabId); } catch (_) {}
       await sleep(150);
-      await sendToTab(tabId, { action: 'INSERT_IMAGES', images: [b.image], atCaret: true });
-      await sleep(1900);
+      const r = await sendToTab(tabId, { action: 'INSERT_IMAGES', images: [b.image], atCaret: true });
+      assertImagesInserted(r, 1);
+      await sleep(400);
       // 다음 문단 타이핑을 위해 CDP 재부착 + 본문 포커스 복귀
       await attachDebugger(tabId);
       await sleep(200);
