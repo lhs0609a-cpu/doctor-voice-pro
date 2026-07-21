@@ -2,7 +2,7 @@
 // 닥터보이스 프로 - 백그라운드 서비스워커 v15
 // CDP(chrome.debugger) 기반 실제 입력 + 오케스트레이션 + 자동 업데이트
 // ============================================================
-const VERSION = '16.0.2';
+const VERSION = '16.0.3';
 const UPDATE_URL = 'https://doctor-voice-pro-ghwi.vercel.app/extension/version.json';
 const WRITE_URL = 'https://blog.naver.com/GoBlogWrite.naver';
 
@@ -545,16 +545,28 @@ async function ensureGeminiTab() {
 /** content script 가 응답할 때까지(=앱이 뜰 때까지) 기다린다. */
 async function waitForGeminiReady(tabId, timeout, tempChat) {
   const started = Date.now();
+  let sawAny = false;   // content script 가 한 번이라도 응답했는가
+  let reloaded = false; // 스크립트 주입용 새로고침을 이미 했는가
   while (Date.now() - started < timeout) {
     const r = await sendToTab(tabId, { action: 'GEM_PING' });
+    if (r) sawAny = true;
     if (r && r.ok && r.ready) {
-      if (!r.loggedIn) throw new Error('Gemini 에 로그인되어 있지 않습니다. 탭에서 로그인 후 다시 시도하세요.');
+      if (!r.loggedIn) throw new Error('Gemini 에 로그인되어 있지 않습니다. 그 탭에서 구글 로그인 후 다시 시도하세요.');
       if (tempChat) await sendToTab(tabId, { action: 'GEM_WAIT_READY', tempChat: true, timeout: 5000 });
       return true;
     }
+    // 응답이 전혀 없다 = content script 미주입. 확장 설치/갱신 전부터 열려 있던
+    // 탭을 재사용할 때 흔하다(다른 컴퓨터에서 '준비 안 됨'의 주된 원인).
+    // 탭을 한 번 새로고침하면 스크립트가 주입되므로 자동으로 되살린다.
+    if (!sawAny && !reloaded && Date.now() - started > 4000) {
+      reloaded = true;
+      log('Gemini 탭에 스크립트가 없어 새로고침으로 주입 시도');
+      try { await chrome.tabs.reload(tabId); } catch (_) {}
+      await sleep(3000);
+    }
     await sleep(700);
   }
-  throw new Error('Gemini 페이지가 준비되지 않았습니다(로딩 실패 또는 로그인 필요)');
+  throw new Error('Gemini 페이지가 준비되지 않았습니다. 그 탭에서 Gemini 에 로그인돼 있는지 확인하고, 탭을 새로고침한 뒤 다시 시도하세요.');
 }
 
 async function reloadGeminiTab(tabId, tempChat) {

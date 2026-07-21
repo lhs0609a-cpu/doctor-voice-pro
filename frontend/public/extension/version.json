@@ -1,7 +1,7 @@
 {
-  "version": "16.0.2",
-  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v16.0.2.zip",
-  "notes": "v16.0.2 — 첫 글에서 계속 멈추던 문제 수정(폴링 수확 + 전송 실패 시 사유 표시)",
+  "version": "16.0.3",
+  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v16.0.3.zip",
+  "notes": "v16.0.3 — 다른 PC에서 'Gemini 준비 안 됨' 오류 수정(스크립트 없는 탭 자동 새로고침)",
   "minVersion": "15.0.0",
   "releasedAt": "2026-07-21"
 }
