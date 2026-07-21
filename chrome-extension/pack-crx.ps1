@@ -20,7 +20,7 @@ $base = Join-Path $env:TEMP ("dvpack-" + [guid]::NewGuid().ToString("N"))
 $stage = Join-Path $base "doctorvoice-ext"
 New-Item -ItemType Directory -Path $stage | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $stage "icons") | Out-Null
-foreach ($f in @("manifest.json","background.js","naver-poster.js","content-login.js","content-website.js","content.css","popup.html","popup.js")) { Copy-Item (Join-Path $src $f) (Join-Path $stage $f) }
+foreach ($f in @("manifest.json","background.js","naver-poster.js","content-login.js","gemini-writer.js","content-website.js","content.css","popup.html","popup.js")) { Copy-Item (Join-Path $src $f) (Join-Path $stage $f) }
 foreach ($ic in @("icon16.png","icon48.png","icon128.png")) { Copy-Item (Join-Path $src "icons\$ic") (Join-Path $stage "icons\$ic") }
 
 $chrome = @(
@@ -42,6 +42,9 @@ $xml = "<?xml version='1.0' encoding='UTF-8'?>`n" +
   "  <app appid='cdmgfoemncdnoigiolpgaaompcmlfcpk'>`n" +
   "    <updatecheck codebase='https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension.crx' version='$version' />`n" +
   "  </app>`n</gupdate>`n"
-Set-Content -Path (Join-Path $pub "updates.xml") -Value $xml -Encoding UTF8
+# Chrome's update manifest parser rejects a UTF-8 BOM, and PS 5.1's -Encoding UTF8
+# writes one. Write UTF-8 without BOM explicitly.
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText((Join-Path $pub "updates.xml"), $xml, $utf8NoBom)
 
 Write-Output "OK: crx + updates.xml (v$version). Next: update version.json, git commit + push."

@@ -1,7 +1,7 @@
 {
-  "version": "15.6.0",
-  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v15.6.0.zip",
-  "notes": "v15.6.0 — 대량 발행 실패(64MiB 초과) 수정: 사진을 글 한 건씩 나눠 전송 + 카테고리 지정 발행",
+  "version": "16.0.0",
+  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v16.0.0.zip",
+  "notes": "v16.0.0 — 키워드 엑셀 대량 글 생성(Gemini 자동화) 추가",
   "minVersion": "15.0.0",
-  "releasedAt": "2026-07-17"
+  "releasedAt": "2026-07-20"
 }
