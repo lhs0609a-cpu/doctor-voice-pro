@@ -2,12 +2,14 @@
 
 import { useExtensionStatus, type ExtLight } from '@/lib/use-extension-status'
 import { Button } from '@/components/ui/button'
-import { Download, RefreshCw, Wifi, WifiOff, ArrowUpCircle } from 'lucide-react'
+import { Download, RefreshCw, Wifi, WifiOff, ArrowUpCircle, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 // 최신 확장 프로그램 버전/다운로드 (릴리스 시 이 두 값 + version.json 갱신)
 export const LATEST_EXTENSION_VERSION = '16.0.1'
 export const EXTENSION_DOWNLOAD_URL = `/extension/doctorvoice-extension-v${LATEST_EXTENSION_VERSION}.zip`
+// 자동 업데이트 원클릭 설치(관리자 정책). 한 번 설치하면 이후 새 버전은 크롬이 자동 갱신.
+export const AUTO_UPDATE_INSTALLER_URL = '/extension/doctorvoice-auto-update-install.bat'
 
 const LIGHT_META: Record<ExtLight, { color: string; ring: string; label: string }> = {
   connected: { color: 'bg-emerald-500', ring: 'bg-emerald-400', label: '실시간 연동 중' },
@@ -110,23 +112,71 @@ export function ExtensionStatusCard({ className }: { className?: string }) {
           <p className="mt-2 text-[11px] leading-relaxed text-amber-700">
             다운로드 → 압축 해제 → chrome://extensions 에서 기존 폴더를 새 폴더로 교체(또는 새로고침)
           </p>
+          <a
+            href={AUTO_UPDATE_INSTALLER_URL}
+            className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-700 hover:underline"
+          >
+            <Zap className="h-3 w-3" />
+            매번 이렇게 하기 번거롭다면 → 자동 업데이트로 전환
+          </a>
         </div>
       )}
 
-      {/* 연결 안 됨 → 설치 유도 */}
+      {/* 연결 안 됨 → 설치 유도 (자동 업데이트를 권장 옵션으로) */}
       {light === 'disconnected' && (
-        <div className="mt-3 rounded-lg bg-white/70 p-3">
-          <a href={EXTENSION_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer">
-            <Button size="sm" className="w-full gap-2">
-              <Download className="h-4 w-4" />
-              확장 프로그램 설치 (.zip)
-            </Button>
-          </a>
-          <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-            이미 설치했다면, 이 페이지를 새로고침하거나 크롬에서 확장 프로그램이 켜져 있는지 확인하세요.
-          </p>
+        <div className="mt-3 space-y-3">
+          <AutoUpdateCallout />
+          <div className="rounded-lg bg-white/70 p-3">
+            <a href={EXTENSION_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer">
+              <Button size="sm" variant="outline" className="w-full gap-2">
+                <Download className="h-4 w-4" />
+                수동 설치 (.zip)
+              </Button>
+            </a>
+            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+              이미 설치했다면, 이 페이지를 새로고침하거나 크롬에서 확장 프로그램이 켜져 있는지 확인하세요.
+            </p>
+          </div>
         </div>
       )}
+
+      {/* 정상 연결 상태 → 아직 수동 설치라면 자동 업데이트로 전환 유도 */}
+      {connected && !updateAvailable && (
+        <div className="mt-3">
+          <a
+            href={AUTO_UPDATE_INSTALLER_URL}
+            className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-700 hover:underline"
+          >
+            <Zap className="h-3 w-3" />
+            자동 업데이트로 전환 (다시 다운로드 안 해도 됨) →
+          </a>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── 자동 업데이트 원클릭 설치 안내 ────────────────────────────
+// 정책(ExtensionInstallForcelist) 설치로 이후 새 버전을 크롬이 자동 갱신한다.
+function AutoUpdateCallout() {
+  return (
+    <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 p-3">
+      <div className="mb-1.5 flex items-center gap-1.5 text-sm font-semibold text-emerald-800">
+        <Zap className="h-4 w-4" />
+        자동 업데이트로 설치 (권장)
+      </div>
+      <p className="mb-2.5 text-[11px] leading-relaxed text-emerald-700">
+        한 번만 설치하면 이후 새 버전을 크롬이 알아서 업데이트합니다. 다시 다운로드할 필요가 없습니다.
+      </p>
+      <a href={AUTO_UPDATE_INSTALLER_URL}>
+        <Button size="sm" className="w-full gap-2 bg-emerald-600 hover:bg-emerald-700">
+          <Download className="h-4 w-4" />
+          설치 파일 받기 (.bat)
+        </Button>
+      </a>
+      <p className="mt-2 text-[11px] leading-relaxed text-emerald-700/80">
+        받은 파일을 더블클릭 → 관리자 승인 &ldquo;예&rdquo; → 크롬 재시작. 그게 끝입니다.
+      </p>
     </div>
   )
 }
