@@ -2,7 +2,7 @@
 // 닥터보이스 프로 - 백그라운드 서비스워커 v15
 // CDP(chrome.debugger) 기반 실제 입력 + 오케스트레이션 + 자동 업데이트
 // ============================================================
-const VERSION = '16.0.0';
+const VERSION = '16.0.1';
 const UPDATE_URL = 'https://doctor-voice-pro-ghwi.vercel.app/extension/version.json';
 const WRITE_URL = 'https://blog.naver.com/GoBlogWrite.naver';
 
@@ -16,6 +16,31 @@ let geminiTabId = null;       // 생성에 쓰는 Gemini 탭
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log('[닥터보이스:bg]', ...a);
+
+// ── MV3 서비스워커 keepalive ────────────────────────────────
+// 긴 배치(글 생성·대량 발행)는 수십 분~수 시간 걸린다. MV3 워커는 30초 유휴면
+// 강제 종료되는데, 그러면 배치가 통째로 멈춘다(Gemini 탭이 빈 채 방치되고 결과도
+// 에러도 오지 않아 화면이 영영 '생성 중'). alarms 최소 주기(30초)는 유휴 한계와
+// 정확히 겹쳐 경계에서 진다 → 25초마다 무해한 확장 API 를 호출해 타이머를 리셋한다.
+// 배치가 겹칠 수 있어 참조 수로 켜고 끈다.
+let keepAliveTimer = null;
+let keepAliveRefs = 0;
+function startKeepAlive() {
+  keepAliveRefs++;
+  if (keepAliveTimer) return;
+  keepAliveTimer = setInterval(() => {
+    chrome.runtime.getPlatformInfo(() => void chrome.runtime.lastError);
+  }, 25000);
+  log('keepalive 시작');
+}
+function stopKeepAlive() {
+  keepAliveRefs = Math.max(0, keepAliveRefs - 1);
+  if (keepAliveRefs === 0 && keepAliveTimer) {
+    clearInterval(keepAliveTimer);
+    keepAliveTimer = null;
+    log('keepalive 종료');
+  }
+}
 
 // ============================================================
 // 외부 메시지 (닥터보이스 웹사이트에서)
@@ -372,6 +397,7 @@ async function requestJobPayload(webTabId, id) {
 async function startBatch(metas, sender) {
   if (batchRunning) { log('배치가 이미 진행 중'); return; }
   batchRunning = true;
+  startKeepAlive(); // 배치 내내 워커가 죽지 않도록
   const webTabId = sender && sender.tab ? sender.tab.id : null;
   let missStreak = 0; // payload 를 연속으로 못 받은 횟수(= 닥터보이스 탭이 사라졌다는 신호)
 
@@ -415,6 +441,7 @@ async function startBatch(metas, sender) {
   } finally {
     // 중간에 무슨 일이 있어도 반드시 푼다 — 안 그러면 다음 발행이 영영 막힌다.
     batchRunning = false;
+    stopKeepAlive();
     log('=== 배치 완료 ===');
   }
 }
@@ -571,6 +598,7 @@ async function startGenBatch(items, sender, options) {
   if (genRunning) { log('생성 배치가 이미 진행 중'); return; }
   genRunning = true;
   genCancel = false;
+  startKeepAlive(); // 배치 내내 워커가 죽지 않도록
   const webTabId = sender && sender.tab ? sender.tab.id : null;
   const opt = { ...GEN_DEFAULTS, ...(options || {}) };
   let sinceReload = 0;
@@ -651,6 +679,7 @@ async function startGenBatch(items, sender, options) {
     genCancel = false;
     if (geminiTabId) { try { await sendToTab(geminiTabId, { action: 'GEM_HIDE_OVERLAY' }); } catch (_) {} }
     reportGenResult(webTabId, '__done__', true, { done: true });
+    stopKeepAlive();
     log('=== 글 생성 완료 ===');
   }
 }
@@ -941,11 +970,14 @@ function compareVersion(a, b) {
 // ============================================================
 chrome.runtime.onInstalled.addListener(() => { checkForUpdate(); });
 chrome.runtime.onStartup.addListener(() => { checkForUpdate(); });
+// keepAlive 알람은 backstop 일 뿐이다 — 실제 배치 중 워커 유지는 startKeepAlive()
+// (25초 인터벌)가 맡는다. 알람 최소 주기 30초는 유휴 한계와 겹쳐 단독으로는 못 믿는다.
 chrome.alarms.create('keepAlive', { periodInMinutes: 0.5 });
 chrome.alarms.create('updateCheck', { periodInMinutes: 180 }); // 3시간마다
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === 'updateCheck') checkForUpdate();
+  // keepAlive: 알람이 뜨는 것만으로 유휴 타이머가 리셋되므로 별도 처리 불필요
 });
 chrome.debugger.onDetach.addListener(() => { debuggerTabId = null; });
 
-log('백그라운드 v15 시작');
+log(`백그라운드 v${VERSION} 시작`);

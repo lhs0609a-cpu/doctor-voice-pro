@@ -6,7 +6,7 @@ import { Download, RefreshCw, Wifi, WifiOff, ArrowUpCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 // 최신 확장 프로그램 버전/다운로드 (릴리스 시 이 두 값 + version.json 갱신)
-export const LATEST_EXTENSION_VERSION = '16.0.0'
+export const LATEST_EXTENSION_VERSION = '16.0.1'
 export const EXTENSION_DOWNLOAD_URL = `/extension/doctorvoice-extension-v${LATEST_EXTENSION_VERSION}.zip`
 
 const LIGHT_META: Record<ExtLight, { color: string; ring: string; label: string }> = {

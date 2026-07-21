@@ -1,7 +1,7 @@
 {
-  "version": "16.0.0",
-  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v16.0.0.zip",
-  "notes": "v16.0.0 — 키워드 엑셀 대량 글 생성(Gemini 자동화) 추가",
+  "version": "16.0.1",
+  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v16.0.1.zip",
+  "notes": "v16.0.1 — 대량 생성/발행이 도중에 멈추던 문제 수정(서비스워커 유지)",
   "minVersion": "15.0.0",
-  "releasedAt": "2026-07-20"
+  "releasedAt": "2026-07-21"
 }

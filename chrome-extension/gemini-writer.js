@@ -11,7 +11,7 @@
 (() => {
   'use strict';
   const TAG = '[닥터보이스:gemini]';
-  const VERSION = '16.0.0';
+  const VERSION = '16.0.1';
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const q = (sel, root) => (root || document).querySelector(sel);
