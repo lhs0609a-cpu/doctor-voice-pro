@@ -6,7 +6,7 @@ import { Download, RefreshCw, Wifi, WifiOff, ArrowUpCircle, Zap } from 'lucide-r
 import { cn } from '@/lib/utils'
 
 // 최신 확장 프로그램 버전/다운로드 (릴리스 시 이 두 값 + version.json 갱신)
-export const LATEST_EXTENSION_VERSION = '16.0.3'
+export const LATEST_EXTENSION_VERSION = '16.0.4'
 export const EXTENSION_DOWNLOAD_URL = `/extension/doctorvoice-extension-v${LATEST_EXTENSION_VERSION}.zip`
 // 자동 업데이트 원클릭 설치(관리자 정책). 한 번 설치하면 이후 새 버전은 크롬이 자동 갱신.
 export const AUTO_UPDATE_INSTALLER_URL = '/extension/doctorvoice-auto-update-install.bat'

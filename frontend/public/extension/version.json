@@ -1,7 +1,7 @@
 {
-  "version": "16.0.3",
-  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v16.0.3.zip",
-  "notes": "v16.0.3 — 다른 PC에서 'Gemini 준비 안 됨' 오류 수정(스크립트 없는 탭 자동 새로고침)",
+  "version": "16.0.4",
+  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v16.0.4.zip",
+  "notes": "v16.0.4 — 다른 PC의 Gemini UI를 못 읽던 문제(입력창 셀렉터 여러 형태 대응)",
   "minVersion": "15.0.0",
   "releasedAt": "2026-07-21"
 }

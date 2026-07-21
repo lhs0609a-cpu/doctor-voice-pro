@@ -11,7 +11,7 @@
 (() => {
   'use strict';
   const TAG = '[닥터보이스:gemini]';
-  const VERSION = '16.0.3';
+  const VERSION = '16.0.4';
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const q = (sel, root) => (root || document).querySelector(sel);
@@ -19,7 +19,6 @@
 
   // ---------- 셀렉터 (SELECTORS.md 의 Gemini 섹션과 동기화할 것) ----------
   const SEL = {
-    input: 'rich-textarea .ql-editor[role="textbox"]',
     conversation: '.conversation-container',
     modelResponse: 'model-response',
     markdown: '.markdown.markdown-main-panel',
@@ -28,22 +27,51 @@
     newChat: '[data-test-id="new-chat-button"] a',
     tempChat: '[data-test-id="temp-chat-button"]',
     modePicker: '[data-test-id="bard-mode-menu-button"]',
-    avatar: 'sidenav-mavatar-footer .mavatar-image',
   };
+
+  // 입력창은 Gemini UI 버전(A/B·크롬 버전·지역)마다 구조가 조금씩 다르다.
+  // 한 셀렉터만 믿으면 '다른 컴퓨터에서 못 읽음' → '준비 안 됨'이 난다.
+  // 여러 형태를 순서대로 시도해 하나라도 맞으면 인정한다.
+  const INPUT_SELECTORS = [
+    'rich-textarea .ql-editor[role="textbox"]',
+    '.ql-editor[role="textbox"]',
+    'rich-textarea [contenteditable="true"]',
+    '[role="textbox"][contenteditable="true"]',
+    'div.ql-editor[contenteditable="true"]',
+    'textarea[aria-label]',
+  ];
+
+  // 로그인(아바타) 판정도 한 곳만 믿지 않는다.
+  const AVATAR_SELECTORS = [
+    'sidenav-mavatar-footer .mavatar-image',
+    '.mavatar-image',
+    'a[aria-label*="Google 계정"]',
+    'img[alt*="계정"]',
+    '[data-test-id="settings-and-help-button"]',
+  ];
 
   // ============================================================
   // 상태 판정
   // ============================================================
-  function inputEl() { return q(SEL.input); }
+  function inputEl() {
+    for (const s of INPUT_SELECTORS) {
+      const el = q(s);
+      if (el && el.isConnected) return el;
+    }
+    return null;
+  }
 
   /** 앱이 뜨고 입력창이 살아있는가 */
   function isReady() {
     const el = inputEl();
-    return !!(el && el.isConnected && el.getBoundingClientRect().width > 0);
+    return !!(el && el.getBoundingClientRect().width > 0);
   }
 
-  /** 로그인 여부. 아바타가 없으면 세션이 끊긴 것 */
-  function isLoggedIn() { return !!q(SEL.avatar); }
+  /** 로그인 여부. 아바타가 없어도 입력창이 있으면 로그인된 것으로 본다(오탐 방지). */
+  function isLoggedIn() {
+    if (AVATAR_SELECTORS.some((s) => q(s))) return true;
+    return !!inputEl();
+  }
 
   function conversationCount() { return qa(SEL.conversation).length; }
 

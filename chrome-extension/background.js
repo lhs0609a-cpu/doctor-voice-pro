@@ -2,7 +2,7 @@
 // 닥터보이스 프로 - 백그라운드 서비스워커 v15
 // CDP(chrome.debugger) 기반 실제 입력 + 오케스트레이션 + 자동 업데이트
 // ============================================================
-const VERSION = '16.0.3';
+const VERSION = '16.0.4';
 const UPDATE_URL = 'https://doctor-voice-pro-ghwi.vercel.app/extension/version.json';
 const WRITE_URL = 'https://blog.naver.com/GoBlogWrite.naver';
 
