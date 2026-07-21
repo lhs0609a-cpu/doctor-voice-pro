@@ -1,7 +1,7 @@
 {
-  "version": "16.0.1",
-  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v16.0.1.zip",
-  "notes": "v16.0.1 — 대량 생성/발행이 도중에 멈추던 문제 수정(서비스워커 유지)",
+  "version": "16.0.2",
+  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v16.0.2.zip",
+  "notes": "v16.0.2 — 첫 글에서 계속 멈추던 문제 수정(폴링 수확 + 전송 실패 시 사유 표시)",
   "minVersion": "15.0.0",
   "releasedAt": "2026-07-21"
 }

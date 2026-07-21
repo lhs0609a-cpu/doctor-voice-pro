@@ -2,7 +2,7 @@
 // 닥터보이스 프로 - 백그라운드 서비스워커 v15
 // CDP(chrome.debugger) 기반 실제 입력 + 오케스트레이션 + 자동 업데이트
 // ============================================================
-const VERSION = '16.0.1';
+const VERSION = '16.0.2';
 const UPDATE_URL = 'https://doctor-voice-pro-ghwi.vercel.app/extension/version.json';
 const WRITE_URL = 'https://blog.naver.com/GoBlogWrite.naver';
 
@@ -585,13 +585,38 @@ async function genOne(tabId, prompt, timeoutMs) {
     try { await detachDebugger(tabId); } catch (_) {}
   }
 
-  const r = await sendToTab(tabId, {
-    action: 'GEM_HARVEST',
-    expectIndex: pos.count || 0,
-    timeout: timeoutMs,
-  });
-  if (!r) throw new Error('Gemini 탭이 응답하지 않습니다');
-  return r; // { ok, text, chars, error? }
+  // 폴링 수확 — 긴 단일 await(최대 5분) 대신 1.5초마다 짧게 상태를 확인한다.
+  //  · MV3 워커는 긴 유휴 await 도중 종료될 수 있는데, 잦은 메시지 왕복이 워커를
+  //    확실히 살려둔다(setInterval keepalive 만으로는 얼어붙을 수 있다).
+  //  · 프롬프트 전송이 실패하면(입력창에 안 들어감) 응답이 시작되지 않으므로,
+  //    60초 내 '시작'이 없으면 무한 대기 대신 실패로 끊어 화면에 사유를 보여준다.
+  const expectIndex = pos.count || 0;
+  const started = Date.now();
+  let sawStart = false;
+  let lastChars = -1;
+  while (Date.now() - started < timeoutMs) {
+    await sleep(1500);
+    const st = await sendToTab(tabId, { action: 'GEM_STATUS', expectIndex });
+    if (!st || !st.ok) continue; // 일시적 무응답은 다음 폴에서 재시도
+    if (st.started) sawStart = true;
+    if (!sawStart && Date.now() - started > 60000) {
+      return { ok: false, text: '', chars: 0, error: '응답이 시작되지 않았습니다(프롬프트 전송 실패 가능성)' };
+    }
+    const cur = st.chars || 0;
+    if (cur !== lastChars) {
+      lastChars = cur;
+      await sendToTab(tabId, {
+        action: 'GEM_PROGRESS',
+        text: `생성 중… ${cur.toLocaleString()}자`,
+        pct: Math.min(90, 20 + cur / 40),
+      });
+    }
+    if (st.complete && st.text) return { ok: true, text: st.text, chars: st.chars };
+  }
+  // 타임아웃 — 그때까지 나온 글이라도 넘겨 background 가 길이로 판단하게 한다.
+  const fin = await sendToTab(tabId, { action: 'GEM_STATUS', expectIndex });
+  const text = fin && fin.ok ? (fin.text || '') : '';
+  return { ok: false, text, chars: text.length, error: '응답 완료 신호를 받지 못했습니다' };
 }
 
 async function startGenBatch(items, sender, options) {

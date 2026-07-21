@@ -11,7 +11,7 @@
 (() => {
   'use strict';
   const TAG = '[닥터보이스:gemini]';
-  const VERSION = '16.0.1';
+  const VERSION = '16.0.2';
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const q = (sel, root) => (root || document).querySelector(sel);
@@ -255,6 +255,19 @@
           case 'GEM_HARVEST': {
             const r = await harvest(msg.expectIndex || 0, msg.timeout || 180000);
             sendResponse(r);
+            break;
+          }
+
+          // 폴링 수확용 — 기다리지 않고 '지금 상태'만 즉시 돌려준다.
+          // background 가 짧은 간격으로 반복 호출한다(MV3 워커 유지 + 무한멈춤 방지).
+          case 'GEM_STATUS': {
+            const responses = qa(SEL.modelResponse);
+            const started = responses.length > (msg.expectIndex || 0);
+            const resp = responses.length ? responses[responses.length - 1] : null;
+            const complete = !!(started && resp && isComplete(resp));
+            const text = resp ? responseText(resp) : '';
+            // text/chars 는 '지금까지 나온' 값(부분 포함). complete 로 완료 여부를 구분한다.
+            sendResponse({ ok: true, started, complete, chars: text.length, text });
             break;
           }
 
