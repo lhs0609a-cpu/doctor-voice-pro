@@ -34,7 +34,7 @@ import {
 import {
   parseKeywordFile, sortByVolume, loadTemplates, saveTemplates, renderPrompt,
   syncTemplates, saveTemplatesToServer,
-  startGeneration, cancelGeneration, onGenResult, splitTitleBody, appendSavedPosts,
+  startGeneration, cancelGeneration, onGenResult, splitTitleBody,
   DEFAULT_TEMPLATE, DEFAULT_GEN_OPTIONS,
   type KeywordRow, type GenItem, type PromptTemplate, type GenOptions,
 } from '@/lib/keyword-batch';
@@ -189,17 +189,10 @@ export function KeywordBatchManager() {
       }
       if (r.fatal) toast.error(r.error || '생성을 시작하지 못했습니다');
 
-      // 한 건 끝날 때마다 바로 저장한다. 배치가 중간에 끊기거나 탭이 닫혀도
-      // 그때까지 나온 글은 저장된 글에 남는다.
-      if (r.ok && r.text) {
-        try {
-          const { title, content } = splitTitleBody(r.text);
-          appendSavedPosts([{ keyword: r.keyword, title, content }]);
-          setSavedCount((n) => n + 1);
-        } catch (e) {
-          toast.error(e instanceof Error ? e.message : '저장에 실패했습니다');
-        }
-      }
+      // 저장은 전역 GenerationSaver 가 담당한다 — 이 페이지를 벗어나(예: 실시간으로
+      // 보려고 '저장된 글'로 이동) 이 컴포넌트가 사라져도 결과가 유실되지 않는다.
+      // 여기서는 이 배치의 진행 표시용 카운트만 올린다.
+      if (r.ok && r.text) setSavedCount((n) => n + 1);
 
       setRows((prev) =>
         prev.map((row) =>

@@ -7,6 +7,7 @@ import { DashboardNav } from '@/components/dashboard-nav'
 import { useAuthStore } from '@/store/auth'
 import OnboardingModal from '@/components/onboarding/OnboardingModal'
 import TutorialGuide from '@/components/tutorial/TutorialGuide'
+import { GenerationSaver } from '@/components/generation-saver'
 
 export default function DashboardLayout({
   children,
@@ -61,6 +62,8 @@ export default function DashboardLayout({
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex flex-col">
+      {/* 생성 결과를 어느 페이지에서든 놓치지 않고 저장(전역, 화면 없음) */}
+      <GenerationSaver />
       <DashboardNav />
       <main className="container mx-auto px-4 py-8 flex-1">{children}</main>
 

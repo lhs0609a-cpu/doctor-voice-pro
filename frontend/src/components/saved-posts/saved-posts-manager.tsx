@@ -588,8 +588,12 @@ export function SavedPostsManager() {
       }
     }
     load()
-    window.addEventListener('storage', load)
-    return () => window.removeEventListener('storage', load)
+    window.addEventListener('storage', load) // 다른 탭에서의 변경
+    window.addEventListener('saved-posts-changed', load) // 같은 탭에서의 변경(생성 실시간 반영)
+    return () => {
+      window.removeEventListener('storage', load)
+      window.removeEventListener('saved-posts-changed', load)
+    }
   }, [])
 
   // 사진 목록 로드 + 저장해둔 장수/선택 목록/예약 설정 복원

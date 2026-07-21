@@ -348,6 +348,13 @@ export function appendSavedPosts(
     // 저장 실패를 성공으로 보고하면 글이 조용히 사라지므로 반드시 알린다.
     throw new Error('저장 공간이 부족합니다. 저장된 글에서 오래된 글을 정리해 주세요.');
   }
+  // 같은 탭의 '저장된 글' 화면이 즉시 갱신되도록 신호를 보낸다.
+  // (storage 이벤트는 '다른 탭'에서만 발생하므로 같은 탭용 커스텀 이벤트가 필요하다)
+  try {
+    window.dispatchEvent(new Event('saved-posts-changed'));
+  } catch {
+    /* SSR 등 window 없음 */
+  }
   return fresh.length;
 }
 
