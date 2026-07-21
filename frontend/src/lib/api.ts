@@ -404,6 +404,26 @@ export const tagsAPI = {
   },
 }
 
+// Keyword Batch API (키워드 대량 생성 - 프롬프트 템플릿 계정 동기화)
+export interface KeywordTemplateDTO {
+  id: string
+  name: string
+  body: string
+  updatedAt: number
+}
+
+export const keywordBatchAPI = {
+  getTemplates: async (): Promise<KeywordTemplateDTO[]> => {
+    const response = await api.get<KeywordTemplateDTO[]>('/api/v1/keyword-batch/templates')
+    return response.data
+  },
+
+  saveTemplates: async (items: KeywordTemplateDTO[]): Promise<KeywordTemplateDTO[]> => {
+    const response = await api.put<KeywordTemplateDTO[]>('/api/v1/keyword-batch/templates', items)
+    return response.data
+  },
+}
+
 // System API
 export interface SystemInfo {
   name: string

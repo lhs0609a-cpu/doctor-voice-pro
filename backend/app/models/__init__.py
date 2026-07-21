@@ -84,9 +84,11 @@ from app.models.reputation import (
 )
 from app.models.media_pool import PoolImage, ImageVariant, PoolCollection, PoolCollectionMember, FixedFooterImage
 from app.models.publish_queue import PublishBatch, QueuedPost, NaverCategoryCache
+from app.models.keyword_template import KeywordPromptTemplate
 
 __all__ = [
     "User",
+    "KeywordPromptTemplate",
     "PublishBatch",
     "QueuedPost",
     "NaverCategoryCache",

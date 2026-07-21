@@ -33,6 +33,7 @@ import {
 
 import {
   parseKeywordFile, sortByVolume, loadTemplates, saveTemplates, renderPrompt,
+  syncTemplates, saveTemplatesToServer,
   startGeneration, cancelGeneration, onGenResult, splitTitleBody, appendSavedPosts,
   DEFAULT_TEMPLATE, DEFAULT_GEN_OPTIONS,
   type KeywordRow, type GenItem, type PromptTemplate, type GenOptions,
@@ -63,11 +64,26 @@ export function KeywordBatchManager() {
   const { connected } = useExtensionStatus();
 
   useEffect(() => {
-    const list = loadTemplates();
-    setTemplates(list);
-    setActiveId(list[0].id);
-    setDraft(list[0].body);
-    setDraftName(list[0].name);
+    const local = loadTemplates();
+    setTemplates(local);
+    setActiveId(local[0].id);
+    setDraft(local[0].body);
+    setDraftName(local[0].name);
+
+    // 서버(계정) 동기화 — 다른 컴퓨터에서 만든 템플릿도 불러온다.
+    // 비로그인/오프라인이면 null 이 와서 로컬 값을 그대로 쓴다.
+    let cancelled = false;
+    void syncTemplates(local).then((synced) => {
+      if (cancelled || !synced) return;
+      const chosen = synced.find((t) => t.id === local[0].id) ?? synced[0];
+      setTemplates(synced);
+      setActiveId(chosen.id);
+      setDraft(chosen.body);
+      setDraftName(chosen.name);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // ---------- 파일 ----------
@@ -110,7 +126,8 @@ export function KeywordBatchManager() {
   // ---------- 템플릿 ----------
   const persist = (list: PromptTemplate[]) => {
     setTemplates(list);
-    saveTemplates(list);
+    saveTemplates(list); // 로컬 캐시(빠른 첫 표시 + 오프라인)
+    void saveTemplatesToServer(list); // 계정에 저장 → 다른 컴퓨터에서도 보임
   };
 
   const selectTemplate = (id: string) => {

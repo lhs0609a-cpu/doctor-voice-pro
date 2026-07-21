@@ -11,6 +11,7 @@ from app.api import (
     reputation,  # 평판 모니터링
     media_pool,  # 사진 풀 + 이미지 유니크화
     publish_queue,  # 대량 자동발행 큐
+    keyword_batch,  # 키워드 대량 생성 프롬프트 템플릿(계정 동기화)
 )
 
 api_router = APIRouter()
@@ -65,3 +66,5 @@ api_router.include_router(reputation.router, prefix="/reputation", tags=["reputa
 api_router.include_router(media_pool.router, prefix="/media", tags=["media"])
 # 대량 자동발행 큐
 api_router.include_router(publish_queue.router, prefix="/publish", tags=["publish-queue"])
+# 키워드 대량 생성 프롬프트 템플릿 (계정별 서버 동기화)
+api_router.include_router(keyword_batch.router, prefix="/keyword-batch", tags=["keyword-batch"])

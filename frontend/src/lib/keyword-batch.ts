@@ -133,6 +133,73 @@ export function saveTemplates(list: PromptTemplate[]) {
   }
 }
 
+/** 로컬이 기본 템플릿 하나(무편집)뿐이면 '올릴 게 없음'으로 본다. */
+function isJustDefault(list: PromptTemplate[]): boolean {
+  return (
+    list.length === 1 &&
+    list[0].id === DEFAULT_TEMPLATE.id &&
+    list[0].body === DEFAULT_TEMPLATE.body &&
+    list[0].name === DEFAULT_TEMPLATE.name
+  );
+}
+
+/**
+ * 서버(계정)에서 템플릿을 불러온다.
+ * - 비로그인/오프라인/서버오류 → null (호출부는 로컬 값을 유지한다)
+ * - 성공 시 로컬 캐시도 갱신한다
+ */
+export async function fetchTemplatesFromServer(): Promise<PromptTemplate[] | null> {
+  try {
+    const { keywordBatchAPI } = await import('@/lib/api');
+    const list = await keywordBatchAPI.getTemplates();
+    if (!Array.isArray(list)) return null;
+    const mapped: PromptTemplate[] = list.map((t) => ({
+      id: t.id,
+      name: t.name,
+      body: t.body,
+      updatedAt: t.updatedAt || 0,
+    }));
+    try {
+      if (mapped.length) localStorage.setItem(TPL_KEY, JSON.stringify(mapped));
+    } catch {
+      /* 캐시 실패는 무시 */
+    }
+    return mapped;
+  } catch {
+    return null;
+  }
+}
+
+/** 서버에 템플릿 전체를 저장한다. 실패해도 로컬 캐시는 이미 남아 있다. */
+export async function saveTemplatesToServer(list: PromptTemplate[]): Promise<boolean> {
+  try {
+    const { keywordBatchAPI } = await import('@/lib/api');
+    await keywordBatchAPI.saveTemplates(
+      list.map((t) => ({ id: t.id, name: t.name, body: t.body, updatedAt: t.updatedAt || 0 })),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 최초 동기화: 서버 목록을 받아 화면에 쓸 목록을 정한다.
+ * - 서버에 값이 있으면 그걸 쓴다(다른 기기에서 만든 것 포함)
+ * - 서버가 비었는데 로컬에 편집한 게 있으면 → 로컬을 서버로 올리고 로컬을 쓴다(1회 이관)
+ * 반환: 화면에 반영할 목록. 서버 접근 불가면 null(로컬 유지).
+ */
+export async function syncTemplates(local: PromptTemplate[]): Promise<PromptTemplate[] | null> {
+  const server = await fetchTemplatesFromServer();
+  if (server === null) return null; // 비로그인/오프라인 → 로컬 유지
+  if (server.length > 0) return server;
+  // 서버가 비어 있음 → 로컬에 올릴 게 있으면 이관
+  if (!isJustDefault(local)) {
+    await saveTemplatesToServer(local);
+  }
+  return local;
+}
+
 /** {{키워드}} / {{keyword}} 치환. 변수를 추가하려면 vars 에 넣으면 된다. */
 export function renderPrompt(body: string, vars: Record<string, string>): string {
   return body.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (m, name: string) => {
