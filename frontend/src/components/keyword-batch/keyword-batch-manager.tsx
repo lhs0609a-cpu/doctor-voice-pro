@@ -16,7 +16,23 @@ import {
 } from 'lucide-react';
 
 import { useExtensionStatus } from '@/lib/use-extension-status';
-import { ExtensionStatusCard } from '@/components/extension-status';
+import {
+  ExtensionStatusCard, EXTENSION_DOWNLOAD_URL, AUTO_UPDATE_INSTALLER_URL,
+  LATEST_EXTENSION_VERSION,
+} from '@/components/extension-status';
+
+// 키워드 대량 생성이 되려면 확장이 이 버전 이상이어야 한다(SUBMIT_GEN_BATCH 도입 버전).
+const MIN_GEN_VERSION = '16.0.0';
+function versionGte(v: string | null, min: string): boolean {
+  if (!v) return false;
+  const a = v.split('.').map((n) => parseInt(n, 10) || 0);
+  const b = min.split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] || 0, y = b[i] || 0;
+    if (x !== y) return x > y;
+  }
+  return true;
+}
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -61,7 +77,9 @@ export function KeywordBatchManager() {
   const [previewId, setPreviewId] = useState<string | null>(null);
 
   // 확장이 연결돼야 아무것도 시작할 수 없다 → 화면에 들어오자마자 알려준다.
-  const { connected } = useExtensionStatus();
+  const { connected, version } = useExtensionStatus();
+  // 연결은 됐는데 버전이 낮으면 생성 기능이 없다(다른 컴퓨터에서 구버전 설치 시 흔함).
+  const extOutdated = connected && !!version && !versionGte(version, MIN_GEN_VERSION);
 
   useEffect(() => {
     const local = loadTemplates();
@@ -303,6 +321,30 @@ export function KeywordBatchManager() {
     <div className="space-y-6">
       {/* 확장이 없으면 아무것도 못 한다 — 버튼을 누르기 전에 알려준다 */}
       {!connected && <ExtensionStatusCard />}
+
+      {/* 연결은 됐지만 구버전 → 생성 기능이 없다. 명확히 알리고 업데이트를 유도한다. */}
+      {extOutdated && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4">
+          <div className="text-sm font-semibold text-amber-900">
+            확장 프로그램이 오래되었습니다 (현재 v{version})
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-amber-800">
+            키워드 대량 생성은 확장 <b>v{MIN_GEN_VERSION} 이상</b>이 필요합니다. 이 컴퓨터의 확장을
+            최신 버전(v{LATEST_EXTENSION_VERSION})으로 업데이트해 주세요. 업데이트 전에는 생성이
+            시작되지 않습니다(Gemini 도 열리지 않습니다).
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <a href={AUTO_UPDATE_INSTALLER_URL}>
+              <Button size="sm" className="gap-2 bg-amber-600 hover:bg-amber-700">
+                <Download className="h-4 w-4" /> 자동 업데이트로 설치 (권장)
+              </Button>
+            </a>
+            <a href={EXTENSION_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer">
+              <Button size="sm" variant="outline">최신 버전 .zip 받기</Button>
+            </a>
+          </div>
+        </div>
+      )}
 
       {/* 1. 키워드 업로드 */}
       <Card>
@@ -593,7 +635,7 @@ export function KeywordBatchManager() {
               </Button>
             ) : (
               <>
-                <Button onClick={run} disabled={!targets.length || !connected}>
+                <Button onClick={run} disabled={!targets.length || !connected || extOutdated}>
                   <Play className="mr-1.5 h-4 w-4" /> {targets.length}건 생성 시작
                 </Button>
                 {failCount > 0 && (
