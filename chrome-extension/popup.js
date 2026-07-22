@@ -10,8 +10,51 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   document.getElementById('btnRefresh').addEventListener('click', () => refresh(VERSION));
 
+  // 네이버 자동로그인 계정 저장/삭제
+  document.getElementById('btnSaveCred').addEventListener('click', saveCred);
+  document.getElementById('btnClearCred').addEventListener('click', clearCred);
+
   refresh(VERSION);
+  refreshCredStatus();
 });
+
+function setCredStatus(text) {
+  const el = document.getElementById('credStatus');
+  if (el) el.textContent = text;
+}
+
+function refreshCredStatus() {
+  chrome.runtime.sendMessage({ action: 'GET_CRED' }, (r) => {
+    if (chrome.runtime.lastError) { setCredStatus('저장된 계정: 확인 불가'); return; }
+    const has = r && r.ok && r.cred && r.cred.id;
+    setCredStatus(has ? ('저장된 계정: ' + maskId(r.cred.id)) : '저장된 계정: 없음');
+  });
+}
+
+function maskId(id) {
+  if (!id) return '';
+  if (id.length <= 3) return id[0] + '**';
+  return id.slice(0, 3) + '*'.repeat(Math.max(2, id.length - 3));
+}
+
+function saveCred() {
+  const id = document.getElementById('credId').value.trim();
+  const pw = document.getElementById('credPw').value;
+  if (!id || !pw) { setCredStatus('아이디와 비밀번호를 모두 입력하세요.'); return; }
+  chrome.runtime.sendMessage({ action: 'SAVE_CRED', id, pw }, (r) => {
+    if (chrome.runtime.lastError || !r || !r.ok) { setCredStatus('저장 실패'); return; }
+    document.getElementById('credPw').value = '';
+    setCredStatus('저장됨: ' + maskId(id));
+  });
+}
+
+function clearCred() {
+  chrome.runtime.sendMessage({ action: 'CLEAR_CRED' }, () => {
+    document.getElementById('credId').value = '';
+    document.getElementById('credPw').value = '';
+    setCredStatus('저장된 계정: 없음');
+  });
+}
 
 async function refresh(VERSION) {
   const site = await checkSiteTab();

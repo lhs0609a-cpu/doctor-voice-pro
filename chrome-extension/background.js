@@ -134,6 +134,17 @@ chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
           sendResponse(r);
           break;
         }
+        case 'SAVE_CRED': {
+          // 웹앱에서 네이버 계정 저장(로컬 암호화). 쓰기 전용 — GET은 외부에 노출 안 함.
+          await saveNaverCred(msg.id, msg.pw);
+          sendResponse({ success: true });
+          break;
+        }
+        case 'HAS_CRED': {
+          const cred = await getNaverCred();
+          sendResponse({ success: true, hasCred: !!(cred && cred.id) });
+          break;
+        }
         default:
           sendResponse({ success: false, error: 'unknown action' });
       }
@@ -173,6 +184,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ current: VERSION, ...info });
         return;
       }
+      // 네이버 자동로그인 자격증명 (로컬 AES-GCM 암호화, 서버 전송 안 함)
+      if (msg.action === 'SAVE_CRED') {
+        await saveNaverCred(msg.id, msg.pw);
+        sendResponse({ ok: true });
+        return;
+      }
+      if (msg.action === 'GET_CRED') {
+        const cred = await getNaverCred();
+        sendResponse({ ok: true, cred });
+        return;
+      }
+      if (msg.action === 'CLEAR_CRED') {
+        await chrome.storage.local.remove('naverCred');
+        sendResponse({ ok: true });
+        return;
+      }
       sendResponse({ ok: false });
     } catch (e) {
       sendResponse({ ok: false, error: e.message });
@@ -180,6 +207,77 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   })();
   return true;
 });
+
+// ============================================================
+// 네이버 자동로그인 자격증명 (로컬 AES-GCM 암호화)
+//  - 서버 DB에 저장하지 않는다. 확장 storage(로컬)에만, 암호화해서 둔다.
+//  - 키는 설치별로 1회 생성해 storage에 보관(같은 기기 사용자면 접근 가능 — 완전 안전은 아님, opt-in).
+// ============================================================
+function _b64(buf) {
+  return btoa(String.fromCharCode(...new Uint8Array(buf)));
+}
+function _unb64(str) {
+  return Uint8Array.from(atob(str), (c) => c.charCodeAt(0));
+}
+
+async function _getCredKey() {
+  const stored = (await chrome.storage.local.get('__credKey')).__credKey;
+  if (stored) {
+    return crypto.subtle.importKey('raw', _unb64(stored), 'AES-GCM', true, [
+      'encrypt',
+      'decrypt',
+    ]);
+  }
+  const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, [
+    'encrypt',
+    'decrypt',
+  ]);
+  const raw = await crypto.subtle.exportKey('raw', key);
+  await chrome.storage.local.set({ __credKey: _b64(raw) });
+  return key;
+}
+
+async function _enc(text) {
+  const key = await _getCredKey();
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    new TextEncoder().encode(text || ''),
+  );
+  return { iv: _b64(iv), ct: _b64(ct) };
+}
+
+async function _dec(enc) {
+  if (!enc || !enc.iv || !enc.ct) return '';
+  try {
+    const key = await _getCredKey();
+    const pt = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: _unb64(enc.iv) },
+      key,
+      _unb64(enc.ct),
+    );
+    return new TextDecoder().decode(pt);
+  } catch (e) {
+    log('자격증명 복호화 실패', e);
+    return '';
+  }
+}
+
+async function saveNaverCred(id, pw) {
+  if (!id || !pw) throw new Error('아이디/비밀번호가 필요합니다.');
+  const enc = { id: await _enc(id), pw: await _enc(pw) };
+  await chrome.storage.local.set({ naverCred: enc });
+}
+
+async function getNaverCred() {
+  const enc = (await chrome.storage.local.get('naverCred')).naverCred;
+  if (!enc) return null;
+  const id = await _dec(enc.id);
+  const pw = await _dec(enc.pw);
+  if (!id || !pw) return null;
+  return { id, pw };
+}
 
 // ============================================================
 // Job 정규화

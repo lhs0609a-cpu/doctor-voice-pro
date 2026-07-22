@@ -74,6 +74,11 @@ export function DashboardNav() {
       icon: LayoutDashboard,
     },
     {
+      href: '/dashboard/one-stop',
+      label: '원스톱 자동화',
+      icon: Sparkles,
+    },
+    {
       href: '/dashboard/create',
       label: '글 작성',
       icon: PenTool,

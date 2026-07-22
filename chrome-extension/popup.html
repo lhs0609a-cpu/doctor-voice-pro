@@ -105,6 +105,22 @@
       </div>
     </div>
 
+    <!-- 네이버 자동로그인 계정 -->
+    <div class="checks" style="padding:12px 14px;">
+      <div style="font-size:13px;font-weight:700;margin-bottom:2px;">네이버 자동로그인</div>
+      <div style="font-size:11px;color:#64748b;line-height:1.5;margin-bottom:8px;">
+        계정은 이 브라우저에만 <b>암호화 저장</b>되며 서버로 전송되지 않습니다.
+        보안문자(캡차)가 뜨면 직접 완료해야 합니다.
+      </div>
+      <input id="credId" type="text" placeholder="네이버 아이디" autocomplete="off"
+        style="width:100%;padding:9px 11px;margin-bottom:6px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;" />
+      <input id="credPw" type="password" placeholder="비밀번호" autocomplete="off"
+        style="width:100%;padding:9px 11px;margin-bottom:8px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;" />
+      <button class="btn btn-primary" id="btnSaveCred" style="margin-bottom:6px;">계정 저장</button>
+      <button class="btn btn-ghost" id="btnClearCred" style="margin-bottom:0;">저장된 계정 삭제</button>
+      <div class="hint" id="credStatus" style="margin-top:8px;">저장된 계정: 확인 중…</div>
+    </div>
+
     <!-- 업데이트 카드 -->
     <div class="update" id="updateCard">
       <div class="u-title">🎉 새 버전이 있습니다</div>

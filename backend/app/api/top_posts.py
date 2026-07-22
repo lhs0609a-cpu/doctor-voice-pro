@@ -32,8 +32,36 @@ from app.services.bulk_analysis_service import (
     get_analysis_dashboard,
     get_category_rules
 )
+from app.services import rank_feasibility_service
 
 router = APIRouter()
+
+
+class FeasibilityRequest(BaseModel):
+    """상위노출 가능성 판정 요청"""
+    keywords: List[str]
+    top_n: int = 3
+
+
+@router.post("/feasibility")
+async def assess_feasibility(
+    request: FeasibilityRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    키워드별 상위노출 가능성 판정 (실측 신호 기반).
+
+    - 상위글 실측 지표(글자수/이미지/소제목 등) + 검색광고 경쟁도 결합
+    - difficulty_score(0~100, 낮을수록 유망) + verdict + 목표 프로필 반환
+    - 내부 Semaphore로 네이버 크롤 동시성 제한
+    """
+    try:
+        results = await rank_feasibility_service.assess_keywords(
+            db, request.keywords, top_n=request.top_n
+        )
+        return {"results": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 class AnalyzeRequest(BaseModel):

@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     NAVER_CLIENT_ID: str = ""
     NAVER_CLIENT_SECRET: str = ""
 
+    # Naver Search Ad API (keywordstool - 실검색량/경쟁도)
+    # 네이버 검색광고 > 도구 > API 사용관리에서 발급
+    NAVER_AD_CUSTOMER_ID: str = ""
+    NAVER_AD_API_KEY: str = ""
+    NAVER_AD_SECRET_KEY: str = ""
+    NAVER_AD_BASE_URL: str = "https://api.searchad.naver.com"
+
     # 토스페이먼츠
     TOSS_CLIENT_KEY: str = ""  # 프론트엔드용
     TOSS_SECRET_KEY: str = ""  # 서버용

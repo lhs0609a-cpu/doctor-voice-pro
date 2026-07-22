@@ -323,8 +323,8 @@ class RankingService:
                         recommendations.append({
                             "keyword": local_kw,
                             "category": "specialty",
-                            "estimated_search_volume": 1000 + len(recommendations) * 100,
-                            "estimated_competition": "medium",
+                            "estimated_search_volume": 0,
+                            "estimated_competition": "mid",
                             "relevance_score": 0.85,
                             "source": "category_based",
                             "recommendation_reason": f"{cat} 관련 인기 키워드",
@@ -339,8 +339,8 @@ class RankingService:
                 recommendations.append({
                     "keyword": location_kw,
                     "category": "location",
-                    "estimated_search_volume": 2000,
-                    "estimated_competition": "high",
+                    "estimated_search_volume": 0,
+                    "estimated_competition": "mid",
                     "relevance_score": 0.95,
                     "source": "location_based",
                     "recommendation_reason": "지역 + 진료과 핵심 키워드",
@@ -358,14 +358,34 @@ class RankingService:
                 recommendations.append({
                     "keyword": local_gk,
                     "category": "service",
-                    "estimated_search_volume": 500,
-                    "estimated_competition": "low",
+                    "estimated_search_volume": 0,
+                    "estimated_competition": "mid",
                     "relevance_score": 0.6,
                     "source": "general",
                     "recommendation_reason": "서비스 관련 검색어",
                 })
 
-        return recommendations[:limit]
+        recommendations = recommendations[:limit]
+
+        # 실검색량/경쟁도로 덮어쓰기 (네이버 검색광고 API, 하루 단위 캐시).
+        # 자격증명 미설정이거나 조회 실패 시 기존 값(0)을 유지한다.
+        try:
+            from app.services import search_volume_service
+
+            kw_list = [r["keyword"] for r in recommendations]
+            metrics = await search_volume_service.get_keyword_metrics(db, kw_list)
+            by_kw = {
+                search_volume_service._normalize(m["keyword"]): m for m in metrics
+            }
+            for r in recommendations:
+                m = by_kw.get(search_volume_service._normalize(r["keyword"]))
+                if m and m["total_volume"] > 0:
+                    r["estimated_search_volume"] = m["total_volume"]
+                    r["estimated_competition"] = m["competition"]
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[추천] 실검색량 조회 실패, 추정치 유지: {e}")
+
+        return recommendations
 
     async def get_summary(
         self,

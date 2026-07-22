@@ -422,6 +422,28 @@ export const keywordBatchAPI = {
     const response = await api.put<KeywordTemplateDTO[]>('/api/v1/keyword-batch/templates', items)
     return response.data
   },
+
+  // 실검색량/경쟁도 조회 (네이버 검색광고 API, 하루 단위 캐시)
+  getVolumes: async (keywords: string[]): Promise<KeywordVolumeDTO[]> => {
+    const response = await api.post<KeywordVolumeDTO[]>('/api/v1/keyword-batch/volumes', { keywords })
+    return response.data
+  },
+
+  // 검색광고 API 자격증명 설정 여부
+  getVolumeStatus: async (): Promise<{ configured: boolean }> => {
+    const response = await api.get<{ configured: boolean }>('/api/v1/keyword-batch/volumes/status')
+    return response.data
+  },
+}
+
+export interface KeywordVolumeDTO {
+  keyword: string
+  monthly_pc: number
+  monthly_mobile: number
+  total_volume: number
+  competition: 'low' | 'mid' | 'high'
+  comp_idx_raw?: string
+  est_cpc?: number
 }
 
 // System API
@@ -721,7 +743,30 @@ export interface TopPostDashboard {
   }[]
 }
 
+export interface FeasibilityDTO {
+  keyword: string
+  search_volume: number
+  competition: 'low' | 'mid' | 'high'
+  difficulty_score: number        // 0~100, 낮을수록 유망
+  verdict: '유망' | '보통' | '레드오션'
+  reason: string
+  target: {
+    content_length: number
+    image_count: number
+    heading_count: number
+    keyword_density: number
+  }
+  analyzed_count: number
+  top_summary?: Record<string, unknown> | null
+}
+
 export const topPostsAPI = {
+  // 상위노출 가능성 판정 (실측 신호 기반)
+  getFeasibility: async (keywords: string[], topN = 3): Promise<{ results: FeasibilityDTO[] }> => {
+    const response = await api.post('/api/v1/top-posts/feasibility', { keywords, top_n: topN })
+    return response.data
+  },
+
   // 대시보드 통계
   getDashboard: async (): Promise<TopPostDashboard> => {
     const response = await api.get('/api/v1/top-posts/dashboard')
