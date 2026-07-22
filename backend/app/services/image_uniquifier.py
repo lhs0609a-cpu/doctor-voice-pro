@@ -440,7 +440,11 @@ def uniquify(
 
     ratios = list(REFRAME_RATIOS) if allow_reframe else [None]
 
-    best = None
+    # 성능: 재사용 사진이 탈락하는 건 거의 항상 '거리 게이트'다. SSIM(압축충실도)은
+    # 대개 여유롭게 통과하므로, 거리 게이트를 먼저 보고 통과할 때만 SSIM을 계산한다.
+    # dhash 도 실제 반환하는 결과에만 계산한다(매 시도 계산하던 낭비 제거).
+    # → 통과/실패 판정과 출력 바이트는 종전과 동일, 실패 시도의 비용만 크게 절감.
+    best = None            # (data, ph, q, d_orig, d_sib, attempt, mode_tag, quality)
     best_key = None
     for attempt in range(max_attempts):
         strength = attempt / 2.0  # 0, 0.5, 1.0, ... 강도 상승
@@ -464,20 +468,35 @@ def uniquify(
         ph = phash(framed_dec)
         d_orig = hamming(ph, orig_ph)
         d_sib = min((hamming(ph, s) for s in siblings), default=64)
-        q = ssim(framed, framed_dec)  # 압축 손실만 측정(정렬됨) → 저품질 여부
-
-        passed = d_orig >= min_distance and d_sib >= min_sibling_distance and q >= min_ssim
         mode_tag = style + ("|flip" if flip else "") + (f"|{ratio:.2f}" if ratio else "")
-        result = UniquifyResult(
-            image_bytes=data, phash=to_hex(ph), dhash=to_hex(dhash(framed_dec)),
-            ssim=round(q, 4), min_distance=min(d_orig, d_sib), attempts=attempt + 1,
-            frame_style=mode_tag[:30], passed=passed, quality=quality,
-        )
-        if passed:
-            return result
+
+        dist_ok = d_orig >= min_distance and d_sib >= min_sibling_distance
+        if dist_ok:
+            # 거리 통과 시에만 SSIM 계산(압축 손실만 측정 → 저품질 여부)
+            q = ssim(framed, framed_dec)
+            if q >= min_ssim:
+                return UniquifyResult(
+                    image_bytes=data, phash=to_hex(ph), dhash=to_hex(dhash(framed_dec)),
+                    ssim=round(q, 4), min_distance=min(d_orig, d_sib), attempts=attempt + 1,
+                    frame_style=mode_tag[:30], passed=True, quality=quality,
+                )
+        else:
+            q = 0.0  # 거리 게이트 이미 탈락 → SSIM 생략(판정에 불필요)
+
         # 최선 후보: 원본거리 우선(엄격 임계), 그다음 형제거리, 품질
         key = (min(d_orig, min_distance), min(d_sib, min_sibling_distance), q)
         if best is None or key > best_key:
-            best, best_key = result, key
+            best = (data, ph, q, d_orig, d_sib, attempt, mode_tag, quality)
+            best_key = key
 
-    return best  # 게이트 미통과 시 최선 후보 (passed=False)
+    # 게이트 미통과 → 최선 후보 반환(dhash는 여기서 한 번만 계산)
+    if best is None:
+        return None
+    data, ph, q, d_orig, d_sib, attempt, mode_tag, quality = best
+    best_dec = Image.open(io.BytesIO(data)).convert("RGB")
+    best_dec.load()
+    return UniquifyResult(
+        image_bytes=data, phash=to_hex(ph), dhash=to_hex(dhash(best_dec)),
+        ssim=round(q, 4), min_distance=min(d_orig, d_sib), attempts=attempt + 1,
+        frame_style=mode_tag[:30], passed=False, quality=quality,
+    )

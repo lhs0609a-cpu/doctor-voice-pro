@@ -655,9 +655,11 @@ export const mediaPoolAPI = {
   },
 
   // 자동 배정 + 유니크화 (collectionId 지정 시 그 목록에서만)
+  // 서버가 사진을 1장씩 순차 유니크화(최대 16회 재시도/장)하므로 장수가 많으면 오래 걸린다.
+  // 업로드(300s)와 동일하게 넉넉히 잡아 "서버는 끝냈는데 client가 먼저 끊는" 실패를 막는다.
   assign: async (params: { count: number; post_id?: string; max_width?: number; collection_id?: string }): Promise<AssignResponse> => {
     const response = await api.post<AssignResponse>('/api/v1/media/assign', params, {
-      timeout: 120000,
+      timeout: 300000,
     })
     return response.data
   },
