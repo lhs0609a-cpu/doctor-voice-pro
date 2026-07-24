@@ -3,9 +3,21 @@
 
 원리:
 - 네이버 중복 판정은 ① 파일 해시 ② EXIF/메타 지문 ③ 지각 해시(pHash/dHash) 3층.
-- pHash 는 "구조 변형(액자/크롭/미세회전/비율)"에 크게 흔들리고 픽셀 노이즈엔 강하다.
-  → 화질을 깎는 강한 노이즈 대신 프레임/크롭 위주로 해시 거리를 벌리고,
-    톤 지터/미세 노이즈는 보조로만 사용 → 눈엔 멀쩡(고품질), 해시는 전혀 다름.
+- pHash 는 "화면에 무엇이 어떻게 담겼나(재구도)"에만 크게 흔들린다. 32x32 로 줄여
+  저주파 DCT 만 보기 때문에 밝기·대비·감마·종횡비·노이즈는 거의 통과시킨다.
+  실측(64bit 해밍 거리): 감마 0.75 → 0 / 대비 1.25 → 0 / 스트레치 15% → 0 /
+  조명 그라디언트 20% → 평균 3 / 비네팅 30% → 3. 반면 비대칭 크롭 8% → 평균 12,
+  14% → 평균 21. 즉 거리를 벌어주는 건 사실상 재구도 하나뿐이다.
+
+여백을 쓰지 않는 이유(중요):
+- 예전에는 넓은 액자/매트/비율 패딩으로 사진을 '축소'해 재구도 효과를 냈다.
+  거리는 잘 벌렸지만 사진이 캔버스의 33~70%까지 쪼그라들어, 블로그에서
+  "회색 여백만 넓고 그림이 안 보인다"는 결과가 됐다.
+- 지금은 방향을 뒤집어 가장자리를 조금 덜어내는 '확대'로 같은 거리를 얻는다
+  (_geom_warp). 여백이 0이라 사진이 화면을 꽉 채우고 주제는 오히려 커진다.
+  프레임은 한 변 2.5% 이하의 얇은 테두리만 — 캔버스 증가는 면적 기준 1.15배 이하.
+- 톤 지터/조명/노이즈는 해시엔 기여가 없으므로 '눈에 안 보이는' 수준으로만 유지한다
+  (파일 해시·픽셀 지문을 흩는 용도).
 
 보장:
 - 생성물 pHash 가 원본 + 과거 모든 변형과 Hamming 거리 ≥ MIN_DISTANCE 이고,
@@ -33,10 +45,21 @@ MAX_ATTEMPTS = 16          # 구조 모드가 늘어난 만큼 탐색 폭도 확
 MAX_WIDTH = 1280           # 블로그 표시 최대폭 (하한 1080 유지)
 JPEG_Q_RANGE = (88, 92)
 
-FRAME_STYLES = ("white_margin", "rounded_shadow", "film", "mat_canvas")
+# 얇은 테두리만 남긴 프레임 세트. none 은 캔버스가 전혀 안 커진다.
+# vignette 는 등록만 해두고 기본에선 뺐다 — 해시 거리에 기여가 거의 없으면서
+# 가장자리 톤만 눈에 띄게 바꿔서, '변화는 줄이고 사진에 집중' 방향과 어긋난다.
+FRAME_STYLES = ("none", "hairline", "white_margin", "soft_shadow")
 
-# 구조 모드용 종횡비(재크롭) 후보 — None 은 원본 비율 유지
-REFRAME_RATIOS = (None, 1.0, 4 / 5, 5 / 4, 3 / 4, 4 / 3)
+# 비율 변형 계수 — 원본 종횡비 × 계수 를 '스트레치'로 맞춘다(패딩·크롭 없음).
+# ±6% 는 나란히 놓고 비교해야 겨우 보이는 수준이지만 pHash 는 확실히 움직인다.
+RESHAPE_FACTORS = (None, 0.94, 0.97, 1.03, 1.06)
+
+# 재구도(확대) 예산 — 가로/세로에서 덜어낼 비율. 시도마다 조금씩 키워
+# '게이트를 넘기는 가장 약한 변형'이 채택되게 한다.
+TRIM_START = 0.09
+TRIM_STEP = 0.02
+TRIM_MAX = 0.24
+TRIM_MAX_CROP = 0.32     # allow_crop=True 일 때 상한
 
 _EXIF_MAKES = [
     ("Samsung", "SM-S928N"), ("Samsung", "SM-G998N"), ("Apple", "iPhone 15 Pro"),
@@ -144,142 +167,132 @@ def ssim(img_a: Image.Image, img_b: Image.Image, size: int = 512) -> float:
 
 
 # ============================================================
-# 프레임(액자)
+# 프레임 — 전부 "얇게". 사진이 캔버스를 꽉 채우는 게 우선이다.
+# (넓은 매트/액자는 해시엔 좋지만 그림을 안 보이게 만들어서 폐기했다.
+#  잃은 해시 이동량은 _geom_warp 의 재구도가 그대로 대신 낸다.)
 # ============================================================
-def _frame_white_margin(img: Image.Image, rng: random.Random, strength: float) -> Image.Image:
+def _frame_none(img: Image.Image, rng: random.Random, strength: float) -> Image.Image:
+    """테두리 없음 — 사진 그대로. 기하/조명만으로 게이트를 넘길 때 쓴다."""
+    return img
+
+
+def _frame_vignette(img: Image.Image, rng: random.Random, strength: float) -> Image.Image:
+    """가장자리만 살짝 어둡게. 기본 세트에는 없고 frame_styles 로 지정할 때만 쓴다."""
     w, h = img.size
-    m = int(min(w, h) * rng.uniform(0.02, 0.05) * (1 + 0.5 * strength))
-    tone = rng.randint(248, 255)
-    color = (tone, tone, tone)
-    out = Image.new("RGB", (w + 2 * m, h + 2 * m), color)
-    out.paste(img, (m, m))
-    return out
-
-
-def _frame_rounded_shadow(img: Image.Image, rng: random.Random, strength: float) -> Image.Image:
-    w, h = img.size
-    pad = int(min(w, h) * rng.uniform(0.04, 0.07) * (1 + 0.4 * strength))
-    radius = int(min(w, h) * rng.uniform(0.03, 0.06))
-    bg_tone = rng.randint(245, 255)
-    canvas = Image.new("RGB", (w + 2 * pad, h + 2 * pad), (bg_tone, bg_tone, bg_tone))
-    # 미세 그림자
-    shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    sd = ImageDraw.Draw(shadow)
-    off = max(2, pad // 3)
-    sd.rounded_rectangle(
-        [pad + off, pad + off, pad + w + off, pad + h + off],
-        radius=radius, fill=(0, 0, 0, rng.randint(40, 70)),
-    )
-    shadow = shadow.filter(ImageFilter.GaussianBlur(max(3, pad // 2)))
-    canvas.paste(shadow, (0, 0), shadow)
-    # 라운드 마스크로 이미지 합성
-    mask = Image.new("L", (w, h), 0)
-    ImageDraw.Draw(mask).rounded_rectangle([0, 0, w, h], radius=radius, fill=255)
-    canvas.paste(img, (pad, pad), mask)
-    return canvas
-
-
-def _frame_film(img: Image.Image, rng: random.Random, strength: float) -> Image.Image:
-    w, h = img.size
-    # 증감(비네팅) + 얇은 검은 테두리
     arr = np.asarray(img.convert("RGB"), dtype=np.float32)
     yy, xx = np.mgrid[0:h, 0:w]
     cx, cy = w / 2, h / 2
     r = np.sqrt(((xx - cx) / cx) ** 2 + ((yy - cy) / cy) ** 2)
-    vig = 1.0 - np.clip(r - 0.6, 0, 1) * rng.uniform(0.12, 0.22)
-    arr = np.clip(arr * vig[..., None], 0, 255).astype(np.uint8)
-    body = Image.fromarray(arr)
-    b = int(min(w, h) * rng.uniform(0.015, 0.03) * (1 + 0.4 * strength))
-    tone = rng.randint(12, 30)
+    depth = min(0.16, rng.uniform(0.07, 0.11) * (1 + 0.3 * strength))
+    vig = 1.0 - np.clip(r - 0.55, 0, 1) * depth
+    return Image.fromarray(np.clip(arr * vig[..., None], 0, 255).astype(np.uint8))
+
+
+def _frame_hairline(img: Image.Image, rng: random.Random, strength: float) -> Image.Image:
+    """머리카락 굵기(한 변 0.4~0.9%) 테두리. 여백이라기보다 마감선에 가깝다."""
+    w, h = img.size
+    b = max(1, int(min(w, h) * rng.uniform(0.004, 0.009) * (1 + 0.2 * strength)))
+    tone = rng.randint(238, 255)
     out = Image.new("RGB", (w + 2 * b, h + 2 * b), (tone, tone, tone))
-    out.paste(body, (b, b))
+    out.paste(img, (b, b))
     return out
 
 
-def _frame_mat_canvas(img: Image.Image, rng: random.Random, strength: float) -> Image.Image:
-    """사진을 더 큰 매트(배경 캔버스) 위에 얹어 레이아웃이 pHash를 지배하게 한다.
-    배경 톤/크기/위치/라운드를 매번 달리해 원본과 완전히 다른 해시 영역으로 이동."""
+def _frame_white_margin(img: Image.Image, rng: random.Random, strength: float) -> Image.Image:
+    """흰 여백 — 종전 2~5% 에서 1~2% 로. 폴라로이드가 아니라 '살짝 뗀 여백' 수준."""
     w, h = img.size
-    # 이미지가 캔버스에서 차지하는 비율(작을수록 여백↑, 해시 이동↑)
-    occupy = rng.uniform(0.78, 0.92) - 0.04 * strength
-    occupy = max(0.68, occupy)
-    cw, ch = int(w / occupy), int(h / occupy)
-    # 배경: 대체로 밝은 회색, 가끔 미세 파스텔
-    if rng.random() < 0.4:
-        color = (rng.randint(236, 255), rng.randint(236, 255), rng.randint(236, 255))
-    else:
-        t = rng.randint(240, 255)
-        color = (t, t, t)
-    canvas = Image.new("RGB", (cw, ch), color)
-    ox = int((cw - w) * rng.uniform(0.35, 0.65))
-    oy = int((ch - h) * rng.uniform(0.28, 0.60))
-    radius = int(min(w, h) * rng.uniform(0.0, 0.045))
+    m = int(min(w, h) * min(0.022, rng.uniform(0.010, 0.017) * (1 + 0.2 * strength)))
+    tone = rng.randint(248, 255)
+    out = Image.new("RGB", (w + 2 * m, h + 2 * m), (tone, tone, tone))
+    out.paste(img, (m, m))
+    return out
+
+
+def _frame_soft_shadow(img: Image.Image, rng: random.Random, strength: float) -> Image.Image:
+    """얇은 여백 + 아주 작은 라운드 + 옅은 그림자(카드 느낌).
+    라운드 반경은 여백보다 작게 잡아 그림 모서리를 파먹지 않게 한다."""
+    w, h = img.size
+    pad = int(min(w, h) * min(0.025, rng.uniform(0.013, 0.020) * (1 + 0.2 * strength)))
+    pad = max(3, pad)
+    radius = int(min(pad * 1.2, min(w, h) * 0.012))
+    bg_tone = rng.randint(246, 255)
+    canvas = Image.new("RGB", (w + 2 * pad, h + 2 * pad), (bg_tone, bg_tone, bg_tone))
+    shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    off = max(1, pad // 3)
+    ImageDraw.Draw(shadow).rounded_rectangle(
+        [pad + off, pad + off, pad + w + off, pad + h + off],
+        radius=max(radius, 1), fill=(0, 0, 0, rng.randint(35, 60)),
+    )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(max(2, pad // 2)))
+    canvas.paste(shadow, (0, 0), shadow)
     if radius > 2:
         mask = Image.new("L", (w, h), 0)
         ImageDraw.Draw(mask).rounded_rectangle([0, 0, w, h], radius=radius, fill=255)
-        canvas.paste(img, (ox, oy), mask)
+        canvas.paste(img, (pad, pad), mask)
     else:
-        canvas.paste(img, (ox, oy))
+        canvas.paste(img, (pad, pad))
     return canvas
 
 
 _FRAME_FUNCS = {
+    "none": _frame_none,
+    "vignette": _frame_vignette,
+    "hairline": _frame_hairline,
     "white_margin": _frame_white_margin,
-    "rounded_shadow": _frame_rounded_shadow,
-    "film": _frame_film,
-    "mat_canvas": _frame_mat_canvas,
+    "soft_shadow": _frame_soft_shadow,
 }
 
 
-def _edge_fill(img: Image.Image) -> tuple:
-    """가장자리 픽셀의 중앙값. 패딩 색으로 쓰면 이어붙인 티가 덜 난다."""
-    a = np.asarray(img.convert("RGB"))
-    if a.shape[0] < 2 or a.shape[1] < 2:
-        return (255, 255, 255)
-    edges = np.concatenate([a[0, :, :], a[-1, :, :], a[:, 0, :], a[:, -1, :]], axis=0)
-    return tuple(int(v) for v in np.median(edges, axis=0))
+def _geom_warp(
+    img: Image.Image, rng: random.Random, strength: float,
+    reshape: float | None, trim: float,
+) -> Image.Image:
+    """재구도(살짝 확대+이동) + 미세 회전 + 미세 원근 + 비율 스트레치를 QUAD 한 번으로.
 
+    왜 재구도인가(실측):
+      pHash 는 32x32 로 줄여 저주파 DCT 만 보기 때문에 밝기·대비·감마·종횡비를
+      아무리 흔들어도 꿈쩍하지 않는다 — 감마 0.75 / 대비 1.25 / 스트레치 15% 모두
+      해밍 거리 0~3. 거리를 실제로 벌어주는 건 "화면에 어디를 얼마나 담느냐"뿐이다
+      (비대칭 크롭 14% → 평균 20, 8% → 평균 12).
+      종전엔 넓은 액자·매트로 사진을 캔버스의 33~70%까지 '축소'해서 같은 효과를 냈는데,
+      그게 블로그에서 회색 여백만 넓어 보이던 원인이었다. 여기선 반대로 가장자리를
+      조금 덜어내 '확대'한다 — 거리는 같은 원리로 벌면서, 여백은 0이고 주제는 커진다.
 
-def _repad_ratio(img: Image.Image, ratio: float, rng: random.Random, fill: tuple) -> Image.Image:
-    """target 종횡비를 '패딩'으로 맞춘다(재크롭 대신).
-
-    사진 안에 글씨/제품 같은 내용이 있으면 잘려나가면 안 되므로 자르지 않고 여백을 덧댄다.
-    레이아웃이 바뀌어 해시 영역은 그대로 이동하므로 유니크화 효과는 유지된다.
+    trim: 가로/세로에서 덜어낼 총 비율. 확대·이동·회전·원근이 전부 이 예산 안에서
+          일어나므로 잘려나가는 양이 명확히 상한을 갖는다(기본 시작 9% → 최대 24%).
     """
-    w, h = img.size
-    cur = w / h
-    if abs(cur - ratio) < 1e-3:
-        return img
-    if ratio > cur:
-        # 목표가 더 넓음 → 좌우에 여백
-        nw = max(w, int(round(h * ratio)))
-        left = int((nw - w) * rng.uniform(0.35, 0.65))
-        canvas = Image.new("RGB", (nw, h), fill)
-        canvas.paste(img, (left, 0))
-        return canvas
-    # 목표가 더 좁음 → 상하에 여백
-    nh = max(h, int(round(w / ratio)))
-    top = int((nh - h) * rng.uniform(0.35, 0.65))
-    canvas = Image.new("RGB", (w, nh), fill)
-    canvas.paste(img, (0, top))
-    return canvas
+    W, H = img.size
+    # 1) 미세 회전 각도 — 짧은 변 기준으로 예산의 일부만 쓴다
+    a_max = min(0.018, trim * 0.35 * min(W, H) / max(W, H))
+    a = min(1.0, rng.uniform(0.35, 0.8) + 0.12 * strength) * a_max * rng.choice([-1, 1])
+    ca, sa = abs(math.cos(a)), abs(math.sin(a))
 
+    # 2) 샘플링 사각형 크기 = (1 - trim). 회전분은 아래 여유(free) 계산에서 자동 반영된다.
+    s = 1.0 - trim
+    hw, hh = s * W / 2, s * H / 2
+    # 돌아간 사각형이 원본 밖으로 나가지 않는 범위에서 중심을 흔든다 → '비대칭 크롭'
+    free_x = max(0.0, W / 2 - (hw * ca + hh * sa))
+    free_y = max(0.0, H / 2 - (hw * sa + hh * ca))
+    cx = W / 2 + rng.uniform(-1, 1) * free_x * 0.9
+    cy = H / 2 + rng.uniform(-1, 1) * free_y * 0.9
 
-def _recrop_ratio(img: Image.Image, ratio: float, rng: random.Random) -> Image.Image:
-    """중앙 근처에서 target 종횡비로 재크롭(구조 모드). 위치를 약간 흔들어 다양화."""
-    w, h = img.size
-    cur = w / h
-    if abs(cur - ratio) < 1e-3:
-        return img
-    if ratio >= cur:
-        # 목표가 더 넓음 → 높이를 자름
-        nh = max(1, min(h, int(w / ratio)))
-        top = int((h - nh) * rng.uniform(0.35, 0.65))
-        return img.crop((0, top, w, top + nh))
-    # 목표가 더 좁음 → 폭을 자름
-    nw = max(1, min(w, int(h * ratio)))
-    left = int((w - nw) * rng.uniform(0.35, 0.65))
-    return img.crop((left, 0, left + nw, h))
+    # 3) 원근: 네 모서리를 서로 다른 양만큼 안쪽으로 당긴다(밖으로는 안 나가 여백이 없다)
+    pj = trim * 0.12
+    ca_s, sa_s = math.cos(a), math.sin(a)
+    pts: list[float] = []
+    for dx, dy in ((-hw, -hh), (-hw, hh), (hw, hh), (hw, -hh)):  # NW, SW, SE, NE 순서
+        x = cx + dx * ca_s - dy * sa_s + math.copysign(W * pj * rng.uniform(0.15, 1.0), -dx)
+        y = cy + dx * sa_s + dy * ca_s + math.copysign(H * pj * rng.uniform(0.15, 1.0), -dy)
+        pts += [x, y]
+
+    # 4) 출력 비율 — pHash 는 정사각 리사이즈라 여기에 둔감하지만, 파일 지문/다른
+    #    해시 계열을 흩는 데는 도움이 된다(±6%, 여백은 안 생김).
+    out_w = W
+    out_h = max(1, int(round(H / reshape))) if reshape else H
+    return img.transform(
+        (out_w, out_h), Image.Transform.QUAD, data=tuple(pts),
+        resample=Image.Resampling.BICUBIC,
+    )
 
 
 # ============================================================
@@ -303,7 +316,7 @@ class UniquifyResult:
 # ============================================================
 def _transform_body(
     src: Image.Image, rng: random.Random, strength: float, max_width: int,
-    flip: bool = False, ratio: float | None = None, allow_crop: bool = False,
+    flip: bool = False, ratio: float | None = None, trim: float = TRIM_START,
 ) -> Image.Image:
     img = ImageOps.exif_transpose(src).convert("RGB")
 
@@ -311,40 +324,10 @@ def _transform_body(
     if flip:
         img = ImageOps.mirror(img)
 
-    fill = _edge_fill(img)
+    # 1) 재구도 + 회전 + 원근 + 비율을 한 번에. 여백은 만들지 않는다.
+    img = _geom_warp(img, rng, strength, ratio, trim)
 
-    # 0b) 구조 모드: 종횡비 조정 — 레이아웃을 바꿔 해시 영역 이동.
-    #     allow_crop=False(기본)면 자르지 않고 여백을 덧대 내용을 100% 보존한다.
-    if ratio:
-        img = _recrop_ratio(img, ratio, rng) if allow_crop else _repad_ratio(img, ratio, rng, fill)
-
-    # 1) 미세 회전. 크롭 금지면 expand+여백으로 모서리를 살린다(잘라내지 않음).
-    ang = rng.uniform(0.4, 1.2) * (1 + 0.5 * strength) * rng.choice([-1, 1])
-    if allow_crop:
-        img = img.rotate(ang, resample=Image.Resampling.BICUBIC, expand=False)
-        w, h = img.size
-        cut = int(min(w, h) * (0.02 + 0.01 * strength))
-        img = img.crop((cut, cut, w - cut, h - cut))
-    else:
-        img = img.rotate(ang, resample=Image.Resampling.BICUBIC, expand=True, fillcolor=fill)
-
-    # 2) 가장자리 흔들기. 크롭 금지면 '자르기' 대신 '비대칭 여백'으로 같은 효과를 낸다.
-    w, h = img.size
-    if allow_crop:
-        fx1 = rng.uniform(0.01, 0.04) + 0.01 * strength
-        fx2 = rng.uniform(0.01, 0.04) + 0.01 * strength
-        fy1 = rng.uniform(0.01, 0.04) + 0.01 * strength
-        fy2 = rng.uniform(0.01, 0.04) + 0.01 * strength
-        img = img.crop((int(w * fx1), int(h * fy1), int(w * (1 - fx2)), int(h * (1 - fy2))))
-    else:
-        # 프레임이 모서리를 최대 6%(=_frame_* 의 radius 상한) 깎으므로, 그 이상으로 여백을 확보해
-        # 둥근 모서리가 사진 내용까지 파고들지 않게 한다. p >= 0.06*(M+2p) → p >= 0.069*M.
-        m = min(w, h)
-        floor = int(m * 0.07)
-        pad = lambda base: max(floor, int(base * (rng.uniform(0.01, 0.04) + 0.01 * strength)))
-        img = ImageOps.expand(img, border=(pad(w), pad(h), pad(w), pad(h)), fill=fill)
-
-    # 3) 리스케일 (96~104%) → 최대폭 제한 (원본이 작으면 업스케일 안 함)
+    # 2) 리스케일 (96~104%) → 최대폭 제한 (원본이 작으면 업스케일 안 함)
     scale = rng.uniform(0.96, 1.04)
     w, h = img.size
     img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.LANCZOS)
@@ -352,7 +335,7 @@ def _transform_body(
         r = max_width / img.width
         img = img.resize((max_width, max(1, int(img.height * r))), Image.Resampling.LANCZOS)
 
-    # 4) 톤 지터 (밝기/대비/채도/감마/색상)
+    # 3) 톤 지터 (밝기/대비/채도/감마/색상)
     img = ImageEnhance.Brightness(img).enhance(rng.uniform(0.97, 1.03))
     img = ImageEnhance.Contrast(img).enhance(rng.uniform(0.97, 1.03))
     img = ImageEnhance.Color(img).enhance(rng.uniform(0.96, 1.04))
@@ -364,8 +347,9 @@ def _transform_body(
     H, W = arr.shape[:2]
     gy, gx = np.mgrid[0:H, 0:W].astype(np.float32)
 
-    # 5) 저주파 조명 그라디언트 — pHash(저주파 DCT)를 흔드는 핵심 지렛대.
-    #    부드러운 사인 2개 합성(±수%)이라 시각적으론 미세, 해시엔 큰 변화.
+    # 4) 저주파 조명 그라디언트 — 파일/픽셀 지문을 흩는 보조 수단.
+    #    pHash 거리에는 거의 기여하지 않는다(실측: 진폭 20% 를 줘도 평균 3비트).
+    #    거리는 재구도가 벌어주므로 여기는 '눈에 안 보이는' 범위로 최소화한다.
     plane = np.zeros((H, W), dtype=np.float32)
     for _ in range(3):
         fx = rng.uniform(-1.6, 1.6)
@@ -373,10 +357,10 @@ def _transform_body(
         phs = rng.uniform(0, 2 * math.pi)
         plane += np.sin(2 * math.pi * (fx * gx / W + fy * gy / H) + phs)
     plane /= 3.0  # ~[-1, 1]
-    amp = min(0.08, rng.uniform(0.025, 0.045) * (1 + 0.5 * strength))
+    amp = min(0.05, rng.uniform(0.020, 0.035) * (1 + 0.3 * strength))
     arr = arr * (1.0 + amp * plane)[..., None]
 
-    # 6) 미세 휘도 노이즈 (비가시)
+    # 5) 미세 휘도 노이즈 (비가시)
     sigma = 1.5 + 0.8 * strength
     noise = np.random.default_rng(rng.randint(0, 2**31)).normal(0, sigma, (H, W))
     arr = np.clip(arr + noise[..., None], 0, 255).astype(np.uint8)
@@ -413,8 +397,8 @@ def uniquify(
     max_width: int = MAX_WIDTH,
     frame_styles: Iterable[str] | None = None,
     allow_flip: bool = False,  # 좌우 반전 금지(글씨/제품 이미지가 뒤집혀 보임)
-    allow_reframe: bool = True,
-    allow_crop: bool = False,  # 크롭 금지(사진 속 글씨/내용이 잘림). 대신 패딩으로 변형한다
+    allow_reframe: bool = True,  # 종횡비 ±6% 스트레치 허용(여백 안 생김)
+    allow_crop: bool = False,  # True 면 가장자리 다듬기 한도를 4%→7% 로 넓힌다
     seed: int | None = None,
 ) -> UniquifyResult:
     """원본 바이트 → 유니크화된 JPEG + 검증 결과.
@@ -438,7 +422,7 @@ def uniquify(
     styles = list(frame_styles) if frame_styles else list(FRAME_STYLES)
     rng = random.Random(seed)
 
-    ratios = list(REFRAME_RATIOS) if allow_reframe else [None]
+    ratios = list(RESHAPE_FACTORS) if allow_reframe else [None]
 
     # 성능: 재사용 사진이 탈락하는 건 거의 항상 '거리 게이트'다. SSIM(압축충실도)은
     # 대개 여유롭게 통과하므로, 거리 게이트를 먼저 보고 통과할 때만 SSIM을 계산한다.
@@ -453,7 +437,10 @@ def uniquify(
         if allow_flip and attempt >= max_attempts // 2:
             flip = True  # 후반부: 반전 강제 → 확실히 다른 해시 클러스터로
         ratio = rng.choice(ratios)
-        body = _transform_body(src, rng, strength, max_width, flip=flip, ratio=ratio, allow_crop=allow_crop)
+        # 재구도 예산은 시도마다 조금씩만 키운다 → 통과하는 순간 반환되므로
+        # 실제로 채택되는 건 '거리를 넘긴 가장 약한 확대'다.
+        trim = min(TRIM_MAX_CROP if allow_crop else TRIM_MAX, TRIM_START + TRIM_STEP * attempt)
+        body = _transform_body(src, rng, strength, max_width, flip=flip, ratio=ratio, trim=trim)
         style = rng.choice(styles)
         framed = _FRAME_FUNCS[style](body, rng, strength)
 
