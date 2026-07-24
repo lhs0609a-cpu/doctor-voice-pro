@@ -973,11 +973,17 @@ async function typeBlocksInterleaved(tabId, job) {
   const blocks = job.blocks || [];
   let first = true;
   let cleared = false;
+  let prevType = null;
   for (const b of blocks) {
     if (b.type === 'text' && b.content) {
-      if (!first) { await pressEnter(tabId); await sleep(40); }
+      if (!first) {
+        // 글 다음에 바로 글이면 Enter 두 번 = 빈 줄. 본문은 '두 문장마다 빈 줄'로
+        // 정리돼 오는데, 여기서 한 번만 치면 그 빈 줄이 문단 경계에서만 사라진다.
+        await pressEnter(tabId); await sleep(40);
+        if (prevType === 'text') { await pressEnter(tabId); await sleep(40); }
+      }
       await typeBody(tabId, b.content, job.emphasize);
-      first = false; cleared = true;
+      first = false; cleared = true; prevType = 'text';
     } else if (b.type === 'image' && b.image) {
       if (!cleared) { await insertText(tabId, ''); cleared = true; } // ctrlA 선택분 제거
       if (!first) { await pressEnter(tabId); await sleep(40); }
@@ -991,7 +997,7 @@ async function typeBlocksInterleaved(tabId, job) {
       // 다음 문단 타이핑을 위해 CDP 재부착 + 본문 포커스 복귀
       await attachDebugger(tabId);
       await sleep(200);
-      first = false;
+      first = false; prevType = 'image';
     }
   }
 }

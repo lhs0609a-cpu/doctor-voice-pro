@@ -112,7 +112,12 @@ export const DEFAULT_TEMPLATE: PromptTemplate = {
 - 본문은 1500자 이상, 소제목을 3~5개 사용하세요.
 - 키워드를 본문에 자연스럽게 5~8회 포함하세요.
 - 실제 경험담처럼 구체적으로 쓰고, 광고 문구는 넣지 마세요.
-- 마크다운 기호(#, **)는 쓰지 말고 일반 텍스트로만 작성하세요.`,
+- 마크다운 기호(#, **)는 쓰지 말고 일반 텍스트로만 작성하세요.
+
+모바일 가독성 (독자의 대부분이 휴대폰으로 봅니다):
+- 한 줄에 한 문장만 쓰고, 두 문장마다 빈 줄을 넣으세요.
+- 한 문장은 60자를 넘기지 마세요. 길어지면 두 문장으로 나누세요.
+- 여러 문장을 한 문단에 몰아 쓰지 마세요.`,
 };
 
 export function loadTemplates(): PromptTemplate[] {
@@ -358,6 +363,77 @@ export function appendSavedPosts(
   return fresh.length;
 }
 
+// ============================================================
+// 모바일 가독성 정리
+// ============================================================
+// 네이버 블로그 방문자의 대부분은 모바일이다. AI 가 뱉는 통짜 문단(한 문단에
+// 대여섯 문장)은 모바일에서 10줄이 넘는 글덩어리가 되어 그냥 안 읽힌다.
+// 규칙: 한 줄 = 한 문장, 두 문장마다 빈 줄. 긴 문장은 쉼표에서 한 번 더 끊는다.
+const SENTENCES_PER_GROUP = 2;
+const MOBILE_LINE_MAX = 60; // 모바일 한 화면 폭 ≈ 25~30자 → 두 줄 정도가 상한
+
+/** 소제목·목록처럼 '문장이 아닌' 줄은 손대지 않고 그대로 한 줄로 둔다.
+ *  길이만으로 판단하면 안 된다 — 짧은 문장까지 소제목 취급해 한 문장씩 흩어지고,
+ *  이미 정리된 글을 한 번 더 돌렸을 때 결과가 달라진다(멱등성 깨짐). */
+function isStructuralLine(line: string): boolean {
+  if (/^([-•·*]|\d+[.)]|[①-⑳])\s/.test(line)) return true; // 목록·번호 항목
+  if (/[.,!?…]$/.test(line)) return false; // 문장/절 부호로 끝나면 본문이다(쉼표=이미 나눈 줄)
+  return line.length <= 45;
+}
+
+function splitSentences(line: string): string[] {
+  // 문장부호 '뒤에 공백이 올 때'만 끊는다 → '2.5억' 같은 소수점은 안전하다.
+  return line
+    .split(/(?<=[.!?…])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** 너무 긴 문장은 '가운데 근처(30~70%)' 쉼표에서 나눈다.
+ *  아무 쉼표에서나 끊으면 짧은 토막 한 줄 + 여전히 긴 한 줄이 나와 오히려 나빠진다.
+ *  마땅한 자리가 없으면 문장을 그대로 둔다(원문 훼손 금지). */
+function splitLongSentence(s: string): string[] {
+  const n = s.length;
+  if (n <= MOBILE_LINE_MAX) return [s];
+  const mid = n / 2;
+  let cut = -1;
+  for (let i = 0; i < n; i++) {
+    if (s[i] !== ',') continue;
+    if (i < n * 0.3 || i > n * 0.7) continue;
+    if (cut < 0 || Math.abs(i - mid) < Math.abs(cut - mid)) cut = i;
+  }
+  if (cut < 0) return [s];
+  return [s.slice(0, cut + 1).trim(), ...splitLongSentence(s.slice(cut + 1).trim())];
+}
+
+/** 본문을 모바일에서 읽히는 형태로 재배치한다. 원문 단어는 하나도 바꾸지 않는다. */
+export function reflowForMobile(body: string): string {
+  const src = (body || '').replace(/\r\n/g, '\n').trim();
+  if (!src) return '';
+  const out: string[] = []; // 이 단위들 사이에 빈 줄이 들어간다
+  let buf: string[] = []; // 아직 묶이지 않은 문장
+
+  const flush = () => {
+    while (buf.length) out.push(buf.splice(0, SENTENCES_PER_GROUP).join('\n'));
+  };
+
+  for (const para of src.split(/\n{2,}/)) {
+    for (const rawLine of para.split('\n')) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      if (isStructuralLine(line)) {
+        flush(); // 소제목 앞에서 묶음을 끊는다
+        out.push(line);
+        continue;
+      }
+      for (const s of splitSentences(line)) buf.push(...splitLongSentence(s));
+    }
+    flush(); // 원문 단락 경계는 그대로 살린다
+  }
+  flush();
+  return out.join('\n\n');
+}
+
 /** 첫 줄을 제목, 나머지를 본문으로 나눈다. 저장된 글 형식과 맞춘다. */
 export function splitTitleBody(text: string): { title: string; content: string } {
   const lines = (text || '').split('\n');
@@ -367,5 +443,5 @@ export function splitTitleBody(text: string): { title: string; content: string }
   // 혹시 마크다운 제목이나 "제목:" 접두가 붙어 오면 벗겨낸다
   const title = rawTitle.replace(/^#+\s*/, '').replace(/^제목\s*[:：]\s*/, '').trim();
   const content = lines.slice(i + 1).join('\n').trim();
-  return { title, content: content || rawTitle };
+  return { title, content: reflowForMobile(content || rawTitle) };
 }

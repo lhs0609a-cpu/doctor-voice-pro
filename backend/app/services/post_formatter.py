@@ -5,6 +5,7 @@
 - 첫 줄(맨 위 문장) = 제목, 나머지 = 본문.
 - 본문에서 '반복되는 단어'를 키워드로 추출(빈도 기반, 한글 조사 제거 + 불용어 제외).
 - 본문을 단락으로 나누되 **단락 1개당 키워드 1개**가 들어가도록 배치.
+- 단락 안은 '한 줄 한 문장, 두 문장마다 빈 줄'로 펼친다(모바일 가독성).
 - 단락 사이에 이미지 슬롯을 끼워 글-이미지-글-이미지 인터리브.
 - 키워드는 본문 전반에 고르게 분산 + 해시태그로도 제공.
 
@@ -88,6 +89,46 @@ def _sentences(body: str) -> List[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+# 모바일 가독성: 한 줄 = 한 문장, 두 문장마다 빈 줄.
+# (독자 대부분이 휴대폰이라, 문장을 스페이스로 이어 붙인 통짜 단락은 그냥 안 읽힌다)
+_SENTENCES_PER_GROUP = 2
+_MOBILE_LINE_MAX = 60
+
+
+def _split_long(s: str) -> List[str]:
+    """긴 문장은 '가운데 근처' 쉼표에서 나눈다.
+
+    가운데(30~70% 구간)로 제한하는 게 핵심이다. 아무 쉼표에서나 끊으면
+    '하지만 실제 현장에서 소방 시설 확충,' 같은 토막 한 줄 + 여전히 긴 한 줄이
+    나와서 안 끊느니만 못하다. 마땅한 자리가 없으면 문장을 그대로 둔다.
+    """
+    n = len(s)
+    if n <= _MOBILE_LINE_MAX:
+        return [s]
+    mid = n / 2
+    cut = -1
+    for i, ch in enumerate(s):
+        if ch != "," or i < n * 0.3 or i > n * 0.7:
+            continue
+        if cut < 0 or abs(i - mid) < abs(cut - mid):
+            cut = i
+    if cut < 0:
+        return [s]
+    return [s[: cut + 1].strip()] + _split_long(s[cut + 1 :].strip())
+
+
+def _mobile_paragraph(sents: List[str]) -> str:
+    """문장 목록 → 한 줄 한 문장, 두 문장마다 빈 줄."""
+    lines: List[str] = []
+    for s in sents:
+        lines.extend(_split_long(s.strip()))
+    groups = [
+        "\n".join(lines[i : i + _SENTENCES_PER_GROUP])
+        for i in range(0, len(lines), _SENTENCES_PER_GROUP)
+    ]
+    return "\n\n".join(g for g in groups if g)
+
+
 def extract_keywords(body: str, top_n: int = 6) -> List[str]:
     """빈도 기반 키워드(2회 이상 반복 단어 우선). 조사 제거 + 불용어 제외."""
     counter: Counter[str] = Counter()
@@ -161,7 +202,7 @@ def format_post(
     blocks: List[PostBlock] = []
     image_slots = 0
     for idx, (kw, sents) in enumerate(grouped):
-        para = " ".join(sents).strip()
+        para = _mobile_paragraph(sents).strip()
         if not para:
             continue
         blocks.append(PostBlock(type="text", content=para, keyword=kw))
