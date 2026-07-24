@@ -1,7 +1,7 @@
 {
-  "version": "16.0.4",
-  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v16.0.4.zip",
-  "notes": "v16.0.4 — 다른 PC의 Gemini UI를 못 읽던 문제(입력창 셀렉터 여러 형태 대응)",
+  "version": "16.0.5",
+  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v16.0.5.zip",
+  "notes": "v16.0.5 — 발행 시 문단 사이 빈 줄이 사라지던 문제(모바일 가독성)",
   "minVersion": "15.0.0",
-  "releasedAt": "2026-07-21"
+  "releasedAt": "2026-07-24"
 }
