@@ -2,7 +2,9 @@
 // 닥터보이스 프로 - 백그라운드 서비스워커 v15
 // CDP(chrome.debugger) 기반 실제 입력 + 오케스트레이션 + 자동 업데이트
 // ============================================================
-const VERSION = '16.0.4';
+// manifest 에서 읽는다 — 상수로 박아두면 릴리스 때 manifest 만 올리고 여기를 빠뜨려
+// "설치했는데도 계속 업데이트 필요" 로 보이는 사고가 난다(v16.0.5).
+const VERSION = chrome.runtime.getManifest().version;
 const UPDATE_URL = 'https://doctor-voice-pro-ghwi.vercel.app/extension/version.json';
 const WRITE_URL = 'https://blog.naver.com/GoBlogWrite.naver';
 
@@ -52,16 +54,20 @@ chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
         case 'PING': {
           // 캐시된 업데이트 정보를 함께 반환 (웹사이트 신호등이 1회 왕복으로 버전/업데이트 파악)
           const cached = (await chrome.storage.local.get('updateInfo')).updateInfo || {};
+          // 캐시의 updateAvailable 을 그대로 믿지 않는다 — 방금 새 버전을 깔았다면
+          // 그 값은 업데이트 전에 계산된 것이라 계속 '업데이트 필요' 로 남는다.
+          const latest = cached.latest || VERSION;
+          const stale = cached.current && cached.current !== VERSION;
           sendResponse({
             success: true,
             version: VERSION,
-            updateAvailable: !!cached.updateAvailable,
-            latest: cached.latest || VERSION,
+            updateAvailable: compareVersion(latest, VERSION) > 0,
+            latest,
             downloadUrl: cached.downloadUrl || '',
             notes: cached.notes || '',
           });
-          // 오래된 캐시면 백그라운드로 갱신 (응답은 지연시키지 않음)
-          if (!cached.checkedAt || Date.now() - cached.checkedAt > 30 * 60 * 1000) {
+          // 오래된 캐시(또는 버전이 바뀐 직후)면 백그라운드로 갱신 (응답은 지연시키지 않음)
+          if (stale || !cached.checkedAt || Date.now() - cached.checkedAt > 30 * 60 * 1000) {
             checkForUpdate().catch(() => {});
           }
           break;

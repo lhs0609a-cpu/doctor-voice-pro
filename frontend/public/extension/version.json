@@ -1,7 +1,7 @@
 {
-  "version": "16.0.5",
-  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v16.0.5.zip",
-  "notes": "v16.0.5 — 발행 시 문단 사이 빈 줄이 사라지던 문제(모바일 가독성)",
+  "version": "16.0.6",
+  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v16.0.6.zip",
+  "notes": "v16.0.6 — 최신 버전을 설치해도 계속 '업데이트 필요' 로 뜨던 문제",
   "minVersion": "15.0.0",
-  "releasedAt": "2026-07-24"
+  "releasedAt": "2026-08-03"
 }
