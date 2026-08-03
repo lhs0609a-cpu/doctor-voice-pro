@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.models import User
-from app.models.publish_queue import PublishBatch, QueuedPost, NaverCategoryCache
+from app.models.publish_queue import PublishBatch, QueuedPost, NaverCategoryCache, ScheduleMark
 from app.models.media_pool import PoolImage, ImageVariant
 from app.services import post_formatter as fmt
 from app.services import image_uniquifier as uniq
@@ -239,6 +239,115 @@ async def delete_batch(
     )
     await db.commit()
     return {"success": True}
+
+
+# ==================== 예약 자리 기록(간격 예약 기준) ====================
+class MarkIn(BaseModel):
+    at: str                       # 타임존 없는 현지시각 "2026-07-19T15:30"
+    title: Optional[str] = None
+
+
+class AddMarksRequest(BaseModel):
+    blog_id: Optional[str] = None
+    source: str = "single"
+    items: List[MarkIn]
+
+
+class MarkOut(BaseModel):
+    at: str
+    title: Optional[str] = None
+    source: Optional[str] = None
+
+
+class MarksResponse(BaseModel):
+    latest_at: Optional[str] = None   # 아는 예약 중 가장 늦은 시각(현지시각)
+    marks: List[MarkOut]
+
+
+def _parse_local(s: str) -> datetime:
+    """'2026-07-19T15:30' 같은 현지시각 문자열 → naive datetime.
+    타임존 접미사가 붙어 오면 떼어낸다(변환하지 않는다 — 화면에 입력한 값 그대로 보관)."""
+    v = (s or "").strip()
+    if v.endswith("Z"):
+        v = v[:-1]
+    try:
+        d = datetime.fromisoformat(v)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"예약 시각 형식이 올바르지 않습니다: {s}")
+    return d.replace(tzinfo=None)
+
+
+MAX_MARKS = 500  # 응답 상한(간격 계산엔 최근 것만 있으면 충분)
+
+
+@router.get("/schedule/marks", response_model=MarksResponse)
+async def list_schedule_marks(
+    blog_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """이 블로그에 걸어둔 예약 자리 목록. 간격 예약의 기준(latest_at)을 함께 준다.
+
+    queued_posts(대량 큐)도 같은 자리를 차지하므로 함께 본다. 과거/미래를 서버가
+    가르지 않는 이유는 scheduled_at 이 현지시각이라 서버의 '지금'과 기준이 다르기
+    때문이다 — 거르는 건 클라이언트가 자기 현지 시각으로 한다.
+    """
+    uid = str(current_user.id)
+
+    q = select(ScheduleMark).where(ScheduleMark.user_id == uid)
+    if blog_id:
+        q = q.where(ScheduleMark.blog_id == blog_id)
+    q = q.order_by(ScheduleMark.scheduled_at.desc()).limit(MAX_MARKS)
+    marks = [
+        MarkOut(at=m.scheduled_at.isoformat(timespec="minutes"), title=m.title, source=m.source)
+        for m in (await db.execute(q)).scalars().all()
+    ]
+
+    # 대량 큐에 잡혀 있는 예약(아직 발행 전)도 자리로 친다.
+    qq = select(QueuedPost).where(
+        QueuedPost.user_id == uid, QueuedPost.status.in_(["queued", "registered"])
+    ).order_by(QueuedPost.scheduled_at.desc()).limit(MAX_MARKS)
+    marks.extend(
+        MarkOut(at=r.scheduled_at.isoformat(timespec="minutes"), title=r.title, source="bulk")
+        for r in (await db.execute(qq)).scalars().all()
+    )
+
+    marks.sort(key=lambda m: m.at, reverse=True)
+    marks = marks[:MAX_MARKS]
+    return MarksResponse(latest_at=marks[0].at if marks else None, marks=marks)
+
+
+@router.post("/schedule/marks", response_model=MarksResponse)
+async def add_schedule_marks(
+    req: AddMarksRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """예약이 성사된 자리를 기록한다. 이미 있는 자리는 조용히 건너뛴다(중복 호출 안전)."""
+    uid = str(current_user.id)
+    wanted = {_parse_local(i.at): (i.title or None) for i in req.items}
+    if not wanted:
+        return await list_schedule_marks(req.blog_id, current_user, db)
+
+    existing_q = select(ScheduleMark.scheduled_at).where(
+        ScheduleMark.user_id == uid,
+        ScheduleMark.scheduled_at.in_(list(wanted.keys())),
+    )
+    if req.blog_id:
+        existing_q = existing_q.where(ScheduleMark.blog_id == req.blog_id)
+    else:
+        existing_q = existing_q.where(ScheduleMark.blog_id.is_(None))
+    existing = {row for (row,) in (await db.execute(existing_q)).all()}
+
+    for at, title in wanted.items():
+        if at in existing:
+            continue
+        db.add(ScheduleMark(
+            user_id=uid, blog_id=req.blog_id, scheduled_at=at,
+            title=title, source=req.source or "single",
+        ))
+    await db.commit()
+    return await list_schedule_marks(req.blog_id, current_user, db)
 
 
 # ==================== 확장용: job fetch ====================

@@ -4365,6 +4365,18 @@ export interface NaverCategoriesResponse {
   updated_at?: string | null
 }
 
+// 예약 자리 1건. at 은 타임존 없는 현지시각("2026-07-19T15:30") — 네이버 화면에 넣는 값 그대로다.
+export interface ScheduleMark {
+  at: string
+  title?: string | null
+  source?: string | null
+}
+
+export interface ScheduleMarksResponse {
+  latest_at: string | null
+  marks: ScheduleMark[]
+}
+
 const PQ = '/api/v1/publish'
 
 export const publishQueueAPI = {
@@ -4408,6 +4420,23 @@ export const publishQueueAPI = {
   },
   reportResult: async (id: string, ok: boolean, message?: string): Promise<{ success: boolean }> => {
     const res = await api.post(`${PQ}/queue/${id}/result`, { ok, message })
+    return res.data
+  },
+
+  // ── 예약 자리 기록 ──
+  // 간격 예약의 기준("아는 가장 늦은 예약")을 브라우저가 아니라 계정에 둔다.
+  // localStorage 만 보던 시절엔 다른 PC 로 옮기거나 캐시를 지우면 기준이 사라져
+  // '지금'부터 다시 계산 → 이미 걸어둔 예약과 시각이 겹쳤다.
+  getScheduleMarks: async (blogId?: string | null): Promise<ScheduleMarksResponse> => {
+    const res = await api.get(`${PQ}/schedule/marks`, { params: blogId ? { blog_id: blogId } : {} })
+    return res.data
+  },
+  addScheduleMarks: async (
+    items: { at: string; title?: string }[],
+    blogId?: string | null,
+    source: 'single' | 'batch' | 'bulk' = 'single',
+  ): Promise<ScheduleMarksResponse> => {
+    const res = await api.post(`${PQ}/schedule/marks`, { items, blog_id: blogId || null, source })
     return res.data
   },
 }

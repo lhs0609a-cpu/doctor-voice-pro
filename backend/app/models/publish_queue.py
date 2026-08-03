@@ -7,7 +7,8 @@
 import uuid
 from datetime import datetime
 from sqlalchemy import (
-    Column, String, Integer, Boolean, DateTime, ForeignKey, Text, JSON
+    Column, String, Integer, Boolean, DateTime, ForeignKey, Text, JSON,
+    UniqueConstraint
 )
 from app.db.database import Base
 
@@ -69,3 +70,33 @@ class QueuedPost(Base):
     order_index = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     registered_at = Column(DateTime, nullable=True)
+
+
+class ScheduleMark(Base):
+    """네이버에 실제로 걸어둔 예약 1건의 '자리 표시'.
+
+    간격 예약은 '아는 가장 늦은 예약 + N시간'으로 다음 자리를 잡는데, 그 기준이
+    브라우저 localStorage 에만 있었다. 다른 PC 로 옮기거나 캐시를 지우면 기준이
+    사라져 '지금'부터 다시 계산 → 이미 걸어둔 예약 위에 그대로 겹쳐 잡혔다.
+    그래서 예약이 성사될 때마다 여기에 남겨 계정 단위로 기준을 공유한다.
+
+    scheduled_at 은 UTC 가 아니라 '네이버 화면에 입력한 현지시각(KST)' 그대로다.
+    앱이 예약 시각을 타임존 없이(toLocalInput) 다루므로 여기서도 변환하지 않는다.
+    비교는 항상 클라이언트의 현지 시각 기준으로 한다.
+    """
+    __tablename__ = "schedule_marks"
+    __table_args__ = (
+        # 같은 블로그의 같은 시각은 한 자리뿐이다. 중복 기록/중복 예약을 DB 에서도 막는다.
+        UniqueConstraint("user_id", "blog_id", "scheduled_at", name="uq_schedule_mark_slot"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    # 네이버 블로그 ID. 한 계정이 여러 블로그를 쓰면 기준도 블로그별로 갈라야 한다.
+    blog_id = Column(String(100), nullable=True, index=True)
+
+    scheduled_at = Column(DateTime, nullable=False, index=True)
+    title = Column(String(500), nullable=True)
+    # single: 단건 발행 / batch: 준비함 일괄 / bulk: 대량 큐
+    source = Column(String(20), default="single")
+    created_at = Column(DateTime, default=datetime.utcnow)
