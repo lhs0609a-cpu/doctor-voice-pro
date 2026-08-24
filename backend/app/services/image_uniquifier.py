@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from typing import Iterable
 
 import numpy as np
-from PIL import Image, ImageEnhance, ImageOps, ImageDraw, ImageFilter
+from PIL import Image, ImageOps, ImageDraw, ImageFilter, ImageEnhance, ImageStat
 
 # ---- 기본 파라미터 ----
 MIN_DISTANCE = 12          # 원본과의 최소 pHash Hamming 거리(64bit 중) — 엄격
@@ -44,6 +44,19 @@ MIN_SSIM = 0.95            # 인코딩(압축) 충실도 하한 — 저품질 �
 MAX_ATTEMPTS = 16          # 구조 모드가 늘어난 만큼 탐색 폭도 확대
 MAX_WIDTH = 1280           # 블로그 표시 최대폭 (하한 1080 유지)
 JPEG_Q_RANGE = (88, 92)
+
+# 회피셋(형제)에 넣을 '최근 변형' 개수. 호출측이 이 값으로 잘라서 넘긴다.
+#
+# 왜 상한이 필요한가: 게이트는 형제 전부와 ≥MIN_SIBLING_DISTANCE 를 요구하므로,
+# 한 사진을 재사용할수록 조건이 빡빡해져 통과하는 변형을 찾기 어려워진다.
+# 운영 실측 — 사진 74장을 90번씩 재사용한 시점에 형제가 장당 90개까지 쌓였고,
+# 장당 시도가 1회에서 7회로 늘어 배정 한 건(12장)이 3~4분까지 갔다.
+# 형제 300개(고정 하단 이미지)에서는 16회를 다 쓰고도 못 넘겨 35초를 버렸다.
+#
+# 막으려는 건 '같은 글/비슷한 시기의 사진끼리 중복 판정'이다. 90번 전에 쓴 변형과
+# 6비트 안쪽으로 겹칠 확률은 낮고, 겹쳐도 그 사이 다른 글 수십 개가 끼어 있다.
+# 최근 것만 확실히 벌리는 편이 비용 대비 효과가 훨씬 크다.
+SIBLING_WINDOW = 24
 
 # 얇은 테두리만 남긴 프레임 세트. none 은 캔버스가 전혀 안 커진다.
 # vignette 는 등록만 해두고 기본에선 뺐다 — 해시 거리에 기여가 거의 없으면서
@@ -132,14 +145,14 @@ def _gauss_kernel(radius: float) -> np.ndarray:
     n = int(3 * sigma)
     x = np.arange(-n, n + 1)
     k = np.exp(-(x ** 2) / (2 * sigma ** 2))
-    return k / k.sum()
+    return (k / k.sum()).astype(np.float32)
 
 
 def _blur1d(a: np.ndarray, k: np.ndarray, axis: int) -> np.ndarray:
     pad = len(k) // 2
     a = np.moveaxis(a, axis, -1)
     ap = np.pad(a, [(0, 0)] * (a.ndim - 1) + [(pad, pad)], mode="edge")
-    out = np.zeros_like(a, dtype=np.float64)
+    out = np.zeros_like(a, dtype=np.float32)
     n = a.shape[-1]
     for i, kv in enumerate(k):
         out += kv * ap[..., i:i + n]
@@ -152,9 +165,14 @@ def _blur(a: np.ndarray, radius: float = 4.0) -> np.ndarray:
 
 
 def ssim(img_a: Image.Image, img_b: Image.Image, size: int = 512) -> float:
-    """두 이미지를 공통 크기 그레이스케일로 맞춰 windowed SSIM 평균."""
-    a = _gray_array(img_a, size)
-    b = _gray_array(img_b, size)
+    """두 이미지를 공통 크기 그레이스케일로 맞춰 windowed SSIM 평균.
+
+    float32 로 계산한다(종전 float64). 재는 값이 0.99대이고 임계는 0.95라
+    1e-6 수준의 차이는 판정에 영향이 없는데, 512x512 배열 6개를 13탭으로
+    두 축 블러하는 비용은 절반이 된다.
+    """
+    a = _gray_array(img_a, size).astype(np.float32)
+    b = _gray_array(img_b, size).astype(np.float32)
     C1 = (0.01 * 255) ** 2
     C2 = (0.03 * 255) ** 2
     mu_a, mu_b = _blur(a), _blur(b)
@@ -217,14 +235,20 @@ def _frame_soft_shadow(img: Image.Image, rng: random.Random, strength: float) ->
     radius = int(min(pad * 1.2, min(w, h) * 0.012))
     bg_tone = rng.randint(246, 255)
     canvas = Image.new("RGB", (w + 2 * pad, h + 2 * pad), (bg_tone, bg_tone, bg_tone))
-    shadow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     off = max(1, pad // 3)
-    ImageDraw.Draw(shadow).rounded_rectangle(
-        [pad + off, pad + off, pad + w + off, pad + h + off],
-        radius=max(radius, 1), fill=(0, 0, 0, rng.randint(35, 60)),
+    # 그림자는 '흐린 검은 도형'이라 색 채널이 필요 없고(전부 검정), 1/4 해상도로
+    # 그린 뒤 늘려도 눈에 차이가 없다. 종전엔 풀해상도 RGBA 에 GaussianBlur 를 걸어
+    # 시도당 40ms 넘게 먹었다(시도는 한 장에 여러 번 돈다).
+    # → 1채널 마스크를 1/4 로 그려 흐린 뒤 늘리고, 검정을 그 마스크로 얹는다.
+    S = 4
+    sw, sh = max(1, canvas.width // S), max(1, canvas.height // S)
+    mask = Image.new("L", (sw, sh), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        [(pad + off) // S, (pad + off) // S, (pad + w + off) // S, (pad + h + off) // S],
+        radius=max(radius // S, 1), fill=rng.randint(35, 60),
     )
-    shadow = shadow.filter(ImageFilter.GaussianBlur(max(2, pad // 2)))
-    canvas.paste(shadow, (0, 0), shadow)
+    mask = mask.filter(ImageFilter.GaussianBlur(max(2, pad // 2) / S))
+    canvas.paste((0, 0, 0), (0, 0), mask.resize(canvas.size, Image.Resampling.BILINEAR))
     if radius > 2:
         mask = Image.new("L", (w, h), 0)
         ImageDraw.Draw(mask).rounded_rectangle([0, 0, w, h], radius=radius, fill=255)
@@ -246,6 +270,7 @@ _FRAME_FUNCS = {
 def _geom_warp(
     img: Image.Image, rng: random.Random, strength: float,
     reshape: float | None, trim: float,
+    scale: float = 1.0, max_width: int = MAX_WIDTH,
 ) -> Image.Image:
     """재구도(살짝 확대+이동) + 미세 회전 + 미세 원근 + 비율 스트레치를 QUAD 한 번으로.
 
@@ -285,12 +310,22 @@ def _geom_warp(
         y = cy + dx * sa_s + dy * ca_s + math.copysign(H * pj * rng.uniform(0.15, 1.0), -dy)
         pts += [x, y]
 
-    # 4) 출력 비율 — pHash 는 정사각 리사이즈라 여기에 둔감하지만, 파일 지문/다른
-    #    해시 계열을 흩는 데는 도움이 된다(±6%, 여백은 안 생김).
-    out_w = W
-    out_h = max(1, int(round(H / reshape))) if reshape else H
+    # 4) 출력 크기 = 비율(±6%) × 리스케일(96~104%), 최대폭으로 클램프.
+    #    pHash 는 정사각 리사이즈라 비율에 둔감하지만, 파일 지문/다른 해시 계열을
+    #    흩는 데는 도움이 된다(여백은 안 생김).
+    #
+    #    종전엔 여기서 원본 크기로 뽑은 뒤 호출측이 LANCZOS 로 두 번 더 리샘플했다
+    #    (리스케일 → 최대폭). 크기를 미리 계산해 QUAD 한 번으로 끝내면 전체 해상도
+    #    리샘플이 3회에서 1회로 준다 — 시도당 35ms 절약, 화질 차이는 없다
+    #    (총 배율이 0.96~1.04 라 축소량이 4% 이내).
+    out_w = W * scale
+    out_h = (H / reshape if reshape else H) * scale
+    if out_w > max_width:
+        out_h *= max_width / out_w
+        out_w = max_width
     return img.transform(
-        (out_w, out_h), Image.Transform.QUAD, data=tuple(pts),
+        (max(1, int(round(out_w))), max(1, int(round(out_h)))),
+        Image.Transform.QUAD, data=tuple(pts),
         resample=Image.Resampling.BICUBIC,
     )
 
@@ -309,62 +344,93 @@ class UniquifyResult:
     frame_style: str
     passed: bool               # 게이트 통과 여부
     quality: int               # 최종 JPEG 품질
+    trim: float                # 채택된 재구도 예산(다음 호출의 시작점으로 재사용)
 
 
 # ============================================================
 # 코어 변형 (프레임 이전 본문)
 # ============================================================
+_LUMA = (299 / 1000, 587 / 1000, 114 / 1000)   # PIL 의 "L" 변환 계수
+
+
+def _tone_lut(img: Image.Image, rng: random.Random) -> list[int]:
+    """밝기·대비·감마를 256칸 LUT 하나로 합성한다 — point() 한 번(C 레벨)에 끝난다.
+
+    셋 다 '픽셀 값에만' 의존하는 함수라 합성할 수 있다(대비의 기준 평균 m 은 스칼라).
+        밝기(b): v ↦ v·b
+        대비(c): v ↦ (v-m)·c + m,  m = 밝기 적용 후 휘도 평균
+        감마(g): v ↦ (v/255)^g·255
+    합치면 v ↦ 감마(clip(b·c·v + m(1-c))).
+
+    채도만은 픽셀의 회색값에 의존해 LUT 로 못 합친다. 대신 채도는 아핀변환과
+    교환법칙이 성립하므로(휘도를 보존한다) 순서를 바꿔 먼저 적용한다 —
+    ImageEnhance.Color 도 C 구현이라 싸다. 결과는 종전과 동일하다.
+    """
+    b = rng.uniform(0.97, 1.03)
+    c = rng.uniform(0.97, 1.03)
+    gamma = rng.uniform(0.97, 1.03)
+    # 채도는 휘도를 바꾸지 않으므로 여기서 재도 밝기·대비 기준 평균은 같다.
+    r_, g_, b_ = ImageStat.Stat(img).mean[:3]
+    m = round(b * (_LUMA[0] * r_ + _LUMA[1] * g_ + _LUMA[2] * b_))
+    v = np.clip(b * c * np.arange(256, dtype=np.float64) + m * (1 - c), 0, 255)
+    v = np.clip((v / 255.0) ** gamma * 255 + 0.5, 0, 255)
+    return v.astype(np.uint8).tolist() * 3
+
+
+def _light_plane(H: int, W: int, rng: random.Random, terms: int = 3) -> np.ndarray:
+    """저주파 조명 그라디언트 — sin(2π(fx·x/W + fy·y/H) + φ) 를 terms 개 더한 평면.
+
+    sin(u+v) = sin(u)cos(v) + cos(u)sin(v) 로 분리해 1차원 sin/cos 만 계산한다.
+    전 픽셀에 sin 을 돌리던 종전 방식과 값은 완전히 같고(항등식), 100만 픽셀짜리
+    초월함수 호출이 (H+W) 번으로 줄어 시도당 65ms → 5ms 가 된다.
+    """
+    x = np.arange(W, dtype=np.float32) * (2 * math.pi / W)
+    y = np.arange(H, dtype=np.float32) * (2 * math.pi / H)
+    plane = np.zeros((H, W), dtype=np.float32)
+    for _ in range(terms):
+        u = rng.uniform(-1.6, 1.6) * x + rng.uniform(0, 2 * math.pi)   # (W,)
+        v = rng.uniform(-1.6, 1.6) * y                                  # (H,)
+        plane += np.sin(v)[:, None] * np.cos(u)[None, :]
+        plane += np.cos(v)[:, None] * np.sin(u)[None, :]
+    plane /= terms  # ~[-1, 1]
+    return plane
+
+
 def _transform_body(
-    src: Image.Image, rng: random.Random, strength: float, max_width: int,
+    base: Image.Image, rng: random.Random, strength: float, max_width: int,
     flip: bool = False, ratio: float | None = None, trim: float = TRIM_START,
 ) -> Image.Image:
-    img = ImageOps.exif_transpose(src).convert("RGB")
-
+    """base: 이미 exif_transpose + RGB 로 준비된 원본(시도마다 다시 만들지 않는다)."""
     # 0) 구조 모드: 좌우 반전 — 새 해시 클러스터(거의 공짜, 눈엔 자연스러움)
-    if flip:
-        img = ImageOps.mirror(img)
+    img = ImageOps.mirror(base) if flip else base
 
-    # 1) 재구도 + 회전 + 원근 + 비율을 한 번에. 여백은 만들지 않는다.
-    img = _geom_warp(img, rng, strength, ratio, trim)
+    # 1) 재구도 + 회전 + 원근 + 비율 + 리스케일 + 최대폭을 QUAD 리샘플 한 번으로.
+    #    여백은 만들지 않는다.
+    img = _geom_warp(img, rng, strength, ratio, trim,
+                     scale=rng.uniform(0.96, 1.04), max_width=max_width)
 
-    # 2) 리스케일 (96~104%) → 최대폭 제한 (원본이 작으면 업스케일 안 함)
-    scale = rng.uniform(0.96, 1.04)
-    w, h = img.size
-    img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.LANCZOS)
-    if img.width > max_width:
-        r = max_width / img.width
-        img = img.resize((max_width, max(1, int(img.height * r))), Image.Resampling.LANCZOS)
-
-    # 3) 톤 지터 (밝기/대비/채도/감마/색상)
-    img = ImageEnhance.Brightness(img).enhance(rng.uniform(0.97, 1.03))
-    img = ImageEnhance.Contrast(img).enhance(rng.uniform(0.97, 1.03))
+    # 2) 톤 지터 — 채도 1회 + LUT 1회로 끝낸다(종전 ImageEnhance 3종 + point 4회 왕복).
     img = ImageEnhance.Color(img).enhance(rng.uniform(0.96, 1.04))
-    gamma = rng.uniform(0.97, 1.03)
-    lut = [min(255, int((i / 255.0) ** gamma * 255 + 0.5)) for i in range(256)] * 3
-    img = img.point(lut)
+    img = img.point(_tone_lut(img, rng))
 
+    # 3) 조명 + 노이즈. 픽셀마다 달라야 해서 여기만 배열로 내려간다.
     arr = np.asarray(img, dtype=np.float32)
     H, W = arr.shape[:2]
-    gy, gx = np.mgrid[0:H, 0:W].astype(np.float32)
 
-    # 4) 저주파 조명 그라디언트 — 파일/픽셀 지문을 흩는 보조 수단.
-    #    pHash 거리에는 거의 기여하지 않는다(실측: 진폭 20% 를 줘도 평균 3비트).
-    #    거리는 재구도가 벌어주므로 여기는 '눈에 안 보이는' 범위로 최소화한다.
-    plane = np.zeros((H, W), dtype=np.float32)
-    for _ in range(3):
-        fx = rng.uniform(-1.6, 1.6)
-        fy = rng.uniform(-1.6, 1.6)
-        phs = rng.uniform(0, 2 * math.pi)
-        plane += np.sin(2 * math.pi * (fx * gx / W + fy * gy / H) + phs)
-    plane /= 3.0  # ~[-1, 1]
+    # 조명 그라디언트 — pHash 거리에는 거의 기여하지 않는다(실측: 진폭 20% 를 줘도
+    # 평균 3비트). 거리는 재구도가 벌어주므로 여기는 '눈에 안 보이는' 범위만 쓴다.
     amp = min(0.05, rng.uniform(0.020, 0.035) * (1 + 0.3 * strength))
-    arr = arr * (1.0 + amp * plane)[..., None]
+    arr *= (1.0 + amp * _light_plane(H, W, rng))[..., None]
 
-    # 5) 미세 휘도 노이즈 (비가시)
+    # 미세 휘도 노이즈 (비가시). float32 로 뽑는다 — float64 대비 절반 비용.
     sigma = 1.5 + 0.8 * strength
-    noise = np.random.default_rng(rng.randint(0, 2**31)).normal(0, sigma, (H, W))
-    arr = np.clip(arr + noise[..., None], 0, 255).astype(np.uint8)
-    return Image.fromarray(arr)
+    noise = np.random.default_rng(rng.randint(0, 2**31)).standard_normal(
+        (H, W), dtype=np.float32
+    )
+    arr += (noise * sigma)[..., None]
+
+    np.clip(arr, 0, 255, out=arr)
+    return Image.fromarray(arr.astype(np.uint8))
 
 
 def _inject_exif(rng: random.Random) -> bytes:
@@ -399,6 +465,7 @@ def uniquify(
     allow_flip: bool = False,  # 좌우 반전 금지(글씨/제품 이미지가 뒤집혀 보임)
     allow_reframe: bool = True,  # 종횡비 ±6% 스트레치 허용(여백 안 생김)
     allow_crop: bool = False,  # True 면 가장자리 다듬기 한도를 4%→7% 로 넓힌다
+    trim_start: float | None = None,   # 직전에 통과한 재구도 예산(있으면 거기서 시작)
     seed: int | None = None,
 ) -> UniquifyResult:
     """원본 바이트 → 유니크화된 JPEG + 검증 결과.
@@ -411,6 +478,8 @@ def uniquify(
     src = Image.open(io.BytesIO(src_bytes))
     src.load()
     orig_ph = phash(src)
+    # 시도마다 만들던 것을 한 번만 만든다(시도는 최대 16회 돈다).
+    base = ImageOps.exif_transpose(src).convert("RGB")
 
     siblings = set()
     for hx in (sibling_hashes or []):
@@ -423,6 +492,12 @@ def uniquify(
     rng = random.Random(seed)
 
     ratios = list(RESHAPE_FACTORS) if allow_reframe else [None]
+
+    # 재구도 예산의 시작점. 직전 통과 지점의 한 칸 아래에서 출발한다.
+    cap = TRIM_MAX_CROP if allow_crop else TRIM_MAX
+    base_trim = TRIM_START
+    if trim_start is not None:
+        base_trim = min(cap, max(TRIM_START, trim_start - TRIM_STEP))
 
     # 성능: 재사용 사진이 탈락하는 건 거의 항상 '거리 게이트'다. SSIM(압축충실도)은
     # 대개 여유롭게 통과하므로, 거리 게이트를 먼저 보고 통과할 때만 SSIM을 계산한다.
@@ -439,8 +514,13 @@ def uniquify(
         ratio = rng.choice(ratios)
         # 재구도 예산은 시도마다 조금씩만 키운다 → 통과하는 순간 반환되므로
         # 실제로 채택되는 건 '거리를 넘긴 가장 약한 확대'다.
-        trim = min(TRIM_MAX_CROP if allow_crop else TRIM_MAX, TRIM_START + TRIM_STEP * attempt)
-        body = _transform_body(src, rng, strength, max_width, flip=flip, ratio=ratio, trim=trim)
+        #
+        # 시작점: 이 사진이 직전에 통과한 예산의 한 칸 아래(trim_start). 매번 9% 부터
+        # 다시 올라가면 통과하지 못할 게 뻔한 앞쪽 시도를 반복해서 버린다 — 같은 사진은
+        # 대체로 같은 지점에서 통과하기 때문이다. 한 칸 아래에서 시작하므로 '가장 약한
+        # 변형을 채택한다'는 성질은 그대로다(더 약하게 통과되면 그게 먼저 잡힌다).
+        trim = min(cap, base_trim + TRIM_STEP * attempt)
+        body = _transform_body(base, rng, strength, max_width, flip=flip, ratio=ratio, trim=trim)
         style = rng.choice(styles)
         framed = _FRAME_FUNCS[style](body, rng, strength)
 
@@ -465,7 +545,7 @@ def uniquify(
                 return UniquifyResult(
                     image_bytes=data, phash=to_hex(ph), dhash=to_hex(dhash(framed_dec)),
                     ssim=round(q, 4), min_distance=min(d_orig, d_sib), attempts=attempt + 1,
-                    frame_style=mode_tag[:30], passed=True, quality=quality,
+                    frame_style=mode_tag[:30], passed=True, quality=quality, trim=trim,
                 )
         else:
             q = 0.0  # 거리 게이트 이미 탈락 → SSIM 생략(판정에 불필요)
@@ -473,17 +553,17 @@ def uniquify(
         # 최선 후보: 원본거리 우선(엄격 임계), 그다음 형제거리, 품질
         key = (min(d_orig, min_distance), min(d_sib, min_sibling_distance), q)
         if best is None or key > best_key:
-            best = (data, ph, q, d_orig, d_sib, attempt, mode_tag, quality)
+            best = (data, ph, q, d_orig, d_sib, attempt, mode_tag, quality, trim)
             best_key = key
 
     # 게이트 미통과 → 최선 후보 반환(dhash는 여기서 한 번만 계산)
     if best is None:
         return None
-    data, ph, q, d_orig, d_sib, attempt, mode_tag, quality = best
+    data, ph, q, d_orig, d_sib, attempt, mode_tag, quality, trim = best
     best_dec = Image.open(io.BytesIO(data)).convert("RGB")
     best_dec.load()
     return UniquifyResult(
         image_bytes=data, phash=to_hex(ph), dhash=to_hex(dhash(best_dec)),
         ssim=round(q, 4), min_distance=min(d_orig, d_sib), attempts=attempt + 1,
-        frame_style=mode_tag[:30], passed=False, quality=quality,
+        frame_style=mode_tag[:30], passed=False, quality=quality, trim=trim,
     )

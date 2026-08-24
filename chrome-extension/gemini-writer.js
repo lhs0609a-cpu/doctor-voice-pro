@@ -11,7 +11,7 @@
 (() => {
   'use strict';
   const TAG = '[닥터보이스:gemini]';
-  const VERSION = '16.0.4';
+  const VERSION = '16.0.8';
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const q = (sel, root) => (root || document).querySelector(sel);
@@ -28,6 +28,26 @@
     tempChat: '[data-test-id="temp-chat-button"]',
     modePicker: '[data-test-id="bard-mode-menu-button"]',
   };
+
+  // 보내기 버튼. Enter 가 안 먹는 빌드/상태(IME 조합 중 등)를 위한 예비 경로다.
+  const SEND_SELECTORS = [
+    'button.send-button',
+    '[data-test-id="send-button"] button',
+    '[data-test-id="send-button"]',
+    'button[aria-label*="보내기"]',
+    'button[aria-label*="Send"]',
+    'button[aria-label*="전송"]',
+  ];
+
+  // 사용량 한도·안전필터 같은 '응답이 아예 시작되지 않는' 사유는 model-response 가
+  // 아니라 스낵바/배너로 뜬다. 이걸 안 보면 전부 '전송 실패'로 뭉뚱그려진다.
+  const NOTICE_SELECTORS = [
+    '.mat-mdc-snack-bar-label',
+    'snack-bar-container',
+    '[role="alert"]',
+    '.error-message',
+  ];
+  const NOTICE_RE = /한도|limit|용량|잠시 후|나중에 다시|다시 시도|too many|rate|오류가 발생|사용할 수 없|현재 응답할 수 없/i;
 
   // 입력창은 Gemini UI 버전(A/B·크롬 버전·지역)마다 구조가 조금씩 다르다.
   // 한 셀렉터만 믿으면 '다른 컴퓨터에서 못 읽음' → '준비 안 됨'이 난다.
@@ -175,6 +195,52 @@
     return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
   }
 
+  /** 입력창에 지금 들어있는 글자수. background 가 '입력이 실제로 됐는가'를 확인한다. */
+  function inputLength() {
+    const el = inputEl();
+    if (!el) return null;
+    const t = ('value' in el && typeof el.value === 'string') ? el.value : (el.innerText || '');
+    // Quill 은 빈 상태에서도 <p><br></p> 를 남긴다 → 공백/개행만 있으면 0 으로 본다.
+    return t.replace(/\s+/g, '').length;
+  }
+
+  /** DOM 포커스로 한 번 더 밀어 넣기(CDP 클릭이 빗나갔을 때의 예비 경로). */
+  function focusInput() {
+    const el = inputEl();
+    if (!el) return false;
+    el.scrollIntoView({ block: 'center' });
+    try { el.focus(); } catch (_) {}
+    // Quill 은 focus() 만으로 캐럿이 안 생기는 경우가 있어 선택 영역까지 만들어 준다.
+    try {
+      const r = document.createRange();
+      r.selectNodeContents(el);
+      r.collapse(false);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(r);
+    } catch (_) {}
+    return document.activeElement === el || el.contains(document.activeElement);
+  }
+
+  function sendButton() {
+    for (const s of SEND_SELECTORS) {
+      const el = q(s);
+      if (el && el.isConnected && !el.disabled && el.getAttribute('aria-disabled') !== 'true') return el;
+    }
+    return null;
+  }
+
+  /** 응답이 시작되지 못한 '진짜 사유'가 화면에 떠 있으면 그 문구를 돌려준다. */
+  function blockedReason() {
+    for (const s of NOTICE_SELECTORS) {
+      for (const el of qa(s)) {
+        const t = (el.innerText || '').trim();
+        if (t && NOTICE_RE.test(t)) return t.slice(0, 120);
+      }
+    }
+    return '';
+  }
+
   /**
    * 임시 채팅 켜기(best-effort).
    * 켜두면 100건을 돌려도 사이드바에 기록이 안 쌓인다. 다만 이것만으로 문맥이
@@ -209,7 +275,9 @@
     link.click();
     await waitFor(() => conversationCount() === 0, 15000, '새 채팅');
     await waitFor(isReady, 10000, '입력창 재생성');
-    await sleep(300); // Quill 초기화 여유
+    // Quill 초기화 여유. 300ms 는 얇아서, 재생성 직전 좌표로 클릭해 입력이 통째로
+    // 허공에 들어가는 일이 있었다(= '응답이 시작되지 않음'의 원인 중 하나).
+    await sleep(900);
     return { before, after: conversationCount() };
   }
 
@@ -276,7 +344,33 @@
             if (!el) throw new Error('입력창을 찾지 못했습니다');
             el.scrollIntoView({ block: 'center' });
             await sleep(120);
-            sendResponse({ ok: true, pos: inputPosition(), count: qa(SEL.modelResponse).length });
+            sendResponse({
+              ok: true, pos: inputPosition(), count: qa(SEL.modelResponse).length,
+              len: inputLength(), viewport: window.innerHeight,
+            });
+            break;
+          }
+
+          // 입력창에 프롬프트가 실제로 들어갔는지 확인용(전송 전/후 모두 사용).
+          case 'GEM_INPUT_TEXT': {
+            const len = inputLength();
+            if (len === null) throw new Error('입력창을 찾지 못했습니다');
+            sendResponse({ ok: true, len });
+            break;
+          }
+
+          case 'GEM_FOCUS_INPUT': {
+            const focused = focusInput();
+            await sleep(80);
+            sendResponse({ ok: true, focused, pos: inputPosition(), viewport: window.innerHeight });
+            break;
+          }
+
+          case 'GEM_CLICK_SEND': {
+            const btn = sendButton();
+            if (!btn) throw new Error('보내기 버튼을 찾지 못했습니다');
+            btn.click();
+            sendResponse({ ok: true });
             break;
           }
 
@@ -295,7 +389,10 @@
             const complete = !!(started && resp && isComplete(resp));
             const text = resp ? responseText(resp) : '';
             // text/chars 는 '지금까지 나온' 값(부분 포함). complete 로 완료 여부를 구분한다.
-            sendResponse({ ok: true, started, complete, chars: text.length, text });
+            sendResponse({
+              ok: true, started, complete, chars: text.length, text,
+              blocked: started ? '' : blockedReason(),
+            });
             break;
           }
 

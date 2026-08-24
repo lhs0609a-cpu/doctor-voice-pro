@@ -94,6 +94,8 @@ class ImageVariant(Base):
     frame_style = Column(String(30))
     ssim = Column(Float)
     min_distance = Column(Integer)      # 원본+형제 대비 최소 pHash 거리
+    attempts = Column(Integer)          # 게이트 통과까지 돈 시도 횟수(느려질 때의 원인 단서)
+    trim = Column(Float)                # 채택된 재구도 예산 — 다음 배정의 탐색 시작점
     passed = Column(Boolean, default=False)
     post_id = Column(String(36), nullable=True)   # 삽입된 글(옵션)
     created_at = Column(DateTime, default=datetime.utcnow)

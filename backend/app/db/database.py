@@ -9,7 +9,7 @@ if settings.DATABASE_URL.startswith("sqlite"):
     from sqlalchemy.pool import StaticPool
     engine = create_async_engine(
         settings.DATABASE_URL,
-        echo=settings.DEBUG,
+        echo=settings.SQL_ECHO,
         future=True,
         connect_args={
             "timeout": 30,
@@ -21,7 +21,7 @@ else:
     # PostgreSQL 등은 connection pool 사용
     engine = create_async_engine(
         settings.DATABASE_URL,
-        echo=settings.DEBUG,
+        echo=settings.SQL_ECHO,
         future=True,
         pool_size=5,
         max_overflow=10,
@@ -40,13 +40,13 @@ AsyncSessionLocal = async_sessionmaker(
 if settings.DATABASE_URL_SYNC.startswith("sqlite"):
     sync_engine = create_engine(
         settings.DATABASE_URL_SYNC,
-        echo=settings.DEBUG,
+        echo=settings.SQL_ECHO,
         connect_args={"check_same_thread": False},
     )
 else:
     sync_engine = create_engine(
         settings.DATABASE_URL_SYNC,
-        echo=settings.DEBUG,
+        echo=settings.SQL_ECHO,
         pool_size=5,
         max_overflow=10,
         pool_pre_ping=True,

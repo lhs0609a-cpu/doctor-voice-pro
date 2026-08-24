@@ -679,8 +679,9 @@ export const mediaPoolAPI = {
   },
 
   // 임의 이미지 1장 유니크화(고정 하단 이미지가 글마다 다른 변형으로 들어가도록)
-  uniquifyOne: async (image: string, siblingHashes: string[] = []): Promise<{ image: string; phash: string; passed: boolean; min_distance: number }> => {
-    const response = await api.post('/api/v1/media/uniquify-one', { image, sibling_hashes: siblingHashes }, { timeout: 60000 })
+  // trimStart: 직전 응답의 trim 을 돌려주면 서버가 그 지점부터 탐색해 시도 횟수가 준다
+  uniquifyOne: async (image: string, siblingHashes: string[] = [], trimStart?: number): Promise<{ image: string; phash: string; passed: boolean; min_distance: number; trim: number }> => {
+    const response = await api.post('/api/v1/media/uniquify-one', { image, sibling_hashes: siblingHashes, trim_start: trimStart ?? null }, { timeout: 60000 })
     return response.data
   },
 

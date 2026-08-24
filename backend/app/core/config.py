@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite:///./doctorvoice.db"
     DATABASE_URL_SYNC: str = "sqlite:///./doctorvoice.db"
+    # SQL 전문 로깅. 종전엔 DEBUG 에 묶여 있어 운영에서 모든 쿼리가 파라미터까지
+    # 찍혔다 — 사진 base64 가 오가는 요청에서는 로그가 폭주해 정작 필요한 줄이 묻힌다.
+    # 문제 추적이 필요할 때만 SQL_ECHO=true 로 켠다.
+    SQL_ECHO: bool = False
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"

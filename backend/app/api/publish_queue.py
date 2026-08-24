@@ -363,6 +363,9 @@ class ExtJob(BaseModel):
     content: str                  # 텍스트 통합(하위호환)
     blocks: List[JobBlock]        # 글-이미지 인터리브(확장이 순서대로 삽입)
     tags: List[str]
+    # 확장이 Ctrl+B 로 굵게 처리할 단어. 확장에는 예전부터 이 기능이 있었는데
+    # 서버가 값을 안 실어 보내 한 번도 동작한 적이 없었다(항상 빈 배열).
+    emphasize: List[str] = []
     finalAction: str = "schedule"
     schedule: dict
     options: dict
@@ -405,13 +408,22 @@ async def fetch_jobs(
                     pid = pool_ids[img_ptr]
                     pimg = imgs_by_id.get(pid)
                     if pimg:
-                        # 형제 변형 해시 수집(글 간 중복 회피)
+                        # 형제 변형 해시 수집(글 간 중복 회피) — 최근 것만.
+                        # 전부 넣으면 재사용이 쌓일수록 게이트를 넘길 변형을 못 찾아
+                        # 시도가 폭증한다(uniq.SIBLING_WINDOW 주석 참고). media_pool 의
+                        # /assign 과 같은 기준을 써야 두 경로의 비용이 갈리지 않는다.
                         sres = await db.execute(
-                            select(ImageVariant.phash).where(ImageVariant.pool_image_id == pid)
+                            select(ImageVariant.phash, ImageVariant.trim)
+                            .where(ImageVariant.pool_image_id == pid)
+                            .order_by(ImageVariant.created_at.desc())
+                            .limit(uniq.SIBLING_WINDOW)
                         )
-                        siblings = [s for (s,) in sres.all() if s]
+                        srows = sres.all()
+                        siblings = [s for (s, _t) in srows if s]
                         result = await run_in_threadpool(
-                            uniq.uniquify, pimg.data, sibling_hashes=siblings
+                            uniq.uniquify, pimg.data, sibling_hashes=siblings,
+                            # 직전 통과 지점에서 탐색 시작 — assign 과 같은 기준
+                            trim_start=(srows[0][1] if srows else None),
                         )
                         if result:
                             data_url = "data:image/jpeg;base64," + base64.b64encode(result.image_bytes).decode()
@@ -419,7 +431,7 @@ async def fetch_jobs(
                                 pool_image_id=pid, user_id=str(current_user.id),
                                 phash=result.phash, dhash=result.dhash, frame_style=result.frame_style,
                                 ssim=result.ssim, min_distance=result.min_distance, passed=result.passed,
-                                post_id=r.id,
+                                attempts=result.attempts, trim=result.trim, post_id=r.id,
                             ))
                             pimg.use_count = (pimg.use_count or 0) + 1
                             pimg.last_used_at = datetime.utcnow()
@@ -434,6 +446,9 @@ async def fetch_jobs(
         jobs.append(ExtJob(
             id=r.id, title=r.title, content=content, blocks=blocks_out,
             tags=r.hashtags or r.keywords or [],
+            # 포맷터가 뽑은 반복 키워드 = 글의 주제어. 이걸 굵게 해야 스캔이 된다.
+            # (해시태그는 '#' 가 붙어 본문 매칭이 안 되므로 keywords 를 쓴다)
+            emphasize=r.keywords or [],
             finalAction="schedule",
             schedule={"datetime": r.scheduled_at.isoformat()},
             options={

@@ -92,26 +92,59 @@ def _sentences(body: str) -> List[str]:
 # 모바일 가독성: 한 줄 = 한 문장, 두 문장마다 빈 줄.
 # (독자 대부분이 휴대폰이라, 문장을 스페이스로 이어 붙인 통짜 단락은 그냥 안 읽힌다)
 _SENTENCES_PER_GROUP = 2
-_MOBILE_LINE_MAX = 60
+# 모바일 블로그 본문은 한 줄에 한글 20자 안팎이 들어간다. 45자 = 화면에서 두 줄.
+# 세 줄 넘게 흐르기 시작하면 '한 줄 한 문장'의 리듬이 깨져서 이 값을 넘으면 쪼갠다.
+_MOBILE_LINE_MAX = 45
+
+# 쉼표가 없는 긴 문장을 끊을 자리. 연결어미 뒤는 의미가 끊겨도 어색하지 않다.
+# '고/며'는 앞에 한글 2자를 요구해 '참고 자료', '사고 접수' 같은 명사를 걸러낸다.
+# '그리고'는 줄 끝에 남으면 어색해서 제외.
+_CONNECTIVE_RE = re.compile(
+    r"(?:지만|는데|은데|면서|어서|아서|여서|라서|니까|므로|거나|도록)\s"
+    r"|(?<=[가-힣][가-힣])(?<!그리)(?:고|며)\s"
+)
+
+
+def _find_cut(s: str, n: int) -> int:
+    """문장을 끊을 자리를 '가운데(30~70%) 구간'에서 찾는다. 없으면 -1.
+
+    가운데로 제한하는 게 핵심이다. 아무 데서나 끊으면 '하지만 실제 현장에서
+    소방 시설 확충,' 같은 토막 한 줄 + 여전히 긴 한 줄이 나와서 안 끊느니만 못하다.
+    쉼표 → 연결어미 뒤 → 그냥 띄어쓰기 순으로 찾는다. 마지막 단계까지 내려가면
+    의미 경계는 아니어도 최소한 단어 중간은 안 쪼갠다. 띄어쓰기조차 없으면(-1)
+    그대로 둔다 — 억지로 자르면 단어가 깨진다.
+    """
+    mid = n / 2
+    best = -1
+
+    def consider(i: int) -> None:
+        nonlocal best
+        if i < n * 0.3 or i > n * 0.7:
+            return
+        if best < 0 or abs(i - mid) < abs(best - mid):
+            best = i
+
+    for i, ch in enumerate(s):
+        if ch == ",":
+            consider(i)
+    if best >= 0:
+        return best
+    for m in _CONNECTIVE_RE.finditer(s):
+        consider(m.end() - 1)  # 어미 뒤 공백 위치
+    if best >= 0:
+        return best
+    for i, ch in enumerate(s):
+        if ch == " ":
+            consider(i)
+    return best
 
 
 def _split_long(s: str) -> List[str]:
-    """긴 문장은 '가운데 근처' 쉼표에서 나눈다.
-
-    가운데(30~70% 구간)로 제한하는 게 핵심이다. 아무 쉼표에서나 끊으면
-    '하지만 실제 현장에서 소방 시설 확충,' 같은 토막 한 줄 + 여전히 긴 한 줄이
-    나와서 안 끊느니만 못하다. 마땅한 자리가 없으면 문장을 그대로 둔다.
-    """
+    """긴 문장은 가운데 근처에서 나눈다. 마땅한 자리가 없으면 그대로 둔다."""
     n = len(s)
     if n <= _MOBILE_LINE_MAX:
         return [s]
-    mid = n / 2
-    cut = -1
-    for i, ch in enumerate(s):
-        if ch != "," or i < n * 0.3 or i > n * 0.7:
-            continue
-        if cut < 0 or abs(i - mid) < abs(cut - mid):
-            cut = i
+    cut = _find_cut(s, n)
     if cut < 0:
         return [s]
     return [s[: cut + 1].strip()] + _split_long(s[cut + 1 :].strip())

@@ -537,13 +537,111 @@
   }
 
   // ============================================================
+  // 본문 정렬
+  // ============================================================
+  // ⚠ SE ONE 툴바의 '정렬' 버튼 셀렉터는 SELECTORS.md 에 아직 실측 기록이 없다.
+  // 그래서 한 방법에 걸지 않고 3단계로 시도하고, 마지막에 실제로 먹었는지 확인해서
+  // 그 결과를 background 에 돌려준다(진단 로그에 남는다).
+  //   1) 툴바 정렬 버튼 → 가운데 옵션 클릭 (에디터 내부 모델까지 정상 갱신되는 정공법)
+  //   2) 본문 전체를 Range 로 선택 후 execCommand('justifyCenter')
+  //      — Ctrl+A 는 제목까지 잡을 수 있어 쓰지 않는다
+  //   3) 문단에 클래스/인라인 스타일 직접 부여 (최후 수단.
+  //      에디터가 자체 모델로 저장하면 무시될 수 있어 마지막에 둔다)
+  const ALIGN_CLASS = {
+    left: 'se-text-paragraph-align-left',
+    center: 'se-text-paragraph-align-center',
+    right: 'se-text-paragraph-align-right',
+  };
+
+  // 제목은 건드리지 않는다 — 본문 문단만.
+  function bodyParagraphs() {
+    return [...document.querySelectorAll('.se-component.se-text .se-text-paragraph')]
+      .filter((p) => !p.closest('.se-documentTitle'));
+  }
+
+  function alignApplied(align) {
+    const paras = bodyParagraphs();
+    if (!paras.length) return false;
+    return paras.every((p) => {
+      if (p.classList.contains(ALIGN_CLASS[align])) return true;
+      const ta = p.style.textAlign || getComputedStyle(p).textAlign;
+      return ta === align;
+    });
+  }
+
+  function selectBodyRange() {
+    const paras = bodyParagraphs();
+    if (!paras.length) return false;
+    try {
+      const range = document.createRange();
+      range.setStartBefore(paras[0]);
+      range.setEndAfter(paras[paras.length - 1]);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async function setBodyAlign(align) {
+    const want = ALIGN_CLASS[align] ? align : 'center';
+    const tried = [];
+
+    if (alignApplied(want)) {
+      return { ok: true, align: want, tried: ['이미적용'], paragraphs: bodyParagraphs().length };
+    }
+
+    // 1) 툴바
+    try {
+      const opener = document.querySelector('button[data-name="align"], .se-toolbar button[data-name*="align" i]');
+      if (opener) {
+        opener.click();
+        await sleep(250);
+        const opt = document.querySelector(
+          `[data-name="align"][data-value="${want}"], [data-value="align-${want}"], .se-toolbar button[data-value="${want}"]`
+        );
+        if (opt) { opt.click(); tried.push('toolbar'); await sleep(250); }
+        else { opener.click(); await sleep(150); } // 못 찾았으면 드롭다운은 닫아둔다
+      }
+    } catch (e) { /* 다음 단계로 */ }
+
+    // 2) execCommand
+    if (!alignApplied(want)) {
+      try {
+        if (selectBodyRange()) {
+          document.execCommand('justify' + want.charAt(0).toUpperCase() + want.slice(1), false, null);
+          tried.push('execCommand');
+          await sleep(200);
+        }
+      } catch (e) { /* 다음 단계로 */ }
+    }
+
+    // 3) 클래스 직접 부여
+    if (!alignApplied(want)) {
+      for (const p of bodyParagraphs()) {
+        Object.values(ALIGN_CLASS).forEach((c) => p.classList.remove(c));
+        p.classList.add(ALIGN_CLASS[want]);
+        p.style.textAlign = want;
+      }
+      tried.push('class');
+    }
+
+    const paragraphs = bodyParagraphs().length;
+    const ok = alignApplied(want);
+    console.log(TAG, `본문 정렬 ${want}: ${ok ? '적용됨' : '실패'} (시도 ${tried.join('>') || '없음'}, 문단 ${paragraphs}개)`);
+    return { ok, align: want, tried, paragraphs };
+  }
+
+  // ============================================================
   // 메시지 라우터 (background ↔ 이 프레임)
   // ============================================================
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!msg || !msg.action) return;
 
     // 에디터 프레임만 처리하는 명령들
-    const editorOnly = ['GET_POSITIONS', 'DISMISS_POPUP', 'INSERT_IMAGES', 'FINALIZE', 'PROGRESS', 'READ_CATEGORIES'];
+    const editorOnly = ['GET_POSITIONS', 'DISMISS_POPUP', 'INSERT_IMAGES', 'FINALIZE', 'PROGRESS', 'READ_CATEGORIES', 'SET_ALIGN'];
     if (editorOnly.includes(msg.action) && !isEditorFrame()) return; // 다른 프레임은 무시
 
     // blogId 는 프레임마다 알 수 있고 없고가 갈린다(에디터 iframe 의 src 에 들어 있다).
@@ -577,6 +675,11 @@
           case 'INSERT_IMAGES': {
             const res = await insertImages(msg.images, msg.atCaret);
             sendResponse({ ok: true, ...res });
+            break;
+          }
+          case 'SET_ALIGN': {
+            const res = await setBodyAlign(msg.align || 'center');
+            sendResponse(res);
             break;
           }
           case 'FINALIZE': {
@@ -614,15 +717,30 @@
   // ============================================================
   // 진입: 에디터 준비되면 background에 알림
   // ============================================================
+  // 배경으로 진단 한 줄 보내기. 글이 안 써질 때 원인이 '에디터를 못 찾음'인지
+  // '찾았는데 입력이 안 됨'인지는 여기서만 갈린다 — 반드시 기록으로 남겨야 한다.
+  function diag(text) {
+    try { chrome.runtime.sendMessage({ action: 'DIAG', text }, () => void chrome.runtime.lastError); }
+    catch (e) { /* 워커 미기동 등 */ }
+  }
+
   async function boot() {
     if (!/GoBlogWrite|PostWriteForm|editor/i.test(location.href) && !isEditorFrame()) {
       // 글쓰기 관련 페이지가 아니면 대기만
     }
     // 편집 대상 프레임에서만 부팅
     const title = await waitFor('.se-documentTitle .se-text-paragraph', { timeout: 25000 });
-    if (!title) { console.log(TAG, '에디터 미발견(이 프레임 아님)'); return; }
+    if (!title) {
+      console.log(TAG, '에디터 미발견(이 프레임 아님)');
+      // 최상위 문서에서만 알린다 — 프레임마다 보내면 로그가 같은 줄로 도배된다.
+      // 글쓰기 URL 인데 이 줄이 찍혔다면 네이버 에디터 구조가 바뀌었거나
+      // 로그인/점검 페이지가 대신 떠 있는 것이다.
+      if (isTopDoc()) diag('에디터 미발견(25초) — ' + location.href.slice(0, 80));
+      return;
+    }
 
     console.log(TAG, '에디터 준비됨, background에 EDITOR_READY 전송');
+    diag('에디터 준비됨 — ' + location.href.slice(0, 80));
     showOverlay('✍️ 자동 작성을 시작합니다...', 5);
     try {
       const resp = await chrome.runtime.sendMessage({ action: 'EDITOR_READY' });

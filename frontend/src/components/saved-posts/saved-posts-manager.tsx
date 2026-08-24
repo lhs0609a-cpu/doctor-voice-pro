@@ -152,6 +152,10 @@ function sendMessageToExtension(extId: string, message: any): Promise<any> {
   })
 }
 
+// 고정 하단 이미지의 '과거 변형' 회피셋 상한. 서버의 uniq.SIBLING_WINDOW 와 맞춘다
+// (서버도 방어적으로 같은 값으로 자르므로, 더 보내봐야 버려지고 저장 공간만 쓴다).
+const FIXED_SIBLING_WINDOW = 24
+
 // 이미지 → EXIF 제거된 base64 (canvas 재인코딩)
 function imageToCleanBase64(file: File, maxWidth = 1280, quality = 0.9): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -263,6 +267,7 @@ export function SavedPostsManager() {
   // 고정 하단 이미지: 모든 글 맨 아래에 항상(유니크화되어) 들어감
   const [fixedImage, setFixedImage] = useState<string | null>(null)      // base64 data URL
   const [fixedSiblings, setFixedSiblings] = useState<string[]>([])        // 과거 변형 pHash(중복 회피)
+  const fixedTrimRef = useRef<number | undefined>(undefined)               // 서버 탐색 시작점(직전 통과 지점)
 
   const [finalAction, setFinalAction] = useState<FinalAction>('publishNow')
   const [openType, setOpenType] = useState<OpenType>('public')
@@ -439,6 +444,13 @@ export function SavedPostsManager() {
   // 이미 등록된 글이 준비함에 남고 사용자가 다시 눌러 중복 발행되는 문제가 있었다.
   const BATCH_KEY = 'doctorvoice-batch-active'
 
+  // 결과가 이만큼 안 오면 멈춘 것으로 본다.
+  // 확장의 건당 가드(jobGuardMs)는 180초 + 캡차 200초 + 사진당 30초라, 사진 10장이면
+  // 11분이 넘는다. 예전엔 여기가 7분이라 정상적으로 오래 걸리는 글도 '응답 없음'으로
+  // 끊겼다 — 화면만 풀리고 확장은 계속 발행하니, 다시 누르면 같은 글이 두 번 예약됐다.
+  // 반드시 확장 가드의 최댓값보다 길어야 한다.
+  const STALL_MS = 15 * 60 * 1000
+
   const beginBatch = (total: number) => {
     batchRef.current = { total, done: 0, ok: 0 }
     setBatchProgress({ total, done: 0, ok: 0 })
@@ -461,7 +473,7 @@ export function SavedPostsManager() {
       const raw = localStorage.getItem(BATCH_KEY)
       if (!raw) return
       const s = JSON.parse(raw)
-      if (!s?.total || Date.now() - (s.at || 0) > 7 * 60 * 1000) { localStorage.removeItem(BATCH_KEY); return }
+      if (!s?.total || Date.now() - (s.at || 0) > STALL_MS) { localStorage.removeItem(BATCH_KEY); return }
       batchRef.current = { total: s.total, done: s.done || 0, ok: s.ok || 0 }
       setBatchProgress({ total: s.total, done: s.done || 0, ok: s.ok || 0 })
       setPublishing(true)
@@ -470,17 +482,17 @@ export function SavedPostsManager() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 한 건당 최대 3분(확장 가드) + 여유. 그 두 배 동안 아무 결과도 없으면 멈춘 것으로 본다.
+  // 결과 하나가 올 때마다 다시 감는다 → 배치 전체가 아니라 '한 건'이 멈춘 것을 잡는다.
   const armStallTimer = () => {
     if (stallTimerRef.current) clearTimeout(stallTimerRef.current)
     stallTimerRef.current = setTimeout(() => {
       const b = batchRef.current
       if (!b.total) return
       toast.error('발행이 응답하지 않아 중단했어요', {
-        description: `${b.ok}건 완료. 남은 글은 준비함에 있으니 다시 발행하세요.`,
+        description: `${b.ok}건 완료. 확장 팝업의 '문제진단 로그 복사'로 원인을 확인할 수 있어요.`,
       })
       endBatch()
-    }, 7 * 60 * 1000)
+    }, STALL_MS)
   }
 
   // 어느 블로그에 로그인돼 있는지 확장에 물어본다. 이게 정해져야 예약 기준을 계산할 수 있다.
@@ -635,7 +647,8 @@ export function SavedPostsManager() {
       .catch(() => { /* 캐시 없음 */ })
     try {
       const fs = JSON.parse(localStorage.getItem('doctorvoice-fixed-siblings') || '[]')
-      if (Array.isArray(fs)) setFixedSiblings(fs)
+      // 예전 버전이 300개까지 쌓아둔 값이 남아 있다 — 여기서 바로 줄인다.
+      if (Array.isArray(fs)) setFixedSiblings(fs.slice(-FIXED_SIBLING_WINDOW))
     } catch { /* noop */ }
     mediaPoolAPI.listCollections().then((data) => {
       setCollections(data.collections)
@@ -773,10 +786,18 @@ export function SavedPostsManager() {
   const resolveFixedImage = async (): Promise<string | null> => {
     if (!fixedImage) return null
     try {
-      const r = await mediaPoolAPI.uniquifyOne(fixedImage, fixedSiblings)
-      // 회피셋 상한. 60이면 100건 준비 시 61번째부터 앞의 변형을 잊어버려
-      // 뒷부분이 앞부분과 같은 변형으로 나왔다 → 100건 배치를 덮도록 넉넉히 잡는다.
-      const nextSib = [...fixedSiblings, r.phash].slice(-300)
+      const r = await mediaPoolAPI.uniquifyOne(fixedImage, fixedSiblings, fixedTrimRef.current)
+      // 직전에 통과한 탐색 시작점을 기억해 다음 글에 돌려준다(서버 시도 횟수 절감).
+      fixedTrimRef.current = r.trim
+      // 회피셋 상한 = FIXED_SIBLING_WINDOW.
+      //
+      // 예전엔 300이었다. "100건 배치를 덮도록 넉넉히" 잡은 건데, 사진 한 장으로
+      // 서로 6비트 이상 떨어진 변형 300개를 만들라는 요구라 애초에 불가능했다 —
+      // 서버가 시도 16회(가드 최대)를 다 쓰고도 게이트를 못 넘겨, 글마다 35초를
+      // 버리고 결국 passed=false 인 변형이 들어갔다. 넉넉히 잡은 게 오히려
+      // '중복 회피 실패 + 35초'를 만들고 있었던 셈.
+      // 최근 것만 확실히 벌리는 편이 실제로 더 안 겹치고 훨씬 싸다.
+      const nextSib = [...fixedSiblings, r.phash].slice(-FIXED_SIBLING_WINDOW)
       setFixedSiblings(nextSib)
       localStorage.setItem('doctorvoice-fixed-siblings', JSON.stringify(nextSib))
       return r.image

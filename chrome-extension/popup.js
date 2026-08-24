@@ -14,20 +14,49 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btnSaveCred').addEventListener('click', saveCred);
   document.getElementById('btnClearCred').addEventListener('click', clearCred);
 
+  document.getElementById('btnCopyDiag').addEventListener('click', copyDiag);
+
   refresh(VERSION);
   refreshCredStatus();
 });
 
-function setCredStatus(text) {
+function setCredStatus(text, warn) {
   const el = document.getElementById('credStatus');
-  if (el) el.textContent = text;
+  if (!el) return;
+  el.textContent = text;
+  el.className = warn ? 'hint warn' : 'hint';
 }
 
 function refreshCredStatus() {
   chrome.runtime.sendMessage({ action: 'GET_CRED' }, (r) => {
-    if (chrome.runtime.lastError) { setCredStatus('저장된 계정: 확인 불가'); return; }
+    if (chrome.runtime.lastError) { setCredStatus('저장된 계정: 확인 불가', true); return; }
     const has = r && r.ok && r.cred && r.cred.id;
-    setCredStatus(has ? ('저장된 계정: ' + maskId(r.cred.id)) : '저장된 계정: 없음');
+    // 확장을 새 폴더로 교체(업데이트)하면 크롬이 확장 저장소를 통째로 비운다.
+    // 그래서 계정이 소리 없이 사라지고, 다음 발행 때 로그인 화면에서 멈춘다.
+    // 없으면 눈에 띄게 알려 다시 저장하도록 한다.
+    setCredStatus(
+      has ? ('저장된 계정: ' + maskId(r.cred.id))
+        : '저장된 계정 없음 — 업데이트 시 초기화됩니다. 다시 저장해주세요.',
+      !has
+    );
+  });
+}
+
+// 확장이 디스크에 남겨둔 진단 로그를 통째로 클립보드에 담는다.
+// (서비스워커 콘솔은 워커가 죽으면 비어서, 고객 PC 에서는 이 방법뿐이다)
+function copyDiag() {
+  const el = document.getElementById('diagStatus');
+  chrome.runtime.sendMessage({ action: 'GET_DIAG' }, async (r) => {
+    if (chrome.runtime.lastError || !r || !r.ok) { el.textContent = '로그를 가져오지 못했습니다'; return; }
+    const lines = r.lines || [];
+    if (!lines.length) { el.textContent = '기록된 로그가 없습니다 (발행을 한 번 시도한 뒤 눌러주세요)'; return; }
+    const head = `닥터보이스 확장 v${r.version} 진단 로그 · ${new Date().toLocaleString('ko-KR')}`;
+    try {
+      await navigator.clipboard.writeText([head, ...lines].join('\n'));
+      el.textContent = `${lines.length}줄 복사됨 — 채팅에 붙여넣기(Ctrl+V) 해주세요`;
+    } catch (e) {
+      el.textContent = '복사 실패 — 확장 관리 화면의 서비스 워커 콘솔을 확인해주세요';
+    }
   });
 }
 

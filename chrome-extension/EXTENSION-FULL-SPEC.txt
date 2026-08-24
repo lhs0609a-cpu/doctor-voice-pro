@@ -1,0 +1,1895 @@
+================================================================================
+ 닥터보이스 프로 - 네이버 블로그 자동화 확장프로그램 전체 명세서
+ (네이버 로그인 → 글쓰기 → 발행/예약발행 → 대량배치 → 자동배포 전 과정)
+
+ 기준 버전 : v16.0.7 (2026-08-03)
+ 확장 ID   : cdmgfoemncdnoigiolpgaaompcmlfcpk
+ 원본 위치 : <repo>/chrome-extension/
+ 목적      : 이 문서 하나만 있으면 다른 프로젝트/다른 서비스로 그대로 이식해
+             동작시킬 수 있도록, 코드·프로토콜·셀렉터·함정을 전부 기록한다.
+================================================================================
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 0. 30초 요약 — 이 확장이 하는 일                                             ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+웹앱(Next.js)에서 "발행" 버튼을 누르면,
+
+  웹앱 --(chrome.runtime.sendMessage, 외부 메시지)--> 확장 background.js
+       --> 네이버 블로그 글쓰기 탭을 열고
+       --> (로그인 안 돼 있으면) 자동/수동 로그인 후 글쓰기로 복귀
+       --> chrome.debugger(CDP)로 "사람이 타이핑하듯" 제목·본문 입력
+       --> 이미지는 합성 DragEvent 로 드롭 삽입
+       --> 발행 레이어를 열어 카테고리/공개설정/예약시간 지정
+       --> 임시저장 | 즉시발행 | 예약발행 실행
+       --> 건별 결과를 웹앱으로 되돌려 보냄(CustomEvent)
+
+여기에 부가 기능 2개:
+  - Gemini(gemini.google.com)를 자동 조작해 키워드 N건의 블로그 글을 대량 생성
+  - crx + updates.xml + 그룹정책 레지스트리로 무음 자동업데이트 배포
+
+핵심 설계 원칙 (이식할 때도 반드시 유지):
+  ① 입력은 반드시 CDP(chrome.debugger). DOM 직접 대입은 SmartEditor ONE / Quill
+     둘 다 무시한다. 이건 취향이 아니라 유일하게 동작하는 경로다.
+  ② 셀렉터는 data-click-area / data-name / data-testid 만 쓴다.
+     해시 클래스(.save_btn__bzc5B 등)는 폴백으로만. 배포마다 바뀐다.
+  ③ 실패는 조용히 넘기지 말고 "발행을 중단"한다.
+     사진 빠진 글, 엉뚱한 카테고리, 즉시 발행돼버린 예약글은 수동 복구가 지옥이다.
+  ④ 비밀번호는 서버에 절대 안 보낸다. 확장 로컬 storage 에 AES-GCM 암호화.
+  ⑤ 긴 배치는 반드시 keepalive 로 감싼다. MV3 워커는 30초 유휴면 죽는다.
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 1. 파일 구성 (이식 시 필요한 최소 세트)                                      ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+chrome-extension/
+├── manifest.json          MV3 매니페스트. 권한/스크립트 주입 규칙/자동업데이트 URL
+├── background.js   (57KB) 서비스워커. 오케스트레이션 + CDP 입력 + 배치 + 암호화 + 업데이트
+├── naver-poster.js (30KB) blog.naver.com 인페이지 컨트롤러 (에디터 판정/이미지/발행레이어)
+├── content-login.js       nid.naver.com 자동로그인 + 로그인 후 글쓰기 복귀
+├── gemini-writer.js       gemini.google.com 글 생성 (DOM 판정/좌표/완료판정/수확)
+├── content-website.js     웹앱 ↔ 확장 브릿지 (확장ID 노출, 결과 릴레이, payload 릴레이)
+├── popup.html / popup.js  팝업 UI (연동 신호등 / 계정 저장 / 진단로그 복사 / 업데이트)
+├── content.css            (오버레이 보조 스타일, 사실상 거의 안 씀)
+├── icons/                 icon16.png / icon48.png / icon128.png
+├── keys/doctorvoice.pem   ★ crx 서명 개인키. 유출 금지 / 분실하면 확장 ID가 바뀐다
+├── pack-crx.ps1           crx 패키징 + updates.xml 갱신 스크립트
+└── SELECTORS.md           셀렉터 실측 맵 (본 문서 12장에 통합됨)
+
+배포 산출물 (웹 서버 public 경로):
+frontend/public/extension/
+├── doctorvoice-extension.crx           자동업데이트용 서명 패키지
+├── updates.xml                         크롬이 주기적으로 읽는 업데이트 매니페스트
+├── version.json                        웹앱/팝업이 읽는 버전 정보 + 릴리스 노트
+├── doctorvoice-extension-v<X.Y.Z>.zip  수동 설치용 (개발자모드)
+├── doctorvoice-auto-update.reg         정책 등록 레지스트리 (1회)
+├── doctorvoice-auto-update-install.bat 위 .reg 를 관리자 권한으로 자동 병합
+└── AUTO-UPDATE-README.txt              고객 안내문
+
+★ 이 확장은 chrome-extension/ 폴더만 있으면 단독으로 동작한다.
+  단, 웹앱 쪽에 "확장을 호출하는 코드"가 필요하다 → 5장·6장 프로토콜 참조.
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 2. manifest.json 전문 + 권한 이유                                            ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+{
+  "manifest_version": 3,
+  "name": "닥터보이스 프로 - 네이버 블로그 자동 포스팅",
+  "version": "16.0.7",
+  "description": "키워드 대량 글 생성(Gemini) + 네이버 블로그 자동 포스팅",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAw15bHHlo+oAu4V9dLtO33fs5EF3eA2vo933KPqtdzVVoSsMV5T+MRjYUvEzQa77TZgtI4ptK2sv7srtHW3XOmWlp6pcbJn2lQVfmqN17lIND3h1SjWUJcRJKr/eZjTUcmFwW0tHqNZM9MeFRNxisxqvBnKmhnwiRVIXdKwgaj/AtQBI0r+eJkd0Sjev2h4o1fR6toT60frJJ89rpZbpGm8MpODg4vyYrx7IqNlRaXxkvea+EjqBX2PCgOTgRvOVdHNZjkhIP5B6/a3MI8mHHY0dJgLFDP3UvgRb/Rn+c2HZfgSjna3cy6DQPG/rM8wbGvIIXXPszaHTYrIBwgwXIvwIDAQAB",
+  "update_url": "https://doctor-voice-pro-ghwi.vercel.app/extension/updates.xml",
+  "permissions": [
+    "activeTab", "storage", "scripting", "tabs",
+    "debugger", "alarms", "clipboardWrite"
+  ],
+  "host_permissions": [
+    "https://nid.naver.com/*",
+    "https://blog.naver.com/*",
+    "https://*.blog.naver.com/*",
+    "https://*.naver.com/*",
+    "https://gemini.google.com/*",
+    "https://*.vercel.app/*",
+    "http://localhost:*/*"
+  ],
+  "externally_connectable": {
+    "matches": ["https://*.vercel.app/*", "http://localhost:*/*"]
+  },
+  "action": { "default_popup": "popup.html", "default_icon": {...} },
+  "icons": { "16":..., "48":..., "128":... },
+  "content_scripts": [
+    { "matches": ["https://blog.naver.com/*", "https://*.blog.naver.com/*"],
+      "js": ["naver-poster.js"], "css": ["content.css"],
+      "run_at": "document_idle", "all_frames": true },        ← iframe 필수
+    { "matches": ["https://nid.naver.com/*", "https://www.naver.com/*", "https://naver.com/*"],
+      "js": ["content-login.js"], "run_at": "document_idle" },
+    { "matches": ["https://gemini.google.com/*"],
+      "js": ["gemini-writer.js"], "run_at": "document_idle" },
+    { "matches": ["https://*.vercel.app/*", "http://localhost:*/*"],
+      "js": ["content-website.js"], "run_at": "document_idle" }
+  ],
+  "background": { "service_worker": "background.js" }
+}
+
+권한별 이유 (하나도 빼면 안 됨):
+  debugger      ★ 핵심. CDP Input.insertText 로 에디터에 실제 타이핑. 없으면 글이 안 써진다.
+                  부작용: 상단에 "디버깅 중" 배너가 뜬다 → 필요한 구간만 attach/detach 한다.
+  tabs          글쓰기 탭 열기/찾기/리로드/닫기, 웹앱 탭 찾아 결과 전달
+  storage       pendingJob / 암호화된 계정 / 진단로그 / 업데이트 캐시
+  alarms        업데이트 확인(3시간) + keepalive backstop(30초)
+  scripting     (현재 직접 사용은 적음. 향후 주입용으로 유지)
+  activeTab     팝업에서의 사용자 제스처 기반 접근
+  clipboardWrite 팝업의 "진단 로그 복사"
+
+all_frames: true 가 왜 필수인가
+  네이버 에디터는 #mainFrame iframe 안에 있다(src=/PostWriteForm.naver?blogId=...).
+  최상위 문서에는 .se-documentTitle 이 없다. all_frames 를 빼면 에디터를 영영 못 찾는다.
+  같은 오리진(blog.naver.com)이라 window.frameElement 접근이 되므로,
+  좌표 계산 시 iframe 오프셋을 더해 "뷰포트 절대 좌표"를 만들 수 있다(CDP 는 절대좌표를 씀).
+
+manifest "key" 와 확장 ID 관계
+  key = keys/doctorvoice.pem 의 공개키. 이걸 박아두면 어디에 설치해도 확장 ID가 고정된다.
+  ID 고정이 필요한 이유: externally_connectable 로 웹앱이 ID를 지정해 메시지를 보내고,
+  ExtensionInstallForcelist 정책도 ID로 지정하기 때문.
+  ★ .pem 을 분실하면 ID가 바뀌고, 기존 사용자 전원이 재설치해야 한다.
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 3. 아키텍처 — 3계층 역할 분담                                                ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────┐  chrome.runtime.sendMessage(extId, msg)   ┌──────────────────┐
+│  웹앱 (페이지)  │ ─────────────────────────────────────────> │                  │
+│  Next.js        │                                            │  background.js   │
+│                 │ <───────── CustomEvent (window) ────────── │ (서비스워커)     │
+└────────┬────────┘   content-website.js 가 릴레이             │                  │
+         │                                                     │ · 오케스트레이션 │
+         │ localStorage['doctorvoice-extension-id']            │ · CDP 입력       │
+         │  ← content-website.js 가 심어줌                     │ · 배치 루프      │
+         └─────────────────────────────────────────────────────│ · 암호화/업데이트│
+                                                               └────┬────────┬────┘
+                                        chrome.tabs.sendMessage     │        │
+                                 ┌──────────────────────────────────┘        │
+                                 ▼                                           ▼
+                    ┌─────────────────────────┐              ┌──────────────────────┐
+                    │ naver-poster.js         │              │ gemini-writer.js     │
+                    │ (blog.naver.com, iframe)│              │ (gemini.google.com)  │
+                    │ · 에디터 프레임 판정    │              │ · 입력창 좌표        │
+                    │ · 좌표 제공(절대좌표)   │              │ · 완료 판정(3신호)   │
+                    │ · 이미지 드롭 삽입      │              │ · 본문 수확(innerText)│
+                    │ · 발행 레이어 조작      │              └──────────────────────┘
+                    │ · 캡차 감지/핸드오프    │
+                    └─────────────────────────┘
+                    ┌─────────────────────────┐
+                    │ content-login.js        │
+                    │ (nid.naver.com)         │
+                    │ · 자동 로그인 입력      │
+                    │ · 캡차 감지 → 핸드오프  │
+                    │ · 로그인 완료 → 글쓰기  │
+                    └─────────────────────────┘
+
+역할 경계 (이걸 어기면 반드시 깨진다):
+  content script = "DOM 판정 + 좌표 제공 + 클릭 가능한 것 클릭 + 대기"
+  background     = "CDP 로 실제 키/마우스 입력" + 상태 관리
+  → 텍스트 입력을 content script 에서 하려 하면 SE ONE / Quill 이 무시한다.
+  → CDP 는 background 에서만 쓸 수 있다(chrome.debugger 는 확장 API).
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 4. 왜 CDP 인가 (가장 중요한 설계 결정)                                       ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+네이버 SmartEditor ONE:
+  키입력을 눈에 안 보이는 버퍼(#input_buffer... iframe + hidden contenteditable)로 캡처한다.
+  .se-text-paragraph 에 textContent 를 대입해도 에디터 내부 모델에 반영되지 않는다.
+  → 저장/발행하면 빈 글이 나간다.
+
+Gemini 입력창:
+  Quill 에디터. 내부 Delta 모델과 DOM 이 분리돼 있어 textContent 대입은 전송조차 안 된다.
+
+해법: chrome.debugger(CDP) 1.3 을 탭에 attach 하고
+  Input.dispatchMouseEvent  → 문단 클릭(캐럿 놓기)
+  Input.insertText           → 텍스트 삽입 (IME 조합 문제 없음, 한글 안전)
+  Input.dispatchKeyEvent     → Enter / Ctrl+A / Ctrl+B
+
+주의사항 4개:
+  (1) 좌표는 "뷰포트 절대좌표"다. iframe 안 요소라면 frameElement 오프셋을 더해야 한다.
+  (2) 이미지 드롭(DragEvent)은 일반 DOM 이벤트라 CDP 가 붙어 있으면 방해된다.
+      → 이미지 삽입 전 detach, 삽입 후 다시 attach.
+  (3) attach 는 탭당 하나. 새로 붙이기 전에 기존 것을 반드시 detach.
+  (4) 사용자에게 "디버깅 중" 배너가 보인다. 필요한 최소 구간만 붙여 배너 노출을 줄인다.
+
+CDP 헬퍼 전문 (background.js — 이식할 때 그대로 복사):
+
+  function cdp(tabId, method, params) {
+    return new Promise((resolve, reject) => {
+      chrome.debugger.sendCommand({ tabId }, method, params || {}, (res) => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve(res);
+      });
+    });
+  }
+
+  let debuggerTabId = null;
+  async function attachDebugger(tabId) {
+    if (debuggerTabId) { try { await detachDebugger(debuggerTabId); } catch (_) {} }
+    await new Promise((resolve, reject) => {
+      chrome.debugger.attach({ tabId }, '1.3', () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else { debuggerTabId = tabId; resolve(); }
+      });
+    });
+  }
+  async function detachDebugger(tabId) {
+    await new Promise((resolve) => {
+      chrome.debugger.detach({ tabId }, () => { debuggerTabId = null; resolve(); });
+    });
+  }
+  async function clickAt(tabId, x, y) {
+    await cdp(tabId, 'Input.dispatchMouseEvent', { type:'mousePressed',  x, y, button:'left', clickCount:1 });
+    await sleep(40);
+    await cdp(tabId, 'Input.dispatchMouseEvent', { type:'mouseReleased', x, y, button:'left', clickCount:1 });
+  }
+  async function insertText(tabId, text) {
+    if (!text) return;
+    await cdp(tabId, 'Input.insertText', { text });
+  }
+  async function pressEnter(tabId) {
+    await cdp(tabId,'Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13,nativeVirtualKeyCode:13});
+    await cdp(tabId,'Input.dispatchKeyEvent',{type:'keyUp'  ,key:'Enter',code:'Enter',windowsVirtualKeyCode:13,nativeVirtualKeyCode:13});
+  }
+  async function ctrlA(tabId) {
+    await cdp(tabId,'Input.dispatchKeyEvent',{type:'keyDown',key:'Control',code:'ControlLeft',windowsVirtualKeyCode:17,modifiers:2});
+    await cdp(tabId,'Input.dispatchKeyEvent',{type:'keyDown',key:'a',code:'KeyA',windowsVirtualKeyCode:65,modifiers:2});
+    await sleep(40);
+    await cdp(tabId,'Input.dispatchKeyEvent',{type:'keyUp',key:'a',code:'KeyA',windowsVirtualKeyCode:65,modifiers:2});
+    await cdp(tabId,'Input.dispatchKeyEvent',{type:'keyUp',key:'Control',code:'ControlLeft',windowsVirtualKeyCode:17,modifiers:0});
+  }
+  // Ctrl+B = 굵게 토글 (키워드 강조에 사용)
+  async function ctrlB(tabId) { /* 위와 동일, KeyB / 66 */ }
+
+  chrome.debugger.onDetach.addListener(() => { debuggerTabId = null; });
+
+  // content script 에 메시지. 응답 안 하는 프레임은 null 로 흘린다.
+  function sendToTab(tabId, message) {
+    return new Promise((resolve) => {
+      chrome.tabs.sendMessage(tabId, message, (res) => {
+        if (chrome.runtime.lastError) resolve(null); else resolve(res);
+      });
+    });
+  }
+
+  // iframe 오프셋을 더한 절대좌표 (naver-poster.js)
+  function absoluteRect(el) {
+    const r = el.getBoundingClientRect();
+    let offX = 0, offY = 0;
+    try {
+      if (window.frameElement) {
+        const fr = window.frameElement.getBoundingClientRect();
+        offX = fr.left; offY = fr.top;
+      }
+    } catch (e) { /* cross-origin → 오프셋 0 */ }
+    return {
+      x: Math.round(offX + r.left + r.width / 2),
+      y: Math.round(offY + r.top + Math.min(r.height / 2, 24)),
+      left: offX + r.left, top: offY + r.top, width: r.width, height: r.height,
+    };
+  }
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 5. 메시지 프로토콜 전체 (웹앱 ↔ 확장)                                        ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+── 5-1. 웹앱 → 확장 : chrome.runtime.onMessageExternal ────────────────────────
+   호출법: chrome.runtime.sendMessage(EXT_ID, { action: '...', ... }, callback)
+   조건  : manifest.externally_connectable.matches 에 웹앱 도메인이 있어야 함
+
+┌───────────────────┬────────────────────────────┬──────────────────────────────┐
+│ action            │ 요청 필드                  │ 응답                         │
+├───────────────────┼────────────────────────────┼──────────────────────────────┤
+│ PING              │ -                          │ {success, version,           │
+│                   │                            │  updateAvailable, latest,    │
+│                   │                            │  downloadUrl, notes}         │
+│ CHECK_UPDATE      │ -                          │ {success, current, latest,   │
+│                   │                            │  updateAvailable, ...}       │
+│ SUBMIT_JOB        │ job (6장 스키마)           │ {success}  단건 발행         │
+│ ONE_CLICK_PUBLISH │ postData                   │ 구버전 호환 별칭             │
+│ SUBMIT_BATCH      │ jobs[] (메타만),           │ {success, accepted}          │
+│                   │ expectedBlogId             │ 실패시 {success:false,error} │
+│ SUBMIT_GEN_BATCH  │ items[{id,keyword,prompt}],│ {success, accepted}          │
+│                   │ options (11장)             │                              │
+│ CANCEL_GEN_BATCH  │ -                          │ {success, running}           │
+│ SYNC_BLOG         │ -                          │ {success, blogId}            │
+│                   │                            │ 또는 {success:false,needLogin}│
+│ SYNC_CATEGORIES   │ -                          │ {success, categories:[{id,   │
+│                   │                            │  name}]} / needLogin         │
+│ SAVE_CRED         │ id, pw                     │ {success}  ※쓰기 전용        │
+│ HAS_CRED          │ -                          │ {success, hasCred}           │
+└───────────────────┴────────────────────────────┴──────────────────────────────┘
+   ★ GET_CRED 는 외부에 노출하지 않는다(웹페이지가 비밀번호를 읽지 못하게).
+
+── 5-2. 확장 내부 : chrome.runtime.onMessage (content script → background) ────
+   EDITOR_READY   에디터 준비됨 → 자동화 시작 트리거. 응답 {hasJob:bool}
+   GET_VERSION    버전 조회
+   DIAG           페이지에서 올리는 진단 한 줄
+   GET_DIAG       저장된 진단 로그 전체 {ok, lines[], version}
+   CLEAR_DIAG     진단 로그 삭제
+   CHECK_UPDATE   업데이트 확인
+   SAVE_CRED / GET_CRED / CLEAR_CRED   자격증명 (GET 은 내부 전용)
+
+── 5-3. background → naver-poster.js : chrome.tabs.sendMessage ───────────────
+   PING            {ok, version, editor:bool}
+   PROGRESS        {text, pct} → 오버레이 갱신
+   DISMISS_POPUP   "작성 중이던 글" 팝업 취소
+   GET_POSITIONS   {ok, title:{x,y,...}, body:{x,y,...}}  ← 에디터 프레임만 응답
+   INSERT_IMAGES   {images:[dataURL], atCaret:bool} → {ok, inserted, expected, failed[]}
+   FINALIZE        {job} → {ok, done, action, categories?, error?}
+   READ_CATEGORIES {ok, categories:[{id,name}], error?}
+   READ_BLOG_ID    {ok, blogId}   ← blogId 를 찾은 프레임만 응답(빈 값 선점 방지)
+   HIDE_OVERLAY    오버레이 제거
+
+   ★ editorOnly 목록: GET_POSITIONS, DISMISS_POPUP, INSERT_IMAGES, FINALIZE,
+     PROGRESS, READ_CATEGORIES → 에디터 프레임이 아니면 return 으로 아예 무응답.
+     이유: 여러 프레임이 동시에 응답하면 먼저 온 답이 채택돼 엉뚱한 결과가 된다.
+
+── 5-4. background → gemini-writer.js ────────────────────────────────────────
+   GEM_PING         {ok, version, ready, loggedIn, conversations}
+   GEM_WAIT_READY   {timeout, tempChat} → 앱 로딩 대기 + 임시채팅 on
+   GEM_NEW_CHAT     새 채팅(문맥 초기화) → {ok, before, after}
+   GEM_INPUT_POS    {ok, pos:{x,y}, count}  count = 현재 응답 블록 수
+   GEM_STATUS       {expectIndex} → {ok, started, complete, chars, text}  ← 폴링용
+   GEM_HARVEST      (구) 블로킹 수확
+   GEM_PROGRESS     {text, pct}
+   GEM_HIDE_OVERLAY
+
+── 5-5. 확장 → 웹앱 : window CustomEvent (content-website.js 가 릴레이) ──────
+   'doctorvoice-extension-ready'  detail:{extensionId, version}
+   'doctorvoice-job-result'       detail:{id, ok, message, uncertain}
+   'doctorvoice-gen-result'       detail:{id, ok, keyword, text, chars, error,
+                                          done, fatal}   id==='__done__' → 배치 종료
+   'doctorvoice-job-request'      detail:{id, token}   ← 확장이 payload 를 요구
+   'doctorvoice-job-payload'      detail:{token, job}  ← 웹앱이 응답(반드시 같은 token)
+
+── 5-6. 확장 → 웹앱 : localStorage / DOM 마커 ────────────────────────────────
+   localStorage['doctorvoice-extension-id']      = 확장 ID  (웹앱이 이걸 읽어 호출)
+   localStorage['doctorvoice-extension-version'] = 버전
+   <div id="doctorvoice-extension-connected" data-extension-id data-version hidden>
+   ★ 웹앱은 확장 ID 를 하드코딩하지 않는다. content-website.js 가 심어준 값을 쓴다.
+     (개발자모드 설치 시 ID 가 달라질 수 있으므로)
+
+── 5-7. 웹앱 측 최소 구현 (이식용 복사본) ────────────────────────────────────
+
+  // (a) 확장에 메시지 보내기
+  function sendToExtension(msg) {
+    return new Promise((resolve, reject) => {
+      const id = localStorage.getItem('doctorvoice-extension-id');
+      if (!id || !window.chrome?.runtime?.sendMessage)
+        return reject(new Error('확장 프로그램이 연결되지 않았습니다'));
+      chrome.runtime.sendMessage(id, msg, (res) => {
+        if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
+        else resolve(res);
+      });
+    });
+  }
+
+  // (b) 연동 상태 폴링 (5초 간격, PING 타임아웃 1.5초)
+  //     'doctorvoice-extension-ready' 와 window focus 에서도 즉시 재확인
+  //     → 신호등: connected / update / disconnected / checking
+
+  // (c) 이미지 → EXIF 제거된 base64 (반드시 canvas 를 거친다)
+  function imageToCleanBase64(file, maxWidth = 1280, quality = 0.9) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth; }
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const ctx = c.getContext('2d');
+        if (!ctx) return reject(new Error('canvas 미지원'));
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(c.toDataURL('image/jpeg', quality));   // ← EXIF(GPS/기기) 제거됨
+      };
+      img.onerror = reject;
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 6. Job 데이터 스키마 (normalizeJob)                                          ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+웹앱이 보내는 job (모든 필드 선택적, 없으면 기본값):
+
+{
+  id:        "post-1735...",           // 배치 결과 매칭 키
+  title:     "글 제목",                 // 없으면 suggested_titles[0]
+  content:   "본문\n줄바꿈=문단",       // 없으면 generated_content
+  images:    ["data:image/jpeg;base64,..."],   // 본문 끝에 순서대로 삽입
+  blocks:    [                          // ★ 있으면 content/images 를 여기서 파생
+    { type:"text",  content:"첫 단락" },
+    { type:"image", image:"data:image/jpeg;base64,..." },
+    { type:"text",  content:"둘째 단락" }
+  ],
+  emphasize: ["임플란트","치과"],        // 본문에서 Ctrl+B 로 자동 굵게 (2자 이상)
+  tags:      ["태그1","태그2"],          // = keywords / seo_keywords
+  options: {
+    openType: "public",                 // public | neighbor | both | private
+    search:   true,                     // false 면 검색허용 체크 해제
+    category: "24"                      // 카테고리 번호 또는 이름. null=네이버 기본
+  },
+  finalAction: "schedule",              // draft | publishNow | schedule
+  schedule:  { datetime: "2026-08-10T14:30" },   // ISO. 분은 10분 단위로 내림됨
+  expectedBlogId: "platonmarketing"     // 발행 직전 실제 로그인 계정과 대조 → 다르면 중단
+}
+
+normalizeJob 정규화 규칙:
+  - blocks 가 있으면 content = text 블록들을 "\n\n" 으로 join,
+    images = image 블록들의 배열 → 즉 blocks 만 보내면 중복 전송 안 해도 된다.
+    ★ blocks 를 보낼 때 images 를 같이 보내면 같은 base64 가 두 번 실려 전송량 2배.
+  - finalAction 기본값 'draft' (안전). 명시 안 하면 발행되지 않는다.
+  - options.openType 기본 'public', options.search 기본 true, category 기본 null.
+
+배치용 메타 (SUBMIT_BATCH 의 jobs[]) — 사진 없이 이것만:
+  { id, title, options, finalAction:'schedule', schedule:{datetime}, expectedBlogId }
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 7. 흐름 ① 네이버 로그인                                                      ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+설계 원칙: "세션 재사용". 매번 로그인하지 않고 브라우저의 네이버 세션을 그대로 쓴다.
+세션이 끊겼을 때만 개입한다. 자동로그인은 opt-in(계정을 저장한 사용자만).
+
+── 7-1. 전체 시나리오 ────────────────────────────────────────────────────────
+
+  startJob(job)
+    → chrome.storage.local.pendingJob = job    ★ 로그인 리다이렉트를 넘어 살아남는 표식
+    → blog.naver.com/GoBlogWrite.naver 탭 열기(기존 글쓰기 탭 있으면 재사용+reload)
+
+  [세션 살아있음]  naver-poster.js boot() → .se-documentTitle 발견
+                   → EDITOR_READY → background 가 runAutomation() 시작
+
+  [세션 끊김]      네이버가 nid.naver.com 으로 리다이렉트
+                   → naver-poster.js 는 주입되지 않음(도메인 불일치)
+                   → content-login.js 가 주입됨
+                     · pendingJob 있는지 확인 (없으면 "일반 로그인"이므로 개입 금지)
+                     · 저장된 계정 있으면 tryAutoLogin()
+                     · 캡차/기기인증 감지되면 즉시 중단 → 사용자 핸드오프
+                     · 로그인 폼이 사라지면 = 로그인 성공
+                       → 1초 뒤 GoBlogWrite.naver 로 이동 → 위 [세션 살아있음] 경로 합류
+
+  [로그인 화면에서 멈춤]
+                   background 의 watchLoginBounce(tabId, gen) 가 3초×20=60초 감시
+                   → tab.url 에 nid.naver.com 이 보이면 이 건을 즉시 실패 처리
+                     {ok:false, needLogin:true} → 배치라면 남은 건 전부 중단
+                   ★ 이게 없으면 건당 가드(최대 11분)가 터질 때까지 화면이 "발행 중"으로 멈춤
+
+── 7-2. content-login.js 핵심 코드 ───────────────────────────────────────────
+
+  const WRITE_URL = 'https://blog.naver.com/GoBlogWrite.naver';
+
+  // 우리 작업이 있을 때만 개입한다
+  function hasPendingJob() {
+    return new Promise((res) => {
+      try { chrome.storage.local.get('pendingJob', (r) => res(!!(r && r.pendingJob))); }
+      catch (e) { res(false); }
+    });
+  }
+
+  const onLoginPage = () => location.href.includes('nid.naver.com');
+  const loginFormPresent = () => !!document.querySelector(
+    '#frmNIDLogin, form[name="frmNIDLogin"], #id, #pw, .login_form, #login_form');
+
+  // 캡차/보안문자/신규기기 인증 → 자동입력 중단, 사용자에게 넘김
+  const securityChallengePresent = () => !!document.querySelector(
+    'iframe[id^="ncaptcha-iframe"], iframe[src*="captcha"], .captcha_wrap, ' +
+    '#captcha, .device_reg, #deviceRegForm');
+
+  // ★ 네이티브 setter 로 값을 넣어야 네이버 폼 스크립트가 인지한다.
+  //   el.value = x 만 하면 React/폼 검증이 "빈 값"으로 본다.
+  function setInputValue(el, value) {
+    if (!el) return false;
+    const proto = Object.getPrototypeOf(el);
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+    if (setter) setter.call(el, value); else el.value = value;
+    el.dispatchEvent(new Event('input',  { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+    return true;
+  }
+
+  let autoLoginTried = false;
+  async function tryAutoLogin() {
+    if (autoLoginTried) return;
+    if (!(await hasPendingJob())) return;
+    if (securityChallengePresent()) { notify('보안 확인이 필요합니다...'); return; }
+    const cred = await getCred();                 // background 에 GET_CRED
+    if (!cred?.id || !cred?.pw) return;           // 미저장 → 수동 흐름 유지
+    const idEl = document.querySelector('#id');
+    const pwEl = document.querySelector('#pw');
+    if (!idEl || !pwEl) return;                   // 폼 아직 안 뜸 → 다음 폴에서 재시도
+    autoLoginTried = true;
+    setInputValue(idEl, cred.id);
+    setInputValue(pwEl, cred.pw);
+    const keep = document.querySelector('#keep'); // 로그인 상태 유지
+    if (keep && !keep.checked) { try { keep.click(); } catch (e) {} }
+    setTimeout(() => {
+      if (securityChallengePresent()) return;     // 제출 직전 재확인
+      const btn = document.querySelector('#log\\.login, button[type="submit"], .btn_login');
+      if (btn) btn.click();
+      else document.querySelector('#frmNIDLogin, form[name="frmNIDLogin"]')?.submit();
+    }, 400);
+  }
+
+  // 감시 루프: 800ms 폴링 + MutationObserver 이중 감시
+  //  · 폼이 사라지거나 nid 도메인을 벗어나면 → 1초 뒤 WRITE_URL 로 이동
+  //  · 폼이 늦게 뜨면 tryAutoLogin() 재시도(내부 플래그로 실제 실행은 1회)
+
+── 7-3. 자격증명 로컬 암호화 (AES-GCM) — background.js ───────────────────────
+
+  원칙: 서버 DB 에 절대 저장하지 않는다. 확장 로컬 storage 에만, 암호화해서.
+  한계: 키도 같은 storage 에 있으므로 "같은 기기 사용자"에게는 완전 안전하지 않다.
+        → 반드시 opt-in(사용자가 팝업에서 직접 저장)으로만 제공한다.
+
+  const _b64   = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+  const _unb64 = (str) => Uint8Array.from(atob(str), (c) => c.charCodeAt(0));
+
+  async function _getCredKey() {                      // 설치별 1회 생성 후 재사용
+    const stored = (await chrome.storage.local.get('__credKey')).__credKey;
+    if (stored) return crypto.subtle.importKey('raw', _unb64(stored), 'AES-GCM', true,
+                                               ['encrypt','decrypt']);
+    const key = await crypto.subtle.generateKey({name:'AES-GCM',length:256}, true,
+                                                ['encrypt','decrypt']);
+    const raw = await crypto.subtle.exportKey('raw', key);
+    await chrome.storage.local.set({ __credKey: _b64(raw) });
+    return key;
+  }
+  async function _enc(text) {
+    const key = await _getCredKey();
+    const iv  = crypto.getRandomValues(new Uint8Array(12));      // GCM 은 IV 12바이트
+    const ct  = await crypto.subtle.encrypt({name:'AES-GCM', iv}, key,
+                                            new TextEncoder().encode(text || ''));
+    return { iv: _b64(iv), ct: _b64(ct) };
+  }
+  async function _dec(enc) {
+    if (!enc?.iv || !enc?.ct) return '';
+    try {
+      const key = await _getCredKey();
+      const pt = await crypto.subtle.decrypt({name:'AES-GCM', iv:_unb64(enc.iv)},
+                                             key, _unb64(enc.ct));
+      return new TextDecoder().decode(pt);
+    } catch (e) { return ''; }
+  }
+  async function saveNaverCred(id, pw) {
+    if (!id || !pw) throw new Error('아이디/비밀번호가 필요합니다.');
+    await chrome.storage.local.set({ naverCred: { id: await _enc(id), pw: await _enc(pw) } });
+  }
+  async function getNaverCred() {
+    const enc = (await chrome.storage.local.get('naverCred')).naverCred;
+    if (!enc) return null;
+    const id = await _dec(enc.id), pw = await _dec(enc.pw);
+    return (id && pw) ? { id, pw } : null;
+  }
+
+  ★ 함정: 확장을 "새 폴더로 교체" 하면 크롬이 확장 storage 를 통째로 비운다.
+    → 저장한 계정이 소리 없이 사라지고 다음 발행이 로그인 화면에서 멈춘다.
+    → 팝업이 "저장된 계정 없음 — 업데이트 시 초기화됩니다. 다시 저장해주세요."로 경고한다.
+
+── 7-4. 계정 오발행 방지 (assertBlog) ───────────────────────────────────────
+
+  발행 도중 다른 계정으로 로그인되면 남의 블로그에 글이 올라간다. 3중 방어:
+
+  ① SUBMIT_BATCH 접수 시점: syncBlogId() 로 현재 blogId 확인
+     · 확인 실패(로그인 필요 등)도 반드시 거절 — 성공 조건으로만 판단하면
+       세션 끊긴 상태에서 배치가 그대로 출발한다.
+     · expectedBlogId 와 다르면 거절
+  ② runAutomation 진입 직후: assertBlog(tabId, job.expectedBlogId) → 다르면 throw
+  ③ READ_BLOG_ID 는 blogId 를 찾은 프레임만 응답 (빈 값이 먼저 채택되는 것 방지)
+
+  blogId 읽는 3단 폴백 (naver-poster.js):
+    1) location.href 의 ?blogId=            (PostWriteForm.naver?blogId=...)
+    2) 모든 iframe 의 src 에서 ?blogId=
+    3) /blog\.naver\.com\/([A-Za-z0-9_-]+)(?:[/?#]|$)/  ← 뒤에 /?# 또는 끝이 와야
+       하므로 'GoBlogWrite.naver' 같은 페이지명은 걸리지 않는다
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 8. 흐름 ② 블로그 글쓰기 (제목/본문/굵게/이미지)                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+── 8-1. runAutomation(tabId, job) 순서 ───────────────────────────────────────
+
+  1. assertBlog()                       계정 확인 (다르면 중단)
+  2. DISMISS_POPUP                      "작성 중이던 글이 있습니다" 팝업 취소
+  3. GET_POSITIONS × 20회 재시도(400ms) 제목/본문 문단의 절대좌표 확보
+  4. attachDebugger(tabId)
+  5. 제목: clickAt(title) → ctrlA → insertText(job.title)
+  6. 본문: clickAt(body)  → ctrlA
+       · blocks 에 이미지가 있으면 → typeBlocksInterleaved()
+       · 없으면 → typeBody() 후 detach → INSERT_IMAGES(전체)
+  7. FINALIZE (9장)
+  8. pendingJob 삭제, lastResult 기록, finishJob({ok, action})
+  에러 시: detach → PROGRESS 로 오버레이에 사유 표시 → finishJob({ok:false, error})
+
+── 8-2. 드래프트 팝업 취소 (naver-poster.js) ─────────────────────────────────
+
+  네이버는 임시저장 글이 있으면 "이어서 쓰기 / 취소" 팝업을 띄운다.
+  이걸 안 닫으면 발행 레이어 조작이 전부 막힌다. 셀렉터가 미확보라 텍스트 매칭:
+
+  async function dismissDraftPopup() {
+    await sleep(300);
+    const cands = [...document.querySelectorAll(
+      'button, a, .se-popup-button, [class*="popup"] button')];
+    for (const btn of cands) {
+      const t = (btn.textContent || '').trim();
+      if (t === '취소' || t === '아니오' || t === '새로 작성' || t === '새글쓰기') {
+        try { btn.click(); await sleep(300); return true; } catch (e) {}
+      }
+    }
+    return false;
+  }
+
+── 8-3. 본문 입력 + 키워드 자동 굵게 (background.js typeBody) ────────────────
+
+  줄바꿈(\n) = Enter 1회 = 문단 분리. emphasize 단어는 Ctrl+B 로 감싼다.
+
+  function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+  async function typeBody(tabId, content, emphasize) {
+    const words = (Array.isArray(emphasize) ? emphasize : [])
+      .filter((w) => typeof w === 'string' && w.trim().length >= 2).map((w) => w.trim());
+    const uniq = [...new Set(words)].sort((a,b) => b.length - a.length); // 긴 단어 우선
+    const re = uniq.length ? new RegExp('(' + uniq.map(escapeRe).join('|') + ')') : null;
+    const wordSet = new Set(uniq);
+
+    const lines = (content || '').split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.length) {
+        if (re) {
+          for (const part of line.split(re)) {          // split 에 캡처그룹 → 구분자 보존
+            if (!part) continue;
+            if (wordSet.has(part)) { await ctrlB(tabId); await insertText(tabId, part); await ctrlB(tabId); }
+            else await insertText(tabId, part);
+          }
+        } else await insertText(tabId, line);
+      }
+      if (i < lines.length - 1) { await pressEnter(tabId); await sleep(30); }
+    }
+  }
+
+  ★ 긴 단어부터 정렬하는 이유: "치과" 와 "치과교정" 이 둘 다 있을 때
+    짧은 것이 먼저 매칭되면 "치과"+"교정" 으로 쪼개져 굵게가 어긋난다.
+
+── 8-4. 글-이미지 인터리브 (typeBlocksInterleaved) ───────────────────────────
+
+  글 → 이미지 → 글 → 이미지 순서로 넣는다. CDP(텍스트)와 DOM 드롭(이미지)이
+  서로 방해하므로 이미지 구간마다 detach/attach 를 반복한다.
+
+  async function typeBlocksInterleaved(tabId, job) {
+    const blocks = job.blocks || [];
+    let first = true, cleared = false, prevType = null;
+    for (const b of blocks) {
+      if (b.type === 'text' && b.content) {
+        if (!first) {
+          await pressEnter(tabId); await sleep(40);
+          // 글 다음에 바로 글이면 Enter 두 번 = 빈 줄 유지
+          // (본문이 '두 문장마다 빈 줄'로 정리돼 오는데, 한 번만 치면 문단 경계에서
+          //  그 빈 줄이 사라져 모바일 가독성이 무너진다)
+          if (prevType === 'text') { await pressEnter(tabId); await sleep(40); }
+        }
+        await typeBody(tabId, b.content, job.emphasize);
+        first = false; cleared = true; prevType = 'text';
+      } else if (b.type === 'image' && b.image) {
+        if (!cleared) { await insertText(tabId, ''); cleared = true; } // ctrlA 선택분 제거
+        if (!first) { await pressEnter(tabId); await sleep(40); }
+        try { await detachDebugger(tabId); } catch (_) {}             // ★ 드롭 전 분리
+        await sleep(150);
+        const r = await sendToTab(tabId, { action:'INSERT_IMAGES', images:[b.image], atCaret:true });
+        assertImagesInserted(r, 1);                                    // 실패 시 throw
+        await sleep(400);
+        await attachDebugger(tabId); await sleep(200);                 // ★ 재부착
+        first = false; prevType = 'image';
+      }
+    }
+  }
+
+── 8-5. 이미지 삽입 (naver-poster.js) ────────────────────────────────────────
+
+  방식: base64 → File → DataTransfer → 합성 DragEvent(dragenter/dragover/drop)
+  삽입 위치: atCaret=true 면 현재 캐럿 좌표, 아니면 에디터 하단
+
+  function base64ToFile(dataUrl, name) {
+    const [head, body] = dataUrl.split(',');
+    const mime = (head.match(/data:(.*?);/) || [])[1] || 'image/jpeg';
+    const bin = atob(body);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new File([arr], name, { type: mime });
+  }
+
+  function caretPoint() {                         // 현재 커서의 화면 좌표
+    try {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount) {
+        const rect = sel.getRangeAt(0).getBoundingClientRect();
+        if (rect && (rect.top || rect.left) && rect.top > 0)
+          return { x: rect.left + 2, y: rect.top + rect.height / 2 };
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  async function dropImage(file, atCaret) {
+    const target = document.querySelector('.se-content .se-components-wrap')
+                || document.querySelector('.se-content')
+                || document.querySelector('.se-dnd-wrap')
+                || document.querySelector('.se-component.se-text');
+    if (!target) throw new Error('드롭 대상 없음');
+    const dt = new DataTransfer(); dt.items.add(file);
+    let x, y;
+    const cp = atCaret ? caretPoint() : null;
+    if (cp) { x = cp.x; y = cp.y; }
+    else { const r = target.getBoundingClientRect(); x = r.left + r.width/2; y = r.top + r.height - 8; }
+    const opts = { bubbles:true, cancelable:true, composed:true, dataTransfer:dt, clientX:x, clientY:y };
+    target.dispatchEvent(new DragEvent('dragenter', opts));
+    target.dispatchEvent(new DragEvent('dragover',  opts));
+    target.dispatchEvent(new DragEvent('drop',      opts));
+  }
+
+  // ★ 업로드 성공을 "실제로 이미지가 늘었는지"로 검증한다.
+  //   예전엔 DragEvent 3개 쏘고 sleep(1800) 만 기다려서, 0장 들어가도 성공으로 셌다.
+  //   이미지 컴포넌트 클래스가 미확보라 3가지 신호의 최댓값을 쓴다(하나 빗나가도 방어).
+  function imageComponentCount() {
+    return Math.max(
+      document.querySelectorAll('.se-component.se-image').length,
+      document.querySelectorAll('.se-component[class*="image" i]').length,
+      document.querySelectorAll('.se-content img, .se-components-wrap img').length
+    );
+  }
+  async function dropImageVerified(file, atCaret, timeoutMs) {
+    const before = imageComponentCount();
+    await dropImage(file, atCaret);
+    const deadline = Date.now() + (timeoutMs || 25000);
+    while (Date.now() < deadline) {
+      await sleep(300);
+      if (imageComponentCount() > before) return true;
+    }
+    return false;
+  }
+
+  // 장당 3회 재시도(점증 대기 2s/4s). 결과를 반드시 호출부에 돌려준다.
+  async function insertImages(images, atCaret) {
+    if (!images?.length) return { inserted:0, expected:0, failed:[] };
+    let ok = 0; const failed = [];
+    for (let i = 0; i < images.length; i++) {
+      let placed = false, lastErr = '';
+      for (let attempt = 1; attempt <= 3 && !placed; attempt++) {
+        try {
+          const file = base64ToFile(images[i], `image_${Date.now()}_${i}_${attempt}.jpg`);
+          placed = await dropImageVerified(file, atCaret);
+          if (!placed) lastErr = '업로드 확인 실패(시간 초과)';
+        } catch (e) { lastErr = e.message; }
+        if (!placed && attempt < 3) await sleep(2000 * attempt);
+      }
+      if (placed) { ok++; await sleep(600); }
+      else failed.push({ index: i, error: lastErr });
+    }
+    return { inserted: ok, expected: images.length, failed };
+  }
+
+  // background 쪽 검증 — 한 장이라도 빠지면 발행하지 않는다
+  function assertImagesInserted(res, expected) {
+    if (!res) throw new Error('이미지 삽입 응답 없음 (탭이 닫혔거나 에디터 무응답)');
+    const got = res.inserted || 0;
+    if (got < expected) {
+      const why = res.failed?.[0]?.error || '원인 불명';
+      throw new Error(`이미지 ${expected}장 중 ${got}장만 삽입됨 — ${why}`);
+    }
+  }
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 9. 흐름 ③ 발행 — 임시저장 / 즉시발행 / 예약발행                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+finalize(job) 는 naver-poster.js 안에서 전부 DOM 클릭으로 처리한다(CDP 불필요).
+
+── 9-1. 임시저장 (finalAction === 'draft') ───────────────────────────────────
+
+  const saveBtn = document.querySelector('[data-click-area="tpb.save"]')
+               || document.querySelector('.save_btn__bzc5B')
+               || [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '저장');
+  if (!saveBtn) throw new Error('임시저장 버튼 없음');
+  saveBtn.click();
+  await sleep(1500);
+  await clickConfirmIfAny();      // 확인 팝업이 뜨면 확인
+  return { done: true, action: 'draft' };
+
+── 9-2. 즉시발행 / 예약발행 공통 — 발행 레이어 열기 ──────────────────────────
+
+  const openBtn = document.querySelector('[data-click-area="tpb.publish"]')
+               || document.querySelector('.publish_btn__m9KHH')
+               || [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '발행');
+  openBtn.click();
+  const finalBtn = await waitFor('[data-testid="seOnePublishBtn"], [data-click-area="tpb*i.publish"]',
+                                 { timeout: 8000 });
+  if (!finalBtn) throw new Error('발행 레이어 열림 실패');
+
+  // 공개설정
+  setOpenType(job.options.openType);   // #open_public / #open_neighbor /
+                                       // #open_both_neighbor / #open_private
+  // 검색허용 해제
+  if (job.options.search === false) {
+    const s = document.querySelector('#publish-option-search');
+    if (s && s.checked) s.click();
+  }
+
+── 9-3. 카테고리 선택 (실패 시 반드시 발행 중단) ─────────────────────────────
+
+  const CATEGORY_BTN  = '[data-click-area="tpb*i.category"], button[aria-label="카테고리 목록 버튼"]';
+  const CATEGORY_ITEM = '[role="menu"] input[data-testid^="categoryBtn_"]';
+
+  // ★ NBSP(U+00A0) 정규화. 카테고리명에 NBSP 가 섞여 있어도 일반 공백처럼 비교된다.
+  //   (JS 의 \s 는 NBSP 를 포함한다)
+  const normText = (s) => (s || '').replace(/\s+/g, ' ').trim();
+
+  // 버튼 안의 현재 카테고리명. 목록 항목과 data-testid 가 겹치므로 버튼 하위로 스코프 축소
+  function currentCategoryName() {
+    const el = document.querySelector(CATEGORY_BTN)
+                 ?.querySelector('[data-testid^="categoryItemText_"]');
+    return normText(el && el.textContent);
+  }
+
+  function readCategoryItems() {           // [role="menu"] 로 스코프 → 버튼 자신 제외
+    return [...document.querySelectorAll(CATEGORY_ITEM)].map((inp) => {
+      const id = (inp.dataset.testid || '').replace('categoryBtn_', '');
+      const li = inp.closest('li') || inp.parentElement;
+      const nameEl = li && li.querySelector('[data-testid^="categoryItemText_"]');
+      return { id, name: normText(nameEl && nameEl.textContent),
+               label: li && li.querySelector('label'), input: inp };
+    }).filter(c => c.id && c.name);
+  }
+
+  async function selectCategory(category) {
+    const want = normText(String(category));
+    const btn = document.querySelector(CATEGORY_BTN);
+    if (!btn) return { ok:false, categories:[], current:'', error:'카테고리 버튼을 찾지 못했습니다' };
+    if (btn.getAttribute('aria-expanded') !== 'true') {
+      btn.click();
+      await waitFor(CATEGORY_ITEM, { timeout: 5000 });
+      await sleep(150);
+    }
+    const items = readCategoryItems();
+    const categories = items.map(({id,name}) => ({id,name}));
+    // ★ 번호를 우선 매칭. 이름은 사용자가 언제든 바꾸지만 번호는 유지된다.
+    const hit = items.find(c => c.id === want) || items.find(c => c.name === want);
+    if (!hit) return { ok:false, categories, current:currentCategoryName(),
+                       error:`카테고리 '${want}' 를 찾지 못했습니다` };
+    // ★ input 은 role="none" tabindex="-1" 로 클릭 핸들러가 없다.
+    //   label[role="button"] 을 클릭해야 반영된다.
+    (hit.label || hit.input).click();
+    await sleep(400);
+    const after = currentCategoryName();
+    if (after !== hit.name)                    // 버튼 텍스트가 실제로 바뀌었는지 확인
+      return { ok:false, categories, current:after, error:`카테고리 반영 실패 (현재 '${after||'?'}')` };
+    return { ok:true, categories, current:after };
+  }
+
+  // finalize 안에서:
+  if (job.options?.category) {
+    const r = await selectCategory(job.options.category);
+    if (!r.ok) {
+      const avail = r.categories.map(c => `${c.name}(${c.id})`).join(', ');
+      throw new Error(`${r.error}. 사용 가능한 카테고리: ${avail || '목록을 읽지 못했습니다'}`);
+    }
+  }
+  // ★ 못 찾으면 발행하지 않는다. 엉뚱한 카테고리로 공개 발행되면 수동 복구뿐이다.
+  // ★ category 미지정이면 아예 손대지 않고 네이버 기본 카테고리로 둔다.
+
+  카테고리 동기화 전용 (syncCategories) — 첫 발행 전에 앱 드롭다운을 채우는 용도.
+  발행 레이어가 닫혀 있으면 열어서 목록만 읽고 원래대로 되돌린다. 글은 발행하지 않는다.
+  ★ "우리가 연 경우에만" 닫는다. 사용자가 이미 열어둔 레이어는 건드리지 않는다.
+
+── 9-4. 예약발행 (finalAction === 'schedule') ────────────────────────────────
+
+  ① 예약 라디오 켜기
+     const pre = document.querySelector('#radio_time2, [data-testid="preTimeRadioBtn"]');
+     if (pre && !pre.checked) pre.click();
+     await sleep(400);
+
+  ② 날짜 — jQuery UI datepicker. 당일이 아닌 미래 날짜도 지원해야 한다.
+
+  async function selectScheduleDate(dt) {
+    const targetY = dt.getFullYear(), targetM = dt.getMonth()+1, targetD = dt.getDate();
+    const dateInput = document.querySelector(
+      'input.input_date__QmA0s, .date__Lkn7S input, input[readonly][class*="input_date"]');
+    if (!dateInput) return false;
+    dateInput.click();
+
+    await waitFor('.ui-datepicker-header', { timeout: 4000 });
+    const header = document.querySelector('.ui-datepicker-header');
+    const root = document.querySelector('#ui-datepicker-div') || (header && header.parentElement);
+    if (!root) return false;
+
+    const readShown = () => ({
+      y: parseInt(root.querySelector('.ui-datepicker-year')?.textContent || '0', 10),
+      // "7월" → 숫자만 파싱
+      m: parseInt((root.querySelector('.ui-datepicker-month')?.textContent || '0')
+                    .replace(/[^0-9]/g,''), 10),
+    });
+
+    for (let i = 0; i < 36; i++) {                    // 최대 36개월 이동
+      const { y, m } = readShown();
+      if (!y || !m || (y === targetY && m === targetM)) break;
+      const goNext = (y < targetY) || (y === targetY && m < targetM);
+      const nav = root.querySelector(goNext ? '.ui-datepicker-next' : '.ui-datepicker-prev');
+      if (!nav || nav.classList.contains('ui-state-disabled')) break;   // 범위 밖
+      nav.click(); await sleep(220);
+    }
+
+    // 비활성일(td.ui-state-disabled) 제외. 구버전은 a.ui-state-default
+    const dayEls = [...root.querySelectorAll(
+      'td:not(.ui-state-disabled) a.ui-state-default, td:not(.ui-state-disabled) button.ui-state-default')];
+    const cell = dayEls.find(el => (el.textContent || '').trim() === String(targetD));
+    if (!cell) return false;
+    cell.click(); await sleep(220);
+    return true;
+  }
+
+  ★★ 날짜 지정 실패 시 반드시 throw 한다:
+     const dateOk = await selectScheduleDate(dt);
+     if (!dateOk) throw new Error('예약 날짜를 지정하지 못했습니다(네이버 화면 변경 가능). ' +
+                                  '즉시 발행을 막기 위해 중단합니다');
+     예전엔 경고만 찍고 진행했다 → 네이버 기본값(오늘/지금)으로 "즉시 발행"돼버렸다.
+     100건 배치라면 예약해둔 글이 전부 한꺼번에 나간다. 최악의 사고.
+
+  ③ 시/분 — React 제어 select. 네이티브 setter + input/change 이벤트 필수.
+     분은 10분 단위만 허용되므로 반드시 내림한다.
+
+  function setNativeValue(el, value) {
+    const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype
+                : el instanceof HTMLInputElement  ? HTMLInputElement.prototype
+                : HTMLElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+    if (setter) setter.call(el, value); else el.value = value;
+    el.dispatchEvent(new Event('input',  { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  const hh = String(dt.getHours()).padStart(2,'0');
+  const mm = String(Math.floor(dt.getMinutes()/10)*10).padStart(2,'0');   // ★ 10분 내림
+  const hourSel = document.querySelector('select.hour_option__J_heO, .hour__ckNMb select');
+  const minSel  = document.querySelector('select.minute_option__Vb3xB, .minute__KXXvZ select');
+  if (!hourSel || !minSel) throw new Error('예약 시각 입력란을 찾지 못했습니다. 중단합니다');
+  setNativeValue(hourSel, hh);
+  setNativeValue(minSel,  mm);
+  await sleep(300);
+
+── 9-5. 최종 발행 + 캡차 핸드오프 ───────────────────────────────────────────
+
+  finalBtn.click();               // [data-testid="seOnePublishBtn"]
+  await sleep(2000);
+  const captchaOk = await waitForCaptchaResolved();      // 최대 180초
+  if (!captchaOk) return { done:false, action, error:'캡차 시간 초과' };
+  await clickConfirmIfAny();
+  return { done:true, action, categories };
+
+  function captchaPresent() {
+    return !!document.querySelector(
+      'iframe[id^="ncaptcha-iframe"], iframe[src*="ncaptcha"], iframe[src*="captcha"], ' +
+      '#ncaptcha, .captcha_wrap, [class*="captcha"] input[type="text"]');
+  }
+  async function waitForCaptchaResolved(timeout = 180000) {
+    if (!captchaPresent()) return true;
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      showOverlay('🔐 보안문자(캡차)가 나타났습니다. 직접 입력해 주세요...', 96);
+      await sleep(800);
+      if (!captchaPresent()) { await sleep(600); return true; }
+    }
+    return false;
+  }
+  // 캡차 iframe 은 wtm.pstatic.net 로 cross-origin → 내부 접근 불가.
+  // 존재 여부만 확인하고 사용자에게 넘긴다. 자동 풀이는 시도하지 않는다.
+
+  async function clickConfirmIfAny() {
+    await sleep(400);
+    const btn = [...document.querySelectorAll('button, a')].find(b => {
+      const t = (b.textContent || '').trim();
+      return t === '확인' || t === '발행' || t === '예';
+    });
+    if (btn) { try { btn.click(); await sleep(500); } catch (e) {} }
+  }
+
+── 9-6. FINALIZE 응답 조립 시 함정 ──────────────────────────────────────────
+
+  case 'FINALIZE': {
+    const res = await finalize(msg.job);
+    hideOverlay();
+    sendResponse({ ...res, ok: res.done !== false });   // ★ ok 를 뒤에 둔다
+    break;
+  }
+  ★ { ok:true, ...res } 로 쓰면 res 가 ok 를 덮지 못해, 캡차 시간초과(done:false)
+    같은 실패가 성공으로 보고된다. 반드시 스프레드를 앞에, ok 를 뒤에.
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 10. 흐름 ④ 대량 배치 발행 (수십~수백 건)                                     ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+── 10-1. 왜 payload 를 나눠 받는가 (64MiB 문제) ──────────────────────────────
+
+  100건 × 사진 10장 × 400KB(base64) ≈ 수백 MB.
+  크롬 확장 메시지 한계는 64MiB → 한 번에 보내면 전송 자체가 실패한다.
+  또 미리 다 만들어두면 웹앱 탭 메모리가 500MB 를 넘어 탭이 죽는다.
+
+  해법: 2단 전송
+    ① 웹앱 → 확장 : 사진 없는 메타데이터만 (100건이어도 수십 KB)
+    ② 확장이 각 글을 처리하기 "직전"에 그 한 건의 payload 만 요청 (≈5MB)
+
+  요청 경로:
+    background: sendToTab(webTabId, {action:'REQUEST_JOB', id})
+      → content-website.js: CustomEvent 'doctorvoice-job-request' {id, token}
+        → 웹앱: IndexedDB 에서 사진 꺼내 blocks 조립
+          → CustomEvent 'doctorvoice-job-payload' {token, job}
+            → content-website.js: sendResponse({job})    ※ token 일치 확인 필수
+  타임아웃: 웹앱이 30초 내 응답 안 하면 finish(null) → 그 건만 실패, 배치는 계속
+  재시도 : background 가 2회까지 요청(첫 실패 후 1초 대기)
+
+  function hasPayload(m) {   // 구버전 페이지는 통째로 보낸다 → 그대로 사용
+    return !!(m && ((m.blocks && m.blocks.length) || (m.images && m.images.length) || m.content));
+  }
+  async function requestJobPayload(webTabId, id) {
+    if (!webTabId) return null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res = await sendToTab(webTabId, { action:'REQUEST_JOB', id });
+        if (res && res.job) return res.job;
+      } catch (e) {}
+      if (attempt === 1) await sleep(1000);
+    }
+    return null;
+  }
+
+── 10-2. startBatch 루프 ─────────────────────────────────────────────────────
+
+  async function startBatch(metas, sender) {
+    if (batchRunning) return;
+    batchRunning = true;
+    startKeepAlive();                                   // ★ 배치 내내 워커 유지
+    const webTabId = sender?.tab?.id || null;
+    let missStreak = 0;
+    try {
+      for (let i = 0; i < metas.length; i++) {
+        const meta = metas[i];
+        let result;
+        try {
+          const raw = hasPayload(meta) ? meta : await requestJobPayload(webTabId, meta.id);
+          const job = normalizeJob(raw);
+          if (!job) throw new Error('글 데이터를 받지 못했습니다(닥터보이스 탭이 닫혔을 수 있습니다)');
+          missStreak = 0;
+          result = await runOne(job);
+        } catch (e) { result = { ok:false, error:e.message }; missStreak++; }
+
+        reportJobResult(webTabId, meta.id, !!result?.ok,
+                        result?.error || result?.action || '', !!result?.uncertain);
+
+        // 로그인이 풀렸으면 남은 건도 전부 같은 이유로 실패한다 → 즉시 중단
+        if (result?.needLogin) {
+          for (let k = i+1; k < metas.length; k++)
+            reportJobResult(webTabId, metas[k].id, false,
+              '네이버 로그인이 풀려 중단됨 — 로그인 후 다시 발행하세요');
+          break;
+        }
+        // payload 3연속 실패 = 웹앱 탭이 닫힘 → 헛돌지 말고 중단
+        if (missStreak >= 3 && i+1 < metas.length) {
+          for (let k = i+1; k < metas.length; k++)
+            reportJobResult(webTabId, metas[k].id, false, '닥터보이스 탭이 닫혀 중단됨');
+          break;
+        }
+        await sleep(1500);          // 연속 등록 사이 여유(봇 감지 완화)
+      }
+    } finally {
+      batchRunning = false;         // ★ 무슨 일이 있어도 반드시 푼다
+      stopKeepAlive();              //   안 풀면 다음 발행이 영영 막힌다
+    }
+  }
+
+── 10-3. 건당 가드 타임아웃 (jobGuardMs) ─────────────────────────────────────
+
+  function jobGuardMs(job) {
+    const imgs = (job.blocks||[]).filter(b => b.type==='image' && b.image).length
+              || (job.images||[]).length;
+    const base    = 180000;   // 페이지 로드 + 타이핑 + finalize
+    const captcha = 200000;   // ★ finalize 의 캡차 대기(180초)보다 반드시 길게
+    return base + captcha + imgs * 30000;   // 이미지 1장당 30초(재시도 3회 여유 포함)
+  }
+  // 사진 10장이면 11분 20초. 고정 180초였을 때의 사고:
+  //  · 사진 30장이면 삽입만 120초 넘어 정상 작업이 timeout 으로 찍혔다
+  //  · 캡차 대기가 정확히 180초라 캡차가 뜨면 반드시 가드가 먼저 터졌다
+  // 가드가 터져도 runAutomation 은 계속 돌아 실제로는 발행이 끝난다
+  //  → 프론트가 실패로 알고 재시도하면 같은 글이 두 번 예약된다
+  //  → 그래서 이 경로는 uncertain:true 로 표시하고, 프론트는 자동 재시도 금지
+
+  function runOne(job) {
+    return new Promise((resolve) => {
+      const guard = setTimeout(() => {
+        if (jobDoneResolver) {
+          const r = jobDoneResolver; jobDoneResolver = null;
+          r({ ok:false, error:'timeout', uncertain:true });   // ★ uncertain
+        }
+      }, jobGuardMs(job));
+      const gen = ++jobGen;                       // 건 세대 번호
+      jobDoneResolver = (res) => { clearTimeout(guard); resolve(res); };
+      startJob(job).then((tabId) => { if (tabId) watchLoginBounce(tabId, gen); })
+                   .catch((e) => { /* 즉시 실패 처리 */ });
+    });
+  }
+  // ★ jobGen 이 필요한 이유: 배치는 같은 탭을 재사용하므로, 앞 건의 watchLoginBounce
+  //   감시자가 살아남아 다음 건을 대신 끝내버릴 수 있다. gen 을 비교해 손을 뗀다.
+
+── 10-4. 결과 보고 ──────────────────────────────────────────────────────────
+
+  function reportJobResult(webTabId, id, ok, message, uncertain) {
+    const payload = { action:'JOB_RESULT', id, ok, message, uncertain: !!uncertain };
+    if (webTabId) chrome.tabs.sendMessage(webTabId, payload, () => void chrome.runtime.lastError);
+    else chrome.tabs.query({}, (tabs) => {      // sender 를 모르면 웹앱 탭을 찾는다
+      const t = tabs.find(x => x.url && (x.url.includes('doctor-voice')
+              || x.url.includes('vercel.app') || x.url.includes('localhost')));
+      if (t) chrome.tabs.sendMessage(t.id, payload, () => void chrome.runtime.lastError);
+    });
+  }
+
+  웹앱 측 처리 원칙:
+    · 성공한 건만 준비함에서 제거. 실패한 건은 사유와 함께 남겨 재시도 가능하게.
+      (예전엔 전송 직후 준비함을 통째로 비워서 실패한 글이 흔적 없이 사라졌다)
+    · uncertain:true 는 "발행됐을 수도 있음" → 자동 재시도 금지, 사용자에게 확인 요청
+    · stall 감시 타이머는 확장 가드 최댓값보다 길어야 한다. 현재 웹앱은 15분.
+      (7분이었을 때: 정상적으로 오래 걸리는 글이 '응답 없음'으로 끊겨 화면만 풀리고,
+       확장은 계속 발행하니 다시 누르면 같은 글이 두 번 예약됐다)
+    · 배치 진행 상태를 localStorage['doctorvoice-batch-active'] 에 남긴다.
+      발행 도중 새로고침하면 화면이 결과를 무시해 중복 발행이 발생했었다.
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 11. 흐름 ⑤ Gemini 글 대량 생성                                               ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+용도: 엑셀 키워드 N건 → 프롬프트 주입 → 블로그 글 수확 → 웹앱의 "저장된 글"로
+
+── 11-1. 기본 옵션 ──────────────────────────────────────────────────────────
+
+  const GEN_DEFAULTS = {
+    newChatEvery: 1,      // N건마다 새 채팅 (1 = 매번) ★ 품질 균일화의 핵심
+    reloadEvery: 20,      // N건마다 탭 통째로 재로드 (SPA 메모리 누수/좀비 방지)
+    minChars: 800,        // 이보다 짧으면 실패로 보고 재시도
+    retries: 1,           // 품질 미달 시 재시도 횟수
+    tempChat: true,       // 임시 채팅(사이드바에 기록 안 남김)
+    gapMs: 1500,          // 건 사이 여유
+  };
+
+  ★ 왜 매번 새 채팅인가: 같은 대화에서 계속 쓰면 앞 글의 문체·구조를 따라가
+    글이 갈수록 비슷해지고 짧아진다. 건당 5초쯤 손해지만 100건 품질이 균일해진다.
+  ★ 임시채팅만으로는 문맥이 초기화되지 않는다. newChat() 을 따로 불러야 한다.
+
+── 11-2. 탭 확보 + 준비 대기 ────────────────────────────────────────────────
+
+  async function ensureGeminiTab() {
+    if (geminiTabId) { try {
+      const t = await chrome.tabs.get(geminiTabId);
+      if (t?.url?.includes('gemini.google.com')) return geminiTabId;
+    } catch (_) {} geminiTabId = null; }
+    const found = await chrome.tabs.query({ url: 'https://gemini.google.com/*' });
+    if (found?.length) return (geminiTabId = found[0].id);     // 사용자 탭 재사용
+    const tab = await chrome.tabs.create({ url:'https://gemini.google.com/app', active:false });
+    geminiTabId = tab.id;
+    await waitForGeminiReady(geminiTabId, 45000, true);
+    return geminiTabId;
+  }
+
+  ★★ 가장 흔한 "다른 컴퓨터에서 준비 안 됨" 원인과 해법:
+     확장 설치/갱신 "전부터" 열려 있던 탭에는 content script 가 주입되지 않았다.
+     → GEM_PING 에 응답이 전혀 없으면(4초 경과) 탭을 자동 새로고침해 주입시킨다.
+
+  async function waitForGeminiReady(tabId, timeout, tempChat) {
+    const started = Date.now();
+    let sawAny = false, reloaded = false;
+    while (Date.now() - started < timeout) {
+      const r = await sendToTab(tabId, { action:'GEM_PING' });
+      if (r) sawAny = true;
+      if (r?.ok && r.ready) {
+        if (!r.loggedIn) throw new Error('Gemini 에 로그인되어 있지 않습니다.');
+        if (tempChat) await sendToTab(tabId, {action:'GEM_WAIT_READY', tempChat:true, timeout:5000});
+        return true;
+      }
+      if (!sawAny && !reloaded && Date.now() - started > 4000) {
+        reloaded = true;
+        try { await chrome.tabs.reload(tabId); } catch (_) {}
+        await sleep(3000);
+      }
+      await sleep(700);
+    }
+    throw new Error('Gemini 페이지가 준비되지 않았습니다. 로그인 확인 후 탭 새로고침하세요.');
+  }
+
+── 11-3. 1건 생성 (genOne) — 입력은 CDP, 전송은 Enter ────────────────────────
+
+  async function genOne(tabId, prompt, timeoutMs) {
+    const pos = await sendToTab(tabId, { action:'GEM_INPUT_POS' });
+    if (!pos?.ok || !pos.pos) throw new Error(pos?.error || '입력창을 찾지 못했습니다');
+
+    await attachDebugger(tabId);
+    try {
+      await clickAt(tabId, pos.pos.x, pos.pos.y);
+      await sleep(200);
+      await insertText(tabId, prompt);
+      await sleep(400);                       // Quill 이 Delta 를 반영할 여유
+      await pressEnter(tabId);                // ★ enterkeyhint="send" → 버튼 불필요
+    } finally {
+      try { await detachDebugger(tabId); } catch (_) {}   // 배너 오래 안 띄운다
+    }
+
+    // ★ 폴링 수확 (긴 단일 await 금지)
+    //  · MV3 워커는 긴 유휴 await 중 종료될 수 있다. 잦은 메시지 왕복이 확실히 살려둔다
+    //  · 프롬프트 전송 실패 시 응답이 시작조차 않으므로, 60초 내 '시작' 없으면 실패 처리
+    const expectIndex = pos.count || 0;
+    const started = Date.now();
+    let sawStart = false, lastChars = -1;
+    while (Date.now() - started < timeoutMs) {
+      await sleep(1500);
+      const st = await sendToTab(tabId, { action:'GEM_STATUS', expectIndex });
+      if (!st?.ok) continue;
+      if (st.started) sawStart = true;
+      if (!sawStart && Date.now() - started > 60000)
+        return { ok:false, text:'', chars:0, error:'응답이 시작되지 않았습니다(프롬프트 전송 실패 가능성)' };
+      const cur = st.chars || 0;
+      if (cur !== lastChars) {
+        lastChars = cur;
+        await sendToTab(tabId, { action:'GEM_PROGRESS',
+          text:`생성 중… ${cur.toLocaleString()}자`, pct: Math.min(90, 20 + cur/40) });
+      }
+      if (st.complete && st.text) return { ok:true, text:st.text, chars:st.chars };
+    }
+    // 타임아웃 — 그때까지 나온 글이라도 넘겨 길이로 판단하게 한다
+    const fin = await sendToTab(tabId, { action:'GEM_STATUS', expectIndex });
+    const text = fin?.ok ? (fin.text || '') : '';
+    return { ok:false, text, chars:text.length, error:'응답 완료 신호를 받지 못했습니다' };
+  }
+
+  function genTimeoutMs(prompt) {      // 프롬프트가 길수록 답도 길어진다
+    return 180000 + Math.min(120000, Math.floor((prompt||'').length / 10) * 1000);
+  }
+
+── 11-4. 완료 판정 (gemini-writer.js) — 3신호 중 2개 ─────────────────────────
+
+  휴리스틱(글자수 정체 감지) 불필요. Gemini 는 DOM 에 명시적 완료 신호를 남긴다.
+  단, 한 신호만 믿으면 UI 개편 때 통째로 깨지므로 2개 이상으로 판정한다.
+
+  function completionSignals(resp) {
+    const footer = resp.querySelector('.response-footer');
+    const md     = resp.querySelector('.markdown.markdown-main-panel');
+    const detail = {
+      footerComplete: !!(footer && footer.classList.contains('complete')),   // 1순위
+      notBusy:        !!(md && md.getAttribute('aria-busy') === 'false'),    // 2순위
+      hasActions:     !!resp.querySelector('message-actions'),               // 3순위
+    };
+    return { count: Object.values(detail).filter(Boolean).length, detail };
+  }
+  const isComplete = (resp) => completionSignals(resp).count >= 2;
+
+  // 본문 수확: innerText 로 뽑아야 문단 구분(\n)이 유지된다. textContent 는 다 붙는다.
+  function responseText(resp) {
+    const md = resp.querySelector('.markdown.markdown-main-panel');
+    return md ? (md.innerText || '').trim() : '';
+  }
+
+  // 입력창/아바타 셀렉터는 여러 형태를 순서대로 시도한다
+  // (Gemini UI 는 A/B 테스트·크롬 버전·지역마다 구조가 다르다)
+  const INPUT_SELECTORS = [
+    'rich-textarea .ql-editor[role="textbox"]',
+    '.ql-editor[role="textbox"]',
+    'rich-textarea [contenteditable="true"]',
+    '[role="textbox"][contenteditable="true"]',
+    'div.ql-editor[contenteditable="true"]',
+    'textarea[aria-label]',
+  ];
+  const AVATAR_SELECTORS = [
+    'sidenav-mavatar-footer .mavatar-image', '.mavatar-image',
+    'a[aria-label*="Google 계정"]', 'img[alt*="계정"]',
+    '[data-test-id="settings-and-help-button"]',
+  ];
+  // 아바타가 없어도 입력창이 있으면 로그인된 것으로 본다(오탐 방지)
+
+  // 새 채팅: Angular SPA 라 페이지는 안 바뀌고 대화 컨테이너만 사라진다 → 그걸로 판정
+  async function newChat() {
+    const link = document.querySelector('[data-test-id="new-chat-button"] a');
+    if (!link) throw new Error('새 채팅 버튼을 찾지 못했습니다(Gemini UI 변경 가능성)');
+    link.click();
+    await waitFor(() => conversationCount() === 0, 15000, '새 채팅');
+    await waitFor(isReady, 10000, '입력창 재생성');
+    await sleep(300);                          // Quill 초기화 여유
+  }
+
+── 11-5. 배치 루프 (startGenBatch) ──────────────────────────────────────────
+
+  건별로: [재로드 or 새 채팅] → 진행률 표시 → genOne → 길이 검증 → 결과 보고
+  · 재로드가 우선 (재로드하면 새 채팅도 자동으로 된 셈)
+  · 완료 신호를 못 받았어도 글이 minChars 이상이면 성공으로 인정
+  · 반대로 신호는 왔는데 짧으면(거절/축약 응답) 실패
+  · 예외 발생 시 waitForGeminiReady 로 탭을 되살린 뒤 재시도
+  · 시작 자체가 실패하면(로그인 안 됨) 전건을 fatal 실패로 보고
+    → 화면이 영영 "생성 중"으로 멈추지 않게 한다
+  · finally: genRunning=false, 오버레이 숨김, id:'__done__' 로 종료 신호, stopKeepAlive()
+
+  결과 이벤트: 'doctorvoice-gen-result'
+    { id, ok, keyword, text, chars, error, done, fatal }
+
+── 11-6. 웹앱 측 후처리 (참고) ──────────────────────────────────────────────
+
+  · splitTitleBody(text) : 첫 줄 = 제목(마크다운 #, "제목:" 접두 제거), 나머지 = 본문
+  · reflowForMobile(body): 한 줄 = 한 문장, 두 문장마다 빈 줄, 60자 넘는 문장은
+    가운데 근처(30~70%) 쉼표에서 분할. 소제목/목록 줄은 손대지 않는다(멱등성 유지).
+  · 프롬프트 템플릿: {{키워드}} / {{keyword}} 치환. 서버 동기화 + localStorage 캐시.
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 12. 셀렉터 맵 (2026-07 실측) — 이식 시 여기만 갱신하면 된다                  ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+원칙: 해시 클래스(__C5hlm, _bzc5B 등)는 폴백으로만.
+      우선순위 = data-click-area > data-name > data-log > data-testid
+
+── 네이버 SmartEditor ONE (blog.naver.com) ───────────────────────────────────
+
+[페이지 구조]
+  글쓰기 URL : https://blog.naver.com/GoBlogWrite.naver
+  에디터     : #mainFrame iframe 내부 (src=/PostWriteForm.naver?blogId=...)
+  content script 는 all_frames:true 로 iframe 안에서도 실행 → 직접 DOM 접근 가능
+
+[로그인 판별]
+  글쓰기 페이지: window.__REACT_QUERY_STATE__ → GetCurrentUser
+                 → result.loggedIn === true, result.naverId
+  네이버 메인  : window['EAGER-DATA'].GV.login === true
+  폴백         : .MyView-module__btn_logout___bsTOJ 존재
+
+[상단 버튼 바] .header__Ceaap
+  저장(임시저장)  [data-click-area="tpb.save"]        폴백 .save_btn__bzc5B / text "저장"
+  임시저장 목록   [data-click-area="tpb*s.count"]     폴백 .save_count_btn__ZTLNa
+  예약발행 목록   [data-click-area="tpb*t.schedule"]  폴백 .reserve_btn__Km5Xh
+  발행(레이어)    [data-click-area="tpb.publish"]     폴백 .publish_btn__m9KHH / text "발행"
+  자동저장 메시지 .autosave_message__PgBf8
+
+[툴바] .se-toolbar.se-document-toolbar
+  사진      button[data-name="image"][data-group="documentToolbar"]  ([data-log="dot.img"])
+  MYBOX     button[data-name="social-media-image"]
+  동영상    button[data-name="video"]
+  인용구    button[data-name="quotation"][data-value="default"]
+  구분선    button[data-name="horizontal-line"][data-value="default"]
+  링크      button[data-name="oglink"]
+
+[인라인 삽입 메뉴] (문단 왼쪽 + 버튼)
+  사진 .se-insert-menu-button-image ([data-key="image"])
+  인용구 .se-insert-menu-button-quotation
+  구분선 .se-insert-menu-button-horizontalLine
+
+[제목]
+  컴포넌트   .se-component.se-documentTitle
+  입력 문단  .se-documentTitle .se-title-text .se-text-paragraph   ← 클릭 대상
+  placeholder .se-documentTitle .se-placeholder
+  빈 상태    .se-title-text.se-is-empty
+
+[본문]
+  컴포넌트   .se-component.se-text → .se-section-text
+  입력 문단  .se-component.se-text .se-text-paragraph              ← 클릭 대상
+  텍스트모듈 .se-module-text.__se-unit
+  폰트 노드  span.__se-node (.se-ff-nanummaruburi.se-fs16)
+  placeholder .se-component.se-text .se-placeholder
+
+[에디터 프레임 판정]
+  .se-component.se-documentTitle, .se-documentTitle  → 있으면 이 프레임이 에디터
+
+[이미지 드롭 대상] (우선순위 순)
+  .se-content .se-components-wrap → .se-content → .se-dnd-wrap → .se-component.se-text
+
+[발행 설정 레이어] .layer_publish__vA9PX
+  카테고리 버튼    [data-click-area="tpb*i.category"]
+                   폴백 button[aria-label="카테고리 목록 버튼"]
+  카테고리 항목    [role="menu"] input[data-testid^="categoryBtn_"]
+  카테고리 이름    [data-testid^="categoryItemText_"]
+  공개-전체        #open_public          ([data-testid="openType_2"])
+  공개-비공개      #open_private         ([data-testid="openType_0"])
+  공개-이웃        #open_neighbor
+  공개-서로이웃    #open_both_neighbor
+  발행시간-현재    #radio_time1          ([data-testid="nowTimeRadioBtn"])
+  발행시간-예약    #radio_time2          ([data-testid="preTimeRadioBtn"])
+  태그 입력        #tag-input
+  검색허용         #publish-option-search
+  공지등록         #set-notice
+  최종 발행 버튼   [data-testid="seOnePublishBtn"] ([data-click-area="tpb*i.publish"])
+
+[예약발행 시간] (#radio_time2 클릭 후 나타남)
+  컨테이너 .time_setting__v6YRU
+  날짜     input.input_date__QmA0s   (readonly, "2026. 07. 13", 클릭 시 datepicker)
+           폴백 .date__Lkn7S input / input[readonly][class*="input_date"]
+  시       select.hour_option__J_heO  (00~23)   폴백 .hour__ckNMb select
+  분       select.minute_option__Vb3xB          폴백 .minute__KXXvZ select
+           ★ 00/10/20/30/40/50 — 10분 단위만!
+  ★ select 은 React 제어 → 네이티브 setter + input/change dispatch 필수
+
+[날짜 캘린더] jQuery UI datepicker
+  루트     #ui-datepicker-div  (없으면 .ui-datepicker-header 의 parentElement)
+  헤더     .ui-datepicker-header / 연 .ui-datepicker-year / 월 .ui-datepicker-month("7월")
+  이전달   .ui-datepicker-prev  (당월이 최소면 .ui-state-disabled + pointer-events:none)
+  다음달   .ui-datepicker-next  (title="다음달")
+  날짜 셀  td > button.ui-state-default  (구버전 a.ui-state-default)
+  비활성일 td.ui-state-disabled          ← 반드시 선택에서 제외
+  오늘/선택 button.ui-state-active (+ .ui-state-highlight)
+
+[캡차] cross-origin (wtm.pstatic.net) — 존재만 확인, 내부 접근 불가
+  iframe[id^="ncaptcha-iframe"], iframe[src*="ncaptcha"], iframe[src*="captcha"],
+  #ncaptcha, .captcha_wrap, [class*="captcha"] input[type="text"]
+
+[로그인 폼] nid.naver.com
+  폼        #frmNIDLogin, form[name="frmNIDLogin"], .login_form, #login_form
+  아이디    #id       비밀번호 #pw       로그인 유지 #keep
+  제출      #log\.login, button[type="submit"], .btn_login
+  보안 화면 iframe[id^="ncaptcha-iframe"], iframe[src*="captcha"], .captcha_wrap,
+            #captcha, .device_reg, #deviceRegForm
+
+── Gemini (gemini.google.com) ───────────────────────────────────────────────
+
+  ★ Angular 해시 속성(_ngcontent-ng-c2538485940)은 절대 쓰지 말 것 — 빌드마다 바뀐다
+
+[앱 구조]
+  루트     chat-app-orchestrator#app-root → chat-app → chat-window
+  대화영역 chat-window-content → infinite-scroller[data-test-id="chat-history-container"]
+  대화 1턴 .conversation-container[id]
+  응답     model-response  (마지막 것이 최신)
+  본문     .markdown.markdown-main-panel   ← innerText 로 수확
+  푸터     .response-footer   (완료 시 class 에 complete 추가)
+  액션     message-actions    (완료 후에만 존재)
+  사용자질문 user-query .query-text  (프롬프트가 실제로 들어갔는지 검증용)
+
+[입력 — Quill]
+  입력창   rich-textarea .ql-editor[role="textbox"]  (aria-label="Gemini 프롬프트 입력")
+  빈 상태  같은 요소에 .ql-blank
+  루트     input-area-v2 .text-input-field
+  ★ 입력은 CDP Input.insertText. 전송은 Enter (rich-textarea[enterkeyhint="send"])
+    → 전송 버튼 셀렉터는 찾지 않는다. 입력이 비면 렌더링조차 안 되고 위치도 자주 바뀐다.
+
+[대화 초기화 / 모델]
+  임시 채팅  [data-test-id="temp-chat-button"]        ★ 배치 실행 시 켤 것
+  새 채팅    [data-test-id="new-chat-button"] a[href="/app"]
+  모델 선택  [data-test-id="bard-mode-menu-button"]   (라벨 .picker-primary-text, 현재 Flash)
+
+[생성 중 표시] thinking-overlay,
+              structured-content-container.processing-state-visible
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 13. 안정성 장치 (전부 실제 사고에서 나온 것 — 빼지 말 것)                    ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+── 13-1. MV3 keepalive ──────────────────────────────────────────────────────
+
+  문제: MV3 서비스워커는 30초 유휴면 강제 종료된다. 배치가 통째로 멈추고
+        Gemini 탭이 빈 채 방치되며, 결과도 에러도 오지 않아 화면이 영영 "생성 중".
+  chrome.alarms 최소 주기(30초)는 유휴 한계와 정확히 겹쳐 경계에서 진다 → 단독으로 못 믿음.
+  해법: 25초마다 무해한 확장 API 호출로 타이머를 리셋. 배치가 겹칠 수 있어 참조수로 on/off.
+
+  let keepAliveTimer = null, keepAliveRefs = 0;
+  function startKeepAlive() {
+    keepAliveRefs++;
+    if (keepAliveTimer) return;
+    keepAliveTimer = setInterval(() => {
+      chrome.runtime.getPlatformInfo(() => void chrome.runtime.lastError);
+    }, 25000);
+  }
+  function stopKeepAlive() {
+    keepAliveRefs = Math.max(0, keepAliveRefs - 1);
+    if (keepAliveRefs === 0 && keepAliveTimer) {
+      clearInterval(keepAliveTimer); keepAliveTimer = null;
+    }
+  }
+  // 알람은 backstop 일 뿐:  chrome.alarms.create('keepAlive', { periodInMinutes: 0.5 });
+  // ★ 새로 수십 분 넘게 도는 background 루프를 만들면 시작 직후 startKeepAlive(),
+  //   finally 에서 stopKeepAlive(). 현재 적용: startGenBatch, startBatch.
+  // ★ 추가 방어: 긴 단일 await 대신 짧은 폴링(1.5초)을 쓴다. 잦은 메시지 왕복이
+  //   워커를 확실히 살려둔다(setInterval 만으로는 얼어붙을 수 있다).
+
+── 13-2. 디스크 진단 로그 (고객 PC 원격 디버깅용) ───────────────────────────
+
+  문제: 서비스워커 콘솔은 워커가 죽으면 같이 비고, 고객 PC 에서는 열어보게 하기도 어렵다.
+        "발행 중인데 글이 안 써진다" 류는 그 순간의 기록이 없으면 영영 못 잡는다.
+  해법: 모든 로그를 chrome.storage.local 에도 남기고, 팝업에서 통째로 클립보드 복사.
+
+  const DIAG_KEY = 'diagLog', DIAG_MAX = 500, DIAG_MAX_LEN = 300;
+
+  function diagFormat(v) {
+    if (typeof v === 'string') return v;
+    if (v instanceof Error) return v.message;
+    try {
+      // ★ 사진 base64 가 섞이면 수십 MB 가 된다 → 반드시 잘라 넣는다
+      return JSON.stringify(v).replace(/data:[^"]{40,}/g, m => m.slice(0,30) + '…(생략)');
+    } catch (e) { return String(v); }
+  }
+  function diagPush(parts) {
+    const t = new Date();
+    let line = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:`
+             + `${String(t.getSeconds()).padStart(2,'0')} ` + parts.map(diagFormat).join(' ');
+    if (line.length > DIAG_MAX_LEN) line = line.slice(0, DIAG_MAX_LEN) + '…';
+    diagQueue.push(line);
+    if (!diagTimer) diagTimer = setTimeout(flushDiag, 1000);   // 1초 모아쓰기
+  }
+  async function flushDiag() {
+    diagTimer = null;
+    if (!diagQueue.length) return;
+    // ★ 앞선 flush 와 겹치면 읽기-쓰기 사이에 줄이 사라진다 → 순서를 강제한다
+    diagFlushing = (diagFlushing || Promise.resolve()).then(async () => {
+      const mine = diagQueue; diagQueue = [];
+      const cur = (await chrome.storage.local.get(DIAG_KEY))[DIAG_KEY] || [];
+      await chrome.storage.local.set({ [DIAG_KEY]: cur.concat(mine).slice(-DIAG_MAX) });
+    });
+    return diagFlushing;
+  }
+  const log = (...a) => { console.log('[bg]', ...a); diagPush(a); };
+
+  // ★ 워커 기동 줄은 모아쓰기를 기다리지 않고 즉시 저장한다.
+  //   배치 로그 한가운데 이 줄이 있으면 = 워커가 도중에 죽었다는 뜻이고,
+  //   진행 중이던 job 은 메모리와 함께 통째로 사라진 것이다. 가장 중요한 단서.
+  log(`서비스워커 기동 v${VERSION}`);
+  flushDiag();
+
+  content script 도 background 로 한 줄씩 올린다:
+    function diag(text) {
+      try { chrome.runtime.sendMessage({action:'DIAG', text}, () => void chrome.runtime.lastError); }
+      catch (e) {}
+    }
+    // "에디터를 못 찾음"인지 "찾았는데 입력이 안 됨"인지는 여기서만 갈린다.
+    // ★ 최상위 문서에서만 보낸다 — 프레임마다 보내면 같은 줄로 도배된다.
+
+── 13-3. "실패 시 중단" 원칙 목록 ───────────────────────────────────────────
+
+  중단(throw)해야 하는 경우                 안 하면 생기는 일
+  ─────────────────────────────────────────  ────────────────────────────────────
+  예약 날짜 지정 실패                        네이버 기본값(오늘/지금) → 전건 즉시 발행
+  예약 시/분 입력란 못 찾음                  같음
+  카테고리 못 찾음/반영 안 됨                엉뚱한 카테고리로 공개 발행
+  이미지 N장 중 M장만 삽입(M<N)              사진 빠진 글이 발행됨
+  blogId 가 expectedBlogId 와 다름           남의 블로그에 글이 올라감
+  배치 시작 전 계정 확인 실패                로그인 화면에서 11분×N 헛돌기
+  캡차 시간 초과(done:false)                 실패가 성공으로 보고됨
+
+── 13-4. 기타 실전 함정 모음 ────────────────────────────────────────────────
+
+  · sendResponse 조립 순서: { ...res, ok: res.done !== false }
+    → { ok:true, ...res } 로 쓰면 실패가 성공으로 보고된다.
+  · editorOnly 명령은 에디터 프레임 아니면 return(무응답).
+    여러 프레임이 응답하면 먼저 온 답이 채택돼 엉뚱한 결과가 된다.
+  · READ_BLOG_ID 는 blogId 를 찾은 프레임만 응답. 빈 값 선점 방지.
+  · jobGen(세대 번호): 배치는 같은 탭을 재사용하므로 앞 건의 감시자가
+    다음 건을 대신 끝내버릴 수 있다.
+  · batchRunning / genRunning 은 반드시 finally 에서 해제.
+    안 풀면 다음 발행이 영영 막힌다. 이미 돌고 있으면 조용히 무시하지 말고 사유를 응답한다
+    (예전엔 페이지가 성공 토스트를 띄운 채 아무 일도 안 일어나 "발행이 안 된다"로 보였다).
+  · VERSION 은 chrome.runtime.getManifest().version 에서 읽는다.
+    상수로 박아두면 릴리스 때 manifest 만 올리고 코드를 빠뜨려
+    "설치했는데도 계속 업데이트 필요"로 보이는 사고가 난다(v16.0.5 실제 발생).
+  · PING 응답의 updateAvailable 은 캐시를 그대로 믿지 말고 compareVersion 으로 재계산.
+    방금 새 버전을 깔았다면 캐시값은 업데이트 전에 계산된 것이라 계속 "업데이트 필요"로 남는다.
+  · 배치 사이 sleep(1500) — 연속 등록 봇 감지 완화.
+  · 웹앱 stall 타이머(15분) > 확장 가드 최댓값(11분+). 어기면 중복 예약 발생.
+  · 확장 폴더 교체 = storage 초기화 = 저장된 계정 소실. 팝업에서 경고 표시.
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 14. 자동 배포 / 자동 업데이트 (3계층)                                        ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+개발자모드(압축해제) 설치는 크롬 정책상 무음 자동설치가 불가능하다.
+그래서 3가지 경로를 동시에 운영한다.
+
+── 14-1. [1층] crx + updates.xml + 그룹정책 (진짜 무음 자동업데이트) ─────────
+
+  구조:
+    manifest.json  "update_url": ".../extension/updates.xml"
+    updates.xml    <updatecheck codebase="....crx" version="16.0.7" />
+    레지스트리     HKLM\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist
+                   "1" = "<확장ID>;<updates.xml URL>"
+
+  updates.xml 전문:
+    <?xml version='1.0' encoding='UTF-8'?>
+    <gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>
+      <app appid='cdmgfoemncdnoigiolpgaaompcmlfcpk'>
+        <updatecheck codebase='https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension.crx'
+                     version='16.0.7' />
+      </app>
+    </gupdate>
+    ★ 크롬의 업데이트 매니페스트 파서는 UTF-8 BOM 을 거부한다.
+      PowerShell 5.1 의 -Encoding UTF8 은 BOM 을 쓴다 → 반드시 BOM 없이 써야 한다.
+
+  doctorvoice-auto-update.reg:
+    Windows Registry Editor Version 5.00
+    [HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist]
+    "1"="cdmgfoemncdnoigiolpgaaompcmlfcpk;https://doctor-voice-pro-ghwi.vercel.app/extension/updates.xml"
+
+  고객 설치 절차 (1회):
+    0) 기존 개발자모드 확장이 있으면 먼저 삭제 (chrome://extensions)
+    1) doctorvoice-auto-update-install.bat 더블클릭 → 관리자 승인 "예"
+       (또는 .reg 를 관리자 권한으로 병합)
+    2) 크롬 완전 종료 (작업관리자에서 chrome.exe 전부)
+    3) 크롬 재실행 → chrome://extensions 에 자동 설치됨
+       ("조직에서 관리하는 브라우저" 표시는 정상)
+    이후: 새 버전이 나오면 크롬이 몇 시간 내 자동 업데이트.
+    즉시 확인: chrome://extensions → 개발자모드 ON → "업데이트" 버튼
+    제거: regedit 에서 ExtensionInstallForcelist 값 삭제 후 크롬 재시작
+
+── 14-2. [2층] version.json 폴링 → 웹앱/팝업 업데이트 안내 ───────────────────
+
+  version.json:
+    {
+      "version": "16.0.7",
+      "downloadUrl": ".../extension/doctorvoice-extension-v16.0.7.zip",
+      "notes": "v16.0.7 — 발행이 멈추는 원인을 찾을 수 있게 '문제진단 로그' 추가 · ...",
+      "minVersion": "15.0.0",
+      "releasedAt": "2026-08-03"
+    }
+
+  background.js:
+    const UPDATE_URL = 'https://.../extension/version.json';
+    async function checkForUpdate() {
+      const res = await fetch(UPDATE_URL + '?t=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) return { updateAvailable: false };
+      const data = await res.json();
+      const updateAvailable = compareVersion(data.version, VERSION) > 0;
+      await chrome.storage.local.set({ updateInfo: {
+        current: VERSION, latest: data.version, updateAvailable,
+        downloadUrl: data.downloadUrl, notes: data.notes || '', checkedAt: Date.now() }});
+      if (updateAvailable) {
+        chrome.action.setBadgeText({ text: 'NEW' });
+        chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
+      } else chrome.action.setBadgeText({ text: '' });
+      return { updateAvailable, latest: data.version, downloadUrl: data.downloadUrl, notes: data.notes };
+    }
+    function compareVersion(a, b) {                 // "16.0.7" vs "16.0.10" 안전 비교
+      const pa = String(a||'0').split('.').map(Number), pb = String(b||'0').split('.').map(Number);
+      for (let i = 0; i < 3; i++) {
+        if ((pa[i]||0) > (pb[i]||0)) return 1;
+        if ((pa[i]||0) < (pb[i]||0)) return -1;
+      }
+      return 0;
+    }
+    chrome.runtime.onInstalled.addListener(() => checkForUpdate());
+    chrome.runtime.onStartup.addListener(()   => checkForUpdate());
+    chrome.alarms.create('updateCheck', { periodInMinutes: 180 });   // 3시간
+    chrome.alarms.onAlarm.addListener(a => { if (a.name === 'updateCheck') checkForUpdate(); });
+
+  웹앱 팝업: content-website.js 가 CHECK_UPDATE 후 우하단 카드 표시.
+    localStorage['doctorvoice-update-dismissed'] = 무시한 latest 버전 → 같은 버전은 재표시 안 함.
+  확장 팝업: 신호등(초록=연동중 / 주황=업데이트 필요 or 웹사이트 안 열림)
+
+── 14-3. [3층] zip 수동 설치 (개발자모드) ────────────────────────────────────
+
+  frontend/public/extension/doctorvoice-extension-v16.0.7.zip
+  압축 해제 → chrome://extensions → 개발자모드 → "압축해제된 확장 프로그램 로드"
+  ★ 폴더를 교체하면 storage 가 초기화되어 저장된 네이버 계정이 사라진다.
+
+── 14-4. pack-crx.ps1 (패키징 스크립트 전문) ────────────────────────────────
+
+  # 주의: 이 파일은 ASCII 만 사용. PowerShell 5.1 은 .ps1 을 ANSI 로 읽어
+  #       비ASCII 주석/here-string 에서 깨진다.
+  $ErrorActionPreference = "Stop"
+  $src = $PSScriptRoot
+  $pem = Join-Path $src "keys\doctorvoice.pem"
+  if (-not (Test-Path $pem)) { throw "signing key missing: $pem" }
+
+  # ConvertFrom-Json 은 PS5.1 에서 UTF-8 파일에 체하므로 regex 로 버전 추출
+  $manifestText = Get-Content (Join-Path $src "manifest.json") -Raw -Encoding UTF8
+  $version = ([regex]::Match($manifestText, '"version"\s*:\s*"([0-9.]+)"')).Groups[1].Value
+  if (-not $version) { throw "could not read version from manifest.json" }
+
+  $base  = Join-Path $env:TEMP ("dvpack-" + [guid]::NewGuid().ToString("N"))
+  $stage = Join-Path $base "doctorvoice-ext"
+  New-Item -ItemType Directory -Path $stage | Out-Null
+  New-Item -ItemType Directory -Path (Join-Path $stage "icons") | Out-Null
+  foreach ($f in @("manifest.json","background.js","naver-poster.js","content-login.js",
+                   "gemini-writer.js","content-website.js","content.css",
+                   "popup.html","popup.js")) {
+    Copy-Item (Join-Path $src $f) (Join-Path $stage $f)
+  }
+  foreach ($ic in @("icon16.png","icon48.png","icon128.png")) {
+    Copy-Item (Join-Path $src "icons\$ic") (Join-Path $stage "icons\$ic")
+  }
+
+  $chrome = @("$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+              "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+              "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
+             ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+  if (-not $chrome) { throw "chrome.exe not found" }
+  & $chrome --pack-extension="$stage" --pack-extension-key="$pem" --no-message-box | Out-Null
+  Start-Sleep -Seconds 3
+
+  $crx = Join-Path $base "doctorvoice-ext.crx"
+  if (-not (Test-Path $crx)) { throw "crx not created" }
+  $pub = Join-Path (Split-Path $src -Parent) "frontend\public\extension"
+  Copy-Item $crx (Join-Path $pub "doctorvoice-extension.crx") -Force
+
+  $xml = "<?xml version='1.0' encoding='UTF-8'?>`n" +
+    "<gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>`n" +
+    "  <app appid='cdmgfoemncdnoigiolpgaaompcmlfcpk'>`n" +
+    "    <updatecheck codebase='https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension.crx' version='$version' />`n" +
+    "  </app>`n</gupdate>`n"
+  # BOM 없는 UTF-8 로 써야 크롬이 파싱한다
+  $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllText((Join-Path $pub "updates.xml"), $xml, $utf8NoBom)
+
+── 14-5. 릴리스 체크리스트 (순서 지킬 것) ───────────────────────────────────
+
+  1) 코드 수정
+  2) chrome-extension/manifest.json 의 "version" 올리기       ← 여기가 단일 진실
+  3) chrome-extension/ 에서  .\pack-crx.ps1  실행
+     → frontend/public/extension/doctorvoice-extension.crx + updates.xml 갱신
+  4) zip 도 만들어 두기 (수동 설치용)
+     → frontend/public/extension/doctorvoice-extension-v<X.Y.Z>.zip
+  5) frontend/public/extension/version.json 수정
+     version / downloadUrl / notes / releasedAt  ★ 4번 zip 파일명과 일치시킬 것
+  6) git commit + push → Vercel 자동 배포 (프론트는 push 로 배포됨)
+  7) 확인: 팝업 신호등이 초록인지, PING 의 version 이 새 값인지
+  ★ 백엔드(Fly.io)는 git push 로 배포되지 않는다. 백엔드 변경이 있으면 flyctl deploy 별도 실행.
+  ★ 버전을 올렸는데 crx/version.json 을 안 올리면 hosted 버전과 안 맞아
+    "업데이트 필요" 오탐이 계속 뜬다.
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 15. 다른 프로젝트로 이식하기 — 바꿔야 할 곳 전체 목록                        ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+── 15-1. 하드코딩된 값 (검색해서 전부 교체) ─────────────────────────────────
+
+  값                                        위치
+  ────────────────────────────────────────  ──────────────────────────────────────
+  doctor-voice-pro-ghwi.vercel.app          manifest.json(update_url)
+                                            background.js(UPDATE_URL)
+                                            popup.js(SITE_URL)
+                                            pack-crx.ps1(codebase)
+                                            *.reg, AUTO-UPDATE-README.txt
+  cdmgfoemncdnoigiolpgaaompcmlfcpk          pack-crx.ps1(appid), *.reg,
+   (확장 ID)                                 AUTO-UPDATE-README.txt
+  manifest "key" (공개키)                   manifest.json  ← 새 .pem 을 만들면 교체
+  keys/doctorvoice.pem                      새로 생성하거나 그대로 승계
+  'doctor-voice' / 'vercel.app' / 'localhost'
+   (웹앱 탭 탐색 문자열)                    background.js reportJobResult /
+                                            reportGenResult, popup.js checkSiteTab
+  externally_connectable.matches            manifest.json  ← 웹앱 도메인
+  host_permissions                          manifest.json  ← 웹앱 도메인
+  content_scripts[].matches (웹앱)          manifest.json
+  localStorage 키 'doctorvoice-extension-id'
+   'doctorvoice-extension-version'
+   'doctorvoice-update-dismissed'           content-website.js + 웹앱
+  CustomEvent 이름 'doctorvoice-*'          content-website.js + 웹앱
+  오버레이 id/클래스 dv-*                   naver-poster.js, gemini-writer.js,
+                                            content-website.js
+  WRITE_URL blog.naver.com/GoBlogWrite.naver  background.js, content-login.js
+  GEMINI_URL gemini.google.com/app          background.js
+
+── 15-2. 새 .pem 으로 확장 ID 를 새로 만드는 절차 ───────────────────────────
+
+  1) chrome://extensions → 개발자모드 → "확장 프로그램 압축" (key 없는 폴더로)
+     → .crx + .pem 생성. .pem 을 keys/ 에 보관(git ignore).
+  2) 생성된 확장의 ID 를 확인 → pack-crx.ps1 의 appid, .reg 값에 반영
+  3) 그 .pem 의 공개키를 manifest.json "key" 에 넣는다(ID 고정)
+     추출: openssl rsa -in key.pem -pubout -outform DER | openssl base64 -A
+  ★ .pem 을 분실하면 ID 가 바뀌고 기존 사용자 전원이 재설치해야 한다. 백업 필수.
+
+── 15-3. 다른 블로그 플랫폼(티스토리 등)으로 확장하려면 ─────────────────────
+
+  바꿔야 하는 것은 naver-poster.js 하나다. background.js 는 거의 그대로 쓴다.
+  새 poster 가 반드시 구현해야 하는 메시지 인터페이스:
+
+    PING            → { ok, version, editor:boolean }
+    GET_POSITIONS   → { ok, title:{x,y}, body:{x,y} }   ★ iframe 오프셋 포함 절대좌표
+    DISMISS_POPUP   → { ok }
+    INSERT_IMAGES   → { ok, inserted, expected, failed[] }  ★ 실제 증가 검증 필수
+    FINALIZE        → { ok, done, action, categories?, error? }
+    READ_CATEGORIES → { ok, categories:[{id,name}], error? }
+    READ_BLOG_ID    → { ok, blogId }   ← 못 찾으면 응답하지 말 것
+    PROGRESS / HIDE_OVERLAY
+
+  그리고 manifest 의 content_scripts matches + host_permissions 에 새 도메인 추가.
+
+── 15-4. 웹앱 없이 확장 단독으로 쓰려면 ─────────────────────────────────────
+
+  popup.html 에 폼을 추가해 popup.js 에서 직접 호출하면 된다:
+    chrome.runtime.sendMessage({ action:'SUBMIT_JOB', job })   ← 내부 메시지
+  단, 현재 background 의 SUBMIT_JOB 은 onMessageExternal 에만 있으므로
+  onMessage 쪽에도 같은 분기를 추가해야 한다.
+  배치는 payload pull 구조(REQUEST_JOB)가 웹 페이지를 전제하므로,
+  단독 사용 시에는 job 전체를 한 번에 넣는 경로(hasPayload=true)만 쓴다.
+
+── 15-5. 이식 후 동작 확인 순서 (스모크 테스트) ─────────────────────────────
+
+  1) 확장 로드 → 팝업 열기 → 버전 표시 정상?
+  2) 웹앱 접속 → 팝업 신호등 초록? (localStorage 에 extension-id 심겼는지 확인)
+  3) PING 왕복 확인 (콘솔에서 chrome.runtime.sendMessage(id,{action:'PING'},console.log))
+  4) SYNC_BLOG → blogId 정상 반환?  (네이버 로그인 필요)
+  5) SYNC_CATEGORIES → 카테고리 목록 반환?
+  6) SUBMIT_JOB { finalAction:'draft' } 로 임시저장 1건 → 네이버에서 확인
+  7) 사진 1장 넣고 draft → 실제로 삽입됐는지 확인 (★ imageComponentCount 검증)
+  8) SUBMIT_JOB { finalAction:'schedule', schedule:{datetime: 내일 날짜} }
+     → ★ 반드시 "내일 이후" 날짜로. 오늘로 테스트하면 datepicker 이동 로직이 검증 안 됨
+     → 네이버 예약발행 목록에서 날짜/시각 확인
+  9) 배치 2건으로 SUBMIT_BATCH → 결과 이벤트 2건 + 준비함 동작 확인
+  10) 팝업 "진단 로그 복사" → 로그가 남는지 확인
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 16. 알려진 한계 / 미확보 항목                                                ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+  · 이미지 컴포넌트 클래스 미실측
+    업로드된 사진이 어떤 컴포넌트로 붙는지 실측되지 않았다.
+    imageComponentCount() 가 3신호 최댓값으로 방어하고 있지만,
+    판정이 틀리면 "정상 업로드가 실패로 찍혀 발행이 막힌다".
+    (사진 없이 나가는 것보다는 낫지만) 배포 전 1~2건 실제 예약발행으로 반드시 확인.
+  · 드래프트 복원 팝업 확인 버튼 셀렉터 미확보 → 텍스트 매칭 best-effort
+  · dropImage 의 합성 DragEvent 방식이 네이버 정책 변경에 취약 (실측 검증 권장)
+  · Gemini 정지 버튼 마크업 미확보 → 생성 중 취소는 배치 단위(CANCEL_GEN_BATCH)만 가능
+  · Gemini 무료 한도 초과 시: 응답이 안 나오고 complete 도 안 붙어
+    가드 타임아웃으로만 걸린다. 배치 중 연속 실패하면 이걸 의심할 것.
+  · 자격증명 암호화 키가 같은 storage 에 있어 같은 기기 사용자에게는 완전 안전하지 않다.
+    반드시 opt-in 으로만 제공.
+  · 캡차는 자동 해결 불가(cross-origin). 사용자 핸드오프가 유일한 대응.
+  · MV3 워커가 죽으면 진행 중이던 job(메모리)은 사라진다.
+    pendingJob(storage)로 글쓰기 복귀는 되지만 배치 진행 상태는 복구되지 않는다.
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║ 17. 트러블슈팅 (증상 → 원인 → 확인법)                                        ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+증상                          원인 후보                        확인/조치
+────────────────────────────  ──────────────────────────────  ──────────────────────
+글이 안 써지고 멈춤           에디터 프레임 못 찾음            팝업 "진단 로그 복사"
+                              (all_frames 누락/네이버 개편)    → "에디터 미발견(25초)"
+글이 안 써지고 멈춤           로그인 화면으로 튕김             로그 → "로그인 화면 감지"
+                                                               / SYNC_BLOG needLogin
+글이 안 써지고 멈춤           워커가 죽음                      로그 한가운데
+                              (keepalive 누락)                 "서비스워커 기동" 줄
+"대기 중인 job 없음"          워커 재시작으로 currentJob 소실  storage.pendingJob 확인
+제목/본문이 빈 채 발행        DOM 직접 대입 사용               CDP insertText 로 교체
+예약글이 전부 즉시 발행됨     datepicker 실패를 무시           selectScheduleDate 실패
+                                                               시 throw 하는지 확인
+엉뚱한 카테고리로 발행        selectCategory 검증 누락         버튼 텍스트 대조하는지
+사진 없이 발행됨              INSERT_IMAGES 반환값 무시        assertImagesInserted 확인
+같은 글이 두 번 예약          가드 타임아웃 후 자동 재시도     uncertain:true 처리 확인
+                              / stall 타이머가 가드보다 짧음   웹앱 STALL_MS ≥ 15분
+"이미 발행이 진행 중입니다"   batchRunning 이 안 풀림          워커 재시작(확장 리로드)
+Gemini "준비 안 됨"           확장 설치 전부터 열려 있던 탭    탭 새로고침(자동 시도됨)
+Gemini "준비 안 됨"           구글 로그인 안 됨                해당 탭에서 로그인
+Gemini 글이 계속 짧음         minChars 미달 / 무료 한도 초과   로그의 chars 값 확인
+"업데이트 필요"가 안 사라짐   version.json/crx 를 안 올림      version.json 확인
+                              / VERSION 을 상수로 박음         getManifest() 쓰는지
+저장한 네이버 계정이 사라짐   확장 폴더 교체 → storage 초기화  팝업에서 다시 저장
+발행 결과가 화면에 안 옴      웹앱 탭을 못 찾음                탭 탐색 문자열 확인
+                                                               (doctor-voice/vercel/localhost)
+
+디버깅 진입점:
+  · 확장 팝업 → "문제진단 로그 복사"        ← 고객 PC 에서는 이게 유일한 창구
+  · chrome://extensions → 해당 확장 → "서비스 워커" 콘솔  ← [닥터보이스:bg]
+  · 네이버 글쓰기 탭 콘솔                   ← [닥터보이스] / [닥터보이스:login]
+  · Gemini 탭 콘솔                          ← [닥터보이스:gemini]
+  · chrome.storage.local 확인:
+    pendingJob / lastResult / diagLog / updateInfo / naverCred / __credKey
+
+================================================================================
+ 문서 끝. 원본 코드가 이 문서와 어긋나면 코드가 정답이다.
+ 코드를 고치면 이 문서의 해당 절과 12장 셀렉터 맵을 함께 갱신할 것.
+================================================================================

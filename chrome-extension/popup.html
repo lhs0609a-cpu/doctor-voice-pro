@@ -65,6 +65,8 @@
     .btn-ghost { background: #f1f5f9; color: #334155; font-size: 13px; padding: 10px; }
     .btn-ghost:hover { background: #e2e8f0; }
     .hint { font-size: 11px; color: #94a3b8; line-height: 1.5; text-align: center; margin-top: 4px; }
+    /* 저장된 계정이 없을 때 — 업데이트로 날아간 경우가 많아 눈에 띄어야 한다 */
+    .hint.warn { color: #b45309; font-weight: 700; }
   </style>
 </head>
 <body>
@@ -134,6 +136,10 @@
     <!-- 웹사이트 열기 -->
     <button class="btn btn-primary" id="btnOpenSite">닥터보이스 프로 열기</button>
     <button class="btn btn-ghost" id="btnRefresh">상태 새로고침</button>
+
+    <!-- 문제진단 -->
+    <button class="btn btn-ghost" id="btnCopyDiag" style="margin-bottom:0;">🩺 문제진단 로그 복사</button>
+    <div class="hint" id="diagStatus">발행이 멈추거나 글이 안 써지면 이 로그를 복사해 보내주세요</div>
   </div>
 
   <script src="popup.js"></script>

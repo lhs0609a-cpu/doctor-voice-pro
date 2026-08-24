@@ -11,13 +11,74 @@ const WRITE_URL = 'https://blog.naver.com/GoBlogWrite.naver';
 let currentJob = null;
 let debuggerTabId = null;
 let jobDoneResolver = null;   // 현재 job 자동화 완료 시 resolve
+let jobGen = 0;               // 건이 바뀔 때마다 증가 — 앞 건의 감시자를 구분한다
 let batchRunning = false;
 let genRunning = false;       // Gemini 글 생성 배치 진행 중
 let genCancel = false;        // 사용자가 중단을 눌렀는가
 let geminiTabId = null;       // 생성에 쓰는 Gemini 탭
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const log = (...a) => console.log('[닥터보이스:bg]', ...a);
+
+// ── 진단 로그 ───────────────────────────────────────────────
+// 서비스워커 콘솔은 워커가 죽으면 같이 비고, 원격지의 고객 PC 에서는 열어보게 하기도
+// 어렵다. "발행 중인데 글이 안 써진다" 류는 그 순간의 기록이 없으면 영영 못 잡는다.
+// → 모든 로그를 디스크(storage)에도 남겨 팝업에서 통째로 복사할 수 있게 한다.
+// 사진 base64 가 섞여 들어가면 수십 MB 가 되므로 값은 반드시 잘라서 넣는다.
+const DIAG_KEY = 'diagLog';
+const DIAG_MAX = 500;        // 줄 수 상한(오래된 것부터 버린다)
+const DIAG_MAX_LEN = 300;    // 한 줄 길이 상한
+let diagQueue = [];
+let diagFlushing = null;
+let diagTimer = null;
+
+function diagFormat(v) {
+  if (typeof v === 'string') return v;
+  if (v instanceof Error) return v.message;
+  try {
+    const s = JSON.stringify(v);
+    // data:image/...;base64,... 는 앞부분만 남긴다
+    return s.replace(/data:[^"]{40,}/g, (m) => m.slice(0, 30) + '…(생략)');
+  } catch (e) { return String(v); }
+}
+
+function diagPush(parts) {
+  try {
+    const t = new Date();
+    const hh = String(t.getHours()).padStart(2, '0');
+    const mm = String(t.getMinutes()).padStart(2, '0');
+    const ss = String(t.getSeconds()).padStart(2, '0');
+    let line = `${hh}:${mm}:${ss} ` + parts.map(diagFormat).join(' ');
+    if (line.length > DIAG_MAX_LEN) line = line.slice(0, DIAG_MAX_LEN) + '…';
+    diagQueue.push(line);
+    // 한 줄마다 쓰면 storage 가 몸살난다 → 1초 모아서 한 번에.
+    if (!diagTimer) diagTimer = setTimeout(flushDiag, 1000);
+  } catch (e) { /* 로그 때문에 본 작업이 죽으면 안 된다 */ }
+}
+
+async function flushDiag() {
+  diagTimer = null;
+  if (!diagQueue.length) return;
+  // 앞선 flush 와 겹치면 읽기-쓰기 사이에 줄이 사라진다 → 순서를 강제한다.
+  diagFlushing = (diagFlushing || Promise.resolve()).then(async () => {
+    const mine = diagQueue;
+    diagQueue = [];
+    try {
+      const cur = (await chrome.storage.local.get(DIAG_KEY))[DIAG_KEY] || [];
+      const next = cur.concat(mine).slice(-DIAG_MAX);
+      await chrome.storage.local.set({ [DIAG_KEY]: next });
+    } catch (e) { /* 저장 실패는 조용히 넘긴다 */ }
+  });
+  return diagFlushing;
+}
+
+const log = (...a) => { console.log('[닥터보이스:bg]', ...a); diagPush(a); };
+
+// 워커가 뜰 때마다 남긴다. 배치 로그 한가운데 이 줄이 있으면 = 서비스워커가 도중에
+// 죽었다는 뜻이고, 그러면 진행 중이던 job 은 메모리와 함께 통째로 사라진 것이다.
+// 이 줄은 1초 모아쓰기를 기다리지 않고 바로 저장한다 — 워커는 아무 때나 죽을 수 있고,
+// 못 남기면 '언제 재시작했는지'라는 가장 중요한 단서가 사라진다.
+log(`서비스워커 기동 v${VERSION}`);
+flushDiag();
 
 // ── MV3 서비스워커 keepalive ────────────────────────────────
 // 긴 배치(글 생성·대량 발행)는 수십 분~수 시간 걸린다. MV3 워커는 30초 유휴면
@@ -96,7 +157,21 @@ chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
           // 시작 전에 계정부터 확인한다 — 다른 블로그에 100건이 통째로 올라가는 걸 막는다.
           if (msg.expectedBlogId) {
             const who = await syncBlogId();
-            if (who.success && who.blogId !== msg.expectedBlogId) {
+            // 확인에 '실패'한 경우를 그냥 지나치면 안 된다. 예전엔 조건이 who.success &&
+            // 로 시작해서, 세션이 끊겨 로그인 화면이 떠도 배치가 그대로 출발했다.
+            // 그러면 글쓰기 탭이 로그인 페이지라 에디터 신호가 영영 안 오고, 건당 가드
+            // (최대 11분)가 터질 때까지 한 건도 못 쓴 채 화면만 '발행 중'으로 멈춘다.
+            if (!who.success) {
+              log('배치 거절 — 계정 확인 실패', who.needLogin ? '(로그인 필요)' : who.error);
+              sendResponse({
+                success: false,
+                error: who.needLogin
+                  ? '네이버 로그인이 풀렸습니다. 방금 열린 네이버 탭에서 로그인한 뒤 다시 발행해주세요.'
+                  : `네이버 계정을 확인하지 못해 발행을 시작하지 않았습니다(${who.error || '원인 불명'}).`,
+              });
+              break;
+            }
+            if (who.blogId !== msg.expectedBlogId) {
               sendResponse({
                 success: false,
                 error: `로그인된 블로그가 다릅니다(예상 '${msg.expectedBlogId}', 현재 '${who.blogId}'). 발행을 중단했습니다.`,
@@ -104,6 +179,7 @@ chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
               break;
             }
           }
+          log(`배치 접수 ${jobs.length}건 (탭 ${sender && sender.tab ? sender.tab.id : '알수없음'})`);
           sendResponse({ success: true, accepted: jobs.length });
           startBatch(jobs, sender); // 백그라운드로 진행(응답 대기 안 함)
           break;
@@ -174,15 +250,37 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           currentJob = stored.pendingJob || null;
         }
         if (currentJob && sender.tab) {
+          log('EDITOR_READY 수신 — 자동화 시작', currentJob.title || '(제목 없음)');
           sendResponse({ hasJob: true });
           runAutomation(sender.tab.id, currentJob).catch((e) => log('자동화 실패', e));
         } else {
+          // 여기가 찍히는데 글이 안 써진다면 job 이 사라진 것(워커 재시작 등)이다.
+          log('EDITOR_READY 수신 — 대기 중인 job 없음');
           sendResponse({ hasJob: false });
         }
         return;
       }
       if (msg.action === 'GET_VERSION') {
         sendResponse({ version: VERSION });
+        return;
+      }
+      // 콘텐트 스크립트(네이버 글쓰기 화면)가 남기는 진단 줄.
+      // 에디터를 못 찾았는지, 몇 번 프레임에서 준비됐는지가 여기로 들어온다.
+      if (msg.action === 'DIAG') {
+        log('[페이지]', msg.text || '');
+        sendResponse({ ok: true });
+        return;
+      }
+      if (msg.action === 'GET_DIAG') {
+        await flushDiag();
+        const lines = (await chrome.storage.local.get(DIAG_KEY))[DIAG_KEY] || [];
+        sendResponse({ ok: true, lines, version: VERSION });
+        return;
+      }
+      if (msg.action === 'CLEAR_DIAG') {
+        diagQueue = [];
+        await chrome.storage.local.remove(DIAG_KEY);
+        sendResponse({ ok: true });
         return;
       }
       if (msg.action === 'CHECK_UPDATE') {
@@ -286,6 +384,76 @@ async function getNaverCred() {
 }
 
 // ============================================================
+// 모바일 가독성 포맷 (backend/app/services/post_formatter.py 와 같은 규칙)
+// ============================================================
+// 서버의 대량 예약 경로(/queue/bulk)는 이미 '한 줄 한 문장, 두 문장마다 빈 줄'로
+// 정리해서 보낸다. 그런데 웹앱의 '저장된 글'이나 Gemini 로 바로 뽑은 글은 그 경로를
+// 안 거쳐서, AI 가 준 줄바꿈 그대로 나갔다 — 같은 자동발행인데 글꼴이 제각각이었다.
+// 발행 직전 여기서 한 번 더 태워 어느 경로로 들어왔든 리듬을 통일한다.
+// 이미 정리된 글에 다시 걸어도 결과가 같다(멱등) — 그래서 서버 경로에도 안전하다.
+// ⚠ 규칙을 고칠 때는 post_formatter.py 의 _split_long / _mobile_paragraph 도 같이.
+const MOBILE_LINE_MAX = 45;       // 모바일 한 줄 ≈ 한글 20자. 45자 = 두 줄
+const SENTENCES_PER_GROUP = 2;    // 두 문장마다 빈 줄
+
+// '고/며'는 앞 한글 2자를 요구해 '참고 자료', '사고 접수' 같은 명사를 걸러낸다.
+// '그리고'는 줄 끝에 남으면 어색해서 제외.
+const CONNECTIVE_RE = /(?:지만|는데|은데|면서|어서|아서|여서|라서|니까|므로|거나|도록)\s|(?<=[가-힣][가-힣])(?<!그리)(?:고|며)\s/g;
+
+// 끊을 자리: 쉼표 → 연결어미 뒤 → 띄어쓰기 순. 가운데(30~70%)로 제한하지 않으면
+// 토막 한 줄 + 여전히 긴 한 줄이 나와 안 끊느니만 못하다. 띄어쓰기조차 없으면 -1(그대로 둠).
+function findCut(s) {
+  const n = s.length;
+  const mid = n / 2;
+  let best = -1;
+  const consider = (i) => {
+    if (i < n * 0.3 || i > n * 0.7) return;
+    if (best < 0 || Math.abs(i - mid) < Math.abs(best - mid)) best = i;
+  };
+  for (let i = 0; i < n; i++) if (s[i] === ',') consider(i);
+  if (best >= 0) return best;
+  for (const m of s.matchAll(CONNECTIVE_RE)) consider(m.index + m[0].length - 1);
+  if (best >= 0) return best;
+  for (let i = 0; i < n; i++) if (s[i] === ' ') consider(i);
+  return best;
+}
+
+function splitLong(s) {
+  if (s.length <= MOBILE_LINE_MAX) return [s];
+  const cut = findCut(s);
+  if (cut < 0) return [s];
+  return [s.slice(0, cut + 1).trim(), ...splitLong(s.slice(cut + 1).trim())];
+}
+
+function splitSentences(body) {
+  return (body || '').split(/(?<=[.!?。？！])\s+|\n+/).map((p) => p.trim()).filter(Boolean);
+}
+
+function mobileFormat(text) {
+  const lines = [];
+  for (const s of splitSentences(text)) lines.push(...splitLong(s));
+  const groups = [];
+  for (let i = 0; i < lines.length; i += SENTENCES_PER_GROUP) {
+    groups.push(lines.slice(i, i + SENTENCES_PER_GROUP).join('\n'));
+  }
+  return groups.filter(Boolean).join('\n\n');
+}
+
+// 굵게 처리할 단어 고르기. 서버가 emphasize 를 주면 그걸 쓰고, 없으면 keywords 로 대신한다.
+// 해시태그('#임플란트')는 본문에 그 형태로 없으므로 '#' 를 뗀다. 1글자는 아무 데나 걸려
+// 글이 굵은 점으로 도배되니 뺀다.
+function pickEmphasize(raw) {
+  const src = Array.isArray(raw.emphasize) && raw.emphasize.length
+    ? raw.emphasize
+    : (raw.keywords || raw.seo_keywords || []);
+  if (!Array.isArray(src)) return [];
+  const out = src
+    .filter((w) => typeof w === 'string')
+    .map((w) => w.replace(/^#/, '').trim())
+    .filter((w) => w.length >= 2);
+  return [...new Set(out)];
+}
+
+// ============================================================
 // Job 정규화
 // ============================================================
 function normalizeJob(raw) {
@@ -295,8 +463,13 @@ function normalizeJob(raw) {
   let images = raw.images || [];
   let blocks = raw.blocks || null;
   if (blocks && blocks.length) {
+    blocks = blocks.map((b) =>
+      b.type === 'text' && b.content ? { ...b, content: mobileFormat(b.content) } : b
+    );
     content = blocks.filter((b) => b.type === 'text' && b.content).map((b) => b.content).join('\n\n');
     images = blocks.filter((b) => b.type === 'image' && b.image).map((b) => b.image);
+  } else {
+    content = mobileFormat(content);
   }
   return {
     id: raw.id || String(Date.now()),
@@ -304,7 +477,9 @@ function normalizeJob(raw) {
     content,
     images, // base64 data URL 배열 (EXIF는 프론트에서 제거됨)
     blocks, // [{type:'text',content} | {type:'image',image}] — 인터리브 삽입용(향후)
-    emphasize: Array.isArray(raw.emphasize) ? raw.emphasize : [], // 자동 굵게할 키워드
+    // 자동 굵게할 키워드. 서버(/queue/jobs)가 emphasize 를 실어 보내지만, 웹앱에서
+    // 바로 넘어온 글은 keywords 밖에 없어서 그것도 받는다('#' 는 본문 매칭이 안 되므로 뗀다).
+    emphasize: pickEmphasize(raw),
     tags: raw.tags || raw.keywords || raw.seo_keywords || [],
     options: {
       openType: raw.options?.openType || 'public',
@@ -331,8 +506,35 @@ async function startJob(job) {
   if (existing) {
     await chrome.tabs.update(existing.id, { active: true });
     await chrome.tabs.reload(existing.id);
-  } else {
-    await chrome.tabs.create({ url: WRITE_URL, active: true });
+    return existing.id;
+  }
+  const created = await chrome.tabs.create({ url: WRITE_URL, active: true });
+  return created.id;
+}
+
+/**
+ * 글쓰기 탭이 로그인 화면으로 튕겼는지 지켜본다.
+ * 로그인 페이지에는 naver-poster 가 붙지 않아 EDITOR_READY 가 영영 오지 않는다.
+ * 그대로 두면 건당 가드(최대 11분)가 터질 때까지 아무 일도 없이 멈춰 있으므로,
+ * 로그인 화면을 확인하는 즉시 이 건을 끝내고 사용자에게 이유를 알린다.
+ */
+async function watchLoginBounce(tabId, gen) {
+  for (let i = 0; i < 20; i++) {         // 3초 × 20 = 60초 동안만 지켜본다
+    await sleep(3000);
+    // 이 건이 이미 끝났거나 다음 건이 시작됐으면 손을 뗀다. 배치는 같은 탭을 재사용하므로
+    // gen 을 안 보면 앞 건의 감시자가 다음 건을 대신 끝내버릴 수 있다.
+    if (gen !== jobGen || !jobDoneResolver) return;
+    let tab;
+    try { tab = await chrome.tabs.get(tabId); } catch (e) { return; } // 탭이 닫힘 → 가드가 처리
+    if (tab.url && tab.url.includes('nid.naver.com')) {
+      log('로그인 화면 감지 — 이 건 중단', tab.url.slice(0, 60));
+      try { await chrome.tabs.update(tabId, { active: true }); } catch (e) { /* noop */ }
+      finishJob({
+        ok: false, needLogin: true,
+        error: '네이버 로그인이 풀렸습니다. 열린 네이버 탭에서 로그인한 뒤 다시 발행해주세요.',
+      });
+      return;
+    }
   }
 }
 
@@ -523,11 +725,23 @@ async function startBatch(metas, sender) {
         missStreak++;
       }
       // 결과를 웹사이트로 전달 → 준비함에서 성공한 건만 제거 + 백엔드에 보고
+      log(`배치 ${i + 1} 결과: ${result && result.ok ? '성공' : '실패'}`,
+        (result && result.error) || '');
       reportJobResult(
         webTabId, meta.id, !!(result && result.ok),
         (result && (result.error || result.action)) || '',
         !!(result && result.uncertain)
       );
+
+      // 로그인이 풀린 상태면 남은 건도 전부 같은 이유로 실패한다. 19번을 더 헛돌며
+      // 로그인 화면만 띄우지 말고 여기서 멈추고, 남은 건은 사유를 붙여 되돌려준다.
+      if (result && result.needLogin) {
+        log('로그인이 풀려 배치 중단');
+        for (let k = i + 1; k < metas.length; k++) {
+          reportJobResult(webTabId, metas[k].id, false, '네이버 로그인이 풀려 중단됨 — 로그인 후 다시 발행하세요');
+        }
+        break;
+      }
 
       // 탭이 닫혔다면 남은 수십 건을 헛돌릴 필요가 없다 — 남은 건 실패로 알리고 끝낸다.
       // (준비함에 그대로 남으므로 탭을 다시 열어 이어서 발행할 수 있다)
@@ -575,8 +789,11 @@ function runOne(job) {
         r({ ok: false, error: 'timeout', uncertain: true });
       }
     }, jobGuardMs(job));
+    const gen = ++jobGen;
     jobDoneResolver = (res) => { clearTimeout(guard); resolve(res); };
-    startJob(job).catch((e) => {
+    startJob(job).then((tabId) => {
+      if (tabId) watchLoginBounce(tabId, gen);
+    }).catch((e) => {
       if (jobDoneResolver) { const r = jobDoneResolver; jobDoneResolver = null; r({ ok: false, error: e.message }); }
     });
   });
@@ -620,7 +837,7 @@ const GEN_DEFAULTS = {
   newChatEvery: 1,     // N건마다 새 채팅 (1 = 매번)
   reloadEvery: 20,     // N건마다 탭 통째로 재로드 (SPA 메모리 누수/좀비 상태 방지)
   minChars: 800,       // 이보다 짧으면 실패로 보고 재시도
-  retries: 1,          // 품질 미달 시 재시도 횟수
+  retries: 2,          // 품질 미달/전송 실패 시 재시도 횟수(전송 실패는 몇 초 안에 판정된다)
   tempChat: true,      // 임시 채팅(사이드바에 기록 안 남김)
   gapMs: 1500,         // 건 사이 여유
 };
@@ -685,38 +902,109 @@ async function reloadGeminiTab(tabId, tempChat) {
  * 전송은 Enter — 입력창에 enterkeyhint="send" 가 걸려 있어 버튼을 찾을 필요가 없고,
  * 버튼 위치가 바뀌어도 안 깨진다.
  */
-async function genOne(tabId, prompt, timeoutMs) {
-  const pos = await sendToTab(tabId, { action: 'GEM_INPUT_POS' });
-  if (!pos || !pos.ok || !pos.pos) throw new Error((pos && pos.error) || '입력창을 찾지 못했습니다');
+/** 입력창이 비워질 때까지 기다린다. Gemini 는 전송에 성공하면 입력창을 비운다. */
+async function waitInputCleared(tabId, ms) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    await sleep(300);
+    const c = await sendToTab(tabId, { action: 'GEM_INPUT_TEXT' });
+    if (c && c.ok && c.len === 0) return true;
+  }
+  return false;
+}
 
+/**
+ * 프롬프트 1건을 보내고 글을 수확한다.
+ * 입력은 CDP(Input.insertText) — Quill 은 DOM 직접 대입을 무시한다.
+ *
+ * ⚠ 순서가 중요하다: 좌표는 **디버거를 붙인 뒤에** 잰다.
+ *   chrome.debugger.attach() 가 붙는 순간 크롬이 상단에 '디버깅하고 있습니다' 배너를
+ *   띄우고 뷰포트가 ~40px 줄어든다. 입력창은 화면 하단에 붙어 있어 뷰포트 좌표가
+ *   통째로 위로 밀리는데, 붙이기 전에 잰 y 로 클릭하면 입력창 아래 여백을 찍는다.
+ *   → 포커스가 안 잡혀 insertText 가 허공에 들어가고, Enter 도 무반응 →
+ *     '응답이 시작되지 않았습니다' 로 72건 중 몇 건이 산발적으로 죽던 원인.
+ *
+ * 그리고 추측하지 않는다 — 넣었으면 되읽어 확인하고, 보냈으면 비워졌는지 확인한다.
+ * 실패를 60초 뒤가 아니라 몇 초 안에 알아야 재시도가 값싸진다.
+ */
+async function genOne(tabId, prompt, timeoutMs) {
   await attachDebugger(tabId);
+  let expectIndex = 0;
   try {
-    await clickAt(tabId, pos.pos.x, pos.pos.y);
-    await sleep(200);
-    await insertText(tabId, prompt);
-    await sleep(400); // Quill 이 Delta 를 반영할 여유
+    await sleep(400); // 배너가 뜨며 뷰포트가 줄어드는 걸 기다린 뒤에 측정한다
+
+    const pos = await sendToTab(tabId, { action: 'GEM_INPUT_POS' });
+    if (!pos || !pos.ok || !pos.pos) throw new Error((pos && pos.error) || '입력창을 찾지 못했습니다');
+    expectIndex = pos.count || 0;
+
+    // 1) 프롬프트가 실제로 입력창에 들어갈 때까지 (매번 좌표를 다시 잰다)
+    let typed = 0;
+    const need = Math.min(20, prompt.length); // 전량 일치는 Quill 정규화 때문에 못 믿는다
+    for (let t = 0; t < 3 && typed < need; t++) {
+      const p = t === 0 ? pos : await sendToTab(tabId, { action: 'GEM_INPUT_POS' });
+      const xy = (p && p.ok && p.pos) || pos.pos;
+      await clickAt(tabId, xy.x, xy.y);
+      await sleep(220);
+      await insertText(tabId, prompt);
+      await sleep(500); // Quill 이 Delta 를 반영할 여유
+      const chk = await sendToTab(tabId, { action: 'GEM_INPUT_TEXT' });
+      typed = (chk && chk.ok) ? chk.len : 0;
+      if (typed < need) {
+        log(`프롬프트가 입력창에 안 들어감 (시도 ${t + 1}/3, 현재 ${typed}자) — DOM 포커스로 재시도`);
+        await sendToTab(tabId, { action: 'GEM_FOCUS_INPUT' });
+        await sleep(250);
+      }
+    }
+    if (typed < need) {
+      throw new Error('프롬프트가 입력창에 들어가지 않았습니다(클릭 좌표/포커스 실패 — Gemini 탭이 최소화됐거나 UI가 바뀌었을 수 있습니다)');
+    }
+
+    // 2) 전송됐는지 확인. Enter 가 안 먹으면 보내기 버튼으로 한 번 더.
     await pressEnter(tabId);
+    let sent = await waitInputCleared(tabId, 6000);
+    if (!sent) {
+      log('Enter 로 전송되지 않음 → 보내기 버튼 클릭 시도');
+      const sb = await sendToTab(tabId, { action: 'GEM_CLICK_SEND' });
+      if (sb && sb.ok) sent = await waitInputCleared(tabId, 6000);
+      else log('보내기 버튼도 못 찾음', (sb && sb.error) || '응답 없음');
+    }
+    if (!sent) throw new Error('프롬프트 전송에 실패했습니다(입력창이 비워지지 않음)');
   } finally {
     // 수확은 DOM 감시라 디버거가 필요 없다. 상단 '디버깅 중' 배너를 오래 띄우지 않는다.
+    // 다만 Enter 직후 바로 떼면 렌더러가 키 이벤트를 흘릴 수 있어 잠깐 둔다.
+    await sleep(250);
     try { await detachDebugger(tabId); } catch (_) {}
   }
 
   // 폴링 수확 — 긴 단일 await(최대 5분) 대신 1.5초마다 짧게 상태를 확인한다.
   //  · MV3 워커는 긴 유휴 await 도중 종료될 수 있는데, 잦은 메시지 왕복이 워커를
   //    확실히 살려둔다(setInterval keepalive 만으로는 얼어붙을 수 있다).
-  //  · 프롬프트 전송이 실패하면(입력창에 안 들어감) 응답이 시작되지 않으므로,
-  //    60초 내 '시작'이 없으면 무한 대기 대신 실패로 끊어 화면에 사유를 보여준다.
-  const expectIndex = pos.count || 0;
+  //  · 전송은 위에서 이미 확인했으므로, 여기서 응답이 안 오면 사유는 Gemini 쪽이다
+  //    (사용량 한도 / 안전필터 / 지연). 그 셋을 뭉뚱그리지 않고 구분해 보고한다.
   const started = Date.now();
   let sawStart = false;
   let lastChars = -1;
+  let deadPolls = 0;
   while (Date.now() - started < timeoutMs) {
     await sleep(1500);
     const st = await sendToTab(tabId, { action: 'GEM_STATUS', expectIndex });
-    if (!st || !st.ok) continue; // 일시적 무응답은 다음 폴에서 재시도
+    if (!st || !st.ok) {
+      // 일시적 무응답은 재시도. 다만 계속 무응답이면 탭이 죽은 것이다 —
+      // 이걸 '전송 실패'로 보고하면 엉뚱한 데를 고치게 된다.
+      if (++deadPolls >= 12) {
+        return { ok: false, text: '', chars: 0, error: 'Gemini 탭이 응답하지 않습니다(탭이 닫혔거나 새로고침됨)' };
+      }
+      continue;
+    }
+    deadPolls = 0;
     if (st.started) sawStart = true;
-    if (!sawStart && Date.now() - started > 60000) {
-      return { ok: false, text: '', chars: 0, error: '응답이 시작되지 않았습니다(프롬프트 전송 실패 가능성)' };
+    if (!sawStart) {
+      if (st.blocked) {
+        return { ok: false, text: '', chars: 0, error: `Gemini 가 응답하지 못했습니다 — ${st.blocked}` };
+      }
+      if (Date.now() - started > 90000) {
+        return { ok: false, text: '', chars: 0, error: '전송은 됐는데 90초 동안 응답이 시작되지 않았습니다(Gemini 사용량 한도 또는 지연 가능성)' };
+      }
     }
     const cur = st.chars || 0;
     if (cur !== lastChars) {
@@ -906,6 +1194,21 @@ async function runAutomation(tabId, job) {
       }
     }
 
+    // 본문 정렬 — 모바일 가독성. 기본 가운데.
+    // 글·이미지가 전부 들어간 뒤에 한 번에 맞춘다. 타이핑 전에 걸면 문단이 아직
+    // 하나뿐이라 나머지 문단이 정렬을 물려받는지에 기대게 되고, 선택 영역도 건드려
+    // CDP 입력과 엉킨다.
+    // 되돌리려면 storage 의 bodyAlign 을 'left' 로: 네이버 기본(왼쪽)이 된다.
+    const { bodyAlign } = await chrome.storage.local.get('bodyAlign');
+    const wantAlign = bodyAlign || 'center';
+    if (wantAlign !== 'left') {
+      await progress(tabId, '본문 정렬 중...', 85);
+      const ar = await sendToTab(tabId, { action: 'SET_ALIGN', align: wantAlign });
+      log('본문 정렬:', ar && ar.ok
+        ? `${wantAlign} 적용 (문단 ${ar.paragraphs}개, ${(ar.tried || []).join('>')})`
+        : `적용 실패 — ${ar ? JSON.stringify(ar) : '응답 없음'}`);
+    }
+
     // 최종 동작 (임시저장 / 발행 / 예약)
     await progress(tabId, '마무리 중...', 88);
     const fin = await sendToTab(tabId, { action: 'FINALIZE', job });
@@ -940,14 +1243,20 @@ async function typeBody(tabId, content, emphasize) {
   const re = uniq.length ? new RegExp('(' + uniq.map(escapeRe).join('|') + ')') : null;
   const wordSet = new Set(uniq);
 
+  // 나올 때마다 굵게 하면 키워드가 6개일 때 글 전체가 굵은 얼룩으로 뒤덮여
+  // 강조가 강조 구실을 못 한다. 문단(빈 줄 기준)당 키워드 1회씩만 굵게 한다.
+  let boldedInPara = new Set();
+
   const lines = (content || '').split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    if (!line.length) boldedInPara = new Set();   // 빈 줄 = 문단 경계
     if (line.length) {
       if (re) {
         for (const part of line.split(re)) {
           if (!part) continue;
-          if (wordSet.has(part)) {
+          if (wordSet.has(part) && !boldedInPara.has(part)) {
+            boldedInPara.add(part);
             await ctrlB(tabId); await insertText(tabId, part); await ctrlB(tabId);
           } else {
             await insertText(tabId, part);

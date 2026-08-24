@@ -492,25 +492,36 @@ async def assign_and_uniquify(
     for p in candidates:
         if len(out) >= req.count:
             break
-        # 이 원본의 과거 변형 해시(형제) 수집
+        # 이 원본의 과거 변형 해시(형제) 중 '최근 것만' 회피셋으로 쓴다.
+        # 전부 넣으면 재사용이 쌓일수록 게이트를 넘길 변형을 못 찾아 시도가 폭증한다
+        # (실측: 형제 90개에서 장당 시도 7회·15초, 300개에서는 16회를 다 쓰고도 실패).
+        # 자세한 근거는 uniq.SIBLING_WINDOW 주석 참고.
         sib_res = await db.execute(
-            select(ImageVariant.phash).where(ImageVariant.pool_image_id == p.id)
+            select(ImageVariant.phash, ImageVariant.trim)
+            .where(ImageVariant.pool_image_id == p.id)
+            .order_by(ImageVariant.created_at.desc())
+            .limit(uniq.SIBLING_WINDOW)
         )
-        siblings = [s for (s,) in sib_res.all() if s]
+        sib_rows = sib_res.all()
+        siblings = [s for (s, _t) in sib_rows if s]
+        # 직전에 통과한 재구도 예산에서 탐색을 시작한다(없으면 기본값부터).
+        # 같은 사진은 대체로 같은 지점에서 통과해서, 이것만으로 시도가 2.6→1.9회로 준다.
+        last_trim = sib_rows[0][1] if sib_rows else None
 
         result = await run_in_threadpool(
             uniq.uniquify, p.data,
-            sibling_hashes=siblings, max_width=req.max_width,
+            sibling_hashes=siblings, max_width=req.max_width, trim_start=last_trim,
         )
         if result is None:
             continue
 
-        # 변형 이력 기록 + 사용 카운트 증가
+        # 변형 이력 기록 + 사용 카운트 증가.
+        # attempts 를 남긴다 — 느려질 때 '몇 번 헛돌았나'가 원인 판단의 유일한 단서다.
         db.add(ImageVariant(
             pool_image_id=p.id, user_id=str(current_user.id),
             phash=result.phash, dhash=result.dhash, frame_style=result.frame_style,
             ssim=result.ssim, min_distance=result.min_distance, passed=result.passed,
-            post_id=req.post_id,
+            attempts=result.attempts, trim=result.trim, post_id=req.post_id,
         ))
         p.use_count = (p.use_count or 0) + 1
         p.last_used_at = datetime.utcnow()
@@ -628,6 +639,7 @@ class UniquifyOneRequest(BaseModel):
     image: str                       # data URL 또는 base64
     sibling_hashes: List[str] = []   # 과거 변형 pHash(글마다 다르게)
     max_width: int = uniq.MAX_WIDTH
+    trim_start: Optional[float] = None   # 직전 응답의 trim (탐색 시작점 재사용)
 
 
 class UniquifyOneResponse(BaseModel):
@@ -635,6 +647,7 @@ class UniquifyOneResponse(BaseModel):
     phash: str
     passed: bool
     min_distance: int
+    trim: float = uniq.TRIM_START    # 다음 요청에 그대로 돌려보내면 시도 횟수가 준다
 
 
 @router.post("/uniquify-one", response_model=UniquifyOneResponse)
@@ -652,8 +665,12 @@ async def uniquify_one(
     except Exception:
         raise HTTPException(status_code=400, detail="이미지 디코딩 실패")
 
+    # 클라이언트가 회피셋을 무한정 쌓아 보내도 여기서 잘라낸다. 예전엔 300개까지
+    # 그대로 받아 한 장에 16회(가드 최대)를 다 쓰고도 게이트를 못 넘겨 35초를 버렸다.
     result = await run_in_threadpool(
-        uniq.uniquify, data, sibling_hashes=req.sibling_hashes, max_width=req.max_width,
+        uniq.uniquify, data,
+        sibling_hashes=(req.sibling_hashes or [])[-uniq.SIBLING_WINDOW:],
+        max_width=req.max_width, trim_start=req.trim_start,
     )
     if result is None:
         raise HTTPException(status_code=400, detail="유니크화 실패(이미지 확인)")
@@ -661,4 +678,5 @@ async def uniquify_one(
     return UniquifyOneResponse(
         image="data:image/jpeg;base64," + base64.b64encode(result.image_bytes).decode(),
         phash=result.phash, passed=result.passed, min_distance=result.min_distance,
+        trim=result.trim,
     )
