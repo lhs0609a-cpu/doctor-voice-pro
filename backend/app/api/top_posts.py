@@ -26,6 +26,7 @@ from app.services.keyword_collector import (
     get_category_keyword_stats,
     CATEGORY_SEEDS
 )
+from app.services.keyword_expander import expand_keyword
 from app.services.bulk_analysis_service import (
     BulkAnalysisService,
     run_bulk_analysis,
@@ -1142,3 +1143,112 @@ async def get_categories_with_stats(db: AsyncSession = Depends(get_db)):
         })
 
     return {"categories": categories}
+
+
+# ============================================================
+# 연관 키워드 확장 (키워드 리서치)
+# ============================================================
+
+class KeywordResearchRequest(BaseModel):
+    """연관 키워드 확장 요청 스키마"""
+    keyword: str
+    target_count: int = 300          # 100 ~ 1000
+    max_depth: int = 2               # 1=시드 확장, 2=허브 재확장, 3=손자까지
+    use_google: bool = True          # 구글 자동완성 병행
+    use_regions: bool = True         # 지역명 조합 포함
+
+
+@router.post("/keyword-research")
+async def keyword_research(request: KeywordResearchRequest):
+    """
+    시드 키워드 하나로 연관검색어를 대량 수집
+
+    - 예) "임플란트" -> 임플란트 후기 / 임플란트 가격 / 강남 임플란트 ...
+    - 허브 키워드 아래에 서브로 연결된 연관검색어까지 트리로 묶어서 반환
+    - target_count 만큼 수집 (300 선택 시 300개, 400 선택 시 400개)
+    """
+    keyword = (request.keyword or "").strip()
+    if not keyword:
+        raise HTTPException(status_code=400, detail="키워드를 입력해주세요")
+    if len(keyword) > 30:
+        raise HTTPException(status_code=400, detail="키워드가 너무 깁니다 (30자 이내)")
+
+    target_count = request.target_count
+    if not 10 <= target_count <= 1000:
+        raise HTTPException(status_code=400, detail="target_count는 10 ~ 1000 사이여야 합니다")
+
+    max_depth = max(1, min(request.max_depth, 3))
+
+    # 목표 개수가 클수록 시간 예산을 늘리되, 프론트 타임아웃(180초) 안쪽으로 제한
+    time_budget = min(160.0, 45.0 + target_count * 0.12)
+
+    try:
+        result = await expand_keyword(
+            seed=keyword,
+            target_count=target_count,
+            max_depth=max_depth,
+            use_google=request.use_google,
+            use_regions=request.use_regions,
+            time_budget=time_budget,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"키워드 수집 실패: {e}")
+
+
+class SaveResearchKeywordsRequest(BaseModel):
+    """수집한 연관 키워드를 분석용 풀에 저장"""
+    category: str
+    keywords: List[str]
+
+
+@router.post("/keyword-research/save")
+async def save_research_keywords(
+    request: SaveResearchKeywordsRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    연관 키워드 확장 결과를 카테고리 키워드 풀에 저장
+
+    저장된 키워드는 상위노출 대량 분석(bulk-analyze)에서 그대로 사용된다.
+    """
+    if request.category not in CATEGORY_SEEDS:
+        raise HTTPException(status_code=400, detail=f"Invalid category: {request.category}")
+
+    keywords = [k.strip() for k in (request.keywords or []) if k and k.strip()]
+    if not keywords:
+        raise HTTPException(status_code=400, detail="저장할 키워드가 없습니다")
+
+    # 이미 저장된 키워드 조회 (SQLite 바인딩 변수 한도를 고려해 나눠서 조회)
+    existing: set = set()
+    chunk_size = 400
+    for start in range(0, len(keywords), chunk_size):
+        chunk = keywords[start:start + chunk_size]
+        existing_result = await db.execute(
+            select(CollectedKeyword.keyword).where(
+                CollectedKeyword.category == request.category,
+                CollectedKeyword.keyword.in_(chunk)
+            )
+        )
+        existing.update(existing_result.scalars().all())
+
+    saved = 0
+    for keyword in keywords:
+        if keyword in existing:
+            continue
+        db.add(CollectedKeyword(
+            category=request.category,
+            keyword=keyword,
+            source="keyword_research"
+        ))
+        existing.add(keyword)
+        saved += 1
+
+    await db.commit()
+
+    return {
+        "category": request.category,
+        "requested": len(keywords),
+        "saved": saved,
+        "skipped": len(keywords) - saved,
+    }

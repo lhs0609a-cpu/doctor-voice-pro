@@ -42,6 +42,7 @@ import {
   Image as ImagesIcon,
   Layers,
   FileSpreadsheet,
+  Network,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -111,6 +112,11 @@ export function DashboardNav() {
       href: '/dashboard/top-post-analysis',
       label: '상위노출 분석',
       icon: TrendingUp,
+    },
+    {
+      href: '/dashboard/keyword-research',
+      label: '연관 키워드',
+      icon: Network,
     },
     {
       href: '/dashboard/roi',

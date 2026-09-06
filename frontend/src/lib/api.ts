@@ -763,6 +763,43 @@ export interface FeasibilityDTO {
   top_summary?: Record<string, unknown> | null
 }
 
+// 연관 키워드 확장 결과
+export interface ResearchKeyword {
+  keyword: string
+  source: string
+  depth: number
+  parent: string | null
+  type: string
+  contains_seed: boolean
+  word_count: number
+}
+
+export interface ResearchGroup {
+  token: string
+  hub: string
+  type: string
+  count: number
+  children: ResearchKeyword[]
+}
+
+export interface KeywordResearchResult {
+  seed: string
+  target_count: number
+  collected_count: number
+  keywords: ResearchKeyword[]
+  groups: ResearchGroup[]
+  hubs: { keyword: string; count: number; type: string }[]
+  stats: {
+    by_source: Record<string, number>
+    by_type: Record<string, number>
+    total_discovered: number
+    group_count: number
+    max_depth_reached: number
+  }
+  truncated: boolean
+  elapsed_seconds: number
+}
+
 export const topPostsAPI = {
   // 상위노출 가능성 판정 (실측 신호 기반)
   getFeasibility: async (keywords: string[], topN = 3): Promise<{ results: FeasibilityDTO[] }> => {
@@ -831,6 +868,27 @@ export const topPostsAPI = {
   // 단일 키워드 분석
   analyzeKeyword: async (keyword: string, topN: number = 3) => {
     const response = await api.post('/api/v1/top-posts/analyze', { keyword, top_n: topN })
+    return response.data
+  },
+
+  // 연관 키워드 대량 확장 (키워드 리서치)
+  researchKeywords: async (data: {
+    keyword: string
+    target_count?: number
+    max_depth?: number
+    use_google?: boolean
+    use_regions?: boolean
+  }): Promise<KeywordResearchResult> => {
+    const response = await api.post('/api/v1/top-posts/keyword-research', data)
+    return response.data
+  },
+
+  // 확장한 연관 키워드를 카테고리 키워드 풀에 저장
+  saveResearchKeywords: async (category: string, keywords: string[]) => {
+    const response = await api.post('/api/v1/top-posts/keyword-research/save', {
+      category,
+      keywords,
+    })
     return response.data
   },
 
