@@ -1264,11 +1264,22 @@ async def save_research_keywords(
 # ============================================================
 
 class BrandInfo(BaseModel):
-    """글에 반영할 업체 정보 (선택)"""
+    """
+    글에 반영할 업체 정보
+
+    differentiators / proof_points 가 차별화의 재료다.
+    비어 있으면 프롬프트는 장점을 지어내는 대신 '판단 기준을 주는' 방향으로 전환한다.
+    """
     name: Optional[str] = None
     region: Optional[str] = None
     specialty: Optional[str] = None
     tone: Optional[str] = None
+    # 우리만 할 수 있는 것 (진료 방식, 장비, 사후관리, 보증 등)
+    differentiators: Optional[List[str]] = None
+    # 숫자로 말할 수 있는 근거 (연차, 케이스 수, 보유 자격 등)
+    proof_points: Optional[List[str]] = None
+    # 주로 찾아오는 환자층
+    target_patient: Optional[str] = None
 
 
 class WritingSpecRequest(BaseModel):

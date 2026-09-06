@@ -19,6 +19,7 @@
 전부 실측/규칙 기반이며 LLM 을 쓰지 않는다.
 """
 
+import hashlib
 import math
 from typing import Dict, List, Optional
 
@@ -173,6 +174,85 @@ CONVERSION_BLOCKS = [
     ),
 ]
 
+# 도입부 진입 방식. 키워드마다 다른 것을 배정해서
+# 여러 편을 한 번에 뽑아도 서로 복제본처럼 읽히지 않게 한다.
+OPENING_STYLES = [
+    "검색자가 지금 겪고 있는 장면을 3인칭으로 묘사하며 시작한다. (예: 어젯밤부터 이런 상태였다면)",
+    "검색자가 속으로 하고 있는 질문을 그대로 첫 문장에 쓴다.",
+    "많은 사람이 잘못 알고 있는 통념 하나를 먼저 깨면서 시작한다.",
+    "지금 결정을 미루면 무엇이 달라지는지 시간 순으로 짧게 보여주며 시작한다.",
+    "비슷한 상황으로 내원했던 사례의 한 장면으로 시작한다.",
+]
+
+
+def pick_opening_style(keyword: str) -> str:
+    """
+    키워드로 결정론적으로 고른다 - 같은 키워드는 늘 같은 진입 방식.
+
+    글자 합으로 고르면 "임플란트 가격"과 "임플란트 부작용"처럼
+    앞부분이 같은 키워드끼리 자주 충돌한다. 해시를 써야 고르게 흩어진다.
+    """
+    if not keyword:
+        return OPENING_STYLES[0]
+    digest = hashlib.md5(keyword.encode("utf-8")).hexdigest()
+    return OPENING_STYLES[int(digest, 16) % len(OPENING_STYLES)]
+
+
+def build_differentiation(research: Dict, brand: Optional[Dict]) -> Dict:
+    """
+    이 원고만의 차별화 각도를 정한다.
+
+    차별화는 세 가지가 맞물려야 나온다.
+      1) 이 키워드 검색자가 실제로 겪는 걱정 (페인포인트)
+      2) 그 걱정에 상위글이 답해주지 않는 지점 (콘텐츠 갭)
+      3) 우리가 그 지점에서 실제로 내세울 수 있는 것 (병원 차별점)
+
+    셋 중 하나라도 비면 "좋은 글"은 나와도 "우리에게 문의할 이유"는 안 나온다.
+    """
+    pains = research.get("pain_points") or []
+    gaps = research.get("content_gaps") or []
+    brand = brand or {}
+
+    primary = pains[0] if pains else None
+    secondary = pains[1] if len(pains) > 1 else None
+
+    # 경쟁글이 안 다루는 것 중 페인포인트와 직접 연결되는 것을 쐐기로 삼는다
+    wedge = None
+    if primary:
+        for gap in gaps:
+            if any(
+                signal in gap["from_keyword"]
+                for signal in _pain_signal_words(primary["id"])
+            ):
+                wedge = gap
+                break
+    if wedge is None and gaps:
+        wedge = gaps[0]
+
+    differentiators = [d for d in (brand.get("differentiators") or []) if d]
+    proof_points = [p for p in (brand.get("proof_points") or []) if p]
+
+    return {
+        "primary_pain": primary,
+        "secondary_pain": secondary,
+        "wedge": wedge,
+        "opening_style": pick_opening_style(research.get("keyword", "")),
+        "differentiators": differentiators,
+        "proof_points": proof_points,
+        "has_brand_material": bool(differentiators or proof_points),
+    }
+
+
+def _pain_signal_words(pain_id: str) -> List[str]:
+    """페인포인트 id 에 해당하는 신호 단어 (딥리서치 사전을 그대로 참조)"""
+    from app.services.serp_research_service import PAIN_SIGNALS
+
+    for pain in PAIN_SIGNALS:
+        if pain["id"] == pain_id:
+            return pain["signals"]
+    return []
+
+
 # 체류시간 - 네이버 상위 유지의 실질 변수
 DWELL_RULES = [
     "첫 문장은 질문이나 상황 묘사로 시작해 바로 읽히게 한다. 인사말 금지.",
@@ -303,9 +383,70 @@ def compose_prompt(
             add(f"    · {gap['topic']}  (실제 검색어: {gap['from_keyword']})")
         add("")
 
+    # ---- 차별화 (이 글의 존재 이유) ------------------------------
+    diff = build_differentiation(research, brand)
+    primary = diff["primary_pain"]
+
+    add("━━━━━━━━━━━━━━━━━━━━━━━━")
+    add("4. 이 글의 차별화 — 가장 중요한 항목")
+    add("━━━━━━━━━━━━━━━━━━━━━━━━")
+    add("정보만 잘 정리된 글은 이미 1페이지에 다섯 편 있습니다.")
+    add("이 글은 '읽고 나서 여기에 물어봐야겠다'는 생각이 들어야 합니다.")
+    add("그러려면 정보를 나열하지 말고, 아래 걱정 하나를 끝까지 풀어주세요.")
+    add("")
+
+    if primary:
+        add(f"[이 키워드를 검색한 사람의 가장 큰 걱정]")
+        add(f"  {primary['label']} — {primary['worry']}")
+        add(f"  근거가 되는 실제 검색어: {', '.join(primary['evidence'][:5])}")
+        add(f"  풀어주는 방법: {primary['answer']}")
+        add("")
+        add("이 걱정을 도입부 3줄 안에 그대로 언어화하세요.")
+        add("독자가 '내 얘기다'라고 느끼는 순간 끝까지 읽습니다.")
+        add("")
+
+    if diff["secondary_pain"]:
+        second = diff["secondary_pain"]
+        add(f"[두 번째 걱정] {second['label']} — {second['worry']}")
+        add(f"  글 중반에 한 번 짚어주세요. {second['answer']}")
+        add("")
+
+    if diff["wedge"]:
+        add(f"[경쟁글이 이 걱정에 답하지 않는 지점]")
+        add(f"  '{diff['wedge']['topic']}' (실제 검색어: {diff['wedge']['from_keyword']})")
+        add("  여기를 정면으로 다루는 것이 이 글의 무기입니다. 소제목 하나를 통째로 배정하세요.")
+        add("")
+
+    add(f"[도입부 진입 방식] {diff['opening_style']}")
+    add("")
+
+    add("[왜 우리에게 문의해야 하는가]")
+    if diff["has_brand_material"]:
+        add("글 후반부에 아래 내용을 '자랑'이 아니라 '위 걱정에 대한 답'으로 연결해서 쓰세요.")
+        for item in diff["differentiators"]:
+            add(f"  - {item}")
+        for item in diff["proof_points"]:
+            add(f"  - (근거) {item}")
+        add("")
+        add("연결 방식이 중요합니다. '저희는 장비가 좋습니다'가 아니라")
+        add("'앞에서 말한 그 위험을 줄이려면 이런 점검이 필요한데, 저희는 그 과정을 이렇게 합니다'")
+        add("처럼 걱정 -> 해법 -> 우리 방식 순서로 이어 붙이세요.")
+    else:
+        add("업체 차별점이 입력되지 않았습니다. 없는 장점을 지어내지 마세요.")
+        add("대신 '어디를 고르든 이것만은 확인하세요' 형태의 판단 기준을 제시하고,")
+        add("그 기준을 함께 점검해보자는 흐름으로 상담을 제안하세요.")
+        add("기준을 준 사람이 신뢰를 얻습니다.")
+    add("")
+
+    add("[하지 말 것]")
+    add("- 상위글과 같은 목차를 순서만 바꿔 쓰는 것")
+    add("- 걱정을 짚지 않고 정보만 나열하는 것")
+    add("- 마지막에 갑자기 병원 홍보를 붙이는 것 (본문과 연결되지 않으면 이탈합니다)")
+    add("")
+
     # ---- 규격 --------------------------------------------------
     add("━━━━━━━━━━━━━━━━━━━━━━━━")
-    add("4. 분량·구조 규격 (실측 기준)")
+    add("5. 분량·구조 규격 (실측 기준)")
     add("━━━━━━━━━━━━━━━━━━━━━━━━")
     if spec["evidence"] == "measured":
         add(
@@ -320,7 +461,7 @@ def compose_prompt(
 
     # ---- 네이버 SEO --------------------------------------------
     add("━━━━━━━━━━━━━━━━━━━━━━━━")
-    add("5. 네이버 노출 규칙")
+    add("6. 네이버 노출 규칙")
     add("━━━━━━━━━━━━━━━━━━━━━━━━")
     for rule in _naver_seo_rules(spec):
         add(f"- {rule}")
@@ -328,7 +469,7 @@ def compose_prompt(
 
     # ---- 체류시간 ----------------------------------------------
     add("━━━━━━━━━━━━━━━━━━━━━━━━")
-    add("6. 끝까지 읽게 만들기 (체류시간)")
+    add("7. 끝까지 읽게 만들기 (체류시간)")
     add("━━━━━━━━━━━━━━━━━━━━━━━━")
     add("네이버는 독자가 글을 얼마나 오래 보는지를 중요하게 봅니다.")
     for rule in DWELL_RULES:
@@ -337,7 +478,7 @@ def compose_prompt(
 
     # ---- 전환 --------------------------------------------------
     add("━━━━━━━━━━━━━━━━━━━━━━━━")
-    add("7. 전환 설계 (읽고 나서 문의하게 만들기)")
+    add("8. 전환 설계 (읽고 나서 문의하게 만들기)")
     add("━━━━━━━━━━━━━━━━━━━━━━━━")
     add("아래 요소를 글 안에 반드시 모두 넣으세요.")
     for name, rule in CONVERSION_BLOCKS:
@@ -347,21 +488,23 @@ def compose_prompt(
     # ---- 브랜드 ------------------------------------------------
     if brand and any(brand.values()):
         add("━━━━━━━━━━━━━━━━━━━━━━━━")
-        add("8. 업체 정보")
+        add("9. 업체 정보")
         add("━━━━━━━━━━━━━━━━━━━━━━━━")
         if brand.get("name"):
             add(f"- 상호: {brand['name']}")
         if brand.get("region"):
             add(f"- 지역: {brand['region']} (지역명을 본문에 2~3회 자연스럽게 넣으세요)")
         if brand.get("specialty"):
-            add(f"- 강점: {brand['specialty']}")
+            add(f"- 진료 분야: {brand['specialty']}")
+        if brand.get("target_patient"):
+            add(f"- 주로 오시는 분: {brand['target_patient']}")
         if brand.get("tone"):
             add(f"- 말투: {brand['tone']}")
         add("")
 
     # ---- 금지 --------------------------------------------------
     add("━━━━━━━━━━━━━━━━━━━━━━━━")
-    add("9. 절대 쓰면 안 되는 표현")
+    add("10. 절대 쓰면 안 되는 표현")
     add("━━━━━━━━━━━━━━━━━━━━━━━━")
     if forbidden["is_medical"]:
         add("의료광고는 법으로 규제됩니다. 아래 유형은 사용 시 문제가 됩니다.")
@@ -374,7 +517,7 @@ def compose_prompt(
 
     # ---- 출력 형식 ---------------------------------------------
     add("━━━━━━━━━━━━━━━━━━━━━━━━")
-    add("10. 출력 형식")
+    add("11. 출력 형식")
     add("━━━━━━━━━━━━━━━━━━━━━━━━")
     add("- 첫 줄에 제목만 쓰고, 한 줄 띄운 뒤 본문을 시작하세요.")
     add("- 마크다운 기호(#, **, ---)를 쓰지 말고 일반 텍스트로만 작성하세요.")
@@ -398,8 +541,13 @@ def build_writing_package(
         "spec": spec,
         "prompt": prompt,
         "prompt_length": len(prompt),
+        "differentiation": build_differentiation(research, brand),
         "research_summary": {
             "analyzed_count": research.get("analyzed_count", 0),
+            "pain_points": [
+                {"label": p["label"], "evidence": p["evidence"][:3]}
+                for p in (research.get("pain_points") or [])[:3]
+            ],
             "competitor_titles": research.get("competitor_titles", [])[:5],
             "common_topics": [t["topic"] for t in (research.get("common_topics") or [])[:10]],
             "content_gaps": [g["topic"] for g in (research.get("content_gaps") or [])[:8]],

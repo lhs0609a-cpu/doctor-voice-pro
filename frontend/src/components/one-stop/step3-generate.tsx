@@ -17,6 +17,7 @@ import {
 } from '@/lib/keyword-batch'
 import { topPostsAPI, type WritingPackage } from '@/lib/api'
 import { Checkbox } from '@/components/ui/checkbox'
+import { BrandForm, useBrand } from './brand-form'
 import type { WizardState } from './use-wizard-state'
 
 interface Props {
@@ -43,6 +44,7 @@ export function Step3Generate({ state, onBack, onDone }: Props) {
   const [useSpec, setUseSpec] = useState(true)
   const [designing, setDesigning] = useState(false)
   const [packages, setPackages] = useState<WritingPackage[]>([])
+  const { brand, setBrand } = useBrand()
 
   // 확장이 보내는 건별 결과 구독 (저장은 전역 GenerationSaver가 담당 — 여기선 진행만 추적)
   useEffect(() => {
@@ -90,6 +92,7 @@ export function Step3Generate({ state, onBack, onDone }: Props) {
         const { results } = await topPostsAPI.createWritingSpec({
           keywords: state.approved,
           top_n: 5,
+          brand,
         })
         const designed: WritingPackage[] = []
         results.forEach((r) => {
@@ -172,6 +175,16 @@ export function Step3Generate({ state, onBack, onDone }: Props) {
               </span>
             </label>
 
+            {useSpec && (
+              <div className="rounded-md border bg-background p-3">
+                <BrandForm
+                  value={brand}
+                  onChange={setBrand}
+                  disabled={running || designing}
+                />
+              </div>
+            )}
+
             {designing && (
               <p className="text-sm text-blue-700">
                 상위글을 분석해 키워드별 설계서를 만드는 중입니다… (키워드당 10~30초)
@@ -189,6 +202,13 @@ export function Step3Generate({ state, onBack, onDone }: Props) {
                       이미지 {pkg.spec?.media.image_count}장
                     </summary>
                     <div className="mt-1 pl-3 space-y-1 text-muted-foreground">
+                      {pkg.differentiation?.primary_pain && (
+                        <p className="text-foreground">
+                          <b>이 글의 각도:</b> {pkg.differentiation.primary_pain.label}
+                          {pkg.differentiation.wedge &&
+                            ` · 쐐기 "${pkg.differentiation.wedge.topic}"`}
+                        </p>
+                      )}
                       {!!pkg.research_summary?.content_gaps?.length && (
                         <p>
                           경쟁글이 빠뜨린 주제:{' '}

@@ -55,8 +55,15 @@ STOPWORDS = {
     "다음", "이번", "지금", "오늘", "여기", "거기", "모두", "함께", "바로",
 }
 
+# 플랫폼·커뮤니티 이름은 검색어로는 흔해도 소제목 글감은 못 된다.
+# ("임플란트 부작용 디시"에서 '디시'를 소제목으로 뽑으면 글이 이상해진다)
+_PLATFORM_TOKENS = {
+    "디시", "블로그", "카페", "지식인", "네이버", "구글", "유튜브",
+    "인스타", "맘카페", "뽐뿌", "클리앙", "루리웹",
+}
+
 # 그대로 소제목이 될 수 있는 주제어 (keyword_expander 의 의도 수식어 사전을 재사용)
-_CONTENT_ANGLES = set(keyword_expander.MODIFIER_SUFFIXES)
+_CONTENT_ANGLES = set(keyword_expander.MODIFIER_SUFFIXES) - _PLATFORM_TOKENS
 
 # 서술어로 끝나는 토큰은 주제가 아니다 (있는, 확인해야, 하는 ...)
 _VERBAL_TOKEN = re.compile(
@@ -211,7 +218,7 @@ def _content_gaps(
         if not missing:
             continue
         key = missing[0]
-        if key in seen:
+        if key in seen or key in _PLATFORM_TOKENS:
             continue
         seen.add(key)
         gaps.append({
@@ -304,6 +311,113 @@ def _questions(
     return pool[:limit]
 
 
+# ============================================================
+# 페인포인트 - 이 키워드를 검색한 사람이 실제로 겪는 불안
+#
+# 연관검색어/질문형 롱테일에 어떤 단어가 붙어 나오는지가 곧 그 사람의 걱정이다.
+# "임플란트 부작용"을 치는 사람과 "임플란트 얼마"를 치는 사람은 다른 글을 원한다.
+# 여기서 뽑은 페인포인트가 원고의 도입부와 차별화 각도를 결정한다.
+# ============================================================
+PAIN_SIGNALS = [
+    {
+        "id": "fear",
+        "label": "잘못될까 봐 두렵다",
+        "signals": [
+            "부작용", "통증", "아픔", "아파", "위험", "실패", "후유증", "염증",
+            "부러", "흔들", "빠짐", "재수술", "잘못", "사고", "무서", "겁",
+        ],
+        "worry": "시술 자체가 잘못되거나 아플까 봐 겁이 납니다.",
+        "answer": "위험이 어떤 조건에서 생기는지, 그리고 그 조건을 어떻게 미리 걸러내는지를 설명해 안심시키세요.",
+    },
+    {
+        "id": "cost",
+        "label": "돈이 얼마나 들지 모르겠다",
+        "signals": [
+            "가격", "비용", "얼마", "저렴", "싼", "보험", "지원", "할부",
+            "부담", "만원", "견적", "실비", "혜택",
+        ],
+        "worry": "총액이 얼마인지, 왜 병원마다 다른지 감이 안 잡힙니다.",
+        "answer": "금액을 못 박지 말고 비용이 갈리는 기준을 설명하세요. 무엇에 따라 올라가고 내려가는지를 알려주면 신뢰가 생깁니다.",
+    },
+    {
+        "id": "time",
+        "label": "얼마나 걸리는지 모르겠다",
+        "signals": [
+            "기간", "며칠", "몇일", "얼마나", "회복", "당일", "하루",
+            "몇번", "몇회", "시간", "빨리", "오래",
+        ],
+        "worry": "일상과 직장 생활에 얼마나 지장이 있을지 계산이 안 됩니다.",
+        "answer": "전체 일정을 단계별로 쪼개 보여주고, 일상 복귀 시점을 구체적으로 말해주세요.",
+    },
+    {
+        "id": "trust",
+        "label": "어디를 골라야 할지 모르겠다",
+        "signals": [
+            "잘하는곳", "유명한곳", "추천", "어디", "후기", "비교", "차이",
+            "순위", "명의", "진짜", "광고", "고르", "선택",
+        ],
+        "worry": "광고가 너무 많아서 뭘 믿어야 할지 판단이 안 섭니다.",
+        "answer": "업체 자랑 대신 '이런 곳은 거르세요' 수준의 판단 기준을 주세요. 기준을 주는 쪽이 신뢰를 얻습니다.",
+    },
+    {
+        "id": "eligibility",
+        "label": "내가 해당되는지 모르겠다",
+        "signals": [
+            "나이", "조건", "기준", "자격", "가능", "안되", "못하",
+            "고혈압", "당뇨", "임산부", "노인", "청소년",
+        ],
+        "worry": "내 상태나 나이에도 되는 건지 확신이 없습니다.",
+        "answer": "되는 경우와 안 되는 경우를 나눠 제시하고, 애매한 경우는 무엇을 확인해야 하는지 알려주세요.",
+    },
+    {
+        "id": "neglect",
+        "label": "그냥 두면 어떻게 되나",
+        "signals": [
+            "방치", "그냥", "안하면", "놔두면", "미루", "자연", "저절로",
+            "심해", "악화", "재발",
+        ],
+        "worry": "지금 당장 해야 하는 건지, 좀 미뤄도 되는 건지 모르겠습니다.",
+        "answer": "미뤘을 때 실제로 무엇이 달라지는지 시간 순으로 보여주세요. 겁주지 말고 사실만 씁니다.",
+    },
+]
+
+
+def _pain_points(seed: str, related_keywords: List[str], questions: List[str]) -> List[Dict]:
+    """
+    검색어 구성에서 이 키워드 검색자의 페인포인트를 뽑는다.
+
+    근거(어떤 검색어에서 나왔는지)를 함께 남겨야 프롬프트에서
+    "왜 이 걱정을 짚어야 하는지"를 Gemini 에게 설득할 수 있다.
+    """
+    pool = list(questions) + list(related_keywords)
+    found: List[Dict] = []
+
+    for pain in PAIN_SIGNALS:
+        evidence: List[str] = []
+        seen: Set[str] = set()
+        for keyword in pool:
+            if any(signal in keyword for signal in pain["signals"]):
+                if keyword in seen:
+                    continue
+                seen.add(keyword)
+                evidence.append(keyword)
+            if len(evidence) >= 5:
+                break
+        if evidence:
+            found.append({
+                "id": pain["id"],
+                "label": pain["label"],
+                "worry": pain["worry"],
+                "answer": pain["answer"],
+                "evidence": evidence,
+                "weight": len(evidence),
+            })
+
+    # 근거가 많은 걱정이 곧 이 키워드의 주된 불안이다
+    found.sort(key=lambda p: -p["weight"])
+    return found
+
+
 def _intent(seed: str, related_keywords: List[str]) -> Dict:
     """
     검색 의도 추정 - 연관검색어 구성비로 본다.
@@ -378,6 +492,8 @@ async def research_keyword(
 
     related_keywords = [k["keyword"] for k in (related_result.get("keywords") or [])]
 
+    questions = _questions(keyword, related_keywords, probed_questions)
+
     return {
         "keyword": keyword,
         "category": top_result.get("category", "general"),
@@ -388,7 +504,8 @@ async def research_keyword(
         "competitor_titles": [p["title"] for p in outline if p["title"]],
         "common_topics": _common_topics(outline, keyword),
         "content_gaps": _content_gaps(keyword, related_keywords, outline),
-        "questions": _questions(keyword, related_keywords, probed_questions),
+        "questions": questions,
+        "pain_points": _pain_points(keyword, related_keywords, questions),
         "related_keywords": related_keywords[:60],
         "intent": _intent(keyword, related_keywords),
     }

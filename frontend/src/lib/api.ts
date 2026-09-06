@@ -839,6 +839,14 @@ export interface WritingPackage {
     content_gaps: string[]
     questions: string[]
     intent: string
+    pain_points?: { label: string; evidence: string[] }[]
+  }
+  differentiation?: {
+    primary_pain?: { label: string; worry: string; evidence: string[] } | null
+    secondary_pain?: { label: string } | null
+    wedge?: { topic: string; from_keyword: string } | null
+    opening_style?: string
+    has_brand_material?: boolean
   }
   error?: string
 }
@@ -848,6 +856,12 @@ export interface BrandInfo {
   region?: string
   specialty?: string
   tone?: string
+  /** 우리만 할 수 있는 것 - 차별화의 핵심 재료 */
+  differentiators?: string[]
+  /** 숫자로 말할 수 있는 근거 (연차, 케이스 수 등) */
+  proof_points?: string[]
+  /** 주로 찾아오는 환자층 */
+  target_patient?: string
 }
 
 export const topPostsAPI = {
