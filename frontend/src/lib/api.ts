@@ -800,7 +800,68 @@ export interface KeywordResearchResult {
   elapsed_seconds: number
 }
 
+// 글쓰기 설계서 (딥리서치 -> Gemini 프롬프트)
+export interface WritingSpec {
+  keyword: string
+  search_volume: number
+  sample_count: number
+  evidence: 'measured' | 'fallback'
+  title: {
+    min_length: number
+    max_length: number
+    keyword_required: boolean
+    keyword_position: string
+    competitor_keyword_rate: number
+  }
+  content: {
+    target_length: number
+    min_length: number
+    heading_count: number
+    keyword_count: number
+    competitor_avg_length: number
+    competitor_max_length: number
+  }
+  media: {
+    image_count: number
+    competitor_avg_images: number
+  }
+}
+
+export interface WritingPackage {
+  keyword: string
+  spec?: WritingSpec
+  prompt?: string
+  prompt_length?: number
+  research_summary?: {
+    analyzed_count: number
+    competitor_titles: string[]
+    common_topics: string[]
+    content_gaps: string[]
+    questions: string[]
+    intent: string
+  }
+  error?: string
+}
+
+export interface BrandInfo {
+  name?: string
+  region?: string
+  specialty?: string
+  tone?: string
+}
+
 export const topPostsAPI = {
+  // 글쓰기 설계서 + Gemini 프롬프트 생성 (딥리서치 기반)
+  createWritingSpec: async (data: {
+    keywords: string[]
+    top_n?: number
+    include_research?: boolean
+    brand?: BrandInfo
+  }): Promise<{ results: WritingPackage[] }> => {
+    const response = await api.post('/api/v1/top-posts/writing-spec', data)
+    return response.data
+  },
+
   // 상위노출 가능성 판정 (실측 신호 기반)
   getFeasibility: async (keywords: string[], topN = 3): Promise<{ results: FeasibilityDTO[] }> => {
     const response = await api.post('/api/v1/top-posts/feasibility', { keywords, top_n: topN })

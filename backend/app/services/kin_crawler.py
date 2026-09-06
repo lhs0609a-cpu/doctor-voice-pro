@@ -36,7 +36,8 @@ class KinCrawlerService:
         self.default_headers = {
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding": "gzip, deflate, br",
+            # Accept-Encoding 은 httpx 가 디코딩 가능한 것만 붙이도록 맡긴다.
+            # br(brotli) 을 직접 광고하면 brotli 미설치 환경에서 본문이 깨져 들어온다.
             "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1",
         }

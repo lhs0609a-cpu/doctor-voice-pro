@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -34,6 +35,10 @@ from app.services.bulk_analysis_service import (
     get_category_rules
 )
 from app.services import rank_feasibility_service
+from app.services import serp_research_service
+from app.services.writing_spec_builder import build_writing_package
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -1252,3 +1257,78 @@ async def save_research_keywords(
         "saved": saved,
         "skipped": len(keywords) - saved,
     }
+
+
+# ============================================================
+# 글쓰기 설계 (딥리서치 -> Gemini 프롬프트)
+# ============================================================
+
+class BrandInfo(BaseModel):
+    """글에 반영할 업체 정보 (선택)"""
+    name: Optional[str] = None
+    region: Optional[str] = None
+    specialty: Optional[str] = None
+    tone: Optional[str] = None
+
+
+class WritingSpecRequest(BaseModel):
+    """글쓰기 설계 요청"""
+    keywords: List[str]
+    top_n: int = 5                     # 분석할 상위글 수
+    include_research: bool = False     # 리서치 원본까지 받을지
+    brand: Optional[BrandInfo] = None
+
+
+@router.post("/writing-spec")
+async def create_writing_spec(
+    request: WritingSpecRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    키워드별 글쓰기 설계서 + Gemini 프롬프트 생성
+
+    1) 그 키워드로 지금 네이버 1페이지에 있는 글들을 실제로 읽고
+    2) 실측 분량/이미지/소제목 규격과 경쟁글이 빠뜨린 주제를 뽑아
+    3) 전환 설계·체류시간·의료법 금지어까지 합쳐 하나의 프롬프트로 컴파일한다.
+
+    반환된 prompt 를 그대로 Gemini 에 넣으면 된다.
+    """
+    keywords = [k.strip() for k in (request.keywords or []) if k and k.strip()]
+    if not keywords:
+        raise HTTPException(status_code=400, detail="키워드를 입력해주세요")
+    if len(keywords) > 20:
+        raise HTTPException(status_code=400, detail="한 번에 최대 20개까지 설계할 수 있습니다")
+
+    top_n = max(3, min(request.top_n, 10))
+    brand = request.brand.model_dump() if request.brand else None
+
+    try:
+        researches = await serp_research_service.research_keywords(keywords, top_n=top_n)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"딥리서치 실패: {e}")
+
+    # 검색량은 있으면 프롬프트에 넣고, 검색광고 키가 없으면 조용히 생략한다
+    volumes = {}
+    try:
+        from app.services import search_volume_service
+        metrics = await search_volume_service.get_keyword_metrics(db, keywords)
+        for row in metrics or []:
+            volumes[row.get("keyword")] = row.get("total_volume", 0) or 0
+    except Exception as e:
+        logger.warning("[글쓰기설계] 검색량 조회 생략: %s", e)
+
+    results = []
+    for keyword, research in zip(keywords, researches):
+        if research.get("error"):
+            results.append({"keyword": keyword, "error": research["error"]})
+            continue
+        package = build_writing_package(
+            research,
+            search_volume=volumes.get(keyword, 0),
+            brand=brand,
+        )
+        if request.include_research:
+            package["research"] = research
+        results.append(package)
+
+    return {"results": results}

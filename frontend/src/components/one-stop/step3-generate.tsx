@@ -15,6 +15,8 @@ import {
   DEFAULT_GEN_OPTIONS,
   type GenStatus,
 } from '@/lib/keyword-batch'
+import { topPostsAPI, type WritingPackage } from '@/lib/api'
+import { Checkbox } from '@/components/ui/checkbox'
 import type { WizardState } from './use-wizard-state'
 
 interface Props {
@@ -37,6 +39,10 @@ export function Step3Generate({ state, onBack, onDone }: Props) {
   const [running, setRunning] = useState(false)
   const [finished, setFinished] = useState(false)
   const successRef = useRef(0)
+  // 상위글을 실제로 분석해 키워드별 프롬프트를 만들지 여부
+  const [useSpec, setUseSpec] = useState(true)
+  const [designing, setDesigning] = useState(false)
+  const [packages, setPackages] = useState<WritingPackage[]>([])
 
   // 확장이 보내는 건별 결과 구독 (저장은 전역 GenerationSaver가 담당 — 여기선 진행만 추적)
   useEffect(() => {
@@ -72,11 +78,47 @@ export function Step3Generate({ state, onBack, onDone }: Props) {
     successRef.current = 0
     setFinished(false)
     setRows(state.approved.map((k) => ({ keyword: k, status: 'pending' })))
+
+    // 키워드별 설계서를 먼저 받아온다.
+    //  - 지금 그 키워드로 1페이지에 있는 글들을 실제로 읽어서
+    //    분량/이미지/소제목 규격과 경쟁글이 빠뜨린 주제를 뽑아낸 프롬프트다.
+    //  - 실패하면 기본 템플릿으로 떨어뜨려 생성 자체는 막지 않는다.
+    let prompts: Record<string, string> = {}
+    if (useSpec) {
+      setDesigning(true)
+      try {
+        const { results } = await topPostsAPI.createWritingSpec({
+          keywords: state.approved,
+          top_n: 5,
+        })
+        const designed: WritingPackage[] = []
+        results.forEach((r) => {
+          if (r.prompt) {
+            prompts[r.keyword] = r.prompt
+            designed.push(r)
+          }
+        })
+        setPackages(designed)
+        if (designed.length) {
+          toast.success(`${designed.length}개 키워드 설계 완료 (상위글 분석 기반)`)
+        }
+        if (designed.length < state.approved.length) {
+          toast.warning(
+            `${state.approved.length - designed.length}개는 설계에 실패해 기본 템플릿으로 씁니다.`,
+          )
+        }
+      } catch (e) {
+        toast.warning('설계 서버 응답이 없어 기본 템플릿으로 진행합니다.')
+      } finally {
+        setDesigning(false)
+      }
+    }
+
     const tpl = loadTemplates()[0]
     const items = state.approved.map((keyword, i) => ({
       id: `ws-${Date.now()}-${i}`,
       keyword,
-      prompt: renderPrompt(tpl.body, { 키워드: keyword, keyword }),
+      prompt: prompts[keyword] || renderPrompt(tpl.body, { 키워드: keyword, keyword }),
     }))
     try {
       setRunning(true)
@@ -111,6 +153,61 @@ export function Step3Generate({ state, onBack, onDone }: Props) {
             열리며, 완료된 글은 <b>저장된 글</b>에 자동 저장됩니다. (창을 닫지 마세요)
           </p>
 
+          {/* 상위글 기반 자동 설계 */}
+          <div className="rounded-lg border bg-muted/40 p-3 space-y-2">
+            <label className="flex items-start gap-2 cursor-pointer">
+              <Checkbox
+                checked={useSpec}
+                onCheckedChange={(v) => setUseSpec(Boolean(v))}
+                disabled={running || designing}
+                className="mt-0.5"
+              />
+              <span className="text-sm">
+                <b>상위글 기반 자동 설계</b> (권장)
+                <span className="block text-muted-foreground text-xs mt-0.5">
+                  키워드마다 지금 1페이지에 있는 글들을 실제로 읽어서 분량·이미지·소제목 규격과
+                  경쟁글이 빠뜨린 주제를 뽑고, 전환 요소와 의료법 금지어까지 넣은 프롬프트를
+                  만들어 씁니다. 끄면 기본 템플릿으로 씁니다.
+                </span>
+              </span>
+            </label>
+
+            {designing && (
+              <p className="text-sm text-blue-700">
+                상위글을 분석해 키워드별 설계서를 만드는 중입니다… (키워드당 10~30초)
+              </p>
+            )}
+
+            {packages.length > 0 && (
+              <div className="space-y-2 pt-1">
+                {packages.map((pkg) => (
+                  <details key={pkg.keyword} className="text-xs">
+                    <summary className="cursor-pointer font-medium">
+                      {pkg.keyword} — 상위글 {pkg.research_summary?.analyzed_count ?? 0}개 분석 ·
+                      목표 {pkg.spec?.content.target_length.toLocaleString()}자 ·
+                      소제목 {pkg.spec?.content.heading_count}개 ·
+                      이미지 {pkg.spec?.media.image_count}장
+                    </summary>
+                    <div className="mt-1 pl-3 space-y-1 text-muted-foreground">
+                      {!!pkg.research_summary?.content_gaps?.length && (
+                        <p>
+                          경쟁글이 빠뜨린 주제:{' '}
+                          {pkg.research_summary.content_gaps.join(', ')}
+                        </p>
+                      )}
+                      {!!pkg.research_summary?.questions?.length && (
+                        <p>답할 질문: {pkg.research_summary.questions.slice(0, 5).join(', ')}</p>
+                      )}
+                      <pre className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap rounded bg-background p-2 text-[11px] leading-relaxed">
+                        {pkg.prompt}
+                      </pre>
+                    </div>
+                  </details>
+                ))}
+              </div>
+            )}
+          </div>
+
           {(running || finished) && (
             <div className="space-y-2">
               <Progress value={pct} />
@@ -134,7 +231,9 @@ export function Step3Generate({ state, onBack, onDone }: Props) {
           </div>
 
           {!running && !finished && (
-            <Button onClick={launch}>생성 시작</Button>
+            <Button onClick={launch} disabled={designing}>
+              {designing ? '설계 중…' : '생성 시작'}
+            </Button>
           )}
           {running && (
             <Button variant="outline" onClick={() => cancelGeneration()}>
