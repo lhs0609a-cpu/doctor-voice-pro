@@ -1,25 +1,22 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { DashboardNav } from '@/components/dashboard-nav'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { PageHeader } from '@/components/app-shell/page-header'
+import { Pill, StatTile, EmptyState, ListRow } from '@/components/app-shell/ui-kit'
 import {
   CircleDollarSign,
-  TrendingUp,
-  TrendingDown,
   BarChart3,
   Users,
   Eye,
   Phone,
-  Calendar,
   Loader2,
   Plus,
   RefreshCw,
@@ -29,8 +26,6 @@ import {
 } from 'lucide-react'
 import { roiAPI, ROIDashboard, KeywordROI, EventType } from '@/lib/api'
 import { toast } from 'sonner'
-import { format } from 'date-fns'
-import { ko } from 'date-fns/locale'
 
 interface EventFormData {
   keyword: string
@@ -63,6 +58,8 @@ const SOURCES = [
   { value: 'referral', label: '소개' },
   { value: 'direct', label: '직접방문' },
 ]
+
+const TABLE_HEAD = 'text-[12px] font-medium uppercase tracking-wide text-muted-foreground'
 
 export default function ROIPage() {
   const [dashboard, setDashboard] = useState<ROIDashboard | null>(null)
@@ -165,13 +162,8 @@ export default function ROIPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-        <DashboardNav />
-        <main className="container mx-auto px-4 py-8">
-          <div className="flex items-center justify-center h-64">
-            <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-          </div>
-        </main>
+      <div className="flex justify-center py-16">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
       </div>
     )
   }
@@ -187,36 +179,60 @@ export default function ROIPage() {
     conversion_rate_reservation: 0,
   }
 
+  const funnelStages = [
+    {
+      key: 'view',
+      icon: <Eye className="h-5 w-5" />,
+      value: summary.total_views.toLocaleString(),
+      label: '조회',
+      rate: '100%',
+      transition: null as string | null,
+    },
+    {
+      key: 'inquiry',
+      icon: <Phone className="h-5 w-5" />,
+      value: summary.total_inquiries.toLocaleString(),
+      label: '상담',
+      rate: formatPercent(summary.conversion_rate_inquiry),
+      transition: `${formatPercent(summary.conversion_rate_inquiry)} 전환`,
+    },
+    {
+      key: 'visit',
+      icon: <Users className="h-5 w-5" />,
+      value: summary.total_visits.toLocaleString(),
+      label: '내원',
+      rate: formatPercent(summary.conversion_rate_visit),
+      transition: `${formatPercent(summary.conversion_rate_visit)} 전환`,
+    },
+    {
+      key: 'revenue',
+      icon: <CircleDollarSign className="h-5 w-5" />,
+      value: `${(summary.total_revenue / 10000).toFixed(0)}만`,
+      label: '매출',
+      rate: formatPercent(summary.conversion_rate_reservation),
+      transition: `${formatPercent(summary.conversion_rate_reservation)} 전환`,
+    },
+  ]
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-      <DashboardNav />
-
-      <main className="container mx-auto px-4 py-8">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-              <CircleDollarSign className="h-8 w-8 text-green-600" />
-              마케팅 ROI 트래커
-            </h1>
-            <p className="text-gray-600 mt-1">
-              블로그 마케팅의 투자 대비 수익률을 분석하세요
-            </p>
-          </div>
-
-          <div className="flex gap-2">
+    <div className="space-y-6">
+      <PageHeader
+        title="마케팅 ROI"
+        description="블로그 마케팅의 투자 대비 수익률을 확인하세요"
+        actions={
+          <>
             <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
               {isRefreshing ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <RefreshCw className="h-4 w-4 mr-2" />
+                <RefreshCw className="h-4 w-4" />
               )}
               새로고침
             </Button>
             <Dialog open={isEventDialogOpen} onOpenChange={setIsEventDialogOpen}>
               <DialogTrigger asChild>
                 <Button>
-                  <Plus className="h-4 w-4 mr-2" />
+                  <Plus className="h-4 w-4" />
                   전환 이벤트 기록
                 </Button>
               </DialogTrigger>
@@ -311,363 +327,271 @@ export default function ROIPage() {
                     취소
                   </Button>
                   <Button onClick={handleCreateEvent} disabled={isSubmitting}>
-                    {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                    {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
                     기록하기
                   </Button>
                 </DialogFooter>
               </DialogContent>
             </Dialog>
-          </div>
-        </div>
+          </>
+        }
+      />
 
-        {/* Summary Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+      {/* Summary Cards */}
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <StatTile
+          label="총 조회"
+          value={summary.total_views.toLocaleString()}
+          icon={<Eye className="h-4 w-4" />}
+        />
+        <StatTile
+          label="상담문의"
+          value={summary.total_inquiries.toLocaleString()}
+          hint={`전환율 ${formatPercent(summary.conversion_rate_inquiry)}`}
+          icon={<Phone className="h-4 w-4" />}
+        />
+        <StatTile
+          label="내원"
+          value={summary.total_visits.toLocaleString()}
+          hint={`전환율 ${formatPercent(summary.conversion_rate_visit)}`}
+          icon={<Users className="h-4 w-4" />}
+        />
+        <StatTile
+          label="총 매출"
+          value={formatCurrency(summary.total_revenue)}
+          tone="ok"
+          icon={<CircleDollarSign className="h-4 w-4" />}
+        />
+      </div>
+
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="mb-6">
+          <TabsTrigger value="overview">전환 퍼널</TabsTrigger>
+          <TabsTrigger value="keywords">키워드별 ROI</TabsTrigger>
+          <TabsTrigger value="channels">채널 분석</TabsTrigger>
+        </TabsList>
+
+        {/* Funnel Tab */}
+        <TabsContent value="overview">
           <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-500">총 조회</p>
-                  <p className="text-2xl font-bold text-blue-600">
-                    {summary.total_views.toLocaleString()}
-                  </p>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Target className="h-4 w-4 text-muted-foreground" />
+                전환 퍼널
+              </CardTitle>
+              <CardDescription>
+                조회부터 매출까지의 전환 과정을 분석합니다
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-col items-center justify-center gap-4 py-6 md:flex-row">
+                {funnelStages.map((stage, index) => (
+                  <div key={stage.key} className="contents">
+                    {index > 0 && (
+                      <>
+                        <ArrowRight className="hidden h-5 w-5 text-muted-foreground md:block" />
+                        <div className="py-1 text-center md:hidden">
+                          <span className="text-sm tabular-nums text-muted-foreground">{stage.transition}</span>
+                        </div>
+                      </>
+                    )}
+                    <div className="flex flex-col items-center">
+                      <div className="flex h-28 w-28 flex-col items-center justify-center gap-1 rounded-lg border bg-muted/40">
+                        <div className="text-primary">{stage.icon}</div>
+                        <span className="text-lg font-semibold tabular-nums">{stage.value}</span>
+                        <span className="text-[13px] text-muted-foreground">{stage.label}</span>
+                      </div>
+                      <span className="mt-2 text-xs tabular-nums text-muted-foreground">{stage.rate}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Conversion Rate Summary */}
+              <div className="grid grid-cols-3 gap-4 border-t pt-4">
+                <div className="text-center">
+                  <div className="mb-1 text-[13px] font-medium text-muted-foreground">조회 → 상담</div>
+                  <div className="kpi">
+                    {formatPercent(summary.conversion_rate_inquiry)}
+                  </div>
                 </div>
-                <Eye className="h-8 w-8 text-blue-200" />
+                <div className="text-center">
+                  <div className="mb-1 text-[13px] font-medium text-muted-foreground">상담 → 내원</div>
+                  <div className="kpi">
+                    {formatPercent(summary.conversion_rate_visit)}
+                  </div>
+                </div>
+                <div className="text-center">
+                  <div className="mb-1 text-[13px] font-medium text-muted-foreground">전체 전환율</div>
+                  <div className="kpi">
+                    {summary.total_views > 0
+                      ? formatPercent((summary.total_visits / summary.total_views) * 100)
+                      : '0%'}
+                  </div>
+                </div>
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
 
+        {/* Keywords Tab */}
+        <TabsContent value="keywords">
           <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-500">상담문의</p>
-                  <p className="text-2xl font-bold text-purple-600">
-                    {summary.total_inquiries.toLocaleString()}
-                  </p>
-                  <p className="text-xs text-gray-400">
-                    전환율 {formatPercent(summary.conversion_rate_inquiry)}
-                  </p>
-                </div>
-                <Phone className="h-8 w-8 text-purple-200" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-500">내원</p>
-                  <p className="text-2xl font-bold text-green-600">
-                    {summary.total_visits.toLocaleString()}
-                  </p>
-                  <p className="text-xs text-gray-400">
-                    전환율 {formatPercent(summary.conversion_rate_visit)}
-                  </p>
-                </div>
-                <Users className="h-8 w-8 text-green-200" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-500">총 매출</p>
-                  <p className="text-2xl font-bold text-orange-600">
-                    {formatCurrency(summary.total_revenue)}
-                  </p>
-                </div>
-                <CircleDollarSign className="h-8 w-8 text-orange-200" />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-6">
-            <TabsTrigger value="overview">전환 퍼널</TabsTrigger>
-            <TabsTrigger value="keywords">키워드별 ROI</TabsTrigger>
-            <TabsTrigger value="channels">채널 분석</TabsTrigger>
-          </TabsList>
-
-          {/* Funnel Tab */}
-          <TabsContent value="overview">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Target className="h-5 w-5" />
-                  전환 퍼널
-                </CardTitle>
-                <CardDescription>
-                  조회부터 매출까지의 전환 과정을 분석합니다
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-col md:flex-row items-center justify-center gap-4 py-8">
-                  {/* View Stage */}
-                  <div className="flex flex-col items-center">
-                    <div className="w-32 h-32 bg-blue-100 rounded-lg flex flex-col items-center justify-center">
-                      <Eye className="h-8 w-8 text-blue-600 mb-2" />
-                      <span className="text-2xl font-bold text-blue-700">
-                        {summary.total_views.toLocaleString()}
-                      </span>
-                      <span className="text-sm text-blue-600">조회</span>
-                    </div>
-                    <span className="text-xs text-gray-500 mt-2">100%</span>
-                  </div>
-
-                  <ArrowRight className="h-6 w-6 text-gray-300 hidden md:block" />
-                  <div className="text-center md:hidden py-2">
-                    <span className="text-sm text-gray-500">
-                      {formatPercent(summary.conversion_rate_inquiry)} 전환
-                    </span>
-                  </div>
-
-                  {/* Inquiry Stage */}
-                  <div className="flex flex-col items-center">
-                    <div className="w-28 h-28 bg-purple-100 rounded-lg flex flex-col items-center justify-center">
-                      <Phone className="h-7 w-7 text-purple-600 mb-2" />
-                      <span className="text-xl font-bold text-purple-700">
-                        {summary.total_inquiries.toLocaleString()}
-                      </span>
-                      <span className="text-sm text-purple-600">상담</span>
-                    </div>
-                    <span className="text-xs text-gray-500 mt-2">
-                      {formatPercent(summary.conversion_rate_inquiry)}
-                    </span>
-                  </div>
-
-                  <ArrowRight className="h-6 w-6 text-gray-300 hidden md:block" />
-                  <div className="text-center md:hidden py-2">
-                    <span className="text-sm text-gray-500">
-                      {formatPercent(summary.conversion_rate_visit)} 전환
-                    </span>
-                  </div>
-
-                  {/* Visit Stage */}
-                  <div className="flex flex-col items-center">
-                    <div className="w-24 h-24 bg-green-100 rounded-lg flex flex-col items-center justify-center">
-                      <Users className="h-6 w-6 text-green-600 mb-2" />
-                      <span className="text-lg font-bold text-green-700">
-                        {summary.total_visits.toLocaleString()}
-                      </span>
-                      <span className="text-sm text-green-600">내원</span>
-                    </div>
-                    <span className="text-xs text-gray-500 mt-2">
-                      {formatPercent(summary.conversion_rate_visit)}
-                    </span>
-                  </div>
-
-                  <ArrowRight className="h-6 w-6 text-gray-300 hidden md:block" />
-                  <div className="text-center md:hidden py-2">
-                    <span className="text-sm text-gray-500">
-                      {formatPercent(summary.conversion_rate_reservation)} 전환
-                    </span>
-                  </div>
-
-                  {/* Revenue Stage */}
-                  <div className="flex flex-col items-center">
-                    <div className="w-20 h-20 bg-orange-100 rounded-lg flex flex-col items-center justify-center">
-                      <CircleDollarSign className="h-5 w-5 text-orange-600 mb-1" />
-                      <span className="text-sm font-bold text-orange-700">
-                        {(summary.total_revenue / 10000).toFixed(0)}만
-                      </span>
-                      <span className="text-xs text-orange-600">매출</span>
-                    </div>
-                    <span className="text-xs text-gray-500 mt-2">
-                      {formatPercent(summary.conversion_rate_reservation)}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Conversion Rate Summary */}
-                <div className="grid grid-cols-3 gap-4 mt-8 border-t pt-6">
-                  <div className="text-center">
-                    <div className="flex items-center justify-center gap-1 mb-1">
-                      <span className="text-sm text-gray-500">조회 → 상담</span>
-                    </div>
-                    <div className="text-xl font-bold text-purple-600">
-                      {formatPercent(summary.conversion_rate_inquiry)}
-                    </div>
-                  </div>
-                  <div className="text-center">
-                    <div className="flex items-center justify-center gap-1 mb-1">
-                      <span className="text-sm text-gray-500">상담 → 내원</span>
-                    </div>
-                    <div className="text-xl font-bold text-green-600">
-                      {formatPercent(summary.conversion_rate_visit)}
-                    </div>
-                  </div>
-                  <div className="text-center">
-                    <div className="flex items-center justify-center gap-1 mb-1">
-                      <span className="text-sm text-gray-500">전체 전환율</span>
-                    </div>
-                    <div className="text-xl font-bold text-orange-600">
-                      {summary.total_views > 0
-                        ? formatPercent((summary.total_visits / summary.total_views) * 100)
-                        : '0%'}
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Keywords Tab */}
-          <TabsContent value="keywords">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <BarChart3 className="h-5 w-5" />
-                  키워드별 ROI 분석
-                </CardTitle>
-                <CardDescription>
-                  각 키워드의 투자 대비 수익률을 분석합니다
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {keywordROIs.length === 0 ? (
-                  <div className="text-center py-12">
-                    <BarChart3 className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                    <p className="text-gray-500">아직 키워드 ROI 데이터가 없습니다</p>
-                    <p className="text-sm text-gray-400 mt-1">
-                      전환 이벤트를 기록하면 키워드별 ROI를 분석할 수 있습니다
-                    </p>
-                  </div>
-                ) : (
-                  <Table>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                키워드별 ROI 분석
+              </CardTitle>
+              <CardDescription>
+                각 키워드의 투자 대비 수익률을 분석합니다
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {keywordROIs.length === 0 ? (
+                <EmptyState
+                  icon={<BarChart3 className="h-8 w-8" />}
+                  title="아직 키워드 ROI 데이터가 없습니다"
+                  description="전환 이벤트를 기록하면 키워드별 ROI를 분석할 수 있습니다"
+                  action={
+                    <Button variant="outline" onClick={() => setIsEventDialogOpen(true)}>
+                      <Plus className="h-4 w-4" />
+                      전환 이벤트 기록
+                    </Button>
+                  }
+                />
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table className="text-sm">
                     <TableHeader>
                       <TableRow>
-                        <TableHead>키워드</TableHead>
-                        <TableHead className="text-right">조회</TableHead>
-                        <TableHead className="text-right">상담</TableHead>
-                        <TableHead className="text-right">내원</TableHead>
-                        <TableHead className="text-right">매출</TableHead>
-                        <TableHead className="text-right">비용</TableHead>
-                        <TableHead className="text-right">ROI</TableHead>
-                        <TableHead className="text-right">전환율</TableHead>
+                        <TableHead className={TABLE_HEAD}>키워드</TableHead>
+                        <TableHead className={`${TABLE_HEAD} text-right`}>조회</TableHead>
+                        <TableHead className={`${TABLE_HEAD} text-right`}>상담</TableHead>
+                        <TableHead className={`${TABLE_HEAD} text-right`}>내원</TableHead>
+                        <TableHead className={`${TABLE_HEAD} text-right`}>매출</TableHead>
+                        <TableHead className={`${TABLE_HEAD} text-right`}>비용</TableHead>
+                        <TableHead className={`${TABLE_HEAD} text-right`}>ROI</TableHead>
+                        <TableHead className={`${TABLE_HEAD} text-right`}>전환율</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {keywordROIs.map((kw, index) => (
-                        <TableRow key={index}>
-                          <TableCell className="font-medium">{kw.keyword}</TableCell>
-                          <TableCell className="text-right">
+                        <TableRow key={index} className="hover:bg-muted/40">
+                          <TableCell className="py-2.5 font-medium">{kw.keyword}</TableCell>
+                          <TableCell className="py-2.5 text-right tabular-nums">
                             {kw.views.toLocaleString()}
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="py-2.5 text-right tabular-nums">
                             {kw.inquiries.toLocaleString()}
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="py-2.5 text-right tabular-nums">
                             {kw.visits.toLocaleString()}
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="py-2.5 text-right tabular-nums">
                             {formatCurrency(kw.revenue)}
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="py-2.5 text-right tabular-nums">
                             {formatCurrency(kw.cost)}
                           </TableCell>
-                          <TableCell className="text-right">
-                            <Badge
-                              variant={kw.roi_percentage >= 100 ? 'default' : 'secondary'}
-                              className={
+                          <TableCell className="py-2.5 text-right tabular-nums">
+                            <Pill
+                              tone={
                                 kw.roi_percentage >= 200
-                                  ? 'bg-green-100 text-green-700'
+                                  ? 'ok'
                                   : kw.roi_percentage >= 100
-                                  ? 'bg-blue-100 text-blue-700'
-                                  : 'bg-gray-100 text-gray-700'
+                                  ? 'accent'
+                                  : 'muted'
                               }
                             >
                               {kw.roi_percentage >= 0 ? '+' : ''}
                               {kw.roi_percentage.toFixed(0)}%
-                            </Badge>
+                            </Pill>
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="py-2.5 text-right tabular-nums">
                             {formatPercent(kw.conversion_rate)}
                           </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-          {/* Channels Tab */}
-          <TabsContent value="channels">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Percent className="h-5 w-5" />
-                  채널별 성과 분석
-                </CardTitle>
-                <CardDescription>
-                  각 마케팅 채널의 성과를 비교 분석합니다
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {!dashboard?.channel_breakdown ||
-                Object.keys(dashboard.channel_breakdown).length === 0 ? (
-                  <div className="text-center py-12">
-                    <BarChart3 className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                    <p className="text-gray-500">아직 채널별 데이터가 없습니다</p>
-                    <p className="text-sm text-gray-400 mt-1">
-                      전환 이벤트를 기록하면 채널별 성과를 분석할 수 있습니다
-                    </p>
-                  </div>
-                ) : (
-                  <div className="grid gap-4">
-                    {Object.entries(dashboard.channel_breakdown).map(
-                      ([channel, data]) => {
-                        const channelLabel =
-                          CHANNELS.find((c) => c.value === channel)?.label || channel
-                        const conversionRate =
-                          data.views > 0
-                            ? ((data.visits / data.views) * 100).toFixed(1)
-                            : '0'
+        {/* Channels Tab */}
+        <TabsContent value="channels">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Percent className="h-4 w-4 text-muted-foreground" />
+                채널별 성과 분석
+              </CardTitle>
+              <CardDescription>
+                각 마케팅 채널의 성과를 비교합니다
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {!dashboard?.channel_breakdown ||
+              Object.keys(dashboard.channel_breakdown).length === 0 ? (
+                <EmptyState
+                  icon={<BarChart3 className="h-8 w-8" />}
+                  title="아직 채널별 데이터가 없습니다"
+                  description="전환 이벤트를 기록하면 채널별 성과를 분석할 수 있습니다"
+                  action={
+                    <Button variant="outline" onClick={() => setIsEventDialogOpen(true)}>
+                      <Plus className="h-4 w-4" />
+                      전환 이벤트 기록
+                    </Button>
+                  }
+                />
+              ) : (
+                <div className="rounded-lg border">
+                  {Object.entries(dashboard.channel_breakdown).map(
+                    ([channel, data]) => {
+                      const channelLabel =
+                        CHANNELS.find((c) => c.value === channel)?.label || channel
+                      const conversionRate =
+                        data.views > 0
+                          ? ((data.visits / data.views) * 100).toFixed(1)
+                          : '0'
 
-                        return (
-                          <div
-                            key={channel}
-                            className="flex items-center justify-between p-4 bg-gray-50 rounded-lg"
-                          >
-                            <div className="flex items-center gap-4">
-                              <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                                <span className="text-lg font-bold text-blue-600">
-                                  {channelLabel.charAt(0)}
-                                </span>
-                              </div>
-                              <div>
-                                <div className="font-medium">{channelLabel}</div>
-                                <div className="text-sm text-gray-500">
-                                  조회 {data.views.toLocaleString()} · 상담{' '}
-                                  {data.inquiries.toLocaleString()} · 내원{' '}
-                                  {data.visits.toLocaleString()}
-                                </div>
-                              </div>
+                      return (
+                        <ListRow key={channel} className="justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent text-primary">
+                              <span className="text-sm font-semibold">
+                                {channelLabel.charAt(0)}
+                              </span>
                             </div>
-                            <div className="text-right">
-                              <div className="font-bold text-green-600">
-                                {formatCurrency(data.revenue)}
-                              </div>
-                              <div className="text-sm text-gray-500">
-                                전환율 {conversionRate}%
+                            <div>
+                              <div className="font-medium">{channelLabel}</div>
+                              <div className="text-[13px] tabular-nums text-muted-foreground">
+                                조회 {data.views.toLocaleString()} · 상담{' '}
+                                {data.inquiries.toLocaleString()} · 내원{' '}
+                                {data.visits.toLocaleString()}
                               </div>
                             </div>
                           </div>
-                        )
-                      }
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-      </main>
+                          <div className="text-right">
+                            <div className="font-semibold tabular-nums text-success">
+                              {formatCurrency(data.revenue)}
+                            </div>
+                            <div className="text-[13px] tabular-nums text-muted-foreground">
+                              전환율 {conversionRate}%
+                            </div>
+                          </div>
+                        </ListRow>
+                      )
+                    }
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

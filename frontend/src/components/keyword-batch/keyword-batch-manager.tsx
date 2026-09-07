@@ -39,7 +39,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Badge } from '@/components/ui/badge';
+import { Pill } from '@/components/app-shell/ui-kit';
 import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
@@ -324,18 +324,18 @@ export function KeywordBatchManager() {
 
       {/* 연결은 됐지만 구버전 → 생성 기능이 없다. 명확히 알리고 업데이트를 유도한다. */}
       {extOutdated && (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4">
-          <div className="text-sm font-semibold text-amber-900">
+        <div className="rounded-xl border bg-warning-soft p-4">
+          <div className="text-sm font-semibold text-warning">
             확장 프로그램이 오래되었습니다 (현재 v{version})
           </div>
-          <p className="mt-1 text-xs leading-relaxed text-amber-800">
-            키워드 대량 생성은 확장 <b>v{MIN_GEN_VERSION} 이상</b>이 필요합니다. 이 컴퓨터의 확장을
+          <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
+            키워드 대량 생성은 확장 <b className="font-medium text-foreground">v{MIN_GEN_VERSION} 이상</b>이 필요합니다. 이 컴퓨터의 확장을
             최신 버전(v{LATEST_EXTENSION_VERSION})으로 업데이트해 주세요. 업데이트 전에는 생성이
             시작되지 않습니다(Gemini 도 열리지 않습니다).
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <a href={AUTO_UPDATE_INSTALLER_URL}>
-              <Button size="sm" className="gap-2 bg-amber-600 hover:bg-amber-700">
+              <Button size="sm">
                 <Download className="h-4 w-4" /> 자동 업데이트로 설치 (권장)
               </Button>
             </a>
@@ -348,9 +348,9 @@ export function KeywordBatchManager() {
 
       {/* 1. 키워드 업로드 */}
       <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <FileSpreadsheet className="h-4 w-4" /> 1. 키워드 엑셀 업로드
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileSpreadsheet className="h-4 w-4 text-muted-foreground" /> 1. 키워드 엑셀 업로드
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -359,8 +359,8 @@ export function KeywordBatchManager() {
             onDragLeave={() => setDragging(false)}
             onDrop={onDrop}
             onClick={() => fileRef.current?.click()}
-            className={`cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition ${
-              dragging ? 'border-primary bg-primary/5' : 'border-muted-foreground/25 hover:border-primary/50'
+            className={`cursor-pointer rounded-xl border border-dashed p-8 text-center transition-colors ${
+              dragging ? 'border-primary bg-accent' : 'hover:border-primary/50 hover:bg-muted/40'
             }`}
           >
             <Upload className="mx-auto mb-2 h-7 w-7 text-muted-foreground" />
@@ -384,12 +384,10 @@ export function KeywordBatchManager() {
           {rows.length > 0 && (
             <>
               <div className="flex flex-wrap items-center gap-3">
-                <Badge variant="secondary">전체 {rows.length}개</Badge>
-                <Badge>생성 대상 {targets.length}개</Badge>
-                {doneCount > 0 && (
-                  <Badge className="bg-emerald-600 hover:bg-emerald-600">완료 {doneCount}</Badge>
-                )}
-                {failCount > 0 && <Badge variant="destructive">실패 {failCount}</Badge>}
+                <Pill tone="muted" className="tabular-nums">전체 {rows.length}개</Pill>
+                <Pill tone="accent" className="tabular-nums">생성 대상 {targets.length}개</Pill>
+                {doneCount > 0 && <Pill tone="ok" className="tabular-nums">완료 {doneCount}</Pill>}
+                {failCount > 0 && <Pill tone="danger" className="tabular-nums">실패 {failCount}</Pill>}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -403,7 +401,7 @@ export function KeywordBatchManager() {
 
               {maxVolume > 0 && (
                 <div className="space-y-2">
-                  <Label className="text-xs">
+                  <Label className="text-[13px] font-medium text-muted-foreground tabular-nums">
                     최소 검색량 {minVolume.toLocaleString()} 이상만 생성
                   </Label>
                   <Slider
@@ -418,12 +416,12 @@ export function KeywordBatchManager() {
 
               <div className="max-h-64 overflow-auto rounded-lg border">
                 <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-muted/60 text-xs">
-                    <tr>
-                      <th className="p-2 text-left font-medium">키워드</th>
-                      <th className="w-24 p-2 text-right font-medium">검색량</th>
-                      <th className="w-28 p-2 text-center font-medium">상태</th>
-                      <th className="w-20 p-2" />
+                  <thead className="sticky top-0 bg-card text-[12px] font-medium uppercase tracking-wide text-muted-foreground">
+                    <tr className="border-b">
+                      <th className="px-3 py-2.5 text-left font-medium">키워드</th>
+                      <th className="w-24 px-3 py-2.5 text-right font-medium">검색량</th>
+                      <th className="w-28 px-3 py-2.5 text-center font-medium">상태</th>
+                      <th className="w-20 px-3 py-2.5" />
                     </tr>
                   </thead>
                   <tbody>
@@ -436,11 +434,11 @@ export function KeywordBatchManager() {
                         <Fragment key={r.id}>
                           <tr
                             onClick={() => canPreview && setPreviewId(open ? null : r.id)}
-                            className={`border-t ${included ? '' : 'opacity-40'} ${
-                              isCurrent ? 'bg-blue-50 dark:bg-blue-950/30' : ''
-                            } ${canPreview ? 'cursor-pointer hover:bg-muted/50' : ''}`}
+                            className={`border-b last:border-0 ${included ? '' : 'opacity-40'} ${
+                              isCurrent ? 'bg-accent/60' : ''
+                            } ${canPreview ? 'cursor-pointer hover:bg-muted/40' : ''}`}
                           >
-                            <td className="p-2">
+                            <td className="px-3 py-2.5">
                               <span className="inline-flex items-center gap-1.5">
                                 {canPreview &&
                                   (open ? (
@@ -451,13 +449,13 @@ export function KeywordBatchManager() {
                                 {r.keyword}
                               </span>
                             </td>
-                            <td className="p-2 text-right tabular-nums text-muted-foreground">
+                            <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">
                               {r.volume?.toLocaleString() ?? '—'}
                             </td>
-                            <td className="p-2 text-center">
+                            <td className="px-3 py-2.5 text-center">
                               <StatusCell item={r} included={included} isCurrent={isCurrent} />
                             </td>
-                            <td className="p-2 text-right">
+                            <td className="px-3 py-2.5 text-right">
                               {canPreview && (
                                 <Button
                                   variant="ghost"
@@ -470,15 +468,15 @@ export function KeywordBatchManager() {
                             </td>
                           </tr>
                           {open && r.text && (
-                            <tr className="border-t bg-muted/30">
+                            <tr className="border-b bg-muted/30">
                               <td colSpan={4} className="p-3">
                                 <PreviewBody text={r.text} />
                               </td>
                             </tr>
                           )}
                           {r.status === 'failed' && r.error && (
-                            <tr className="border-t bg-red-50 dark:bg-red-950/20">
-                              <td colSpan={4} className="px-3 py-1.5 text-xs text-red-700 dark:text-red-400">
+                            <tr className="border-b bg-danger-soft">
+                              <td colSpan={4} className="px-3 py-1.5 text-xs text-danger">
                                 {r.error}
                               </td>
                             </tr>
@@ -496,8 +494,8 @@ export function KeywordBatchManager() {
 
       {/* 2. 프롬프트 */}
       <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">2. 명령 프롬프트</CardTitle>
+        <CardHeader>
+          <CardTitle>2. 명령 프롬프트</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap items-center gap-2">
@@ -519,19 +517,19 @@ export function KeywordBatchManager() {
             <Button variant="outline" size="sm" onClick={removeTemplate}>
               <Trash2 className="mr-1 h-3.5 w-3.5" /> 삭제
             </Button>
-            <Button size="sm" className="ml-auto" onClick={saveDraft}>
-              <Save className="mr-1 h-3.5 w-3.5" /> 저장
+            <Button size="sm" variant="outline" className="ml-auto" onClick={saveDraft}>
+              <Save className="mr-1 h-3.5 w-3.5" /> 템플릿 저장
             </Button>
           </div>
 
           <div className="space-y-2">
-            <Label className="text-xs">템플릿 이름</Label>
+            <Label className="text-[13px] font-medium text-muted-foreground">템플릿 이름</Label>
             <Input value={draftName} onChange={(e) => setDraftName(e.target.value)} />
           </div>
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label className="text-xs">프롬프트 본문</Label>
+              <Label className="text-[13px] font-medium text-muted-foreground">프롬프트 본문</Label>
               <code className="rounded bg-muted px-1.5 py-0.5 text-[11px]">{'{{키워드}}'}</code>
             </div>
             <Textarea
@@ -541,7 +539,7 @@ export function KeywordBatchManager() {
               className="font-mono text-xs leading-relaxed"
             />
             {!hasKeywordVar && (
-              <p className="flex items-center gap-1.5 text-xs text-amber-600">
+              <p className="flex items-center gap-1.5 text-xs text-warning">
                 <AlertCircle className="h-3.5 w-3.5" />
                 {'{{키워드}}'} 가 없습니다. 이대로면 모든 글이 같은 내용으로 나옵니다.
               </p>
@@ -561,8 +559,8 @@ export function KeywordBatchManager() {
 
       {/* 3. 실행 */}
       <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center justify-between text-base">
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between">
             <span>3. 생성 실행</span>
             <Button variant="ghost" size="sm" onClick={() => setShowOptions((v) => !v)}>
               <Settings2 className="mr-1 h-3.5 w-3.5" /> 고급 설정
@@ -603,7 +601,7 @@ export function KeywordBatchManager() {
               />
               <div className="flex items-center justify-between sm:col-span-2">
                 <div>
-                  <Label className="text-xs">임시 채팅 사용</Label>
+                  <Label className="text-[13px] font-medium text-muted-foreground">임시 채팅 사용</Label>
                   <p className="text-[11px] text-muted-foreground">
                     Gemini 사이드바에 대화 기록이 쌓이지 않습니다.
                   </p>
@@ -618,7 +616,7 @@ export function KeywordBatchManager() {
 
           {running && (
             <div className="space-y-2">
-              <div className="flex justify-between text-xs text-muted-foreground">
+              <div className="flex justify-between text-[13px] text-muted-foreground tabular-nums">
                 <span>
                   {doneCount + failCount} / {targets.length} 처리됨
                 </span>
@@ -649,16 +647,16 @@ export function KeywordBatchManager() {
               <Download className="mr-1.5 h-4 w-4" /> 결과 내려받기 ({doneCount})
             </Button>
             {savedCount > 0 && (
-              <Button variant="secondary" asChild>
+              <Button variant="ghost" asChild>
                 <a href="/dashboard/saved">
-                  <Save className="mr-1.5 h-4 w-4" /> 저장된 글 {savedCount}건 보기 →
+                  <Save className="mr-1.5 h-4 w-4" /> 저장된 글 {savedCount}건 보기
                 </a>
               </Button>
             )}
           </div>
 
           {savedCount > 0 && (
-            <p className="flex items-center gap-1.5 text-xs text-emerald-600">
+            <p className="flex items-center gap-1.5 text-xs text-success">
               <CheckCircle2 className="h-3.5 w-3.5" />
               완성된 글은 자동으로 &lsquo;저장된 글&rsquo;에 저장됩니다. 거기서 사진을 넣고
               예약발행을 걸 수 있습니다.
@@ -701,7 +699,7 @@ function StatusCell({
   switch (item.status) {
     case 'running':
       return isCurrent ? (
-        <span className="inline-flex items-center gap-1 text-xs font-medium text-blue-600">
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-primary">
           <Loader2 className="h-3 w-3 animate-spin" /> 생성 중
         </span>
       ) : (
@@ -709,13 +707,13 @@ function StatusCell({
       );
     case 'done':
       return (
-        <span className="inline-flex items-center gap-1 text-xs text-emerald-600">
+        <span className="inline-flex items-center gap-1 text-xs text-success tabular-nums">
           <CheckCircle2 className="h-3 w-3" /> {item.chars?.toLocaleString()}자
         </span>
       );
     case 'failed':
       return (
-        <span className="inline-flex items-center gap-1 text-xs text-red-600" title={item.error}>
+        <span className="inline-flex items-center gap-1 text-xs text-danger" title={item.error}>
           <AlertCircle className="h-3 w-3" /> 실패
         </span>
       );
@@ -732,7 +730,7 @@ function NumField({
 }) {
   return (
     <div className="space-y-1">
-      <Label className="text-xs">{label}</Label>
+      <Label className="text-[13px] font-medium text-muted-foreground">{label}</Label>
       <Input
         type="number"
         value={value}

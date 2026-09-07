@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
-import { Badge } from '@/components/ui/badge'
 import {
   Select,
   SelectContent,
@@ -13,12 +12,12 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { PageHeader } from '@/components/app-shell/page-header'
+import { Pill, StatTile, EmptyState } from '@/components/app-shell/ui-kit'
 import {
-  TrendingUp,
   Search,
   Database,
   Play,
-  Pause,
   RefreshCw,
   CheckCircle2,
   AlertCircle,
@@ -54,18 +53,6 @@ const CATEGORY_ICONS: Record<string, any> = {
   tech: Smartphone,
   fitness: Dumbbell,
   general: FileText,
-}
-
-// 카테고리 색상 매핑
-const CATEGORY_COLORS: Record<string, string> = {
-  hospital: 'bg-blue-100 text-blue-700 border-blue-200',
-  restaurant: 'bg-orange-100 text-orange-700 border-orange-200',
-  beauty: 'bg-pink-100 text-pink-700 border-pink-200',
-  parenting: 'bg-green-100 text-green-700 border-green-200',
-  travel: 'bg-cyan-100 text-cyan-700 border-cyan-200',
-  tech: 'bg-purple-100 text-purple-700 border-purple-200',
-  fitness: 'bg-red-100 text-red-700 border-red-200',
-  general: 'bg-gray-100 text-gray-700 border-gray-200',
 }
 
 interface CategoryWithStats {
@@ -145,6 +132,9 @@ interface PatternsSummary {
   summary: string | null
   insights: PatternInsight[]
 }
+
+const confidenceColor = (confidence: number) =>
+  confidence >= 0.7 ? 'text-success' : confidence >= 0.4 ? 'text-warning' : 'text-danger'
 
 export default function TopPostAnalysisPage() {
   const [categories, setCategories] = useState<CategoryWithStats[]>([])
@@ -326,89 +316,64 @@ export default function TopPostAnalysisPage() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'completed':
-        return <Badge className="bg-green-100 text-green-700">완료</Badge>
+        return <Pill tone="ok">완료</Pill>
       case 'running':
-        return <Badge className="bg-blue-100 text-blue-700">진행중</Badge>
+        return <Pill tone="accent">진행중</Pill>
       case 'pending':
-        return <Badge className="bg-yellow-100 text-yellow-700">대기중</Badge>
+        return <Pill tone="warn">대기중</Pill>
       case 'failed':
-        return <Badge className="bg-red-100 text-red-700">실패</Badge>
+        return <Pill tone="danger">실패</Pill>
       case 'cancelled':
-        return <Badge className="bg-gray-100 text-gray-700">취소됨</Badge>
+        return <Pill tone="muted">취소됨</Pill>
       default:
-        return <Badge variant="outline">{status}</Badge>
+        return <Pill tone="muted">{status}</Pill>
     }
   }
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="flex justify-center py-16">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
       </div>
     )
   }
 
   return (
     <div className="space-y-6">
-      {/* 헤더 */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <TrendingUp className="h-6 w-6 text-indigo-600" />
-            네이버 상위노출 분석
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            카테고리별 상위 노출 글을 대량으로 분석하여 최적화 규칙을 도출합니다
-          </p>
-        </div>
-        <Button variant="outline" onClick={loadData}>
-          <RefreshCw className="h-4 w-4 mr-2" />
-          새로고침
-        </Button>
-      </div>
+      <PageHeader
+        title="네이버 상위노출 분석"
+        description="카테고리별 상위 노출 글을 대량으로 분석해 최적화 규칙을 찾습니다"
+        actions={
+          <Button variant="outline" onClick={loadData}>
+            <RefreshCw className="h-4 w-4" />
+            새로고침
+          </Button>
+        }
+      />
 
       {/* 전체 통계 */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">분석된 글</p>
-                <p className="text-2xl font-bold">{dashboard?.total_posts.toLocaleString() || 0}</p>
-              </div>
-              <Database className="h-8 w-8 text-blue-500" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">수집된 키워드</p>
-                <p className="text-2xl font-bold">{dashboard?.total_keywords.toLocaleString() || 0}</p>
-              </div>
-              <Search className="h-8 w-8 text-green-500" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">활성 카테고리</p>
-                <p className="text-2xl font-bold">
-                  {categories.filter(c => c.has_rules).length} / {categories.length}
-                </p>
-              </div>
-              <BarChart3 className="h-8 w-8 text-purple-500" />
-            </div>
-          </CardContent>
-        </Card>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <StatTile
+          label="분석된 글"
+          value={(dashboard?.total_posts || 0).toLocaleString()}
+          icon={<Database className="h-4 w-4" />}
+        />
+        <StatTile
+          label="수집된 키워드"
+          value={(dashboard?.total_keywords || 0).toLocaleString()}
+          icon={<Search className="h-4 w-4" />}
+        />
+        <StatTile
+          label="활성 카테고리"
+          value={`${categories.filter(c => c.has_rules).length} / ${categories.length}`}
+          hint="규칙이 생성된 카테고리"
+          icon={<BarChart3 className="h-4 w-4" />}
+        />
       </div>
 
       {/* 탭 네비게이션 */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-2 max-w-md">
+        <TabsList className="grid w-full max-w-md grid-cols-2">
           <TabsTrigger value="analysis" className="flex items-center gap-2">
             <Target className="h-4 w-4" />
             분석 실행
@@ -422,216 +387,213 @@ export default function TopPostAnalysisPage() {
         {/* 분석 실행 탭 */}
         <TabsContent value="analysis" className="space-y-6">
           {/* 분석 설정 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Target className="h-5 w-5" />
-            분석 설정
-          </CardTitle>
-          <CardDescription>
-            분석할 카테고리와 목표 글 수를 선택하세요
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {/* 카테고리 선택 */}
-          <div>
-            <label className="text-sm font-medium mb-3 block">카테고리 선택</label>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {categories.map((cat) => {
-                const Icon = CATEGORY_ICONS[cat.id] || FileText
-                const isSelected = selectedCategory === cat.id
-                return (
-                  <button
-                    key={cat.id}
-                    onClick={() => setSelectedCategory(cat.id)}
-                    disabled={analyzing}
-                    className={`p-4 rounded-lg border-2 transition-all text-left ${
-                      isSelected
-                        ? 'border-indigo-500 bg-indigo-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    } ${analyzing ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    <div className="flex items-center gap-2 mb-2">
-                      <div className={`p-2 rounded-lg ${CATEGORY_COLORS[cat.id] || CATEGORY_COLORS.general}`}>
-                        <Icon className="h-4 w-4" />
-                      </div>
-                      <span className="font-medium">{cat.name}</span>
-                    </div>
-                    <div className="text-xs text-muted-foreground space-y-1">
-                      <div className="flex justify-between">
-                        <span>분석된 글:</span>
-                        <span className="font-medium">{cat.posts_count}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>신뢰도:</span>
-                        <span className={`font-medium ${
-                          cat.confidence >= 0.7 ? 'text-green-600' :
-                          cat.confidence >= 0.4 ? 'text-yellow-600' : 'text-red-600'
-                        }`}>
-                          {Math.round(cat.confidence * 100)}%
-                        </span>
-                      </div>
-                      {cat.has_rules && (
-                        <div className="flex items-center gap-1 text-green-600">
-                          <CheckCircle2 className="h-3 w-3" />
-                          <span>규칙 생성됨</span>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Target className="h-4 w-4 text-muted-foreground" />
+                분석 설정
+              </CardTitle>
+              <CardDescription>
+                분석할 카테고리와 목표 글 수를 선택하세요
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* 카테고리 선택 */}
+              <div className="space-y-3">
+                <label className="block text-[13px] font-medium text-muted-foreground">카테고리 선택</label>
+                <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                  {categories.map((cat) => {
+                    const Icon = CATEGORY_ICONS[cat.id] || FileText
+                    const isSelected = selectedCategory === cat.id
+                    return (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => setSelectedCategory(cat.id)}
+                        disabled={analyzing}
+                        className={`rounded-lg border p-4 text-left transition-colors ${
+                          isSelected ? 'border-primary bg-accent' : 'hover:bg-muted/40'
+                        } ${analyzing ? 'cursor-not-allowed opacity-50' : ''}`}
+                      >
+                        <div className="mb-2 flex items-center gap-2">
+                          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-primary">
+                            <Icon className="h-4 w-4" />
+                          </div>
+                          <span className="text-sm font-medium">{cat.name}</span>
                         </div>
-                      )}
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
+                        <div className="space-y-1 text-xs text-muted-foreground">
+                          <div className="flex justify-between">
+                            <span>분석된 글</span>
+                            <span className="font-medium tabular-nums text-foreground">{cat.posts_count}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>신뢰도</span>
+                            <span className={`font-medium tabular-nums ${confidenceColor(cat.confidence)}`}>
+                              {Math.round(cat.confidence * 100)}%
+                            </span>
+                          </div>
+                          {cat.has_rules && (
+                            <div className="flex items-center gap-1 text-success">
+                              <CheckCircle2 className="h-3 w-3" />
+                              <span>규칙 생성됨</span>
+                            </div>
+                          )}
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
 
-          {/* 분석 규모 선택 */}
-          <div className="flex items-center gap-4">
-            <div className="flex-1">
-              <label className="text-sm font-medium mb-2 block">분석 규모</label>
-              <Select
-                value={targetCount.toString()}
-                onValueChange={(v) => setTargetCount(Number(v))}
-                disabled={analyzing}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="100">100개 (빠른 분석, 약 5분)</SelectItem>
-                  <SelectItem value="500">500개 (중간 분석, 약 20분)</SelectItem>
-                  <SelectItem value="1000">1000개 (정밀 분석, 약 40분)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="pt-6">
-              {analyzing ? (
-                <Button variant="destructive" onClick={handleCancelAnalysis}>
-                  <X className="h-4 w-4 mr-2" />
-                  분석 취소
-                </Button>
-              ) : (
-                <Button onClick={handleStartAnalysis} disabled={!selectedCategory}>
-                  <Play className="h-4 w-4 mr-2" />
-                  분석 시작
-                </Button>
+              {/* 분석 규모 선택 */}
+              <div className="flex items-end gap-4">
+                <div className="flex-1 space-y-2">
+                  <label className="block text-[13px] font-medium text-muted-foreground">분석 규모</label>
+                  <Select
+                    value={targetCount.toString()}
+                    onValueChange={(v) => setTargetCount(Number(v))}
+                    disabled={analyzing}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="100">100개 (빠른 분석, 약 5분)</SelectItem>
+                      <SelectItem value="500">500개 (중간 분석, 약 20분)</SelectItem>
+                      <SelectItem value="1000">1000개 (정밀 분석, 약 40분)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {analyzing ? (
+                  <Button variant="outline" onClick={handleCancelAnalysis}>
+                    <X className="h-4 w-4" />
+                    분석 취소
+                  </Button>
+                ) : (
+                  <Button onClick={handleStartAnalysis} disabled={!selectedCategory}>
+                    <Play className="h-4 w-4" />
+                    분석 시작
+                  </Button>
+                )}
+              </div>
+
+              {/* 진행 상황 */}
+              {currentJob && analyzing && (
+                <div className="space-y-3 rounded-lg border bg-muted/40 p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-sm">
+                      <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                      <span className="font-medium">분석 진행 중</span>
+                    </div>
+                    {getStatusBadge(currentJob.status)}
+                  </div>
+                  <Progress value={currentJob.progress} className="h-2 bg-muted" />
+                  <div className="flex justify-between text-xs tabular-nums text-muted-foreground">
+                    <span>키워드 수집: {currentJob.keywords_collected}개</span>
+                    <span>글 분석: {currentJob.posts_analyzed} / {currentJob.target_count}</span>
+                    <span>진행률: {currentJob.progress}%</span>
+                  </div>
+                </div>
               )}
-            </div>
-          </div>
+            </CardContent>
+          </Card>
 
-          {/* 진행 상황 */}
-          {currentJob && analyzing && (
-            <div className="p-4 bg-blue-50 rounded-lg space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
-                  <span className="font-medium">분석 진행 중...</span>
+          {/* 카테고리별 규칙 현황 */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                카테고리별 분석 현황
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              {!dashboard?.categories.length ? (
+                <p className="py-6 text-center text-sm text-muted-foreground">아직 분석된 카테고리가 없습니다</p>
+              ) : (
+                <div className="divide-y rounded-lg border">
+                  {dashboard.categories.map((cat) => {
+                    const Icon = CATEGORY_ICONS[cat.category] || FileText
+                    return (
+                      <div
+                        key={cat.category}
+                        className="flex items-center justify-between gap-4 px-4 py-3 text-sm"
+                      >
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-primary">
+                            <Icon className="h-4 w-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="truncate font-medium">{cat.category_name}</p>
+                            <p className="text-xs tabular-nums text-muted-foreground">
+                              글 {cat.posts_count}개 · 키워드 {cat.keywords_count}개
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-4">
+                          <div className="text-right">
+                            <p className="text-sm font-medium tabular-nums">샘플 {cat.sample_count}개</p>
+                            <p className={`text-xs tabular-nums ${confidenceColor(cat.confidence)}`}>
+                              신뢰도 {Math.round(cat.confidence * 100)}%
+                            </p>
+                          </div>
+                          <div className="hidden w-24 sm:block">
+                            <Progress value={cat.confidence * 100} className="h-2 bg-muted" />
+                          </div>
+                          {cat.sample_count >= 3 ? (
+                            <CheckCircle2 className="h-4 w-4 text-success" />
+                          ) : (
+                            <AlertCircle className="h-4 w-4 text-warning" />
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
-                {getStatusBadge(currentJob.status)}
-              </div>
-              <Progress value={currentJob.progress} className="h-2" />
-              <div className="flex justify-between text-sm text-muted-foreground">
-                <span>키워드 수집: {currentJob.keywords_collected}개</span>
-                <span>글 분석: {currentJob.posts_analyzed} / {currentJob.target_count}</span>
-                <span>진행률: {currentJob.progress}%</span>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+              )}
+            </CardContent>
+          </Card>
 
-      {/* 카테고리별 규칙 현황 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <BarChart3 className="h-5 w-5" />
-            카테고리별 분석 현황
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            {dashboard?.categories.map((cat) => {
-              const Icon = CATEGORY_ICONS[cat.category] || FileText
-              return (
-                <div
-                  key={cat.category}
-                  className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className={`p-2 rounded-lg ${CATEGORY_COLORS[cat.category] || CATEGORY_COLORS.general}`}>
-                      <Icon className="h-4 w-4" />
+          {/* 최근 작업 이력 */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-muted-foreground" />
+                최근 분석 작업
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              {dashboard?.recent_jobs.length === 0 ? (
+                <EmptyState
+                  icon={<Clock className="h-8 w-8" />}
+                  title="아직 분석 작업이 없습니다"
+                  description="위에서 카테고리를 선택하고 분석을 시작하세요"
+                />
+              ) : (
+                <div className="divide-y rounded-lg border">
+                  {dashboard?.recent_jobs.map((job) => (
+                    <div
+                      key={job.id}
+                      className="flex items-center justify-between gap-4 px-4 py-3 text-sm"
+                    >
+                      <div className="flex min-w-0 items-center gap-3">
+                        {getStatusBadge(job.status)}
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{job.category_name}</p>
+                          <p className="text-xs tabular-nums text-muted-foreground">
+                            목표 {job.target_count}개 · 완료 {job.posts_analyzed}개
+                          </p>
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+                        <p>{new Date(job.created_at).toLocaleDateString('ko-KR')}</p>
+                        <p>{new Date(job.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-medium">{cat.category_name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        글 {cat.posts_count}개 | 키워드 {cat.keywords_count}개
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <div className="text-right">
-                      <p className="text-sm font-medium">샘플 {cat.sample_count}개</p>
-                      <p className={`text-xs ${
-                        cat.confidence >= 0.7 ? 'text-green-600' :
-                        cat.confidence >= 0.4 ? 'text-yellow-600' : 'text-red-600'
-                      }`}>
-                        신뢰도 {Math.round(cat.confidence * 100)}%
-                      </p>
-                    </div>
-                    <div className="w-24">
-                      <Progress value={cat.confidence * 100} className="h-2" />
-                    </div>
-                    {cat.sample_count >= 3 ? (
-                      <CheckCircle2 className="h-5 w-5 text-green-500" />
-                    ) : (
-                      <AlertCircle className="h-5 w-5 text-yellow-500" />
-                    )}
-                  </div>
+                  ))}
                 </div>
-              )
-            })}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* 최근 작업 이력 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Clock className="h-5 w-5" />
-            최근 분석 작업
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {dashboard?.recent_jobs.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">
-              아직 분석 작업이 없습니다
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {dashboard?.recent_jobs.map((job) => (
-                <div
-                  key={job.id}
-                  className="flex items-center justify-between p-3 border rounded-lg"
-                >
-                  <div className="flex items-center gap-3">
-                    {getStatusBadge(job.status)}
-                    <div>
-                      <p className="font-medium">{job.category_name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        목표 {job.target_count}개 | 완료 {job.posts_analyzed}개
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-right text-sm text-muted-foreground">
-                    <p>{new Date(job.created_at).toLocaleDateString('ko-KR')}</p>
-                    <p>{new Date(job.created_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* 분석 결과 탭 */}
@@ -640,15 +602,15 @@ export default function TopPostAnalysisPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Eye className="h-5 w-5" />
+                <Eye className="h-4 w-4 text-muted-foreground" />
                 분석 결과 조회
               </CardTitle>
               <CardDescription>
-                카테고리를 선택하여 분석된 글과 발견된 공통점을 확인하세요
+                카테고리를 선택해 분석된 글과 발견된 공통점을 확인하세요
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
                 <div className="flex-1">
                   <Select
                     value={resultsCategory}
@@ -668,8 +630,10 @@ export default function TopPostAnalysisPage() {
                 </div>
                 <Button
                   variant="outline"
+                  size="icon"
                   onClick={() => resultsCategory && loadAnalysisResults(resultsCategory)}
                   disabled={!resultsCategory || loadingResults}
+                  aria-label="새로고침"
                 >
                   {loadingResults ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -683,14 +647,12 @@ export default function TopPostAnalysisPage() {
 
           {/* 공통점 요약 */}
           {patternsSummary && patternsSummary.status === 'data_driven' && (
-            <Card className="border-indigo-200 bg-indigo-50/30">
+            <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Lightbulb className="h-5 w-5 text-yellow-500" />
+                  <Lightbulb className="h-4 w-4 text-muted-foreground" />
                   발견된 공통점
-                  <Badge variant="outline" className="ml-2">
-                    {patternsSummary.sample_count}개 글 분석
-                  </Badge>
+                  <Pill tone="muted">{patternsSummary.sample_count}개 글 분석</Pill>
                 </CardTitle>
                 <CardDescription>
                   신뢰도 {Math.round(patternsSummary.confidence * 100)}%
@@ -699,28 +661,26 @@ export default function TopPostAnalysisPage() {
               <CardContent className="space-y-4">
                 {/* 요약 텍스트 */}
                 {patternsSummary.summary && (
-                  <div className="p-4 bg-white rounded-lg border whitespace-pre-line text-sm">
+                  <div className="whitespace-pre-line rounded-lg border bg-muted/40 p-4 text-sm">
                     {patternsSummary.summary}
                   </div>
                 )}
 
                 {/* 인사이트 목록 */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   {patternsSummary.insights.map((insight, idx) => (
-                    <div key={idx} className="p-3 bg-white rounded-lg border">
-                      <div className="flex items-center gap-2 mb-1">
-                        <Badge variant="outline" className="text-xs">
-                          {insight.category}
-                        </Badge>
-                        <span className="text-xs text-muted-foreground">
+                    <div key={idx} className="rounded-lg border bg-muted/40 p-4">
+                      <div className="mb-1.5 flex items-center gap-2">
+                        <Pill tone="muted">{insight.category}</Pill>
+                        <span className="text-xs tabular-nums text-muted-foreground">
                           신뢰도 {Math.round(insight.confidence * 100)}%
                         </span>
                       </div>
-                      <p className="text-sm font-medium text-gray-800 mb-1">
+                      <p className="mb-1 text-sm font-medium">
                         {insight.finding}
                       </p>
-                      <p className="text-xs text-indigo-600">
-                        💡 {insight.recommendation}
+                      <p className="text-xs text-primary">
+                        {insight.recommendation}
                       </p>
                     </div>
                   ))}
@@ -734,11 +694,9 @@ export default function TopPostAnalysisPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Database className="h-5 w-5" />
+                  <Database className="h-4 w-4 text-muted-foreground" />
                   분석된 글 목록
-                  <Badge variant="secondary" className="ml-2">
-                    {analyzedPosts.length}개
-                  </Badge>
+                  <Pill tone="muted">{analyzedPosts.length}개</Pill>
                 </CardTitle>
                 <CardDescription>
                   키워드별로 상위 1~3위 글의 분석 결과를 확인하세요
@@ -746,30 +704,37 @@ export default function TopPostAnalysisPage() {
               </CardHeader>
               <CardContent>
                 {loadingResults ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                  <div className="flex justify-center py-8">
+                    <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
                   </div>
                 ) : Object.keys(postsByKeyword).length === 0 ? (
-                  <p className="text-center text-muted-foreground py-8">
-                    분석된 글이 없습니다
-                  </p>
+                  <EmptyState
+                    icon={<Database className="h-8 w-8" />}
+                    title="분석된 글이 없습니다"
+                    description="분석 실행 탭에서 이 카테고리를 먼저 분석하세요"
+                    action={
+                      <Button variant="outline" onClick={() => setActiveTab('analysis')}>
+                        <Target className="h-4 w-4" />
+                        분석 실행으로 이동
+                      </Button>
+                    }
+                  />
                 ) : (
                   <div className="space-y-3">
                     {Object.entries(postsByKeyword).map(([keyword, posts]) => (
-                      <div key={keyword} className="border rounded-lg">
+                      <div key={keyword} className="overflow-hidden rounded-lg border">
                         {/* 키워드 헤더 */}
                         <button
+                          type="button"
                           onClick={() => toggleKeyword(keyword)}
-                          className="w-full p-3 flex items-center justify-between hover:bg-gray-50 transition-colors"
+                          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-sm transition-colors hover:bg-muted/40"
                         >
-                          <div className="flex items-center gap-2">
-                            <Search className="h-4 w-4 text-indigo-500" />
-                            <span className="font-medium">{keyword}</span>
-                            <Badge variant="outline" className="text-xs">
-                              {posts.length}개 글
-                            </Badge>
+                          <div className="flex min-w-0 items-center gap-2">
+                            <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+                            <span className="truncate font-medium">{keyword}</span>
+                            <Pill tone="muted">{posts.length}개 글</Pill>
                           </div>
-                          <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                          <div className="flex shrink-0 items-center gap-4 text-xs tabular-nums text-muted-foreground">
                             <span>
                               평균 {Math.round(posts.reduce((sum, p) => sum + p.content_length, 0) / posts.length)}자
                             </span>
@@ -786,67 +751,51 @@ export default function TopPostAnalysisPage() {
 
                         {/* 글 목록 (펼친 경우) */}
                         {expandedKeywords.has(keyword) && (
-                          <div className="border-t p-3 space-y-2 bg-gray-50">
+                          <div className="space-y-2 border-t bg-muted/40 p-3">
                             {posts.sort((a, b) => a.rank - b.rank).map((post) => (
                               <div
                                 key={post.id}
-                                className="p-3 bg-white rounded-lg border flex items-start gap-3"
+                                className="flex items-start gap-3 rounded-lg border bg-card p-3"
                               >
-                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-                                  post.rank === 1 ? 'bg-yellow-100 text-yellow-700' :
-                                  post.rank === 2 ? 'bg-gray-100 text-gray-700' :
-                                  'bg-orange-100 text-orange-700'
+                                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold tabular-nums ${
+                                  post.rank === 1 ? 'bg-accent text-primary' : 'bg-muted text-muted-foreground'
                                 }`}>
                                   {post.rank}
                                 </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2 mb-1">
+                                <div className="min-w-0 flex-1">
+                                  <div className="mb-1 flex items-center gap-2">
                                     <a
                                       href={post.post_url}
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      className="font-medium text-blue-600 hover:underline truncate"
+                                      className="truncate text-sm font-medium text-primary hover:underline"
                                     >
                                       {post.title || '(제목 없음)'}
                                     </a>
-                                    <ExternalLink className="h-3 w-3 text-gray-400 flex-shrink-0" />
+                                    <ExternalLink className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
                                   </div>
-                                  <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                                    <span className="flex items-center gap-1">
-                                      📝 {post.content_length.toLocaleString()}자
-                                    </span>
-                                    <span className="flex items-center gap-1">
-                                      🖼️ {post.image_count}장
-                                    </span>
-                                    <span className="flex items-center gap-1">
-                                      📑 {post.heading_count}개 소제목
-                                    </span>
-                                    <span className="flex items-center gap-1">
-                                      🔑 {post.keyword_count}회 키워드
-                                    </span>
+                                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs tabular-nums text-muted-foreground">
+                                    <span>본문 {post.content_length.toLocaleString()}자</span>
+                                    <span>이미지 {post.image_count}장</span>
+                                    <span>소제목 {post.heading_count}개</span>
+                                    <span>키워드 {post.keyword_count}회</span>
                                     {post.title_has_keyword && (
-                                      <Badge variant="outline" className="text-green-600 border-green-300">
-                                        제목에 키워드 포함
-                                      </Badge>
+                                      <Pill tone="ok">제목에 키워드 포함</Pill>
                                     )}
                                     {post.has_map && (
-                                      <Badge variant="outline" className="text-blue-600 border-blue-300">
-                                        지도 포함
-                                      </Badge>
+                                      <Pill tone="accent">지도 포함</Pill>
                                     )}
                                   </div>
                                 </div>
-                                <Badge
-                                  variant="outline"
-                                  className={
-                                    post.data_quality === 'high' ? 'text-green-600 border-green-300' :
-                                    post.data_quality === 'medium' ? 'text-yellow-600 border-yellow-300' :
-                                    'text-red-600 border-red-300'
+                                <Pill
+                                  tone={
+                                    post.data_quality === 'high' ? 'ok' :
+                                    post.data_quality === 'medium' ? 'warn' : 'danger'
                                   }
                                 >
                                   {post.data_quality === 'high' ? '고품질' :
                                    post.data_quality === 'medium' ? '중품질' : '저품질'}
-                                </Badge>
+                                </Pill>
                               </div>
                             ))}
                           </div>
@@ -861,10 +810,11 @@ export default function TopPostAnalysisPage() {
 
           {/* 카테고리 미선택 안내 */}
           {!resultsCategory && (
-            <div className="text-center py-12 text-muted-foreground">
-              <Eye className="h-12 w-12 mx-auto mb-4 opacity-30" />
-              <p>카테고리를 선택하여 분석 결과를 확인하세요</p>
-            </div>
+            <EmptyState
+              icon={<Eye className="h-8 w-8" />}
+              title="카테고리를 선택하세요"
+              description="위에서 카테고리를 고르면 분석된 글과 공통점을 보여드립니다"
+            />
           )}
         </TabsContent>
       </Tabs>

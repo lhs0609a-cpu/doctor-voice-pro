@@ -6,10 +6,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Switch } from '@/components/ui/switch'
+import { PageHeader } from '@/components/app-shell/page-header'
+import { Pill } from '@/components/app-shell/ui-kit'
 import { outreachAPI } from '@/lib/api'
 import { toast } from 'sonner'
 import {
@@ -28,11 +29,26 @@ import {
   Settings,
   Send,
   HelpCircle,
-  ChevronRight,
   Check,
   X,
+  type LucideIcon,
 } from 'lucide-react'
 import Link from 'next/link'
+
+/** 가이드 단계 번호 배지 */
+function StepNumber({ n, done }: { n: number; done?: boolean }) {
+  return (
+    <div
+      className={
+        done
+          ? 'flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-success-soft text-[13px] font-semibold text-success'
+          : 'flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent text-[13px] font-semibold text-primary'
+      }
+    >
+      {done ? <Check className="h-4 w-4" /> : n}
+    </div>
+  )
+}
 
 export default function SmtpGuidePage() {
   const router = useRouter()
@@ -58,34 +74,39 @@ export default function SmtpGuidePage() {
   })
 
   // 이메일 제공자 설정
-  const providers = {
+  const providers: Record<'gmail' | 'naver' | 'custom', {
+    name: string
+    icon: LucideIcon
+    host: string
+    port: number
+    useTls: boolean
+    description: string
+    limit: string
+  }> = {
     gmail: {
       name: 'Gmail',
-      icon: '📧',
+      icon: Mail,
       host: 'smtp.gmail.com',
       port: 587,
       useTls: true,
-      color: 'bg-red-50 border-red-200',
       description: '가장 많이 사용되는 이메일 서비스',
       limit: '일 500건 (무료), 2000건 (Workspace)',
     },
     naver: {
       name: '네이버 메일',
-      icon: '📮',
+      icon: Mail,
       host: 'smtp.naver.com',
       port: 587,
       useTls: true,
-      color: 'bg-green-50 border-green-200',
       description: '국내 사용자에게 친숙한 서비스',
       limit: '일 500건',
     },
     custom: {
       name: '직접 입력',
-      icon: '⚙️',
+      icon: Settings,
       host: '',
       port: 587,
       useTls: true,
-      color: 'bg-gray-50 border-gray-200',
       description: '다른 이메일 서비스 사용',
       limit: '서비스마다 다름',
     },
@@ -151,57 +172,56 @@ export default function SmtpGuidePage() {
   }
 
   const totalSteps = 4
+  const stepLabels = ['이메일 선택', '앱 비밀번호', 'SMTP 설정', '테스트']
 
   return (
-    <div className="container mx-auto py-6 max-w-4xl">
-      {/* 헤더 */}
-      <div className="mb-8">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
-          <Link href="/dashboard/outreach" className="hover:text-primary">
-            이메일 영업
-          </Link>
-          <ChevronRight className="h-4 w-4" />
-          <span>SMTP 설정 가이드</span>
-        </div>
-        <h1 className="text-3xl font-bold">SMTP 설정 완벽 가이드</h1>
-        <p className="text-muted-foreground mt-2">
-          이메일 발송을 위한 SMTP 설정을 단계별로 안내해드립니다
-        </p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="이메일 영업"
+        title="SMTP 설정 가이드"
+        description="이메일 발송에 필요한 SMTP 설정을 단계별로 안내합니다."
+        actions={
+          <Button variant="ghost" size="sm" asChild>
+            <Link href="/dashboard/outreach">
+              <ArrowLeft />
+              이메일 영업으로
+            </Link>
+          </Button>
+        }
+      />
 
       {/* 진행 표시 */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-2">
-          {[1, 2, 3, 4].map((step) => (
-            <div key={step} className="flex items-center">
-              <div
-                className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold transition-all ${
-                  step < currentStep
-                    ? 'bg-green-500 text-white'
-                    : step === currentStep
-                    ? 'bg-primary text-white'
-                    : 'bg-gray-200 text-gray-500'
-                }`}
-              >
-                {step < currentStep ? <Check className="h-5 w-5" /> : step}
-              </div>
-              {step < 4 && (
-                <div
-                  className={`w-full h-1 mx-2 rounded ${
-                    step < currentStep ? 'bg-green-500' : 'bg-gray-200'
-                  }`}
-                  style={{ width: '80px' }}
-                />
-              )}
-            </div>
-          ))}
-        </div>
-        <div className="flex justify-between text-sm">
-          <span>이메일 선택</span>
-          <span>앱 비밀번호</span>
-          <span>SMTP 설정</span>
-          <span>테스트</span>
-        </div>
+      <div className="surface p-4">
+        <ol className="flex items-center gap-2">
+          {stepLabels.map((label, i) => {
+            const step = i + 1
+            const done = step < currentStep
+            const active = step === currentStep
+            return (
+              <li key={step} className="flex flex-1 items-center gap-2">
+                <div className="flex items-center gap-2">
+                  <div
+                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold ${
+                      done
+                        ? 'bg-success-soft text-success'
+                        : active
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted text-muted-foreground'
+                    }`}
+                  >
+                    {done ? <Check className="h-4 w-4" /> : step}
+                  </div>
+                  <span className={`hidden whitespace-nowrap text-[13px] sm:inline ${active ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>
+                    {label}
+                  </span>
+                </div>
+                {step < totalSteps && (
+                  <div className={`h-px flex-1 ${done ? 'bg-success' : 'bg-border'}`} />
+                )}
+              </li>
+            )
+          })}
+        </ol>
       </div>
 
       {/* Step 1: 이메일 제공자 선택 */}
@@ -209,60 +229,63 @@ export default function SmtpGuidePage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Mail className="h-5 w-5" />
-              Step 1: 이메일 서비스 선택
+              <Mail className="h-4 w-4 text-muted-foreground" />
+              1단계: 이메일 서비스 선택
             </CardTitle>
             <CardDescription>
-              이메일 발송에 사용할 서비스를 선택해주세요
+              이메일 발송에 사용할 서비스를 선택하세요
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid gap-4">
-              {(Object.entries(providers) as [keyof typeof providers, typeof providers.gmail][]).map(([key, provider]) => (
-                <button
-                  key={key}
-                  onClick={() => handleProviderSelect(key)}
-                  className={`p-4 rounded-xl border-2 text-left transition-all ${
-                    selectedProvider === key
-                      ? 'border-primary bg-primary/5'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">{provider.icon}</span>
-                      <div>
-                        <div className="font-semibold">{provider.name}</div>
-                        <div className="text-sm text-muted-foreground">{provider.description}</div>
+            <div className="grid gap-3">
+              {(Object.entries(providers) as [keyof typeof providers, typeof providers.gmail][]).map(([key, provider]) => {
+                const Icon = provider.icon
+                const active = selectedProvider === key
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => handleProviderSelect(key)}
+                    className={`rounded-lg border p-4 text-left transition-colors ${
+                      active ? 'border-primary bg-accent/60' : 'hover:bg-muted/40'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent text-primary">
+                          <Icon className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <div className="text-sm font-semibold">{provider.name}</div>
+                          <div className="text-[13px] text-muted-foreground">{provider.description}</div>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <Pill tone="muted">{provider.limit}</Pill>
+                        {active && <CheckCircle2 className="h-4 w-4 text-primary" />}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="secondary">{provider.limit}</Badge>
-                      {selectedProvider === key && (
-                        <CheckCircle2 className="h-5 w-5 text-primary" />
-                      )}
-                    </div>
-                  </div>
-                </button>
-              ))}
+                  </button>
+                )
+              })}
             </div>
 
-            <Alert>
-              <HelpCircle className="h-4 w-4" />
-              <AlertTitle>어떤 서비스를 선택해야 하나요?</AlertTitle>
-              <AlertDescription>
-                <ul className="list-disc list-inside mt-2 space-y-1 text-sm">
-                  <li><strong>Gmail</strong>: 가장 안정적이고 무료로 일 500건까지 발송 가능</li>
-                  <li><strong>네이버</strong>: 국내 수신율이 높고 설정이 간편</li>
-                  <li><strong>직접 입력</strong>: 다음, 카카오, 회사 이메일 등 사용 시</li>
-                </ul>
-              </AlertDescription>
-            </Alert>
+            <div className="rounded-lg border bg-muted/40 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <HelpCircle className="h-4 w-4 text-muted-foreground" />
+                어떤 서비스를 선택해야 하나요?
+              </div>
+              <ul className="mt-2 list-inside list-disc space-y-1 text-sm text-muted-foreground">
+                <li><strong className="font-medium text-foreground">Gmail</strong>: 가장 안정적이고 무료로 일 500건까지 발송 가능</li>
+                <li><strong className="font-medium text-foreground">네이버</strong>: 국내 수신율이 높고 설정이 간편</li>
+                <li><strong className="font-medium text-foreground">직접 입력</strong>: 다음, 카카오, 회사 이메일 등 사용 시</li>
+              </ul>
+            </div>
 
             <div className="flex justify-end">
               <Button onClick={() => setCurrentStep(2)}>
                 다음 단계
-                <ArrowRight className="h-4 w-4 ml-2" />
+                <ArrowRight />
               </Button>
             </div>
           </CardContent>
@@ -274,14 +297,14 @@ export default function SmtpGuidePage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Key className="h-5 w-5" />
-              Step 2: 앱 비밀번호 발급
+              <Key className="h-4 w-4 text-muted-foreground" />
+              2단계: 앱 비밀번호 발급
             </CardTitle>
             <CardDescription>
               보안을 위해 일반 비밀번호 대신 앱 비밀번호를 사용합니다
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-6">
+          <CardContent className="space-y-4">
             <Tabs defaultValue={selectedProvider === 'naver' ? 'naver' : 'gmail'}>
               <TabsList className="grid w-full grid-cols-2">
                 <TabsTrigger value="gmail">Gmail 가이드</TabsTrigger>
@@ -290,23 +313,25 @@ export default function SmtpGuidePage() {
 
               {/* Gmail 가이드 */}
               <TabsContent value="gmail" className="space-y-4">
-                <Alert className="bg-blue-50 border-blue-200">
-                  <Shield className="h-4 w-4 text-blue-600" />
-                  <AlertTitle className="text-blue-800">Gmail 앱 비밀번호란?</AlertTitle>
-                  <AlertDescription className="text-blue-700">
-                    앱 비밀번호는 Google 계정의 2단계 인증을 활성화한 후 생성할 수 있는 16자리 특수 비밀번호입니다.
-                    일반 비밀번호 대신 사용하여 더 안전하게 이메일을 발송할 수 있습니다.
-                  </AlertDescription>
-                </Alert>
+                <div className="rounded-lg border bg-muted/40 p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Shield className="h-4 w-4 text-muted-foreground" />
+                    Gmail 앱 비밀번호란?
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    앱 비밀번호는 Google 계정의 2단계 인증을 켠 뒤 만들 수 있는 16자리 전용 비밀번호입니다.
+                    일반 비밀번호 대신 사용해 더 안전하게 이메일을 보낼 수 있습니다.
+                  </p>
+                </div>
 
-                <div className="space-y-4">
-                  <div className="rounded-xl border p-4">
-                    <div className="flex items-start gap-4">
-                      <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold">1</div>
+                <div className="space-y-3">
+                  <div className="rounded-lg border p-4">
+                    <div className="flex items-start gap-3">
+                      <StepNumber n={1} />
                       <div className="flex-1">
-                        <h4 className="font-semibold">Google 계정 보안 페이지 접속</h4>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          아래 링크를 클릭하여 Google 계정 보안 설정으로 이동합니다.
+                        <h4 className="text-sm font-semibold">Google 계정 보안 페이지 접속</h4>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          아래 버튼을 눌러 Google 계정 보안 설정으로 이동합니다.
                         </p>
                         <Button
                           variant="outline"
@@ -314,35 +339,35 @@ export default function SmtpGuidePage() {
                           className="mt-2"
                           onClick={() => window.open('https://myaccount.google.com/security', '_blank')}
                         >
-                          <ExternalLink className="h-4 w-4 mr-2" />
+                          <ExternalLink />
                           Google 보안 설정 열기
                         </Button>
                       </div>
                     </div>
                   </div>
 
-                  <div className="rounded-xl border p-4">
-                    <div className="flex items-start gap-4">
-                      <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold">2</div>
+                  <div className="rounded-lg border p-4">
+                    <div className="flex items-start gap-3">
+                      <StepNumber n={2} />
                       <div className="flex-1">
-                        <h4 className="font-semibold">2단계 인증 활성화</h4>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          "Google에 로그인하는 방법" 섹션에서 <strong>"2단계 인증"</strong>을 클릭하고 활성화합니다.
+                        <h4 className="text-sm font-semibold">2단계 인증 활성화</h4>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          &quot;Google에 로그인하는 방법&quot; 섹션에서 <strong className="font-medium text-foreground">&quot;2단계 인증&quot;</strong>을 클릭하고 활성화합니다.
                         </p>
-                        <div className="mt-2 p-3 bg-yellow-50 rounded-lg text-sm">
-                          <strong>⚠️ 주의:</strong> 2단계 인증이 이미 활성화되어 있다면 이 단계는 건너뛰세요.
+                        <div className="mt-2 rounded-lg border bg-warning-soft p-3 text-sm">
+                          <strong className="font-medium text-warning">주의:</strong> 2단계 인증이 이미 켜져 있다면 이 단계는 건너뛰세요.
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  <div className="rounded-xl border p-4">
-                    <div className="flex items-start gap-4">
-                      <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold">3</div>
+                  <div className="rounded-lg border p-4">
+                    <div className="flex items-start gap-3">
+                      <StepNumber n={3} />
                       <div className="flex-1">
-                        <h4 className="font-semibold">앱 비밀번호 페이지로 이동</h4>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          2단계 인증 설정 후, 아래 링크로 앱 비밀번호 페이지에 접속합니다.
+                        <h4 className="text-sm font-semibold">앱 비밀번호 페이지로 이동</h4>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          2단계 인증을 설정한 뒤, 아래 버튼으로 앱 비밀번호 페이지에 접속합니다.
                         </p>
                         <Button
                           variant="outline"
@@ -350,24 +375,24 @@ export default function SmtpGuidePage() {
                           className="mt-2"
                           onClick={() => window.open('https://myaccount.google.com/apppasswords', '_blank')}
                         >
-                          <ExternalLink className="h-4 w-4 mr-2" />
+                          <ExternalLink />
                           앱 비밀번호 페이지 열기
                         </Button>
                       </div>
                     </div>
                   </div>
 
-                  <div className="rounded-xl border p-4">
-                    <div className="flex items-start gap-4">
-                      <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold">4</div>
+                  <div className="rounded-lg border p-4">
+                    <div className="flex items-start gap-3">
+                      <StepNumber n={4} />
                       <div className="flex-1">
-                        <h4 className="font-semibold">앱 비밀번호 생성</h4>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          앱 이름에 <strong>"닥터보이스"</strong> 또는 원하는 이름을 입력하고 "만들기"를 클릭합니다.
+                        <h4 className="text-sm font-semibold">앱 비밀번호 생성</h4>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          앱 이름에 <strong className="font-medium text-foreground">&quot;닥터보이스&quot;</strong> 또는 원하는 이름을 입력하고 &quot;만들기&quot;를 클릭합니다.
                         </p>
                         <div className="mt-2 flex items-center gap-2">
-                          <code className="px-3 py-1 bg-gray-100 rounded text-sm">닥터보이스</code>
-                          <Button variant="ghost" size="sm" onClick={() => copyToClipboard('닥터보이스')}>
+                          <code className="rounded bg-muted px-3 py-1 text-sm">닥터보이스</code>
+                          <Button variant="ghost" size="icon" onClick={() => copyToClipboard('닥터보이스')} title="복사">
                             <Copy className="h-4 w-4" />
                           </Button>
                         </div>
@@ -375,18 +400,18 @@ export default function SmtpGuidePage() {
                     </div>
                   </div>
 
-                  <div className="rounded-xl border p-4 bg-green-50 border-green-200">
-                    <div className="flex items-start gap-4">
-                      <div className="w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center font-bold">5</div>
+                  <div className="rounded-lg border bg-muted/40 p-4">
+                    <div className="flex items-start gap-3">
+                      <StepNumber n={5} done />
                       <div className="flex-1">
-                        <h4 className="font-semibold text-green-800">16자리 비밀번호 복사</h4>
-                        <p className="text-sm text-green-700 mt-1">
-                          화면에 표시되는 <strong>16자리 비밀번호</strong>를 복사해주세요.
-                          이 비밀번호는 다시 볼 수 없으니 꼭 저장해두세요!
+                        <h4 className="text-sm font-semibold">16자리 비밀번호 복사</h4>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          화면에 표시되는 <strong className="font-medium text-foreground">16자리 비밀번호</strong>를 복사하세요.
+                          이 비밀번호는 다시 볼 수 없으니 꼭 저장해 두세요.
                         </p>
-                        <div className="mt-2 p-3 bg-white rounded-lg border border-green-300">
-                          <code className="text-lg font-mono tracking-widest">xxxx xxxx xxxx xxxx</code>
-                          <p className="text-xs text-green-600 mt-1">← 이런 형태의 비밀번호가 생성됩니다</p>
+                        <div className="mt-2 rounded-lg border bg-card p-3">
+                          <code className="font-mono text-base tracking-widest">xxxx xxxx xxxx xxxx</code>
+                          <p className="mt-1 text-xs text-muted-foreground">이런 형태의 비밀번호가 생성됩니다</p>
                         </div>
                       </div>
                     </div>
@@ -396,22 +421,24 @@ export default function SmtpGuidePage() {
 
               {/* 네이버 가이드 */}
               <TabsContent value="naver" className="space-y-4">
-                <Alert className="bg-green-50 border-green-200">
-                  <Shield className="h-4 w-4 text-green-600" />
-                  <AlertTitle className="text-green-800">네이버 SMTP 사용 설정</AlertTitle>
-                  <AlertDescription className="text-green-700">
+                <div className="rounded-lg border bg-muted/40 p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Shield className="h-4 w-4 text-muted-foreground" />
+                    네이버 SMTP 사용 설정
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">
                     네이버 메일은 SMTP 사용을 위해 별도의 설정이 필요합니다.
                     일반 네이버 비밀번호를 그대로 사용할 수 있습니다.
-                  </AlertDescription>
-                </Alert>
+                  </p>
+                </div>
 
-                <div className="space-y-4">
-                  <div className="rounded-xl border p-4">
-                    <div className="flex items-start gap-4">
-                      <div className="w-8 h-8 rounded-full bg-green-100 text-green-600 flex items-center justify-center font-bold">1</div>
+                <div className="space-y-3">
+                  <div className="rounded-lg border p-4">
+                    <div className="flex items-start gap-3">
+                      <StepNumber n={1} />
                       <div className="flex-1">
-                        <h4 className="font-semibold">네이버 메일 설정 페이지 접속</h4>
-                        <p className="text-sm text-muted-foreground mt-1">
+                        <h4 className="text-sm font-semibold">네이버 메일 설정 페이지 접속</h4>
+                        <p className="mt-1 text-sm text-muted-foreground">
                           네이버 메일에 로그인한 후 설정 페이지로 이동합니다.
                         </p>
                         <Button
@@ -420,72 +447,72 @@ export default function SmtpGuidePage() {
                           className="mt-2"
                           onClick={() => window.open('https://mail.naver.com/v2/settings/general', '_blank')}
                         >
-                          <ExternalLink className="h-4 w-4 mr-2" />
+                          <ExternalLink />
                           네이버 메일 설정 열기
                         </Button>
                       </div>
                     </div>
                   </div>
 
-                  <div className="rounded-xl border p-4">
-                    <div className="flex items-start gap-4">
-                      <div className="w-8 h-8 rounded-full bg-green-100 text-green-600 flex items-center justify-center font-bold">2</div>
+                  <div className="rounded-lg border p-4">
+                    <div className="flex items-start gap-3">
+                      <StepNumber n={2} />
                       <div className="flex-1">
-                        <h4 className="font-semibold">POP3/IMAP 설정 찾기</h4>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          왼쪽 메뉴에서 <strong>"POP3/IMAP 설정"</strong>을 클릭합니다.
+                        <h4 className="text-sm font-semibold">POP3/IMAP 설정 찾기</h4>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          왼쪽 메뉴에서 <strong className="font-medium text-foreground">&quot;POP3/IMAP 설정&quot;</strong>을 클릭합니다.
                         </p>
                       </div>
                     </div>
                   </div>
 
-                  <div className="rounded-xl border p-4">
-                    <div className="flex items-start gap-4">
-                      <div className="w-8 h-8 rounded-full bg-green-100 text-green-600 flex items-center justify-center font-bold">3</div>
+                  <div className="rounded-lg border p-4">
+                    <div className="flex items-start gap-3">
+                      <StepNumber n={3} />
                       <div className="flex-1">
-                        <h4 className="font-semibold">IMAP/SMTP 사용 활성화</h4>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          <strong>"IMAP/SMTP 사용"</strong> 옵션을 <strong>"사용함"</strong>으로 변경합니다.
+                        <h4 className="text-sm font-semibold">IMAP/SMTP 사용 활성화</h4>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          <strong className="font-medium text-foreground">&quot;IMAP/SMTP 사용&quot;</strong> 옵션을 <strong className="font-medium text-foreground">&quot;사용함&quot;</strong>으로 변경합니다.
                         </p>
-                        <div className="mt-2 p-3 bg-green-50 rounded-lg text-sm">
-                          <strong>✅ 체크:</strong> "IMAP/SMTP 사용" → 사용함
+                        <div className="mt-2 rounded-lg border bg-success-soft p-3 text-sm">
+                          <strong className="font-medium text-success">확인:</strong> &quot;IMAP/SMTP 사용&quot; → 사용함
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  <div className="rounded-xl border p-4 bg-green-50 border-green-200">
-                    <div className="flex items-start gap-4">
-                      <div className="w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center font-bold">4</div>
+                  <div className="rounded-lg border bg-muted/40 p-4">
+                    <div className="flex items-start gap-3">
+                      <StepNumber n={4} done />
                       <div className="flex-1">
-                        <h4 className="font-semibold text-green-800">설정 저장</h4>
-                        <p className="text-sm text-green-700 mt-1">
-                          변경사항을 저장하면 네이버 SMTP를 사용할 준비가 완료됩니다.
-                          비밀번호는 <strong>네이버 로그인 비밀번호</strong>를 그대로 사용합니다.
+                        <h4 className="text-sm font-semibold">설정 저장</h4>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          변경사항을 저장하면 네이버 SMTP를 사용할 준비가 끝납니다.
+                          비밀번호는 <strong className="font-medium text-foreground">네이버 로그인 비밀번호</strong>를 그대로 사용합니다.
                         </p>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="p-4 rounded-xl bg-gray-50 border">
-                  <h4 className="font-semibold mb-2">네이버 SMTP 정보</h4>
+                <div className="rounded-lg border bg-muted/40 p-4">
+                  <h4 className="mb-2 text-sm font-semibold">네이버 SMTP 정보</h4>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">SMTP 서버:</span>
-                      <code className="bg-white px-2 py-0.5 rounded">smtp.naver.com</code>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">SMTP 서버</span>
+                      <code className="rounded border bg-card px-2 py-0.5">smtp.naver.com</code>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">포트:</span>
-                      <code className="bg-white px-2 py-0.5 rounded">587</code>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">포트</span>
+                      <code className="rounded border bg-card px-2 py-0.5 tabular-nums">587</code>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">보안:</span>
-                      <code className="bg-white px-2 py-0.5 rounded">TLS</code>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">보안</span>
+                      <code className="rounded border bg-card px-2 py-0.5">TLS</code>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">인증:</span>
-                      <code className="bg-white px-2 py-0.5 rounded">네이버 ID/비밀번호</code>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted-foreground">인증</span>
+                      <code className="rounded border bg-card px-2 py-0.5">네이버 ID/비밀번호</code>
                     </div>
                   </div>
                 </div>
@@ -494,12 +521,12 @@ export default function SmtpGuidePage() {
 
             <div className="flex justify-between">
               <Button variant="outline" onClick={() => setCurrentStep(1)}>
-                <ArrowLeft className="h-4 w-4 mr-2" />
+                <ArrowLeft />
                 이전
               </Button>
               <Button onClick={() => setCurrentStep(3)}>
                 다음 단계
-                <ArrowRight className="h-4 w-4 ml-2" />
+                <ArrowRight />
               </Button>
             </div>
           </CardContent>
@@ -511,17 +538,17 @@ export default function SmtpGuidePage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Settings className="h-5 w-5" />
-              Step 3: SMTP 정보 입력
+              <Settings className="h-4 w-4 text-muted-foreground" />
+              3단계: SMTP 정보 입력
             </CardTitle>
             <CardDescription>
-              앞에서 준비한 정보를 입력해주세요
+              앞에서 준비한 정보를 입력하세요
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             {/* SMTP 서버 설정 */}
             <div className="space-y-4">
-              <h4 className="font-semibold">서버 설정</h4>
+              <h4 className="section-title">서버 설정</h4>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>SMTP 호스트</Label>
@@ -538,7 +565,7 @@ export default function SmtpGuidePage() {
                     type="number"
                     value={smtpConfig.smtp_port}
                     onChange={(e) => setSmtpConfig(prev => ({ ...prev, smtp_port: parseInt(e.target.value) }))}
-                    className="mt-1"
+                    className="mt-1 tabular-nums"
                   />
                 </div>
               </div>
@@ -553,7 +580,7 @@ export default function SmtpGuidePage() {
 
             {/* 인증 정보 */}
             <div className="space-y-4">
-              <h4 className="font-semibold">인증 정보</h4>
+              <h4 className="section-title">인증 정보</h4>
               <div className="grid grid-cols-1 gap-4">
                 <div>
                   <Label>이메일 주소 (사용자명)</Label>
@@ -582,13 +609,13 @@ export default function SmtpGuidePage() {
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                     >
                       {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
                   </div>
                   {selectedProvider === 'gmail' && (
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="mt-1 text-xs text-muted-foreground">
                       공백 없이 16자리를 입력하세요 (예: abcdabcdabcdabcd)
                     </p>
                   )}
@@ -598,7 +625,7 @@ export default function SmtpGuidePage() {
 
             {/* 발신자 정보 */}
             <div className="space-y-4">
-              <h4 className="font-semibold">발신자 정보</h4>
+              <h4 className="section-title">발신자 정보</h4>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>발신자 이름</Label>
@@ -624,7 +651,7 @@ export default function SmtpGuidePage() {
 
             {/* 발송 제한 */}
             <div className="space-y-4">
-              <h4 className="font-semibold">발송 제한 설정</h4>
+              <h4 className="section-title">발송 제한 설정</h4>
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <Label>일일 한도</Label>
@@ -632,9 +659,9 @@ export default function SmtpGuidePage() {
                     type="number"
                     value={smtpConfig.daily_limit}
                     onChange={(e) => setSmtpConfig(prev => ({ ...prev, daily_limit: parseInt(e.target.value) }))}
-                    className="mt-1"
+                    className="mt-1 tabular-nums"
                   />
-                  <p className="text-xs text-muted-foreground mt-1">권장: 50건</p>
+                  <p className="mt-1 text-xs text-muted-foreground">권장: 50건</p>
                 </div>
                 <div>
                   <Label>시간당 한도</Label>
@@ -642,9 +669,9 @@ export default function SmtpGuidePage() {
                     type="number"
                     value={smtpConfig.hourly_limit}
                     onChange={(e) => setSmtpConfig(prev => ({ ...prev, hourly_limit: parseInt(e.target.value) }))}
-                    className="mt-1"
+                    className="mt-1 tabular-nums"
                   />
-                  <p className="text-xs text-muted-foreground mt-1">권장: 10건</p>
+                  <p className="mt-1 text-xs text-muted-foreground">권장: 10건</p>
                 </div>
                 <div>
                   <Label>발송 간격 (초)</Label>
@@ -652,21 +679,21 @@ export default function SmtpGuidePage() {
                     type="number"
                     value={smtpConfig.min_interval_seconds}
                     onChange={(e) => setSmtpConfig(prev => ({ ...prev, min_interval_seconds: parseInt(e.target.value) }))}
-                    className="mt-1"
+                    className="mt-1 tabular-nums"
                   />
-                  <p className="text-xs text-muted-foreground mt-1">권장: 300초</p>
+                  <p className="mt-1 text-xs text-muted-foreground">권장: 300초</p>
                 </div>
               </div>
             </div>
 
             <div className="flex justify-between">
               <Button variant="outline" onClick={() => setCurrentStep(2)}>
-                <ArrowLeft className="h-4 w-4 mr-2" />
+                <ArrowLeft />
                 이전
               </Button>
               <Button onClick={() => setCurrentStep(4)}>
                 다음 단계
-                <ArrowRight className="h-4 w-4 ml-2" />
+                <ArrowRight />
               </Button>
             </div>
           </CardContent>
@@ -678,8 +705,8 @@ export default function SmtpGuidePage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Send className="h-5 w-5" />
-              Step 4: 연결 테스트 및 완료
+              <Send className="h-4 w-4 text-muted-foreground" />
+              4단계: 연결 테스트 및 완료
             </CardTitle>
             <CardDescription>
               설정이 올바른지 확인하고 저장합니다
@@ -687,38 +714,38 @@ export default function SmtpGuidePage() {
           </CardHeader>
           <CardContent className="space-y-6">
             {/* 설정 요약 */}
-            <div className="rounded-xl border p-4 bg-gray-50">
-              <h4 className="font-semibold mb-3">설정 요약</h4>
+            <div className="rounded-lg border bg-muted/40 p-4">
+              <h4 className="mb-3 text-sm font-semibold">설정 요약</h4>
               <div className="grid grid-cols-2 gap-3 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">SMTP 서버:</span>
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">SMTP 서버</span>
                   <span className="font-medium">{smtpConfig.smtp_host || '-'}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">포트:</span>
-                  <span className="font-medium">{smtpConfig.smtp_port}</span>
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">포트</span>
+                  <span className="font-medium tabular-nums">{smtpConfig.smtp_port}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">이메일:</span>
-                  <span className="font-medium">{smtpConfig.smtp_username || '-'}</span>
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">이메일</span>
+                  <span className="truncate font-medium">{smtpConfig.smtp_username || '-'}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">TLS:</span>
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">TLS</span>
                   <span className="font-medium">{smtpConfig.smtp_use_tls ? '사용' : '미사용'}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">발신자 이름:</span>
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">발신자 이름</span>
                   <span className="font-medium">{smtpConfig.sender_name || '-'}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">일일 한도:</span>
-                  <span className="font-medium">{smtpConfig.daily_limit}건</span>
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">일일 한도</span>
+                  <span className="font-medium tabular-nums">{smtpConfig.daily_limit}건</span>
                 </div>
               </div>
             </div>
 
             {/* 테스트 버튼 */}
-            <div className="flex flex-col items-center gap-4 py-6">
+            <div className="flex flex-col items-center gap-4 py-4">
               <Button
                 size="lg"
                 variant={testResult === 'success' ? 'outline' : 'default'}
@@ -728,44 +755,44 @@ export default function SmtpGuidePage() {
               >
                 {isTesting ? (
                   <>
-                    <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                    <Loader2 className="animate-spin" />
                     연결 테스트 중...
                   </>
                 ) : testResult === 'success' ? (
                   <>
-                    <CheckCircle2 className="h-5 w-5 mr-2 text-green-500" />
-                    테스트 성공!
+                    <CheckCircle2 className="text-success" />
+                    테스트 성공
                   </>
                 ) : testResult === 'error' ? (
                   <>
-                    <X className="h-5 w-5 mr-2 text-red-500" />
+                    <X />
                     다시 테스트
                   </>
                 ) : (
                   <>
-                    <Send className="h-5 w-5 mr-2" />
+                    <Send />
                     연결 테스트
                   </>
                 )}
               </Button>
 
               {testResult === 'success' && (
-                <Alert className="bg-green-50 border-green-200">
-                  <CheckCircle2 className="h-4 w-4 text-green-600" />
-                  <AlertTitle className="text-green-800">연결 성공!</AlertTitle>
-                  <AlertDescription className="text-green-700">
-                    SMTP 서버에 성공적으로 연결되었습니다. 이제 이메일을 발송할 수 있습니다.
+                <Alert className="border bg-success-soft">
+                  <CheckCircle2 className="h-4 w-4 text-success" />
+                  <AlertTitle className="text-success">연결 성공</AlertTitle>
+                  <AlertDescription>
+                    SMTP 서버에 연결되었습니다. 이제 이메일을 보낼 수 있습니다.
                   </AlertDescription>
                 </Alert>
               )}
 
               {testResult === 'error' && (
-                <Alert className="bg-red-50 border-red-200">
-                  <AlertCircle className="h-4 w-4 text-red-600" />
-                  <AlertTitle className="text-red-800">연결 실패</AlertTitle>
-                  <AlertDescription className="text-red-700">
-                    <p>SMTP 서버 연결에 실패했습니다. 다음을 확인해주세요:</p>
-                    <ul className="list-disc list-inside mt-2 text-sm">
+                <Alert className="border bg-danger-soft">
+                  <AlertCircle className="h-4 w-4 text-danger" />
+                  <AlertTitle className="text-danger">연결 실패</AlertTitle>
+                  <AlertDescription>
+                    <p>SMTP 서버에 연결하지 못했습니다. 다음을 확인하세요:</p>
+                    <ul className="mt-2 list-inside list-disc text-sm">
                       <li>이메일 주소와 비밀번호가 올바른지 확인</li>
                       <li>Gmail: 앱 비밀번호(16자리)를 사용했는지 확인</li>
                       <li>네이버: IMAP/SMTP 사용 설정이 활성화되었는지 확인</li>
@@ -778,21 +805,22 @@ export default function SmtpGuidePage() {
 
             <div className="flex justify-between">
               <Button variant="outline" onClick={() => setCurrentStep(3)}>
-                <ArrowLeft className="h-4 w-4 mr-2" />
+                <ArrowLeft />
                 이전
               </Button>
               <Button
+                variant={testResult === 'success' ? 'default' : 'outline'}
                 onClick={handleSaveSettings}
                 disabled={isSaving || testResult !== 'success'}
               >
                 {isSaving ? (
                   <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    <Loader2 className="animate-spin" />
                     저장 중...
                   </>
                 ) : (
                   <>
-                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    <CheckCircle2 />
                     설정 저장 및 완료
                   </>
                 )}
@@ -803,37 +831,37 @@ export default function SmtpGuidePage() {
       )}
 
       {/* FAQ 섹션 */}
-      <Card className="mt-8">
+      <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <HelpCircle className="h-5 w-5" />
+            <HelpCircle className="h-4 w-4 text-muted-foreground" />
             자주 묻는 질문
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-3">
-            <div className="rounded-lg border p-4">
-              <h4 className="font-semibold">Q: "앱 비밀번호" 메뉴가 보이지 않아요</h4>
-              <p className="text-sm text-muted-foreground mt-1">
-                A: 2단계 인증이 활성화되어 있어야 앱 비밀번호 메뉴가 나타납니다.
-                먼저 Google 계정 → 보안 → 2단계 인증을 활성화해주세요.
+        <CardContent>
+          <div className="divide-y rounded-lg border">
+            <div className="p-4">
+              <h4 className="text-sm font-semibold">Q. &quot;앱 비밀번호&quot; 메뉴가 보이지 않아요</h4>
+              <p className="mt-1 text-sm text-muted-foreground">
+                2단계 인증이 켜져 있어야 앱 비밀번호 메뉴가 나타납니다.
+                먼저 Google 계정 → 보안 → 2단계 인증을 활성화하세요.
               </p>
             </div>
 
-            <div className="rounded-lg border p-4">
-              <h4 className="font-semibold">Q: 이메일이 발송되지 않아요</h4>
-              <p className="text-sm text-muted-foreground mt-1">
-                A: 다음 사항을 확인해주세요:
+            <div className="p-4">
+              <h4 className="text-sm font-semibold">Q. 이메일이 발송되지 않아요</h4>
+              <p className="mt-1 text-sm text-muted-foreground">
+                다음 사항을 확인하세요:
                 <br />• Gmail: 16자리 앱 비밀번호를 공백 없이 입력했는지 확인
-                <br />• 네이버: IMAP/SMTP 사용 설정이 "사용함"인지 확인
+                <br />• 네이버: IMAP/SMTP 사용 설정이 &quot;사용함&quot;인지 확인
                 <br />• 일일 발송 한도를 초과하지 않았는지 확인
               </p>
             </div>
 
-            <div className="rounded-lg border p-4">
-              <h4 className="font-semibold">Q: 하루에 몇 건까지 발송할 수 있나요?</h4>
-              <p className="text-sm text-muted-foreground mt-1">
-                A: 서비스별 제한:
+            <div className="p-4">
+              <h4 className="text-sm font-semibold">Q. 하루에 몇 건까지 발송할 수 있나요?</h4>
+              <p className="mt-1 text-sm text-muted-foreground">
+                서비스별 제한:
                 <br />• Gmail 무료: 일 500건
                 <br />• Gmail Workspace: 일 2,000건
                 <br />• 네이버: 일 500건
@@ -841,10 +869,10 @@ export default function SmtpGuidePage() {
               </p>
             </div>
 
-            <div className="rounded-lg border p-4">
-              <h4 className="font-semibold">Q: 보안이 걱정돼요. 비밀번호가 안전한가요?</h4>
-              <p className="text-sm text-muted-foreground mt-1">
-                A: 앱 비밀번호는 암호화되어 저장됩니다. 또한 앱 비밀번호는 언제든
+            <div className="p-4">
+              <h4 className="text-sm font-semibold">Q. 보안이 걱정돼요. 비밀번호가 안전한가요?</h4>
+              <p className="mt-1 text-sm text-muted-foreground">
+                앱 비밀번호는 암호화되어 저장됩니다. 또한 앱 비밀번호는 언제든
                 Google/네이버 계정에서 삭제하고 새로 발급받을 수 있어 보안 위험이 낮습니다.
               </p>
             </div>

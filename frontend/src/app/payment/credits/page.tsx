@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { PageHeader } from '@/components/app-shell/page-header'
+import { Pill } from '@/components/app-shell/ui-kit'
 import { Loader2, ArrowLeft, CreditCard, FileText, Search, Shield } from 'lucide-react'
 import { paymentAPI, subscriptionAPI, type UserCredit } from '@/lib/api'
 import { toast } from 'sonner'
@@ -165,8 +167,8 @@ export default function CreditsPurchasePage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
       </div>
     )
   }
@@ -178,185 +180,182 @@ export default function CreditsPurchasePage() {
         onLoad={() => setTossLoaded(true)}
       />
 
-      <div className="min-h-screen bg-muted/30 py-8">
-        <div className="container mx-auto px-4 max-w-4xl">
-          <Button
-            variant="ghost"
-            onClick={() => router.push('/dashboard/subscription')}
-            className="mb-6"
-          >
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            구독 관리로 돌아가기
-          </Button>
+      <div className="min-h-screen bg-background">
+        <div className="mx-auto max-w-2xl space-y-6 px-4 py-8">
+          <PageHeader
+            title="크레딧 구매"
+            description="필요한 만큼 크레딧을 구매하세요. 크레딧은 만료되지 않습니다."
+            actions={
+              <Button variant="ghost" size="sm" onClick={() => router.push('/dashboard/subscription')}>
+                <ArrowLeft />
+                구독 관리로 돌아가기
+              </Button>
+            }
+          />
 
-          <div className="grid md:grid-cols-2 gap-6">
-            {/* Credit Selection */}
-            <Card>
-              <CardHeader>
-                <CardTitle>크레딧 구매</CardTitle>
-                <CardDescription>
-                  필요한 만큼 크레딧을 구매하세요. 크레딧은 만료되지 않습니다.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {/* Current Credits */}
-                <div className="p-4 bg-muted rounded-lg">
-                  <p className="text-sm text-muted-foreground mb-2">현재 보유 크레딧</p>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-xl font-bold">{credits?.post_credits || 0}</p>
-                      <p className="text-sm text-muted-foreground">글 생성</p>
-                    </div>
-                    <div>
-                      <p className="text-xl font-bold">{credits?.analysis_credits || 0}</p>
-                      <p className="text-sm text-muted-foreground">분석</p>
-                    </div>
+          {/* Credit Selection */}
+          <Card>
+            <CardHeader>
+              <CardTitle>크레딧 선택</CardTitle>
+              <CardDescription>크레딧 종류와 수량을 고르세요</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Current Credits */}
+              <div className="rounded-lg border bg-muted/40 p-4">
+                <div className="mb-3 text-[13px] font-medium text-muted-foreground">현재 보유 크레딧</div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <div className="kpi">{credits?.post_credits || 0}</div>
+                    <div className="text-xs text-muted-foreground">글 생성</div>
+                  </div>
+                  <div>
+                    <div className="kpi">{credits?.analysis_credits || 0}</div>
+                    <div className="text-xs text-muted-foreground">분석</div>
                   </div>
                 </div>
+              </div>
 
-                {/* Credit Type */}
-                <div>
-                  <Label className="mb-3 block">크레딧 종류</Label>
-                  <RadioGroup
-                    value={creditType}
-                    onValueChange={(v: string) => {
-                      setCreditType(v as 'post' | 'analysis')
-                      setSelectedPackage(0)
-                      setCustomAmount('')
-                    }}
-                    className="grid grid-cols-2 gap-4"
-                  >
-                    <div>
-                      <RadioGroupItem value="post" id="post" className="peer sr-only" />
-                      <Label
-                        htmlFor="post"
-                        className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary cursor-pointer"
-                      >
-                        <FileText className="h-6 w-6 mb-2" />
-                        <span>글 생성</span>
-                      </Label>
-                    </div>
-                    <div>
-                      <RadioGroupItem value="analysis" id="analysis" className="peer sr-only" />
-                      <Label
-                        htmlFor="analysis"
-                        className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary cursor-pointer"
-                      >
-                        <Search className="h-6 w-6 mb-2" />
-                        <span>분석</span>
-                      </Label>
-                    </div>
-                  </RadioGroup>
-                </div>
-
-                {/* Package Selection */}
-                <div>
-                  <Label className="mb-3 block">수량 선택</Label>
-                  <div className="space-y-2">
-                    {CREDIT_PACKAGES[creditType].map((pkg, idx) => (
-                      <div
-                        key={idx}
-                        className={`p-4 border rounded-lg cursor-pointer transition-colors ${
-                          selectedPackage === idx && !customAmount
-                            ? 'border-primary bg-primary/5'
-                            : 'hover:border-muted-foreground'
-                        }`}
-                        onClick={() => {
-                          setSelectedPackage(idx)
-                          setCustomAmount('')
-                        }}
-                      >
-                        <div className="flex justify-between items-center">
-                          <div>
-                            <span className="font-medium">{pkg.amount}개</span>
-                            {pkg.discount > 0 && (
-                              <span className="ml-2 text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded">
-                                {pkg.discount}% 할인
-                              </span>
-                            )}
-                          </div>
-                          <span className="font-bold">₩{formatPrice(pkg.price)}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Custom Amount */}
-                <div>
-                  <Label htmlFor="custom">직접 입력</Label>
-                  <div className="flex gap-2 mt-2">
-                    <Input
-                      id="custom"
-                      type="number"
-                      placeholder="수량 입력"
-                      value={customAmount}
-                      onChange={(e) => setCustomAmount(e.target.value)}
-                      min={1}
-                    />
-                    <span className="flex items-center text-muted-foreground">개</span>
-                  </div>
-                  {customAmount && (
-                    <p className="text-sm text-muted-foreground mt-1">
-                      예상 금액: ₩{formatPrice(getCurrentPrice())}
-                    </p>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Payment */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <CreditCard className="h-5 w-5" />
-                  결제
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {!tossLoaded ? (
-                  <div className="flex items-center justify-center h-40">
-                    <Loader2 className="h-6 w-6 animate-spin" />
-                  </div>
-                ) : (
-                  <>
-                    <div id="payment-method" className="min-h-[200px]" />
-                    <div id="agreement" />
-                  </>
-                )}
-
-                <div className="p-4 bg-muted rounded-lg">
-                  <div className="flex justify-between items-center">
-                    <span>
-                      {creditType === 'post' ? '글 생성' : '분석'} 크레딧 {getCurrentAmount()}개
-                    </span>
-                    <span className="text-xl font-bold">₩{formatPrice(getCurrentPrice())}</span>
-                  </div>
-                </div>
-
-                <Button
-                  className="w-full"
-                  size="lg"
-                  disabled={!tossLoaded || processing || getCurrentPrice() === 0}
-                  onClick={handlePayment}
+              {/* Credit Type */}
+              <div>
+                <Label className="mb-2 block text-[13px] font-medium text-muted-foreground">크레딧 종류</Label>
+                <RadioGroup
+                  value={creditType}
+                  onValueChange={(v: string) => {
+                    setCreditType(v as 'post' | 'analysis')
+                    setSelectedPackage(0)
+                    setCustomAmount('')
+                  }}
+                  className="grid grid-cols-2 gap-4"
                 >
-                  {processing ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      결제 처리 중...
-                    </>
-                  ) : (
-                    <>₩{formatPrice(getCurrentPrice())} 결제하기</>
-                  )}
-                </Button>
+                  <div>
+                    <RadioGroupItem value="post" id="post" className="peer sr-only" />
+                    <Label
+                      htmlFor="post"
+                      className="flex cursor-pointer flex-col items-center justify-between rounded-lg border bg-card p-4 text-sm transition-colors hover:bg-muted/40 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-accent peer-data-[state=checked]:text-accent-foreground [&:has([data-state=checked])]:border-primary"
+                    >
+                      <FileText className="mb-2 h-5 w-5" />
+                      <span>글 생성</span>
+                    </Label>
+                  </div>
+                  <div>
+                    <RadioGroupItem value="analysis" id="analysis" className="peer sr-only" />
+                    <Label
+                      htmlFor="analysis"
+                      className="flex cursor-pointer flex-col items-center justify-between rounded-lg border bg-card p-4 text-sm transition-colors hover:bg-muted/40 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-accent peer-data-[state=checked]:text-accent-foreground [&:has([data-state=checked])]:border-primary"
+                    >
+                      <Search className="mb-2 h-5 w-5" />
+                      <span>분석</span>
+                    </Label>
+                  </div>
+                </RadioGroup>
+              </div>
 
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Shield className="h-4 w-4" />
-                  <span>안전한 결제가 보장됩니다</span>
+              {/* Package Selection */}
+              <div>
+                <Label className="mb-2 block text-[13px] font-medium text-muted-foreground">수량 선택</Label>
+                <div className="space-y-2">
+                  {CREDIT_PACKAGES[creditType].map((pkg, idx) => (
+                    <div
+                      key={idx}
+                      className={`cursor-pointer rounded-lg border p-4 text-sm transition-colors ${
+                        selectedPackage === idx && !customAmount
+                          ? 'border-primary bg-accent'
+                          : 'hover:bg-muted/40'
+                      }`}
+                      onClick={() => {
+                        setSelectedPackage(idx)
+                        setCustomAmount('')
+                      }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium tabular-nums">{pkg.amount}개</span>
+                          {pkg.discount > 0 && (
+                            <Pill tone="accent">{pkg.discount}% 할인</Pill>
+                          )}
+                        </div>
+                        <span className="font-semibold tabular-nums">₩{formatPrice(pkg.price)}</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              </CardContent>
-            </Card>
-          </div>
+              </div>
+
+              {/* Custom Amount */}
+              <div>
+                <Label htmlFor="custom" className="text-[13px] font-medium text-muted-foreground">직접 입력</Label>
+                <div className="mt-2 flex items-center gap-2">
+                  <Input
+                    id="custom"
+                    type="number"
+                    placeholder="수량 입력"
+                    value={customAmount}
+                    onChange={(e) => setCustomAmount(e.target.value)}
+                    min={1}
+                    className="tabular-nums"
+                  />
+                  <span className="text-sm text-muted-foreground">개</span>
+                </div>
+                {customAmount && (
+                  <p className="mt-1 text-sm tabular-nums text-muted-foreground">
+                    예상 금액: ₩{formatPrice(getCurrentPrice())}
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Payment */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <CreditCard className="h-4 w-4 text-muted-foreground" />
+                결제
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {!tossLoaded ? (
+                <div className="flex h-40 items-center justify-center">
+                  <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
+                </div>
+              ) : (
+                <>
+                  <div id="payment-method" className="min-h-[200px]" />
+                  <div id="agreement" />
+                </>
+              )}
+
+              <div className="rounded-lg border bg-muted/40 p-4">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="tabular-nums">
+                    {creditType === 'post' ? '글 생성' : '분석'} 크레딧 {getCurrentAmount()}개
+                  </span>
+                  <span className="text-lg font-semibold tabular-nums">₩{formatPrice(getCurrentPrice())}</span>
+                </div>
+              </div>
+
+              <Button
+                className="w-full tabular-nums"
+                size="lg"
+                disabled={!tossLoaded || processing || getCurrentPrice() === 0}
+                onClick={handlePayment}
+              >
+                {processing ? (
+                  <>
+                    <Loader2 className="animate-spin" />
+                    결제 처리 중...
+                  </>
+                ) : (
+                  <>₩{formatPrice(getCurrentPrice())} 결제하기</>
+                )}
+              </Button>
+
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Shield className="h-4 w-4" />
+                <span>안전한 결제가 보장됩니다</span>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </>

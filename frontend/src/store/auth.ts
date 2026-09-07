@@ -7,10 +7,25 @@ interface AuthState {
   token: string | null
   isLoading: boolean
   error: string | null
+  /** localStorage 에서 세션을 읽어 왔는지. 이전엔 새로고침마다 user 가 null 로 시작해 대시보드가 로그인으로 튕겼다. */
+  hydrated: boolean
+  hydrate: () => void
   login: (data: LoginRequest) => Promise<void>
   register: (data: RegisterRequest) => Promise<void>
   logout: () => void
   checkAuth: () => Promise<void>
+}
+
+function readStoredSession(): { user: User | null; token: string | null } {
+  if (typeof window === 'undefined') return { user: null, token: null }
+  try {
+    const token = localStorage.getItem('access_token')
+    const raw = localStorage.getItem('user')
+    const user = token && raw ? (JSON.parse(raw) as User) : null
+    return { user, token: user ? token : null }
+  } catch {
+    return { user: null, token: null }
+  }
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -18,6 +33,12 @@ export const useAuthStore = create<AuthState>((set) => ({
   token: null,
   isLoading: false,
   error: null,
+  hydrated: false,
+
+  hydrate: () => {
+    const stored = readStoredSession()
+    set({ ...stored, hydrated: true })
+  },
 
   login: async (data: LoginRequest) => {
     set({ isLoading: true, error: null })

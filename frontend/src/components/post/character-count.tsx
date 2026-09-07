@@ -1,6 +1,6 @@
 'use client'
 
-import { Card, CardContent } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FileText, AlignLeft, Type } from 'lucide-react'
 
 interface CharacterCountProps {
@@ -24,82 +24,43 @@ export function CharacterCount({ analysis }: CharacterCountProps) {
 
   const { character_count, sentence_count, paragraph_count } = analysis
 
+  const stats = [
+    { icon: Type, label: '전체', value: character_count.total.toLocaleString(), hint: '공백 포함' },
+    { icon: Type, label: '순수', value: character_count.no_space.toLocaleString(), hint: '공백 제외' },
+    { icon: AlignLeft, label: '문장', value: sentence_count.toLocaleString(), hint: '개' },
+    { icon: FileText, label: '단락', value: paragraph_count.toLocaleString(), hint: '개' },
+    { icon: Type, label: '줄', value: character_count.lines.toLocaleString(), hint: '개' },
+    {
+      icon: Type,
+      label: '평균',
+      value: (sentence_count > 0 ? Math.round(character_count.no_space / sentence_count) : 0).toLocaleString(),
+      hint: '자/문장',
+    },
+  ]
+
   return (
     <Card>
-      <CardContent className="p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <FileText className="h-4 w-4 text-blue-600" />
-          <h3 className="font-semibold text-sm">글자수 분석</h3>
-        </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-          <div className="p-3 bg-blue-50 rounded-lg">
-            <div className="flex items-center gap-2 mb-1">
-              <Type className="h-3 w-3 text-blue-600" />
-              <p className="text-xs text-gray-600">전체</p>
-            </div>
-            <p className="text-lg font-bold text-blue-600">
-              {character_count.total.toLocaleString()}
-            </p>
-            <p className="text-xs text-gray-500">공백 포함</p>
-          </div>
-
-          <div className="p-3 bg-green-50 rounded-lg">
-            <div className="flex items-center gap-2 mb-1">
-              <Type className="h-3 w-3 text-green-600" />
-              <p className="text-xs text-gray-600">순수</p>
-            </div>
-            <p className="text-lg font-bold text-green-600">
-              {character_count.no_space.toLocaleString()}
-            </p>
-            <p className="text-xs text-gray-500">공백 제외</p>
-          </div>
-
-          <div className="p-3 bg-purple-50 rounded-lg">
-            <div className="flex items-center gap-2 mb-1">
-              <AlignLeft className="h-3 w-3 text-purple-600" />
-              <p className="text-xs text-gray-600">문장</p>
-            </div>
-            <p className="text-lg font-bold text-purple-600">
-              {sentence_count}
-            </p>
-            <p className="text-xs text-gray-500">개</p>
-          </div>
-
-          <div className="p-3 bg-orange-50 rounded-lg">
-            <div className="flex items-center gap-2 mb-1">
-              <FileText className="h-3 w-3 text-orange-600" />
-              <p className="text-xs text-gray-600">단락</p>
-            </div>
-            <p className="text-lg font-bold text-orange-600">
-              {paragraph_count}
-            </p>
-            <p className="text-xs text-gray-500">개</p>
-          </div>
-
-          <div className="p-3 bg-gray-50 rounded-lg">
-            <div className="flex items-center gap-2 mb-1">
-              <Type className="h-3 w-3 text-gray-600" />
-              <p className="text-xs text-gray-600">줄</p>
-            </div>
-            <p className="text-lg font-bold text-gray-600">
-              {character_count.lines}
-            </p>
-            <p className="text-xs text-gray-500">개</p>
-          </div>
-
-          <div className="p-3 bg-indigo-50 rounded-lg">
-            <div className="flex items-center gap-2 mb-1">
-              <Type className="h-3 w-3 text-indigo-600" />
-              <p className="text-xs text-gray-600">평균</p>
-            </div>
-            <p className="text-lg font-bold text-indigo-600">
-              {sentence_count > 0
-                ? Math.round(character_count.no_space / sentence_count)
-                : 0}
-            </p>
-            <p className="text-xs text-gray-500">자/문장</p>
-          </div>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <FileText className="h-4 w-4 text-muted-foreground" />
+          글자수 분석
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+          {stats.map((s) => {
+            const Icon = s.icon
+            return (
+              <div key={s.label} className="rounded-lg border bg-muted/40 p-3">
+                <div className="mb-1 flex items-center gap-1.5 text-[13px] font-medium text-muted-foreground">
+                  <Icon className="h-3 w-3" />
+                  {s.label}
+                </div>
+                <p className="text-xl font-semibold tabular-nums">{s.value}</p>
+                <p className="text-xs text-muted-foreground">{s.hint}</p>
+              </div>
+            )
+          })}
         </div>
       </CardContent>
     </Card>

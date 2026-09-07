@@ -3,7 +3,10 @@
 import { Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { XCircle, CreditCard, ArrowLeft, RefreshCw } from 'lucide-react'
+import { XCircle, ArrowLeft, RefreshCw } from 'lucide-react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Logo } from '@/components/app-shell/logo'
 
 function BillingFailContent() {
   const searchParams = useSearchParams()
@@ -11,48 +14,52 @@ function BillingFailContent() {
   const code = searchParams.get('code')
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="max-w-md w-full mx-4">
-        <div className="bg-white rounded-lg shadow-sm border p-8 text-center">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <XCircle className="w-8 h-8 text-red-600" />
-          </div>
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">카드 등록 실패</h1>
-          <p className="text-gray-600 mb-2">
-            {message || '카드 등록 중 오류가 발생했습니다.'}
-          </p>
-          {code && (
-            <p className="text-sm text-gray-500 mb-6">
-              오류 코드: {code}
-            </p>
-          )}
-
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6 text-left">
-            <p className="text-sm text-amber-800 font-medium mb-2">확인해 주세요</p>
-            <ul className="text-sm text-amber-700 space-y-1">
-              <li>• 카드 정보가 정확한지 확인해 주세요.</li>
-              <li>• 카드 한도가 충분한지 확인해 주세요.</li>
-              <li>• 해외결제 또는 온라인결제가 차단되어 있지 않은지 확인해 주세요.</li>
-            </ul>
-          </div>
-
-          <div className="space-y-3">
-            <Link
-              href="/payment/billing-setup"
-              className="w-full inline-flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-            >
-              <RefreshCw className="w-4 h-4" />
-              다시 시도하기
-            </Link>
-            <Link
-              href="/subscription/manage"
-              className="w-full inline-flex items-center justify-center gap-2 px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              구독 관리로 돌아가기
-            </Link>
-          </div>
+    <div className="flex min-h-screen flex-col items-center justify-center bg-background px-4 py-12">
+      <div className="w-full max-w-sm space-y-6">
+        <div className="flex justify-center">
+          <Logo href="/" />
         </div>
+        <Card>
+          <CardHeader className="items-center text-center">
+            <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-danger-soft text-danger">
+              <XCircle className="h-6 w-6" />
+            </div>
+            <CardTitle>카드 등록 실패</CardTitle>
+            <CardDescription>
+              {message || '카드 등록 중 오류가 발생했습니다.'}
+            </CardDescription>
+            {code && (
+              <p className="text-xs text-muted-foreground">
+                오류 코드: <code className="font-mono">{code}</code>
+              </p>
+            )}
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="rounded-lg bg-warning-soft p-4 text-left text-sm">
+              <p className="mb-2 font-medium text-warning">확인해 주세요</p>
+              <ul className="space-y-1 text-muted-foreground">
+                <li>• 카드 정보가 정확한지 확인해 주세요.</li>
+                <li>• 카드 한도가 충분한지 확인해 주세요.</li>
+                <li>• 해외결제 또는 온라인결제가 차단되어 있지 않은지 확인해 주세요.</li>
+              </ul>
+            </div>
+
+            <div className="space-y-2">
+              <Button asChild className="w-full">
+                <Link href="/payment/billing-setup">
+                  <RefreshCw />
+                  다시 시도하기
+                </Link>
+              </Button>
+              <Button asChild variant="outline" className="w-full">
+                <Link href="/subscription/manage">
+                  <ArrowLeft />
+                  구독 관리로 돌아가기
+                </Link>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   )
@@ -61,8 +68,8 @@ function BillingFailContent() {
 export default function BillingFailPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
       </div>
     }>
       <BillingFailContent />

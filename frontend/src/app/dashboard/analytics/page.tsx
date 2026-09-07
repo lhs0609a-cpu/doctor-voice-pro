@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react'
 import { analyticsAPI } from '@/lib/api'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
+import { PageHeader } from '@/components/app-shell/page-header'
+import { Pill, StatTile, EmptyState } from '@/components/app-shell/ui-kit'
 import {
   LineChart,
   Line,
@@ -80,7 +81,32 @@ interface TrendsData {
   }>
 }
 
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8']
+const CHART = {
+  primary: 'hsl(var(--primary))',
+  secondary: 'hsl(var(--muted-foreground))',
+  success: 'hsl(var(--success))',
+  warning: 'hsl(var(--warning))',
+  danger: 'hsl(var(--danger))',
+  grid: 'hsl(var(--border))',
+}
+
+const AXIS_TICK = { fill: 'hsl(var(--muted-foreground))', fontSize: 12 }
+
+const TOOLTIP_STYLE = {
+  background: 'hsl(var(--card))',
+  border: '1px solid hsl(var(--border))',
+  borderRadius: 10,
+  fontSize: 13,
+}
+
+const LEGEND_STYLE = { fontSize: 12 }
+
+const formatShortDate = (value: string) => {
+  const date = new Date(value)
+  return `${date.getMonth() + 1}/${date.getDate()}`
+}
+
+const formatFullDate = (value: string) => new Date(value).toLocaleDateString('ko-KR')
 
 export default function AnalyticsPage() {
   const [overview, setOverview] = useState<OverviewData | null>(null)
@@ -113,42 +139,44 @@ export default function AnalyticsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">분석 데이터를 불러오는 중...</p>
-        </div>
+      <div className="flex justify-center py-16">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
       </div>
     )
   }
 
   if (!overview || !comparison || !trends) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <p className="text-muted-foreground">데이터를 불러올 수 없습니다.</p>
+      <div className="space-y-6">
+        <PageHeader title="분석" description="포스팅 성과와 통계를 한눈에 확인하세요" />
+        <EmptyState
+          title="데이터를 불러올 수 없습니다"
+          description="잠시 후 다시 시도해 주세요."
+          action={<Button onClick={loadData}>다시 불러오기</Button>}
+        />
       </div>
     )
   }
 
   // Prepare pie chart data
   const statusData = [
-    { name: '작성중', value: overview.status_breakdown.draft, color: '#FFBB28' },
-    { name: '발행됨', value: overview.status_breakdown.published, color: '#00C49F' },
-    { name: '보관됨', value: overview.status_breakdown.archived || 0, color: '#8884D8' },
+    { name: '작성중', value: overview.status_breakdown.draft, color: CHART.warning },
+    { name: '발행됨', value: overview.status_breakdown.published, color: CHART.success },
+    { name: '보관됨', value: overview.status_breakdown.archived || 0, color: CHART.secondary },
   ].filter((item) => item.value > 0)
 
   const renderChangeIndicator = (change: number) => {
     if (change > 0) {
       return (
-        <span className="flex items-center text-green-600 text-sm">
-          <TrendingUp className="w-4 h-4 mr-1" />
+        <span className="flex items-center text-sm tabular-nums text-success">
+          <TrendingUp className="mr-1 h-4 w-4" />
           {change.toFixed(1)}%
         </span>
       )
     } else if (change < 0) {
       return (
-        <span className="flex items-center text-red-600 text-sm">
-          <TrendingDown className="w-4 h-4 mr-1" />
+        <span className="flex items-center text-sm tabular-nums text-danger">
+          <TrendingDown className="mr-1 h-4 w-4" />
           {Math.abs(change).toFixed(1)}%
         </span>
       )
@@ -157,89 +185,58 @@ export default function AnalyticsPage() {
   }
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">분석 대시보드</h1>
-          <p className="text-muted-foreground mt-1">
-            포스팅 성과 및 통계를 한눈에 확인하세요
-          </p>
-        </div>
-        <Button onClick={loadData} variant="outline">
-          새로고침
-        </Button>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="분석"
+        description="포스팅 성과와 통계를 한눈에 확인하세요"
+        actions={
+          <Button onClick={loadData} variant="outline">
+            새로고침
+          </Button>
+        }
+      />
 
       {/* Overview Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">전체 포스팅</CardTitle>
-            <FileText className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{overview.total_posts}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              이번 달 {overview.posts_this_month}개
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">평균 설득력</CardTitle>
-            <Target className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{overview.average_persuasion_score}/100</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              전체 포스팅 평균
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">시간 절약</CardTitle>
-            <Clock className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {Math.floor(overview.time_saved_minutes / 60)}시간
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {overview.time_saved_minutes % 60}분
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">이번 주</CardTitle>
-            <Calendar className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{overview.posts_this_week}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              최근 7일간 작성
-            </p>
-          </CardContent>
-        </Card>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <StatTile
+          label="전체 포스팅"
+          value={overview.total_posts}
+          hint={`이번 달 ${overview.posts_this_month}개`}
+          icon={<FileText className="h-4 w-4" />}
+        />
+        <StatTile
+          label="평균 설득력"
+          value={`${overview.average_persuasion_score}/100`}
+          hint="전체 포스팅 평균"
+          icon={<Target className="h-4 w-4" />}
+        />
+        <StatTile
+          label="시간 절약"
+          value={`${Math.floor(overview.time_saved_minutes / 60)}시간`}
+          hint={`${overview.time_saved_minutes % 60}분`}
+          icon={<Clock className="h-4 w-4" />}
+        />
+        <StatTile
+          label="이번 주"
+          value={overview.posts_this_week}
+          hint="최근 7일간 작성"
+          icon={<Calendar className="h-4 w-4" />}
+        />
       </div>
 
       {/* Month Comparison */}
       <Card>
         <CardHeader>
           <CardTitle>월별 비교</CardTitle>
-          <CardDescription>이번 달과 지난 달의 성과 비교</CardDescription>
+          <CardDescription>이번 달과 지난 달의 성과를 비교합니다</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="space-y-2">
-              <p className="text-sm font-medium text-muted-foreground">포스팅 수</p>
-              <div className="flex items-baseline space-x-2">
-                <span className="text-3xl font-bold">{comparison.this_month.count}</span>
-                <span className="text-sm text-muted-foreground">
+              <p className="text-[13px] font-medium text-muted-foreground">포스팅 수</p>
+              <div className="flex items-baseline gap-2">
+                <span className="kpi">{comparison.this_month.count}</span>
+                <span className="text-sm tabular-nums text-muted-foreground">
                   / {comparison.last_month.count} (지난 달)
                 </span>
               </div>
@@ -247,12 +244,10 @@ export default function AnalyticsPage() {
             </div>
 
             <div className="space-y-2">
-              <p className="text-sm font-medium text-muted-foreground">평균 설득력</p>
-              <div className="flex items-baseline space-x-2">
-                <span className="text-3xl font-bold">
-                  {comparison.this_month.avg_score.toFixed(1)}
-                </span>
-                <span className="text-sm text-muted-foreground">
+              <p className="text-[13px] font-medium text-muted-foreground">평균 설득력</p>
+              <div className="flex items-baseline gap-2">
+                <span className="kpi">{comparison.this_month.avg_score.toFixed(1)}</span>
+                <span className="text-sm tabular-nums text-muted-foreground">
                   / {comparison.last_month.avg_score.toFixed(1)} (지난 달)
                 </span>
               </div>
@@ -260,10 +255,10 @@ export default function AnalyticsPage() {
             </div>
 
             <div className="space-y-2">
-              <p className="text-sm font-medium text-muted-foreground">발행된 포스팅</p>
-              <div className="flex items-baseline space-x-2">
-                <span className="text-3xl font-bold">{comparison.this_month.published}</span>
-                <span className="text-sm text-muted-foreground">
+              <p className="text-[13px] font-medium text-muted-foreground">발행된 포스팅</p>
+              <div className="flex items-baseline gap-2">
+                <span className="kpi">{comparison.this_month.published}</span>
+                <span className="text-sm tabular-nums text-muted-foreground">
                   / {comparison.last_month.published} (지난 달)
                 </span>
               </div>
@@ -274,7 +269,7 @@ export default function AnalyticsPage() {
       </Card>
 
       {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Status Breakdown */}
         <Card>
           <CardHeader>
@@ -291,14 +286,15 @@ export default function AnalyticsPage() {
                   labelLine={false}
                   label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
                   outerRadius={80}
-                  fill="#8884d8"
+                  fill={CHART.primary}
+                  stroke="hsl(var(--card))"
                   dataKey="value"
                 >
                   {statusData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.color} />
                   ))}
                 </Pie>
-                <Tooltip />
+                <Tooltip contentStyle={TOOLTIP_STYLE} />
               </PieChart>
             </ResponsiveContainer>
           </CardContent>
@@ -307,8 +303,8 @@ export default function AnalyticsPage() {
         {/* Top Keywords */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center">
-              <Hash className="w-5 h-5 mr-2" />
+            <CardTitle className="flex items-center gap-2">
+              <Hash className="h-4 w-4 text-muted-foreground" />
               인기 키워드
             </CardTitle>
             <CardDescription>가장 많이 사용된 키워드 Top 10</CardDescription>
@@ -317,17 +313,15 @@ export default function AnalyticsPage() {
             <div className="space-y-2">
               {overview.top_keywords.slice(0, 10).map((item, index) => (
                 <div key={index} className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <Badge variant={index < 3 ? 'default' : 'secondary'}>
-                      {index + 1}
-                    </Badge>
+                  <div className="flex items-center gap-2">
+                    <Pill tone={index < 3 ? 'accent' : 'muted'}>{index + 1}</Pill>
                     <span className="text-sm font-medium">{item.keyword}</span>
                   </div>
-                  <span className="text-sm text-muted-foreground">{item.count}회</span>
+                  <span className="text-sm tabular-nums text-muted-foreground">{item.count}회</span>
                 </div>
               ))}
               {overview.top_keywords.length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-4">
+                <p className="py-4 text-center text-sm text-muted-foreground">
                   아직 키워드 데이터가 없습니다
                 </p>
               )}
@@ -339,30 +333,30 @@ export default function AnalyticsPage() {
       {/* Trends Section */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <CardTitle>설득력 트렌드</CardTitle>
               <CardDescription>
                 최근 {trendDays}일간의 설득력 점수 변화
               </CardDescription>
             </div>
-            <div className="flex space-x-2">
+            <div className="flex gap-2">
               <Button
-                variant={trendDays === 7 ? 'default' : 'outline'}
+                variant={trendDays === 7 ? 'secondary' : 'ghost'}
                 size="sm"
                 onClick={() => setTrendDays(7)}
               >
                 7일
               </Button>
               <Button
-                variant={trendDays === 30 ? 'default' : 'outline'}
+                variant={trendDays === 30 ? 'secondary' : 'ghost'}
                 size="sm"
                 onClick={() => setTrendDays(30)}
               >
                 30일
               </Button>
               <Button
-                variant={trendDays === 90 ? 'default' : 'outline'}
+                variant={trendDays === 90 ? 'secondary' : 'ghost'}
                 size="sm"
                 onClick={() => setTrendDays(90)}
               >
@@ -375,44 +369,42 @@ export default function AnalyticsPage() {
           <div className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={trends.score_trend}>
-                <CartesianGrid strokeDasharray="3 3" />
+                <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} vertical={false} />
                 <XAxis
                   dataKey="date"
-                  tickFormatter={(value) => {
-                    const date = new Date(value)
-                    return `${date.getMonth() + 1}/${date.getDate()}`
-                  }}
+                  tickFormatter={formatShortDate}
+                  tick={AXIS_TICK}
+                  axisLine={{ stroke: CHART.grid }}
+                  tickLine={false}
                 />
-                <YAxis domain={[0, 100]} />
-                <Tooltip
-                  labelFormatter={(value) => {
-                    const date = new Date(value)
-                    return date.toLocaleDateString('ko-KR')
-                  }}
-                />
-                <Legend />
+                <YAxis domain={[0, 100]} tick={AXIS_TICK} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={formatFullDate} />
+                <Legend wrapperStyle={LEGEND_STYLE} />
                 <Line
                   type="monotone"
                   dataKey="average_score"
-                  stroke="#0088FE"
+                  stroke={CHART.primary}
                   name="평균 점수"
                   strokeWidth={2}
+                  dot={false}
                 />
                 <Line
                   type="monotone"
                   dataKey="max_score"
-                  stroke="#00C49F"
+                  stroke={CHART.success}
                   name="최고 점수"
                   strokeWidth={1}
                   strokeDasharray="5 5"
+                  dot={false}
                 />
                 <Line
                   type="monotone"
                   dataKey="min_score"
-                  stroke="#FF8042"
+                  stroke={CHART.warning}
                   name="최저 점수"
                   strokeWidth={1}
                   strokeDasharray="5 5"
+                  dot={false}
                 />
               </LineChart>
             </ResponsiveContainer>
@@ -432,22 +424,21 @@ export default function AnalyticsPage() {
           <div className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={trends.volume_trend}>
-                <CartesianGrid strokeDasharray="3 3" />
+                <CartesianGrid strokeDasharray="3 3" stroke={CHART.grid} vertical={false} />
                 <XAxis
                   dataKey="date"
-                  tickFormatter={(value) => {
-                    const date = new Date(value)
-                    return `${date.getMonth() + 1}/${date.getDate()}`
-                  }}
+                  tickFormatter={formatShortDate}
+                  tick={AXIS_TICK}
+                  axisLine={{ stroke: CHART.grid }}
+                  tickLine={false}
                 />
-                <YAxis />
+                <YAxis tick={AXIS_TICK} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip
-                  labelFormatter={(value) => {
-                    const date = new Date(value)
-                    return date.toLocaleDateString('ko-KR')
-                  }}
+                  contentStyle={TOOLTIP_STYLE}
+                  cursor={{ fill: 'hsl(var(--muted))' }}
+                  labelFormatter={formatFullDate}
                 />
-                <Bar dataKey="count" fill="#0088FE" name="포스팅 수" />
+                <Bar dataKey="count" fill={CHART.primary} name="포스팅 수" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -455,30 +446,30 @@ export default function AnalyticsPage() {
       </Card>
 
       {/* Summary Card */}
-      <Card className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950 dark:to-indigo-950">
+      <Card>
         <CardHeader>
-          <CardTitle className="flex items-center">
-            <Award className="w-5 h-5 mr-2" />
+          <CardTitle className="flex items-center gap-2">
+            <Award className="h-4 w-4 text-muted-foreground" />
             요약
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>
-              <p className="text-sm text-muted-foreground mb-2">분석 기간</p>
-              <p className="text-lg font-semibold">최근 {trendDays}일</p>
+              <p className="mb-1 text-[13px] font-medium text-muted-foreground">분석 기간</p>
+              <p className="text-base font-semibold tabular-nums">최근 {trendDays}일</p>
             </div>
             <div>
-              <p className="text-sm text-muted-foreground mb-2">일평균 작성량</p>
-              <p className="text-lg font-semibold">{trends.daily_average.toFixed(1)}개</p>
+              <p className="mb-1 text-[13px] font-medium text-muted-foreground">일평균 작성량</p>
+              <p className="text-base font-semibold tabular-nums">{trends.daily_average.toFixed(1)}개</p>
             </div>
             <div>
-              <p className="text-sm text-muted-foreground mb-2">총 작성 포스팅</p>
-              <p className="text-lg font-semibold">{trends.total_posts}개</p>
+              <p className="mb-1 text-[13px] font-medium text-muted-foreground">총 작성 포스팅</p>
+              <p className="text-base font-semibold tabular-nums">{trends.total_posts}개</p>
             </div>
             <div>
-              <p className="text-sm text-muted-foreground mb-2">전체 평균 설득력</p>
-              <p className="text-lg font-semibold">
+              <p className="mb-1 text-[13px] font-medium text-muted-foreground">전체 평균 설득력</p>
+              <p className="text-base font-semibold tabular-nums">
                 {overview.average_persuasion_score}/100
               </p>
             </div>

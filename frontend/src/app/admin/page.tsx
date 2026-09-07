@@ -4,6 +4,11 @@ import { useEffect, useState } from 'react'
 import { adminAPI, APIKeyInfo, APIKeyStatus, subscriptionAPI, type Plan } from '@/lib/api'
 import type { User } from '@/types'
 import { useRouter } from 'next/navigation'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { PageHeader } from '@/components/app-shell/page-header'
+import { Pill, StatTile, EmptyState } from '@/components/app-shell/ui-kit'
 
 // 크레딧 팩 정보 (백엔드와 동일)
 const CREDIT_PACKS = {
@@ -322,10 +327,10 @@ export default function AdminPage() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'connected': return 'bg-green-500'
-      case 'failed': return 'bg-red-500'
-      case 'not_configured': return 'bg-gray-400'
-      default: return 'bg-yellow-500'
+      case 'connected': return 'bg-success'
+      case 'failed': return 'bg-danger'
+      case 'not_configured': return 'bg-muted-foreground/40'
+      default: return 'bg-warning'
     }
   }
 
@@ -459,99 +464,57 @@ export default function AdminPage() {
 
   if (loading && users.length === 0) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">로딩 중...</p>
-        </div>
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
       </div>
     )
   }
 
+  const tabClass = (active: boolean) =>
+    `-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+      active ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
+    }`
+
+  const chipClass = (active: boolean) =>
+    `rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors ${
+      active ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+    }`
+
+  const th = 'px-4 py-2.5 text-left text-[12px] font-medium uppercase tracking-wide text-muted-foreground'
+  const thRight = 'px-4 py-2.5 text-right text-[12px] font-medium uppercase tracking-wide text-muted-foreground'
+
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="container mx-auto px-4 py-8">
-        <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
-          <h1 className="text-3xl font-bold mb-2">관리자 페이지</h1>
-          <p className="text-gray-600">사용자 및 API 키 관리</p>
-        </div>
+    <div className="min-h-screen bg-background">
+      <div className="mx-auto max-w-[1200px] space-y-6 px-4 py-8">
+        <PageHeader title="관리자" description="사용자, API 키, 시스템 정보를 관리합니다." />
 
         {/* 메인 탭 */}
-        <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
-          <div className="flex gap-2 border-b pb-4 mb-4">
-            <button
-              onClick={() => setActiveTab('users')}
-              className={`px-4 py-2 rounded-md font-medium ${
-                activeTab === 'users'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
+        <div className="space-y-4">
+          <div className="flex gap-1 overflow-x-auto border-b">
+            <button onClick={() => setActiveTab('users')} className={tabClass(activeTab === 'users')}>
               사용자 관리
             </button>
-            <button
-              onClick={() => setActiveTab('apikeys')}
-              className={`px-4 py-2 rounded-md font-medium ${
-                activeTab === 'apikeys'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
+            <button onClick={() => setActiveTab('apikeys')} className={tabClass(activeTab === 'apikeys')}>
               API 키 관리
             </button>
-            <button
-              onClick={() => setActiveTab('system')}
-              className={`px-4 py-2 rounded-md font-medium ${
-                activeTab === 'system'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
+            <button onClick={() => setActiveTab('system')} className={tabClass(activeTab === 'system')}>
               시스템 정보
             </button>
-            <button
-              onClick={() => setActiveTab('legal')}
-              className={`px-4 py-2 rounded-md font-medium ${
-                activeTab === 'legal'
-                  ? 'bg-red-600 text-white'
-                  : 'bg-red-50 text-red-700 hover:bg-red-100'
-              }`}
-            >
+            <button onClick={() => setActiveTab('legal')} className={tabClass(activeTab === 'legal')}>
               법적 리스크
             </button>
           </div>
 
           {/* 사용자 관리 탭 - 필터 */}
           {activeTab === 'users' && (
-            <div className="flex gap-2">
-              <button
-                onClick={() => setFilter('all')}
-                className={`px-4 py-2 rounded-md ${
-                  filter === 'all'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
+            <div className="flex gap-1">
+              <button onClick={() => setFilter('all')} className={chipClass(filter === 'all')}>
                 전체
               </button>
-              <button
-                onClick={() => setFilter('pending')}
-                className={`px-4 py-2 rounded-md ${
-                  filter === 'pending'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
+              <button onClick={() => setFilter('pending')} className={chipClass(filter === 'pending')}>
                 승인 대기
               </button>
-              <button
-                onClick={() => setFilter('approved')}
-                className={`px-4 py-2 rounded-md ${
-                  filter === 'approved'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
+              <button onClick={() => setFilter('approved')} className={chipClass(filter === 'approved')}>
                 승인됨
               </button>
             </div>
@@ -566,81 +529,84 @@ export default function AdminPage() {
               const info = providerInfo[provider]
 
               return (
-                <div key={provider} className="bg-white rounded-lg shadow-sm p-6">
-                  <div className="flex items-center justify-between mb-4">
+                <Card key={provider}>
+                  <CardHeader className="flex-row items-center justify-between space-y-0">
                     <div className="flex items-center gap-3">
-                      <h3 className="text-lg font-semibold">{info.name}</h3>
+                      <CardTitle>{info.name}</CardTitle>
                       {/* 연결 상태 표시등 */}
                       <div className="flex items-center gap-2">
-                        <div className={`w-3 h-3 rounded-full ${getStatusColor(status?.last_status || 'not_configured')} ${status?.last_status === 'connected' ? 'animate-pulse' : ''}`}></div>
-                        <span className={`text-sm ${status?.last_status === 'connected' ? 'text-green-600' : status?.last_status === 'failed' ? 'text-red-600' : 'text-gray-500'}`}>
+                        <div className={`h-2.5 w-2.5 rounded-full ${getStatusColor(status?.last_status || 'not_configured')} ${status?.last_status === 'connected' ? 'animate-pulse' : ''}`}></div>
+                        <span className={`text-sm ${status?.last_status === 'connected' ? 'text-success' : status?.last_status === 'failed' ? 'text-danger' : 'text-muted-foreground'}`}>
                           {getStatusText(status?.last_status || 'not_configured')}
                         </span>
                       </div>
                     </div>
                     {status?.configured && (
-                      <div className="text-sm text-gray-500">
-                        키: {status.api_key_preview}
+                      <div className="text-sm text-muted-foreground">
+                        키: <span className="font-mono">{status.api_key_preview}</span>
                       </div>
                     )}
-                  </div>
-
-                  {/* API 키 입력 폼 */}
-                  <div className="flex gap-2 mb-4">
-                    <input
-                      type="password"
-                      value={apiKeyInputs[provider]}
-                      onChange={(e) => setApiKeyInputs(prev => ({ ...prev, [provider]: e.target.value }))}
-                      placeholder={`${info.name} API 키 입력 (${info.prefix}...)`}
-                      className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                    <button
-                      onClick={() => handleSaveAPIKey(provider)}
-                      disabled={savingProvider === provider}
-                      className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed min-w-[80px]"
-                    >
-                      {savingProvider === provider ? '저장 중...' : '저장'}
-                    </button>
-                  </div>
-
-                  {/* 버튼들 */}
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleTestAPIKey(provider)}
-                      disabled={!status?.configured || testingProvider === provider}
-                      className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {testingProvider === provider ? '테스트 중...' : '연결 테스트'}
-                    </button>
-                    {status?.configured && (
-                      <button
-                        onClick={() => handleDeleteAPIKey(provider)}
-                        className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {/* API 키 입력 폼 */}
+                    <div className="flex gap-2">
+                      <Input
+                        type="password"
+                        value={apiKeyInputs[provider]}
+                        onChange={(e) => setApiKeyInputs(prev => ({ ...prev, [provider]: e.target.value }))}
+                        placeholder={`${info.name} API 키 입력 (${info.prefix}...)`}
+                        className="flex-1"
+                      />
+                      <Button
+                        onClick={() => handleSaveAPIKey(provider)}
+                        disabled={savingProvider === provider}
+                        className="min-w-[80px]"
                       >
-                        삭제
-                      </button>
-                    )}
-                  </div>
+                        {savingProvider === provider ? '저장 중...' : '저장'}
+                      </Button>
+                    </div>
 
-                  {/* 마지막 확인 시간 및 에러 메시지 */}
-                  {status?.last_checked_at && (
-                    <div className="mt-3 text-sm text-gray-500">
-                      마지막 확인: {new Date(status.last_checked_at).toLocaleString('ko-KR')}
+                    {/* 버튼들 */}
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleTestAPIKey(provider)}
+                        disabled={!status?.configured || testingProvider === provider}
+                      >
+                        {testingProvider === provider ? '테스트 중...' : '연결 테스트'}
+                      </Button>
+                      {status?.configured && (
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => handleDeleteAPIKey(provider)}
+                        >
+                          삭제
+                        </Button>
+                      )}
                     </div>
-                  )}
-                  {status?.last_error && (
-                    <div className="mt-2 text-sm text-red-600 bg-red-50 p-2 rounded">
-                      {status.last_error}
-                    </div>
-                  )}
-                </div>
+
+                    {/* 마지막 확인 시간 및 에러 메시지 */}
+                    {status?.last_checked_at && (
+                      <div className="text-sm text-muted-foreground">
+                        마지막 확인: {new Date(status.last_checked_at).toLocaleString('ko-KR')}
+                      </div>
+                    )}
+                    {status?.last_error && (
+                      <div className="rounded-lg bg-danger-soft p-3 text-sm text-danger">
+                        {status.last_error}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
               )
             })}
 
             {/* 안내 메시지 */}
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h4 className="font-semibold text-blue-800 mb-2">API 키 안내</h4>
-              <ul className="text-sm text-blue-700 space-y-1">
+            <div className="rounded-lg bg-accent p-4 text-accent-foreground">
+              <h4 className="mb-2 text-sm font-semibold">API 키 안내</h4>
+              <ul className="space-y-1 text-sm text-muted-foreground">
                 <li>- Claude API 키는 Anthropic Console에서 발급받을 수 있습니다.</li>
                 <li>- GPT API 키는 OpenAI Platform에서 발급받을 수 있습니다.</li>
                 <li>- Gemini API 키는 Google AI Studio에서 발급받을 수 있습니다.</li>
@@ -654,200 +620,213 @@ export default function AdminPage() {
         {activeTab === 'system' && (
           <div className="space-y-6">
             {/* 백엔드 연결 상태 */}
-            <div className="bg-white rounded-lg shadow-sm p-6">
-              <h3 className="text-lg font-semibold mb-4">백엔드 연결 상태</h3>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <div className={`w-3 h-3 rounded-full ${
-                    backendStatus === 'connected' ? 'bg-green-500 animate-pulse' :
-                    backendStatus === 'disconnected' ? 'bg-red-500' : 'bg-yellow-500 animate-pulse'
-                  }`}></div>
-                  <span className={`font-medium ${
-                    backendStatus === 'connected' ? 'text-green-600' :
-                    backendStatus === 'disconnected' ? 'text-red-600' : 'text-yellow-600'
-                  }`}>
-                    {backendStatus === 'connected' ? '연결됨' :
-                     backendStatus === 'disconnected' ? '연결 안됨' : '확인 중...'}
-                  </span>
+            <Card>
+              <CardHeader>
+                <CardTitle>백엔드 연결 상태</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap items-center gap-4 text-sm">
+                  <div className="flex items-center gap-2">
+                    <div className={`h-2.5 w-2.5 rounded-full ${
+                      backendStatus === 'connected' ? 'bg-success animate-pulse' :
+                      backendStatus === 'disconnected' ? 'bg-danger' : 'bg-warning animate-pulse'
+                    }`}></div>
+                    <span className={`font-medium ${
+                      backendStatus === 'connected' ? 'text-success' :
+                      backendStatus === 'disconnected' ? 'text-danger' : 'text-warning'
+                    }`}>
+                      {backendStatus === 'connected' ? '연결됨' :
+                       backendStatus === 'disconnected' ? '연결 안됨' : '확인 중...'}
+                    </span>
+                  </div>
+                  <span className="text-muted-foreground">|</span>
+                  <span className="font-mono text-sm text-muted-foreground">{backendUrl}</span>
+                  <Button variant="ghost" size="sm" onClick={loadSystemInfo} className="ml-auto">
+                    새로고침
+                  </Button>
                 </div>
-                <span className="text-gray-500">|</span>
-                <span className="text-sm text-gray-600 font-mono">{backendUrl}</span>
-                <button
-                  onClick={loadSystemInfo}
-                  className="ml-auto px-3 py-1 bg-gray-100 hover:bg-gray-200 rounded text-sm"
-                >
-                  새로고침
-                </button>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
 
             {/* AI 모델별 비용 */}
-            <div className="bg-white rounded-lg shadow-sm p-6">
-              <h3 className="text-lg font-semibold mb-4">AI 모델별 비용 (1건당 예상)</h3>
-              {aiPricing?.pricing ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>AI 모델별 비용 (1건당 예상)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {aiPricing?.pricing ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="border-b">
+                        <tr>
+                          <th className={th}>모델</th>
+                          <th className={th}>제공사</th>
+                          <th className={thRight}>입력 (100만 토큰)</th>
+                          <th className={thRight}>출력 (100만 토큰)</th>
+                          <th className={thRight}>글 1건 예상 비용</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {aiPricing.pricing.map((model: any) => (
+                          <tr key={model.model_id} className="hover:bg-muted/40">
+                            <td className="px-4 py-2.5 font-medium">{model.model_id}</td>
+                            <td className="px-4 py-2.5 text-muted-foreground">{model.provider}</td>
+                            <td className="px-4 py-2.5 text-right tabular-nums">${model.input_price_per_1m}</td>
+                            <td className="px-4 py-2.5 text-right tabular-nums">${model.output_price_per_1m}</td>
+                            <td className="px-4 py-2.5 text-right font-semibold tabular-nums text-primary">
+                              ₩{model.estimated_cost_per_post_krw?.toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">AI 비용 정보를 불러오는 중...</p>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* 구독 플랜 정보 */}
+            <Card>
+              <CardHeader>
+                <CardTitle>구독 플랜 가격</CardTitle>
+              </CardHeader>
+              <CardContent>
                 <div className="overflow-x-auto">
-                  <table className="w-full">
-                    <thead className="bg-gray-50 border-b">
+                  <table className="w-full text-sm">
+                    <thead className="border-b">
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">모델</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">제공사</th>
-                        <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">입력 (100만 토큰)</th>
-                        <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">출력 (100만 토큰)</th>
-                        <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">글 1건 예상 비용</th>
+                        <th className={th}>플랜</th>
+                        <th className={thRight}>월간 가격</th>
+                        <th className={thRight}>연간 가격</th>
+                        <th className={thRight}>글 생성/월</th>
+                        <th className={thRight}>분석/월</th>
+                        <th className={thRight}>추가 글 단가</th>
+                        <th className={thRight}>추가 분석 단가</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-200">
-                      {aiPricing.pricing.map((model: any) => (
-                        <tr key={model.model_id} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 text-sm font-medium">{model.model_id}</td>
-                          <td className="px-4 py-3 text-sm text-gray-600">{model.provider}</td>
-                          <td className="px-4 py-3 text-sm text-right">${model.input_price_per_1m}</td>
-                          <td className="px-4 py-3 text-sm text-right">${model.output_price_per_1m}</td>
-                          <td className="px-4 py-3 text-sm text-right font-semibold text-blue-600">
-                            ₩{model.estimated_cost_per_post_krw?.toLocaleString()}
+                    <tbody className="divide-y">
+                      {plans.map((plan) => (
+                        <tr key={plan.id} className="hover:bg-muted/40">
+                          <td className="px-4 py-2.5 font-medium">
+                            {plan.name}
+                            {plan.id === 'pro' && (
+                              <Pill tone="accent" className="ml-2">추천</Pill>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 text-right tabular-nums">
+                            {plan.price_monthly === 0 ? '무료' : `₩${plan.price_monthly.toLocaleString()}`}
+                          </td>
+                          <td className="px-4 py-2.5 text-right tabular-nums">
+                            {plan.price_yearly === 0 ? '-' : `₩${plan.price_yearly.toLocaleString()}`}
+                          </td>
+                          <td className="px-4 py-2.5 text-right tabular-nums">
+                            {plan.posts_per_month === -1 ? '무제한' : plan.posts_per_month}
+                          </td>
+                          <td className="px-4 py-2.5 text-right tabular-nums">
+                            {plan.analysis_per_month === -1 ? '무제한' : plan.analysis_per_month}
+                          </td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-warning">
+                            ₩{plan.extra_post_price?.toLocaleString() || '-'}
+                          </td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-warning">
+                            ₩{plan.extra_analysis_price?.toLocaleString() || '-'}
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-              ) : (
-                <p className="text-gray-500">AI 비용 정보를 불러오는 중...</p>
-              )}
-            </div>
-
-            {/* 구독 플랜 정보 */}
-            <div className="bg-white rounded-lg shadow-sm p-6">
-              <h3 className="text-lg font-semibold mb-4">구독 플랜 가격</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-50 border-b">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">플랜</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">월간 가격</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">연간 가격</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">글 생성/월</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">분석/월</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">추가 글 단가</th>
-                      <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">추가 분석 단가</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {plans.map((plan) => (
-                      <tr key={plan.id} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 text-sm font-medium">
-                          {plan.name}
-                          {plan.id === 'pro' && (
-                            <span className="ml-2 px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">추천</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right">
-                          {plan.price_monthly === 0 ? '무료' : `₩${plan.price_monthly.toLocaleString()}`}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right">
-                          {plan.price_yearly === 0 ? '-' : `₩${plan.price_yearly.toLocaleString()}`}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right">
-                          {plan.posts_per_month === -1 ? '무제한' : plan.posts_per_month}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right">
-                          {plan.analysis_per_month === -1 ? '무제한' : plan.analysis_per_month}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right text-orange-600">
-                          ₩{plan.extra_post_price?.toLocaleString() || '-'}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right text-orange-600">
-                          ₩{plan.extra_analysis_price?.toLocaleString() || '-'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
 
             {/* 크레딧 팩 가격 */}
-            <div className="bg-white rounded-lg shadow-sm p-6">
-              <h3 className="text-lg font-semibold mb-4">크레딧 팩 가격</h3>
-              <div className="grid md:grid-cols-2 gap-6">
-                {/* 글 생성 크레딧 */}
-                <div>
-                  <h4 className="font-medium text-gray-700 mb-3">글 생성 크레딧</h4>
-                  <div className="space-y-2">
-                    {Object.values(CREDIT_PACKS)
-                      .filter(pack => pack.credit_type === 'post')
-                      .map(pack => (
-                        <div key={pack.id} className="flex justify-between items-center p-3 bg-gray-50 rounded">
-                          <div>
-                            <span className="font-medium">{pack.amount}개</span>
-                            {(pack as any).discount_rate && (
-                              <span className="ml-2 text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded">
-                                {(pack as any).discount_rate}% 할인
+            <Card>
+              <CardHeader>
+                <CardTitle>크레딧 팩 가격</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {/* 글 생성 크레딧 */}
+                  <div>
+                    <h4 className="mb-2 text-[13px] font-medium text-muted-foreground">글 생성 크레딧</h4>
+                    <div className="space-y-2">
+                      {Object.values(CREDIT_PACKS)
+                        .filter(pack => pack.credit_type === 'post')
+                        .map(pack => (
+                          <div key={pack.id} className="flex items-center justify-between rounded-lg border bg-muted/40 p-3 text-sm">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium tabular-nums">{pack.amount}개</span>
+                              {(pack as any).discount_rate && (
+                                <Pill tone="accent">{(pack as any).discount_rate}% 할인</Pill>
+                              )}
+                            </div>
+                            <div className="text-right tabular-nums">
+                              <span className="font-semibold">₩{pack.price.toLocaleString()}</span>
+                              <span className="ml-2 text-xs text-muted-foreground">
+                                (개당 ₩{Math.round(pack.price / pack.amount).toLocaleString()})
                               </span>
-                            )}
+                            </div>
                           </div>
-                          <div className="text-right">
-                            <span className="font-semibold">₩{pack.price.toLocaleString()}</span>
-                            <span className="text-xs text-gray-500 ml-2">
-                              (개당 ₩{Math.round(pack.price / pack.amount).toLocaleString()})
-                            </span>
-                          </div>
-                        </div>
-                      ))}
+                        ))}
+                    </div>
                   </div>
-                </div>
 
-                {/* 분석 크레딧 */}
-                <div>
-                  <h4 className="font-medium text-gray-700 mb-3">분석 크레딧</h4>
-                  <div className="space-y-2">
-                    {Object.values(CREDIT_PACKS)
-                      .filter(pack => pack.credit_type === 'analysis')
-                      .map(pack => (
-                        <div key={pack.id} className="flex justify-between items-center p-3 bg-gray-50 rounded">
-                          <div>
-                            <span className="font-medium">{pack.amount}개</span>
-                            {(pack as any).discount_rate && (
-                              <span className="ml-2 text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded">
-                                {(pack as any).discount_rate}% 할인
+                  {/* 분석 크레딧 */}
+                  <div>
+                    <h4 className="mb-2 text-[13px] font-medium text-muted-foreground">분석 크레딧</h4>
+                    <div className="space-y-2">
+                      {Object.values(CREDIT_PACKS)
+                        .filter(pack => pack.credit_type === 'analysis')
+                        .map(pack => (
+                          <div key={pack.id} className="flex items-center justify-between rounded-lg border bg-muted/40 p-3 text-sm">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium tabular-nums">{pack.amount}개</span>
+                              {(pack as any).discount_rate && (
+                                <Pill tone="accent">{(pack as any).discount_rate}% 할인</Pill>
+                              )}
+                            </div>
+                            <div className="text-right tabular-nums">
+                              <span className="font-semibold">₩{pack.price.toLocaleString()}</span>
+                              <span className="ml-2 text-xs text-muted-foreground">
+                                (개당 ₩{Math.round(pack.price / pack.amount).toLocaleString()})
                               </span>
-                            )}
+                            </div>
                           </div>
-                          <div className="text-right">
-                            <span className="font-semibold">₩{pack.price.toLocaleString()}</span>
-                            <span className="text-xs text-gray-500 ml-2">
-                              (개당 ₩{Math.round(pack.price / pack.amount).toLocaleString()})
-                            </span>
-                          </div>
-                        </div>
-                      ))}
+                        ))}
+                    </div>
                   </div>
                 </div>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
 
             {/* 환경 정보 */}
-            <div className="bg-white rounded-lg shadow-sm p-6">
-              <h3 className="text-lg font-semibold mb-4">환경 정보</h3>
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div className="p-3 bg-gray-50 rounded">
-                  <span className="text-gray-500">프론트엔드:</span>
-                  <span className="ml-2 font-mono">{typeof window !== 'undefined' ? window.location.origin : '-'}</span>
+            <Card>
+              <CardHeader>
+                <CardTitle>환경 정보</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-4 text-sm sm:grid-cols-2">
+                  <div className="rounded-lg border bg-muted/40 p-3">
+                    <span className="text-muted-foreground">프론트엔드:</span>
+                    <span className="ml-2 font-mono">{typeof window !== 'undefined' ? window.location.origin : '-'}</span>
+                  </div>
+                  <div className="rounded-lg border bg-muted/40 p-3">
+                    <span className="text-muted-foreground">백엔드:</span>
+                    <span className="ml-2 font-mono">{backendUrl}</span>
+                  </div>
+                  <div className="rounded-lg border bg-muted/40 p-3">
+                    <span className="text-muted-foreground">NEXT_PUBLIC_API_URL:</span>
+                    <span className="ml-2 font-mono">{process.env.NEXT_PUBLIC_API_URL || '(미설정)'}</span>
+                  </div>
+                  <div className="rounded-lg border bg-muted/40 p-3">
+                    <span className="text-muted-foreground">환경:</span>
+                    <span className="ml-2 font-mono">{process.env.NODE_ENV}</span>
+                  </div>
                 </div>
-                <div className="p-3 bg-gray-50 rounded">
-                  <span className="text-gray-500">백엔드:</span>
-                  <span className="ml-2 font-mono">{backendUrl}</span>
-                </div>
-                <div className="p-3 bg-gray-50 rounded">
-                  <span className="text-gray-500">NEXT_PUBLIC_API_URL:</span>
-                  <span className="ml-2 font-mono">{process.env.NEXT_PUBLIC_API_URL || '(미설정)'}</span>
-                </div>
-                <div className="p-3 bg-gray-50 rounded">
-                  <span className="text-gray-500">환경:</span>
-                  <span className="ml-2 font-mono">{process.env.NODE_ENV}</span>
-                </div>
-              </div>
-            </div>
+              </CardContent>
+            </Card>
           </div>
         )}
 
@@ -855,62 +834,40 @@ export default function AdminPage() {
         {activeTab === 'legal' && (
           <div className="space-y-4">
             {/* 경고 배너 */}
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-              <div className="flex items-start gap-3">
-                <div className="flex-shrink-0">
-                  <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                </div>
-                <div>
-                  <h3 className="text-lg font-semibold text-red-800">법적 리스크 가이드라인</h3>
-                  <p className="text-sm text-red-700 mt-1">
-                    이 시스템에 구현된 기능 중 법적으로 문제가 될 수 있는 항목들입니다.
-                    서비스 운영 전 반드시 검토하고 필요한 조치를 취하세요.
-                  </p>
-                </div>
+            <div className="flex items-start gap-3 rounded-lg bg-danger-soft p-4">
+              <div className="flex-shrink-0 text-danger">
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-danger">법적 리스크 가이드라인</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  이 시스템에 구현된 기능 중 법적으로 문제가 될 수 있는 항목들입니다.
+                  서비스 운영 전 반드시 검토하고 필요한 조치를 취하세요.
+                </p>
               </div>
             </div>
 
             {/* 위험도 요약 */}
-            <div className="grid grid-cols-4 gap-4">
-              <div className="bg-red-100 border border-red-300 rounded-lg p-4 text-center">
-                <div className="text-3xl font-bold text-red-700">
-                  {LEGAL_RISKS.filter(r => r.severity === 'critical').length}
-                </div>
-                <div className="text-sm text-red-600 font-medium">심각 (Critical)</div>
-              </div>
-              <div className="bg-orange-100 border border-orange-300 rounded-lg p-4 text-center">
-                <div className="text-3xl font-bold text-orange-700">
-                  {LEGAL_RISKS.filter(r => r.severity === 'high').length}
-                </div>
-                <div className="text-sm text-orange-600 font-medium">높음 (High)</div>
-              </div>
-              <div className="bg-yellow-100 border border-yellow-300 rounded-lg p-4 text-center">
-                <div className="text-3xl font-bold text-yellow-700">
-                  {LEGAL_RISKS.filter(r => r.severity === 'medium').length}
-                </div>
-                <div className="text-sm text-yellow-600 font-medium">보통 (Medium)</div>
-              </div>
-              <div className="bg-gray-100 border border-gray-300 rounded-lg p-4 text-center">
-                <div className="text-3xl font-bold text-gray-700">
-                  {LEGAL_RISKS.filter(r => r.severity === 'low').length}
-                </div>
-                <div className="text-sm text-gray-600 font-medium">낮음 (Low)</div>
-              </div>
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+              <StatTile label="심각 (Critical)" tone="danger" value={LEGAL_RISKS.filter(r => r.severity === 'critical').length} />
+              <StatTile label="높음 (High)" tone="warn" value={LEGAL_RISKS.filter(r => r.severity === 'high').length} />
+              <StatTile label="보통 (Medium)" tone="warn" value={LEGAL_RISKS.filter(r => r.severity === 'medium').length} />
+              <StatTile label="낮음 (Low)" tone="muted" value={LEGAL_RISKS.filter(r => r.severity === 'low').length} />
             </div>
 
             {/* 리스크 목록 */}
             <div className="space-y-3">
               {LEGAL_RISKS.map((risk) => {
                 const isExpanded = expandedRisk === risk.id
-                const severityColors = {
-                  critical: { bg: 'bg-red-50', border: 'border-red-200', badge: 'bg-red-600 text-white', text: 'text-red-800' },
-                  high: { bg: 'bg-orange-50', border: 'border-orange-200', badge: 'bg-orange-500 text-white', text: 'text-orange-800' },
-                  medium: { bg: 'bg-yellow-50', border: 'border-yellow-200', badge: 'bg-yellow-500 text-white', text: 'text-yellow-800' },
-                  low: { bg: 'bg-gray-50', border: 'border-gray-200', badge: 'bg-gray-500 text-white', text: 'text-gray-800' },
-                }
-                const colors = severityColors[risk.severity as keyof typeof severityColors]
+                const severityTone = {
+                  critical: 'danger',
+                  high: 'warn',
+                  medium: 'warn',
+                  low: 'muted',
+                } as const
+                const tone = severityTone[risk.severity as keyof typeof severityTone]
                 const severityLabel = {
                   critical: '심각',
                   high: '높음',
@@ -919,20 +876,20 @@ export default function AdminPage() {
                 }
 
                 return (
-                  <div key={risk.id} className={`rounded-lg border ${colors.border} ${colors.bg} overflow-hidden`}>
+                  <div key={risk.id} className="surface overflow-hidden">
                     {/* 헤더 - 클릭 가능 */}
                     <button
                       onClick={() => setExpandedRisk(isExpanded ? null : risk.id)}
-                      className="w-full px-6 py-4 flex items-center justify-between hover:bg-white/50 transition-colors"
+                      className="flex w-full items-center justify-between px-5 py-4 text-left transition-colors hover:bg-muted/40"
                     >
-                      <div className="flex items-center gap-4">
-                        <span className={`px-3 py-1 rounded-full text-xs font-bold ${colors.badge}`}>
+                      <div className="flex items-center gap-3">
+                        <Pill tone={tone}>
                           {severityLabel[risk.severity as keyof typeof severityLabel]}
-                        </span>
-                        <span className={`font-semibold ${colors.text}`}>{risk.name}</span>
+                        </Pill>
+                        <span className="text-sm font-semibold">{risk.name}</span>
                       </div>
                       <svg
-                        className={`w-5 h-5 ${colors.text} transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                        className={`h-4 w-4 text-muted-foreground transition-transform ${isExpanded ? 'rotate-180' : ''}`}
                         fill="none"
                         viewBox="0 0 24 24"
                         stroke="currentColor"
@@ -943,25 +900,25 @@ export default function AdminPage() {
 
                     {/* 상세 내용 */}
                     {isExpanded && (
-                      <div className="px-6 pb-6 space-y-4 border-t border-white/50">
+                      <div className="space-y-4 border-t px-5 pb-5">
                         {/* 설명 */}
                         <div className="pt-4">
-                          <p className="text-gray-700">{risk.description}</p>
-                          <p className="text-xs text-gray-500 mt-2 font-mono">위치: {risk.location}</p>
+                          <p className="text-sm">{risk.description}</p>
+                          <p className="mt-2 font-mono text-xs text-muted-foreground">위치: {risk.location}</p>
                         </div>
 
                         {/* 관련 법률 */}
-                        <div className="bg-white/70 rounded-lg p-4">
-                          <h4 className="font-semibold text-gray-800 mb-2 flex items-center gap-2">
-                            <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <div className="rounded-lg border bg-muted/40 p-4">
+                          <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+                            <svg className="h-4 w-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" />
                             </svg>
                             관련 법률
                           </h4>
                           <ul className="space-y-1">
                             {risk.laws.map((law, idx) => (
-                              <li key={idx} className="text-sm text-gray-600 flex items-start gap-2">
-                                <span className="text-blue-500 mt-1">•</span>
+                              <li key={idx} className="flex items-start gap-2 text-sm text-muted-foreground">
+                                <span className="mt-1 text-primary">•</span>
                                 {law}
                               </li>
                             ))}
@@ -969,17 +926,17 @@ export default function AdminPage() {
                         </div>
 
                         {/* 문제점 */}
-                        <div className="bg-red-100/50 rounded-lg p-4">
-                          <h4 className="font-semibold text-red-800 mb-2 flex items-center gap-2">
-                            <svg className="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <div className="rounded-lg bg-danger-soft p-4">
+                          <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-danger">
+                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
                             현재 문제점
                           </h4>
                           <ul className="space-y-1">
                             {risk.problems.map((problem, idx) => (
-                              <li key={idx} className="text-sm text-red-700 flex items-start gap-2">
-                                <span className="text-red-500 mt-1">•</span>
+                              <li key={idx} className="flex items-start gap-2 text-sm">
+                                <span className="mt-1 text-danger">•</span>
                                 {problem}
                               </li>
                             ))}
@@ -987,17 +944,17 @@ export default function AdminPage() {
                         </div>
 
                         {/* 해결 방안 */}
-                        <div className="bg-green-100/50 rounded-lg p-4">
-                          <h4 className="font-semibold text-green-800 mb-2 flex items-center gap-2">
-                            <svg className="w-5 h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <div className="rounded-lg bg-success-soft p-4">
+                          <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-success">
+                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
                             해결 방안
                           </h4>
                           <ul className="space-y-1">
                             {risk.solutions.map((solution, idx) => (
-                              <li key={idx} className="text-sm text-green-700 flex items-start gap-2">
-                                <span className="text-green-500 mt-1">•</span>
+                              <li key={idx} className="flex items-start gap-2 text-sm">
+                                <span className="mt-1 text-success">•</span>
                                 {solution}
                               </li>
                             ))}
@@ -1005,14 +962,14 @@ export default function AdminPage() {
                         </div>
 
                         {/* 안전한 구현 방법 */}
-                        <div className="bg-blue-100/50 rounded-lg p-4">
-                          <h4 className="font-semibold text-blue-800 mb-2 flex items-center gap-2">
-                            <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <div className="rounded-lg bg-accent p-4 text-accent-foreground">
+                          <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+                            <svg className="h-4 w-4 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                             </svg>
                             안전한 구현 가이드
                           </h4>
-                          <p className="text-sm text-blue-700">{risk.safeImplementation}</p>
+                          <p className="text-sm">{risk.safeImplementation}</p>
                         </div>
                       </div>
                     )}
@@ -1022,9 +979,9 @@ export default function AdminPage() {
             </div>
 
             {/* 면책 조항 */}
-            <div className="bg-gray-100 border border-gray-300 rounded-lg p-4 mt-6">
-              <h4 className="font-semibold text-gray-700 mb-2">면책 조항</h4>
-              <p className="text-sm text-gray-600">
+            <div className="rounded-lg border bg-muted/40 p-4">
+              <h4 className="mb-2 text-sm font-semibold">면책 조항</h4>
+              <p className="text-sm text-muted-foreground">
                 이 가이드라인은 참고용으로 제공되며, 법률 자문을 대체하지 않습니다.
                 실제 서비스 운영 전 반드시 법률 전문가와 상담하시기 바랍니다.
                 관련 법률은 변경될 수 있으며, 최신 법령을 확인하시기 바랍니다.
@@ -1035,54 +992,59 @@ export default function AdminPage() {
 
         {/* 사용자 목록 */}
         {activeTab === 'users' && (
-        <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+        <Card className="overflow-hidden">
+          {users.length === 0 ? (
+            <div className="p-5">
+              <EmptyState
+                title="사용자가 없습니다"
+                description="필터를 바꾸거나 새 가입을 기다려 주세요."
+                action={
+                  <Button variant="outline" size="sm" onClick={() => setFilter('all')}>
+                    전체 보기
+                  </Button>
+                }
+              />
+            </div>
+          ) : (
           <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b">
+            <table className="w-full text-sm">
+              <thead className="border-b">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">이메일</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">이름</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">병원명</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">전문과목</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">승인 상태</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">글 무제한</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">사용 종료일</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">가입일</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">작업</th>
+                  <th className={th}>이메일</th>
+                  <th className={th}>이름</th>
+                  <th className={th}>병원명</th>
+                  <th className={th}>전문과목</th>
+                  <th className={th}>승인 상태</th>
+                  <th className={th}>글 무제한</th>
+                  <th className={th}>사용 종료일</th>
+                  <th className={th}>가입일</th>
+                  <th className={th}>작업</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y">
                 {users.map((user) => (
-                  <tr key={user.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 text-sm text-gray-900">{user.email}</td>
-                    <td className="px-6 py-4 text-sm text-gray-900">{user.name || '-'}</td>
-                    <td className="px-6 py-4 text-sm text-gray-900">{user.hospital_name || '-'}</td>
-                    <td className="px-6 py-4 text-sm text-gray-900">{user.specialty || '-'}</td>
-                    <td className="px-6 py-4 text-sm">
+                  <tr key={user.id} className="hover:bg-muted/40">
+                    <td className="px-4 py-2.5">{user.email}</td>
+                    <td className="px-4 py-2.5">{user.name || '-'}</td>
+                    <td className="px-4 py-2.5">{user.hospital_name || '-'}</td>
+                    <td className="px-4 py-2.5">{user.specialty || '-'}</td>
+                    <td className="px-4 py-2.5">
                       {user.is_admin ? (
-                        <span className="px-2 py-1 text-xs rounded-full bg-purple-100 text-purple-800">
-                          관리자
-                        </span>
+                        <Pill tone="accent">관리자</Pill>
                       ) : user.is_approved ? (
-                        <span className="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">
-                          승인됨
-                        </span>
+                        <Pill tone="ok">승인됨</Pill>
                       ) : (
-                        <span className="px-2 py-1 text-xs rounded-full bg-yellow-100 text-yellow-800">
-                          대기 중
-                        </span>
+                        <Pill tone="warn">대기 중</Pill>
                       )}
                     </td>
-                    <td className="px-6 py-4 text-sm">
+                    <td className="px-4 py-2.5">
                       {user.has_unlimited_posts ? (
-                        <div className="flex flex-col gap-1">
-                          <span className="px-2 py-1 text-xs rounded-full bg-indigo-100 text-indigo-800 inline-block w-fit">
-                            무제한
-                          </span>
+                        <div className="flex flex-col items-start gap-1">
+                          <Pill tone="accent">무제한</Pill>
                           {!user.is_admin && (
                             <button
                               onClick={() => handleUnlimitedAccess(user.id, false, user.email)}
-                              className="text-xs text-red-600 hover:text-red-800"
+                              className="text-xs text-danger hover:underline"
                             >
                               해제
                             </button>
@@ -1090,50 +1052,55 @@ export default function AdminPage() {
                         </div>
                       ) : (
                         !user.is_admin && (
-                          <button
+                          <Button
+                            variant="outline"
+                            size="sm"
                             onClick={() => handleUnlimitedAccess(user.id, true, user.email)}
-                            className="px-2 py-1 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700"
                           >
                             부여
-                          </button>
+                          </Button>
                         )
                       )}
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-900">
+                    <td className="px-4 py-2.5 tabular-nums text-muted-foreground">
                       {user.subscription_end_date ? formatDate(user.subscription_end_date) : '-'}
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-900">{formatDate(user.created_at)}</td>
-                    <td className="px-6 py-4 text-sm">
+                    <td className="px-4 py-2.5 tabular-nums text-muted-foreground">{formatDate(user.created_at)}</td>
+                    <td className="px-4 py-2.5">
                       {!user.is_admin && (
-                        <div className="flex flex-col gap-2">
+                        <div className="flex flex-col items-start gap-1.5">
                           {!user.is_approved && (
-                            <button
+                            <Button
+                              variant="outline"
+                              size="sm"
                               onClick={() => handleApprove(user.id, true)}
-                              className="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700"
                             >
                               승인
-                            </button>
+                            </Button>
                           )}
                           {user.is_approved && (
-                            <button
+                            <Button
+                              variant="outline"
+                              size="sm"
                               onClick={() => handleApprove(user.id, false)}
-                              className="px-3 py-1 bg-yellow-600 text-white text-xs rounded hover:bg-yellow-700"
                             >
                               승인 취소
-                            </button>
+                            </Button>
                           )}
-                          <button
+                          <Button
+                            variant="ghost"
+                            size="sm"
                             onClick={() => setEditingUser(user)}
-                            className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
                           >
                             기간 설정
-                          </button>
-                          <button
+                          </Button>
+                          <Button
+                            variant="destructive"
+                            size="sm"
                             onClick={() => handleDelete(user.id)}
-                            className="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700"
                           >
                             삭제
-                          </button>
+                          </Button>
                         </div>
                       )}
                     </td>
@@ -1142,49 +1109,46 @@ export default function AdminPage() {
               </tbody>
             </table>
           </div>
-
-          {users.length === 0 && (
-            <div className="text-center py-12 text-gray-500">사용자가 없습니다</div>
           )}
-        </div>
+        </Card>
         )}
       </div>
 
       {/* 사용 기간 설정 모달 */}
       {editingUser && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-4">사용 기간 설정</h3>
-            <p className="text-sm text-gray-600 mb-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/50 px-4">
+          <div className="surface w-full max-w-md space-y-4 p-6">
+            <h3 className="section-title">사용 기간 설정</h3>
+            <p className="text-sm text-muted-foreground">
               사용자: {editingUser.email}
             </p>
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+            <div>
+              <label className="mb-2 block text-[13px] font-medium text-muted-foreground">
                 종료일
               </label>
-              <input
+              <Input
                 type="datetime-local"
                 value={subscriptionEndDate}
                 onChange={(e) => setSubscriptionEndDate(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
             <div className="flex gap-2">
-              <button
+              <Button
+                className="flex-1"
                 onClick={() => handleSetSubscription(editingUser.id)}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
               >
                 설정
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="outline"
+                className="flex-1"
                 onClick={() => {
                   setEditingUser(null)
                   setSubscriptionEndDate('')
                 }}
-                className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300"
               >
                 취소
-              </button>
+              </Button>
             </div>
           </div>
         </div>

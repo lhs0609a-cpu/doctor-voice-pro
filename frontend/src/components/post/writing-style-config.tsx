@@ -1,6 +1,5 @@
 'use client'
 
-import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
@@ -83,6 +82,13 @@ const PRESETS: Record<string, WritingStyle> = {
   },
 }
 
+const PRESET_BUTTONS: Array<{ key: string; label: string; desc: string }> = [
+  { key: 'professional', label: '전문적', desc: '격식 있고 전문적' },
+  { key: 'friendly', label: '친근한', desc: '편안하고 친근함' },
+  { key: 'warm', label: '따뜻한', desc: '감성적이고 따뜻함' },
+  { key: 'confident', label: '자신감 있는', desc: '확신 있고 명확함' },
+]
+
 export function WritingStyleConfig({ value, onChange }: WritingStyleConfigProps) {
   const handleSliderChange = (field: keyof WritingStyle, newValue: number[]) => {
     onChange({
@@ -113,75 +119,44 @@ export function WritingStyleConfig({ value, onChange }: WritingStyleConfigProps)
 
   return (
     <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Palette className="h-5 w-5 text-indigo-600" />
-            <CardTitle className="text-base">말투 설정</CardTitle>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleReset}
-            className="h-8 gap-1"
-          >
-            <RotateCcw className="h-3 w-3" />
-            초기화
-          </Button>
-        </div>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <CardTitle className="flex items-center gap-2">
+          <Palette className="h-4 w-4 text-muted-foreground" />
+          말투 설정
+        </CardTitle>
+        <Button variant="ghost" size="sm" onClick={handleReset}>
+          <RotateCcw className="h-3.5 w-3.5" />
+          초기화
+        </Button>
       </CardHeader>
       <CardContent className="space-y-6">
         {/* 프리셋 버튼 */}
-        <div>
-          <Label className="text-xs text-gray-600 mb-2 block">빠른 프리셋</Label>
+        <div className="space-y-2">
+          <Label className="text-[13px] font-medium text-muted-foreground">빠른 프리셋</Label>
           <div className="grid grid-cols-2 gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handlePreset('professional')}
-              className="h-auto py-2 flex-col items-start"
-            >
-              <span className="font-semibold">전문적</span>
-              <span className="text-xs text-gray-500">격식있고 전문적</span>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handlePreset('friendly')}
-              className="h-auto py-2 flex-col items-start"
-            >
-              <span className="font-semibold">친근한</span>
-              <span className="text-xs text-gray-500">편안하고 친근함</span>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handlePreset('warm')}
-              className="h-auto py-2 flex-col items-start"
-            >
-              <span className="font-semibold">따뜻한</span>
-              <span className="text-xs text-gray-500">감성적이고 따뜻함</span>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handlePreset('confident')}
-              className="h-auto py-2 flex-col items-start"
-            >
-              <span className="font-semibold">자신감있는</span>
-              <span className="text-xs text-gray-500">확신있고 명확함</span>
-            </Button>
+            {PRESET_BUTTONS.map((preset) => (
+              <Button
+                key={preset.key}
+                variant="outline"
+                size="sm"
+                onClick={() => handlePreset(preset.key)}
+                className="h-auto flex-col items-start gap-0.5 py-2"
+              >
+                <span className="font-semibold">{preset.label}</span>
+                <span className="text-xs font-normal text-muted-foreground">{preset.desc}</span>
+              </Button>
+            ))}
           </div>
         </div>
 
         {/* 상세 설정 슬라이더 */}
         <div className="space-y-4">
-          <Label className="text-xs text-gray-600">상세 설정</Label>
+          <Label className="text-[13px] font-medium text-muted-foreground">상세 설정</Label>
           {styleFields.map((field) => (
             <div key={field.key} className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label className="text-sm font-medium">{field.label}</Label>
-                <span className="text-sm font-bold text-indigo-600">
+                <span className="text-sm font-semibold tabular-nums text-primary">
                   {value[field.key as keyof WritingStyle]}
                 </span>
               </div>
@@ -193,7 +168,7 @@ export function WritingStyleConfig({ value, onChange }: WritingStyleConfigProps)
                 step={1}
                 className="w-full"
               />
-              <p className="text-xs text-gray-500">{field.desc}</p>
+              <p className="text-xs text-muted-foreground">{field.desc}</p>
             </div>
           ))}
         </div>

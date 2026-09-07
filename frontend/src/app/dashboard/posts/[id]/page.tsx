@@ -32,7 +32,6 @@ import {
   X,
   Copy,
   Download,
-  Share2,
   Trash2,
   RefreshCw,
   Clock,
@@ -49,6 +48,8 @@ import { KeywordTags } from '@/components/post/keyword-tags'
 import { TitleSelector } from '@/components/post/title-selector'
 import { SubtitlePreview } from '@/components/post/subtitle-preview'
 import { ForbiddenWordsAlert } from '@/components/post/forbidden-words-alert'
+import { PageHeader } from '@/components/app-shell/page-header'
+import { Pill, StatTile, EmptyState } from '@/components/app-shell/ui-kit'
 import {
   Dialog,
   DialogContent,
@@ -272,11 +273,8 @@ export default function PostDetailPage({ params }: PageProps) {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="text-center">
-          <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground mx-auto mb-2" />
-          <p className="text-muted-foreground">로딩 중...</p>
-        </div>
+      <div className="flex justify-center py-16">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
       </div>
     )
   }
@@ -285,29 +283,60 @@ export default function PostDetailPage({ params }: PageProps) {
     return null
   }
 
+  const isCompliant = post.medical_law_check?.is_compliant
+  const totalIssues = post.medical_law_check?.total_issues ?? 0
+
+  const renderIssueList = (
+    items: any[],
+    kind: 'violation' | 'warning',
+  ) =>
+    items.map((item: any, index: number) => (
+      <div
+        key={`${kind}-${index}`}
+        className={`rounded-lg border p-3 ${
+          kind === 'violation'
+            ? 'border-danger/20 bg-danger-soft'
+            : 'border-warning/20 bg-warning-soft'
+        }`}
+      >
+        <div className="flex flex-wrap items-start gap-2 text-sm">
+          <span
+            className={`font-medium ${
+              kind === 'violation' ? 'text-danger line-through' : 'text-warning'
+            }`}
+          >
+            {typeof item === 'string' ? item : item.text}
+          </span>
+          {typeof item === 'object' && item.suggestion && (
+            <>
+              <span className="text-muted-foreground">→</span>
+              <span className="font-medium text-success">{item.suggestion}</span>
+            </>
+          )}
+        </div>
+        {typeof item === 'object' && item.category && (
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            분류: {item.category.replace(/_/g, ' ')}
+          </p>
+        )}
+      </div>
+    ))
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Link href="/dashboard/posts">
-            <Button variant="ghost" size="sm" className="gap-2">
-              <ArrowLeft className="h-4 w-4" />
-              목록으로
-            </Button>
-          </Link>
-          <div>
-            <h1 className="text-3xl font-bold">
-              {isEditing ? '포스팅 편집' : '포스팅 상세'}
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              작성일: {formatDate(post.created_at)}
-            </p>
-          </div>
-        </div>
+      <Link
+        href="/dashboard/posts"
+        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <ArrowLeft className="h-4 w-4" />
+        목록으로
+      </Link>
 
-        <div className="flex items-center gap-2">
-          {isEditing ? (
+      <PageHeader
+        eyebrow={`작성일 ${formatDate(post.created_at)}`}
+        title={isEditing ? '포스팅 편집' : '포스팅 상세'}
+        actions={
+          isEditing ? (
             <>
               <Button
                 variant="outline"
@@ -319,24 +348,20 @@ export default function PostDetailPage({ params }: PageProps) {
                 }}
                 disabled={isSaving}
               >
-                <X className="h-4 w-4 mr-2" />
+                <X className="h-4 w-4" />
                 취소
               </Button>
               <Button onClick={handleSave} disabled={isSaving}>
-                <Save className="h-4 w-4 mr-2" />
+                <Save className="h-4 w-4" />
                 {isSaving ? '저장 중...' : '저장'}
               </Button>
             </>
           ) : (
             <>
-              <Button
-                variant="outline"
-                onClick={handleCopy}
-                className="gap-2"
-              >
+              <Button variant="outline" onClick={handleCopy}>
                 {copied ? (
                   <>
-                    <Check className="h-4 w-4" />
+                    <Check className="h-4 w-4 text-success" />
                     복사됨
                   </>
                 ) : (
@@ -349,7 +374,7 @@ export default function PostDetailPage({ params }: PageProps) {
 
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" className="gap-2">
+                  <Button variant="outline">
                     <Download className="h-4 w-4" />
                     내보내기
                   </Button>
@@ -367,42 +392,38 @@ export default function PostDetailPage({ params }: PageProps) {
                 </DropdownMenuContent>
               </DropdownMenu>
 
-              <Button
-                variant="default"
-                onClick={handleOpenNaverDialog}
-                className="gap-2 bg-green-600 hover:bg-green-700"
-              >
-                <Send className="h-4 w-4" />
-                네이버 블로그 발행
-              </Button>
-
-              <Button onClick={() => setIsEditing(true)} className="gap-2">
+              <Button variant="outline" onClick={() => setIsEditing(true)}>
                 <Edit className="h-4 w-4" />
                 편집
               </Button>
 
+              <Button onClick={handleOpenNaverDialog}>
+                <Send className="h-4 w-4" />
+                네이버 블로그 발행
+              </Button>
+
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm">
+                  <Button variant="ghost" size="icon" aria-label="더 보기">
                     <MoreVertical className="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onClick={() => router.push(`/dashboard/create?rewrite=${post.id}`)}>
-                    <RefreshCw className="h-4 w-4 mr-2" />
+                    <RefreshCw className="mr-2 h-4 w-4" />
                     다시 작성
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={handleDelete} className="text-red-600">
-                    <Trash2 className="h-4 w-4 mr-2" />
+                  <DropdownMenuItem onClick={handleDelete} className="text-destructive focus:text-destructive">
+                    <Trash2 className="mr-2 h-4 w-4" />
                     삭제
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </>
-          )}
-        </div>
-      </div>
+          )
+        }
+      />
 
       <Tabs defaultValue="content" className="space-y-4">
         <TabsList>
@@ -423,7 +444,7 @@ export default function PostDetailPage({ params }: PageProps) {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="title">제목</Label>
+                  <Label htmlFor="title" className="text-[13px] font-medium text-muted-foreground">제목</Label>
                   <Input
                     id="title"
                     value={editedTitle}
@@ -433,19 +454,19 @@ export default function PostDetailPage({ params }: PageProps) {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="content">내용</Label>
+                  <Label htmlFor="content" className="text-[13px] font-medium text-muted-foreground">내용</Label>
                   <Textarea
                     id="content"
                     value={editedContent}
                     onChange={(e) => setEditedContent(e.target.value)}
                     placeholder="포스팅 내용"
                     rows={20}
-                    className="font-mono"
+                    className="font-mono text-sm"
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="status">상태</Label>
+                  <Label htmlFor="status" className="text-[13px] font-medium text-muted-foreground">상태</Label>
                   <Select
                     value={editedStatus}
                     onValueChange={setEditedStatus}
@@ -463,44 +484,23 @@ export default function PostDetailPage({ params }: PageProps) {
             </Card>
           ) : (
             <>
-              {/* Post Header Card */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <CardTitle className="text-2xl mb-2">
-                        {post.title || '제목 없음'}
-                      </CardTitle>
-                      <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                        <span className="flex items-center gap-1">
-                          <Clock className="h-3 w-3" />
-                          {formatDate(post.created_at)}
-                        </span>
-                        <span
-                          className={`px-2 py-1 rounded-full text-xs font-medium ${
-                            post.status === 'published'
-                              ? 'bg-green-100 text-green-700'
-                              : 'bg-gray-100 text-gray-700'
-                          }`}
-                        >
-                          {post.status === 'published' ? '발행됨' : '임시저장'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </CardHeader>
-              </Card>
-
               {/* Post Content */}
               <Card>
                 <CardHeader>
-                  <CardTitle>생성된 콘텐츠</CardTitle>
+                  <CardTitle className="text-lg">{post.title || '제목 없음'}</CardTitle>
+                  <div className="flex flex-wrap items-center gap-3 pt-1 text-[13px] font-medium text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <Clock className="h-3.5 w-3.5" />
+                      {formatDate(post.created_at)}
+                    </span>
+                    <Pill tone={post.status === 'published' ? 'ok' : 'muted'}>
+                      {post.status === 'published' ? '발행됨' : '임시저장'}
+                    </Pill>
+                  </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="prose max-w-none">
-                    <div className="whitespace-pre-wrap text-base leading-relaxed">
-                      {post.generated_content}
-                    </div>
+                  <div className="whitespace-pre-wrap text-[15px] leading-relaxed">
+                    {post.generated_content}
                   </div>
                 </CardContent>
               </Card>
@@ -513,10 +513,8 @@ export default function PostDetailPage({ params }: PageProps) {
                     <CardDescription>AI가 각색하기 전의 원본 내용</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <div className="prose max-w-none">
-                      <div className="whitespace-pre-wrap text-base leading-relaxed text-muted-foreground">
-                        {post.original_content}
-                      </div>
+                    <div className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
+                      {post.original_content}
                     </div>
                   </CardContent>
                 </Card>
@@ -527,53 +525,26 @@ export default function PostDetailPage({ params }: PageProps) {
 
         {/* Analysis Tab */}
         <TabsContent value="analysis" className="space-y-4">
-          <div className="grid md:grid-cols-3 gap-4">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">설득력 점수</CardTitle>
-                <TrendingUp className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold">
-                  {Math.round(post.persuasion_score)}점
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  100점 만점
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">의료법 검토</CardTitle>
-                <Shield className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold text-green-600">
-                  {post.medical_law_check?.is_compliant ? '통과' : '검토 필요'}
-                </div>
-                {post.medical_law_check && post.medical_law_check.total_issues > 0 && (
-                  <p className="text-xs text-red-600 mt-1">
-                    {post.medical_law_check.total_issues}개 이슈 발견
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">SEO 점수</CardTitle>
-                <SearchIcon className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold">
-                  {post.seo_keywords?.length || 0}개
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  키워드 최적화
-                </p>
-              </CardContent>
-            </Card>
+          <div className="grid gap-4 md:grid-cols-3">
+            <StatTile
+              label="설득력 점수"
+              value={`${Math.round(post.persuasion_score)}점`}
+              hint="100점 만점"
+              icon={<TrendingUp className="h-4 w-4" />}
+            />
+            <StatTile
+              label="의료법 검토"
+              value={isCompliant ? '통과' : '검토 필요'}
+              tone={isCompliant ? 'ok' : 'warn'}
+              hint={totalIssues > 0 ? `${totalIssues}개 이슈 발견` : undefined}
+              icon={<Shield className="h-4 w-4" />}
+            />
+            <StatTile
+              label="SEO 키워드"
+              value={`${post.seo_keywords?.length || 0}개`}
+              hint="키워드 최적화"
+              icon={<SearchIcon className="h-4 w-4" />}
+            />
           </div>
 
           {/* SEO Keywords */}
@@ -586,12 +557,9 @@ export default function PostDetailPage({ params }: PageProps) {
               <CardContent>
                 <div className="flex flex-wrap gap-2">
                   {post.seo_keywords.map((keyword, index) => (
-                    <span
-                      key={index}
-                      className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-medium"
-                    >
+                    <Pill key={index} tone="accent">
                       {keyword}
-                    </span>
+                    </Pill>
                   ))}
                 </div>
               </CardContent>
@@ -600,73 +568,31 @@ export default function PostDetailPage({ params }: PageProps) {
 
           {/* P2 Fix: Law Check Issues - 수정 제안과 함께 표시 */}
           {post.medical_law_check && (post.medical_law_check.violations.length > 0 || post.medical_law_check.warnings.length > 0) && (
-            <Card className="border-orange-200">
+            <Card>
               <CardHeader>
-                <CardTitle className="text-orange-600">의료법 검토 사항</CardTitle>
-                <CardDescription>아래 표현들을 수정하시면 의료법 위반 위험을 줄일 수 있습니다</CardDescription>
+                <CardTitle className="text-warning">의료법 검토 사항</CardTitle>
+                <CardDescription>아래 표현을 수정하면 의료법 위반 위험을 줄일 수 있습니다</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 {post.medical_law_check.violations.length > 0 && (
-                  <div className="space-y-3">
-                    <p className="text-sm font-medium text-red-600 flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-red-500" />
+                  <div className="space-y-2">
+                    <p className="flex items-center gap-1.5 text-[13px] font-medium text-danger">
+                      <span className="h-2 w-2 rounded-full bg-danger" />
                       위반 의심 표현 ({post.medical_law_check.violations.length}건)
                     </p>
                     <div className="space-y-2">
-                      {post.medical_law_check.violations.map((violation: any, index: number) => (
-                        <div key={`violation-${index}`} className="bg-red-50 border border-red-100 rounded-lg p-3">
-                          <div className="flex items-start gap-2 flex-wrap">
-                            <span className="text-red-700 font-medium line-through">
-                              {typeof violation === 'string' ? violation : violation.text}
-                            </span>
-                            {typeof violation === 'object' && violation.suggestion && (
-                              <>
-                                <span className="text-gray-400">→</span>
-                                <span className="text-green-700 font-medium">
-                                  {violation.suggestion}
-                                </span>
-                              </>
-                            )}
-                          </div>
-                          {typeof violation === 'object' && violation.category && (
-                            <p className="text-xs text-muted-foreground mt-1.5">
-                              분류: {violation.category.replace(/_/g, ' ')}
-                            </p>
-                          )}
-                        </div>
-                      ))}
+                      {renderIssueList(post.medical_law_check.violations, 'violation')}
                     </div>
                   </div>
                 )}
                 {post.medical_law_check.warnings.length > 0 && (
-                  <div className="space-y-3">
-                    <p className="text-sm font-medium text-orange-600 flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-orange-500" />
+                  <div className="space-y-2">
+                    <p className="flex items-center gap-1.5 text-[13px] font-medium text-warning">
+                      <span className="h-2 w-2 rounded-full bg-warning" />
                       주의 표현 ({post.medical_law_check.warnings.length}건)
                     </p>
                     <div className="space-y-2">
-                      {post.medical_law_check.warnings.map((warning: any, index: number) => (
-                        <div key={`warning-${index}`} className="bg-orange-50 border border-orange-100 rounded-lg p-3">
-                          <div className="flex items-start gap-2 flex-wrap">
-                            <span className="text-orange-700 font-medium">
-                              {typeof warning === 'string' ? warning : warning.text}
-                            </span>
-                            {typeof warning === 'object' && warning.suggestion && (
-                              <>
-                                <span className="text-gray-400">→</span>
-                                <span className="text-green-700 font-medium">
-                                  {warning.suggestion}
-                                </span>
-                              </>
-                            )}
-                          </div>
-                          {typeof warning === 'object' && warning.category && (
-                            <p className="text-xs text-muted-foreground mt-1.5">
-                              분류: {warning.category.replace(/_/g, ' ')}
-                            </p>
-                          )}
-                        </div>
-                      ))}
+                      {renderIssueList(post.medical_law_check.warnings, 'warning')}
                     </div>
                   </div>
                 )}
@@ -709,23 +635,11 @@ export default function PostDetailPage({ params }: PageProps) {
 
         {/* Versions Tab */}
         <TabsContent value="versions" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>버전 이력</CardTitle>
-              <CardDescription>
-                이 포스팅의 모든 수정 이력을 확인할 수 있습니다
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="text-center py-12 text-muted-foreground">
-                <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
-                <p>버전 이력 기능은 곧 추가됩니다</p>
-                <p className="text-sm mt-2">
-                  향후 버전 비교 및 복원 기능이 제공될 예정입니다
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+          <EmptyState
+            icon={<FileText className="h-8 w-8" />}
+            title="버전 이력은 곧 추가됩니다"
+            description="수정 이력을 비교하고 이전 버전으로 되돌리는 기능이 제공될 예정입니다"
+          />
         </TabsContent>
       </Tabs>
     </div>

@@ -2,42 +2,41 @@
 
 import { DIACRANKAnalysis } from '@/types'
 import { TrendingUp, Award, Info } from 'lucide-react'
+import { Pill } from '@/components/app-shell/ui-kit'
 
 interface DIACRANKScoreProps {
   analysis: DIACRANKAnalysis
 }
 
+const getScoreTextColor = (score: number) => {
+  if (score >= 80) return 'text-success'
+  if (score >= 70) return 'text-warning'
+  return 'text-danger'
+}
+
+const getGradeTone = (grade: string): 'ok' | 'warn' | 'accent' | 'muted' => {
+  if (grade === 'S' || grade === 'A+' || grade === 'A') return 'accent'
+  if (grade === 'B+' || grade === 'B') return 'ok'
+  return 'muted'
+}
+
 export function DIACRANKScore({ analysis }: DIACRANKScoreProps) {
-  const getScoreColor = (score: number) => {
-    if (score >= 90) return 'text-green-600'
-    if (score >= 80) return 'text-blue-600'
-    if (score >= 70) return 'text-yellow-600'
-    return 'text-red-600'
-  }
-
-  const getGradeColor = (grade: string) => {
-    if (grade === 'S' || grade === 'A+') return 'bg-gradient-to-r from-purple-600 to-pink-600 text-white'
-    if (grade === 'A') return 'bg-gradient-to-r from-blue-600 to-cyan-600 text-white'
-    if (grade === 'B+' || grade === 'B') return 'bg-gradient-to-r from-green-600 to-emerald-600 text-white'
-    return 'bg-gray-500 text-white'
-  }
-
   return (
     <div className="space-y-6">
       {/* 전체 등급 */}
-      <div className="flex items-center justify-between p-4 bg-gradient-to-br from-blue-50 to-purple-50 rounded-lg border border-blue-200">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Award className="h-5 w-5 text-purple-600" />
-            <span className="text-sm font-semibold text-gray-700">전체 등급</span>
+      <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/40 p-4">
+        <div className="min-w-0">
+          <div className="mb-1 flex items-center gap-2">
+            <Award className="h-4 w-4 text-primary" />
+            <span className="text-[13px] font-medium text-muted-foreground">전체 등급</span>
           </div>
-          <p className="text-xs text-gray-600">{analysis.summary}</p>
+          <p className="text-sm text-foreground">{analysis.summary}</p>
         </div>
-        <div className="flex flex-col items-end gap-1">
-          <div className={`px-4 py-2 rounded-full font-bold text-2xl ${getGradeColor(analysis.overall_grade)}`}>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <Pill tone={getGradeTone(analysis.overall_grade)} className="px-3 py-1 text-lg font-semibold">
             {analysis.overall_grade}
-          </div>
-          <div className="text-xs text-gray-600 flex items-center gap-1">
+          </Pill>
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <TrendingUp className="h-3 w-3" />
             {analysis.estimated_ranking}
           </div>
@@ -46,9 +45,9 @@ export function DIACRANKScore({ analysis }: DIACRANKScoreProps) {
 
       {/* DIA 점수 */}
       <div>
-        <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
-          <span className="text-blue-600">📊 DIA 점수</span>
-          <span className={`text-lg font-bold ${getScoreColor(analysis.dia_score.total)}`}>
+        <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+          <span>DIA 점수</span>
+          <span className={`text-base font-semibold tabular-nums ${getScoreTextColor(analysis.dia_score.total)}`}>
             {analysis.dia_score.total}점
           </span>
         </h4>
@@ -86,9 +85,9 @@ export function DIACRANKScore({ analysis }: DIACRANKScoreProps) {
 
       {/* CRANK 점수 */}
       <div>
-        <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
-          <span className="text-purple-600">📈 C-RANK 점수</span>
-          <span className={`text-lg font-bold ${getScoreColor(analysis.crank_score.total)}`}>
+        <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+          <span>C-RANK 점수</span>
+          <span className={`text-base font-semibold tabular-nums ${getScoreTextColor(analysis.crank_score.total)}`}>
             {analysis.crank_score.total}점
           </span>
         </h4>
@@ -135,38 +134,24 @@ interface ScoreItemProps {
 }
 
 function ScoreItem({ label, score, analysis, suggestions }: ScoreItemProps) {
-  const getScoreColor = (score: number) => {
-    if (score >= 90) return 'bg-green-500'
-    if (score >= 80) return 'bg-blue-500'
-    if (score >= 70) return 'bg-yellow-500'
-    return 'bg-red-500'
-  }
-
-  const getTextColor = (score: number) => {
-    if (score >= 90) return 'text-green-600'
-    if (score >= 80) return 'text-blue-600'
-    if (score >= 70) return 'text-yellow-600'
-    return 'text-red-600'
-  }
-
   return (
-    <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-sm font-medium text-gray-700">{label}</span>
-        <span className={`text-sm font-bold ${getTextColor(score)}`}>{score}점</span>
+    <div className="rounded-lg border bg-muted/40 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[13px] font-medium text-muted-foreground">{label}</span>
+        <span className={`text-sm font-semibold tabular-nums ${getScoreTextColor(score)}`}>{score}점</span>
       </div>
-      <div className="relative w-full h-2 bg-gray-200 rounded-full overflow-hidden mb-2">
+      <div className="relative mb-2 h-2 w-full overflow-hidden rounded-full bg-muted">
         <div
-          className={`h-full ${getScoreColor(score)} transition-all duration-300`}
+          className="h-full bg-primary transition-all duration-300"
           style={{ width: `${score}%` }}
         />
       </div>
-      <p className="text-xs text-gray-600 mb-2">{analysis}</p>
+      <p className="mb-2 text-xs text-muted-foreground">{analysis}</p>
       {suggestions.length > 0 && (
-        <div className="mt-2 pt-2 border-t border-gray-200">
-          <div className="flex items-start gap-1">
-            <Info className="h-3 w-3 text-blue-500 mt-0.5 flex-shrink-0" />
-            <div className="text-xs text-gray-600 space-y-1">
+        <div className="mt-2 border-t pt-2">
+          <div className="flex items-start gap-1.5">
+            <Info className="mt-0.5 h-3 w-3 flex-shrink-0 text-primary" />
+            <div className="space-y-1 text-xs text-muted-foreground">
               {suggestions.map((suggestion, idx) => (
                 <div key={idx}>• {suggestion}</div>
               ))}

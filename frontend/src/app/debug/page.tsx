@@ -1,24 +1,34 @@
 'use client'
 
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { PageHeader } from '@/components/app-shell/page-header'
+
 export default function DebugPage() {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL
 
   return (
-    <div className="min-h-screen p-8 bg-gray-50">
-      <div className="max-w-2xl mx-auto bg-white p-6 rounded-lg shadow">
-        <h1 className="text-2xl font-bold mb-4">Debug Information</h1>
+    <div className="min-h-screen bg-background">
+      <div className="mx-auto max-w-2xl space-y-6 px-4 py-8">
+        <PageHeader title="Debug Information" description="환경 변수와 백엔드 연결 상태를 확인합니다." />
 
-        <div className="space-y-4">
-          <div>
-            <h2 className="font-semibold text-gray-700">Environment Variable:</h2>
-            <pre className="mt-2 p-4 bg-gray-100 rounded">
+        <Card>
+          <CardHeader>
+            <CardTitle>Environment Variable</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <pre className="overflow-x-auto rounded-lg bg-muted p-4 text-xs tabular-nums">
               NEXT_PUBLIC_API_URL = {apiUrl || 'NOT SET'}
             </pre>
-          </div>
+          </CardContent>
+        </Card>
 
-          <div>
-            <h2 className="font-semibold text-gray-700">Backend URL Test:</h2>
-            <button
+        <Card>
+          <CardHeader>
+            <CardTitle>Backend URL Test</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Button
               onClick={async () => {
                 const url = apiUrl || 'http://localhost:8000'
                 try {
@@ -29,12 +39,11 @@ export default function DebugPage() {
                   alert(`Error: ${error.message}`)
                 }
               }}
-              className="mt-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
             >
               Test Connection
-            </button>
-          </div>
-        </div>
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     </div>
   )

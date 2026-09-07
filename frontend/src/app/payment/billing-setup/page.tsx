@@ -4,7 +4,10 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import Script from 'next/script'
-import { CreditCard, Shield, Check, AlertTriangle, ArrowLeft } from 'lucide-react'
+import { CreditCard, Shield, Check, AlertTriangle, ArrowLeft, Loader2 } from 'lucide-react'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { PageHeader } from '@/components/app-shell/page-header'
 import { billingAPI, paymentAPI } from '@/lib/api'
 
 declare global {
@@ -96,8 +99,8 @@ export default function BillingSetupPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
       </div>
     )
   }
@@ -109,137 +112,131 @@ export default function BillingSetupPage() {
         onLoad={initTossPayments}
       />
 
-      <div className="min-h-screen bg-gray-50">
-        {/* 헤더 */}
-        <div className="bg-white border-b">
-          <div className="container mx-auto px-4 py-6">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => router.back()}
-                className="p-2 hover:bg-gray-100 rounded-lg"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">결제 수단 등록</h1>
-                <p className="text-sm text-gray-600 mt-1">정기결제에 사용할 카드를 등록해 주세요</p>
-              </div>
+      <div className="min-h-screen bg-background">
+        <div className="mx-auto max-w-2xl space-y-6 px-4 py-8">
+          <PageHeader
+            title="결제 수단 등록"
+            description="정기결제에 사용할 카드를 등록해 주세요."
+            actions={
+              <Button variant="ghost" size="sm" onClick={() => router.back()}>
+                <ArrowLeft />
+                뒤로
+              </Button>
+            }
+          />
+
+          {error ? (
+            <div className="flex items-center gap-3 rounded-lg bg-danger-soft p-4 text-sm text-danger">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <p>{error}</p>
             </div>
-          </div>
-        </div>
-
-        <div className="container mx-auto px-4 py-8">
-          <div className="max-w-2xl mx-auto">
-            {error ? (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
-                <div className="flex items-center gap-3">
-                  <AlertTriangle className="w-5 h-5 text-red-600" />
-                  <p className="text-red-800">{error}</p>
-                </div>
-              </div>
-            ) : (
-              <>
-                {/* 결제 수단 선택 */}
-                <div className="bg-white rounded-lg shadow-sm border p-6 mb-6">
-                  <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <CreditCard className="w-5 h-5" />
+          ) : (
+            <>
+              {/* 결제 수단 선택 */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <CreditCard className="h-4 w-4 text-muted-foreground" />
                     결제 수단 선택
-                  </h2>
-
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
                   <div id="billing-method" className="min-h-[200px]">
                     {!billingMethodsRendered.current && (
-                      <div className="flex items-center justify-center h-[200px]">
-                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                      <div className="flex h-[200px] items-center justify-center">
+                        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
                       </div>
                     )}
                   </div>
-                </div>
+                </CardContent>
+              </Card>
 
-                {/* 자동결제 동의 */}
-                <div className="bg-white rounded-lg shadow-sm border p-6 mb-6">
-                  <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                    <Shield className="w-5 h-5" />
+              {/* 자동결제 동의 */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Shield className="h-4 w-4 text-muted-foreground" />
                     자동결제 동의
-                  </h2>
-
-                  <div className="bg-gray-50 rounded-lg p-4 mb-4">
-                    <h3 className="font-medium text-gray-900 mb-3">자동결제 안내</h3>
-                    <ul className="space-y-2 text-sm text-gray-600">
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="rounded-lg border bg-muted/40 p-4">
+                    <div className="mb-3 text-[13px] font-medium text-muted-foreground">자동결제 안내</div>
+                    <ul className="space-y-2 text-sm">
                       <li className="flex items-start gap-2">
-                        <Check className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
+                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-success" />
                         등록하신 결제수단으로 매월 자동 결제됩니다.
                       </li>
                       <li className="flex items-start gap-2">
-                        <Check className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
+                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-success" />
                         결제 7일 전 이메일로 사전 안내드립니다.
                       </li>
                       <li className="flex items-start gap-2">
-                        <Check className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
+                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-success" />
                         결제 실패 시 3일 후 재시도되며, 3회 실패 시 구독이 해지됩니다.
                       </li>
                       <li className="flex items-start gap-2">
-                        <Check className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
+                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-success" />
                         언제든지 구독 관리 페이지에서 해지할 수 있습니다.
                       </li>
                     </ul>
                   </div>
 
-                  <label className="flex items-start gap-3 cursor-pointer">
+                  <label className="flex cursor-pointer items-start gap-3">
                     <input
                       type="checkbox"
                       checked={agreed}
                       onChange={(e) => setAgreed(e.target.checked)}
-                      className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 mt-0.5"
+                      className="mt-0.5 h-4 w-4 rounded border accent-primary"
                     />
-                    <span className="text-sm text-gray-700">
+                    <span className="text-sm text-muted-foreground">
                       위 내용을 확인하였으며,{' '}
-                      <Link href="/legal" className="text-blue-600 hover:underline" target="_blank">
+                      <Link href="/legal" className="text-primary hover:underline" target="_blank">
                         이용약관
                       </Link>{' '}
                       및{' '}
-                      <Link href="/legal" className="text-blue-600 hover:underline" target="_blank">
+                      <Link href="/legal" className="text-primary hover:underline" target="_blank">
                         개인정보처리방침
                       </Link>
                       에 동의하고 자동결제에 동의합니다.
                     </span>
                   </label>
-                </div>
+                </CardContent>
+              </Card>
 
-                {/* 안내 */}
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-                  <div className="flex items-start gap-3">
-                    <Shield className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-                    <div className="text-sm text-blue-800">
-                      <p className="font-medium mb-1">안전한 결제</p>
-                      <p>
-                        카드 정보는 토스페이먼츠에서 안전하게 암호화되어 저장됩니다.
-                        당사는 카드 정보를 직접 저장하지 않습니다.
-                      </p>
-                    </div>
-                  </div>
+              {/* 안내 */}
+              <div className="flex items-start gap-3 rounded-lg bg-accent p-4 text-sm text-accent-foreground">
+                <Shield className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                <div>
+                  <p className="mb-1 font-medium">안전한 결제</p>
+                  <p className="text-muted-foreground">
+                    카드 정보는 토스페이먼츠에서 안전하게 암호화되어 저장됩니다.
+                    당사는 카드 정보를 직접 저장하지 않습니다.
+                  </p>
                 </div>
+              </div>
 
-                {/* 버튼 */}
-                <button
-                  onClick={handleSubmit}
-                  disabled={processing || !agreed}
-                  className="w-full py-4 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {processing ? (
-                    <>
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                      처리 중...
-                    </>
-                  ) : (
-                    <>
-                      <CreditCard className="w-5 h-5" />
-                      카드 등록하기
-                    </>
-                  )}
-                </button>
-              </>
-            )}
-          </div>
+              {/* 버튼 */}
+              <Button
+                size="lg"
+                className="w-full"
+                onClick={handleSubmit}
+                disabled={processing || !agreed}
+              >
+                {processing ? (
+                  <>
+                    <Loader2 className="animate-spin" />
+                    처리 중...
+                  </>
+                ) : (
+                  <>
+                    <CreditCard />
+                    카드 등록하기
+                  </>
+                )}
+              </Button>
+            </>
+          )}
         </div>
       </div>
     </>

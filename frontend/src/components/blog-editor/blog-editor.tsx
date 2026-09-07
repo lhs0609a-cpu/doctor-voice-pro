@@ -716,21 +716,21 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
 
   return (
     <div
-      className="min-h-screen"
+      className="relative"
       onDragOver={handleGlobalDragOver}
       onDragLeave={handleGlobalDragLeave}
       onDrop={handleGlobalDrop}
     >
       {/* 헤더 - P1 Fix: 모바일 UX 개선 */}
-      <div className="sticky top-0 z-50 bg-white border-b shadow-sm">
-        <div className="container mx-auto px-2 sm:px-4 py-2 sm:py-3">
+      <div className="sticky top-0 z-20 mb-4 rounded-xl border bg-card px-3 py-2 shadow-card sm:px-4 sm:py-3">
+        <div>
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 sm:gap-4 min-w-0">
               <Button variant="ghost" size="sm" onClick={() => router.push('/dashboard/saved')} className="px-2 sm:px-3">
                 <ArrowLeft className="h-4 w-4 sm:mr-2" />
                 <span className="hidden sm:inline">돌아가기</span>
               </Button>
-              <div className="h-6 w-px bg-gray-300 hidden sm:block" />
+              <div className="h-6 w-px bg-border hidden sm:block" />
               {/* P1 Fix: 모바일에서도 제목 표시 (짧게) */}
               <h1 className="font-semibold text-sm sm:text-base truncate">
                 <span className="sm:hidden">에디터</span>
@@ -741,7 +741,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
             {/* P1 Fix: 모바일에서 버튼 간격 및 터치 영역 개선 */}
             <div className="flex items-center gap-1.5 sm:gap-2">
               <Button
-                variant={previewMode ? 'default' : 'outline'}
+                variant={previewMode ? 'secondary' : 'outline'}
                 size="sm"
                 onClick={() => setPreviewMode(!previewMode)}
                 className="px-2.5 sm:px-3 min-w-[40px] sm:min-w-0"
@@ -772,7 +772,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
               </Button>
               <Button
                 size="sm"
-                className="bg-green-600 hover:bg-green-700 px-2.5 sm:px-3 min-w-[40px] sm:min-w-0"
+                className="px-2.5 sm:px-3 min-w-[40px] sm:min-w-0"
                 onClick={sendToExtension}
                 title="블로그에 포스팅"
               >
@@ -786,16 +786,16 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
 
       {/* 드래그 오버레이 */}
       {isDragging && (
-        <div className="fixed inset-0 z-40 bg-blue-500/20 flex items-center justify-center pointer-events-none">
-          <div className="bg-white p-8 rounded-lg shadow-lg text-center">
-            <Upload className="h-12 w-12 mx-auto mb-4 text-blue-600" />
+        <div className="fixed inset-0 z-40 bg-primary/10 flex items-center justify-center pointer-events-none">
+          <div className="surface p-8 text-center">
+            <Upload className="h-12 w-12 mx-auto mb-4 text-primary" />
             <p className="text-lg font-semibold">이미지를 여기에 드롭하세요</p>
           </div>
         </div>
       )}
 
-      <div className="container mx-auto px-2 sm:px-4 py-4 sm:py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6">
+      <div>
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
           {/* 왼쪽: 이미지 패널 (모바일에서는 에디터 다음에 표시) */}
           <div className="lg:col-span-1 space-y-4 order-2 lg:order-1">
             <Card>
@@ -826,7 +826,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
 
                 {uploadedImages.length > 0 ? (
                   <div className="space-y-2">
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-muted-foreground">
                       이미지를 드래그해서 원하는 위치에 놓으세요
                     </p>
                     <div className="grid grid-cols-2 gap-2">
@@ -842,13 +842,13 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                           <img
                             src={img.url}
                             alt=""
-                            className="w-full h-20 object-cover rounded border hover:border-blue-500 transition-colors"
+                            className="w-full h-20 object-cover rounded border hover:border-primary transition-colors"
                           />
                           <button
                             onClick={() => {
                               setUploadedImages(prev => prev.filter(i => i.id !== img.id))
                             }}
-                            className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                            className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
                           >
                             <X className="h-3 w-3" />
                           </button>
@@ -857,7 +857,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                     </div>
                   </div>
                 ) : (
-                  <p className="text-xs text-gray-400 text-center py-4">
+                  <p className="text-xs text-muted-foreground text-center py-4">
                     업로드된 이미지가 없습니다
                   </p>
                 )}
@@ -923,7 +923,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                     <div
                       key={block.id}
                       className={`relative group ${
-                        dragOverBlockId === block.id ? 'ring-2 ring-blue-500' : ''
+                        dragOverBlockId === block.id ? 'ring-2 ring-primary' : ''
                       }`}
                       onDragOver={e => handleDragOver(e, block.id)}
                       onDrop={e => handleDrop(e, block.id)}
@@ -939,7 +939,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                                 e.stopPropagation()
                                 moveBlock(block.id, 'up')
                               }}
-                              className="p-1 hover:bg-gray-100 rounded"
+                              className="p-1 hover:bg-muted rounded"
                               disabled={index === 0}
                             >
                               <MoveUp className="h-3 w-3" />
@@ -949,7 +949,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                                 e.stopPropagation()
                                 moveBlock(block.id, 'down')
                               }}
-                              className="p-1 hover:bg-gray-100 rounded"
+                              className="p-1 hover:bg-muted rounded"
                               disabled={index === blocks.length - 1}
                             >
                               <MoveDown className="h-3 w-3" />
@@ -957,13 +957,13 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                           </div>
                           {/* 모바일: 선택 시 상단 툴바 표시 */}
                           {selectedBlockId === block.id && (
-                            <div className="lg:hidden flex items-center gap-1 mb-2 p-1 bg-gray-100 rounded-lg">
+                            <div className="lg:hidden flex items-center gap-1 mb-2 p-1 bg-muted rounded-lg">
                               <button
                                 onClick={e => {
                                   e.stopPropagation()
                                   moveBlock(block.id, 'up')
                                 }}
-                                className="p-2 hover:bg-white rounded disabled:opacity-30"
+                                className="p-2 hover:bg-card rounded disabled:opacity-30"
                                 disabled={index === 0}
                               >
                                 <MoveUp className="h-4 w-4" />
@@ -973,7 +973,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                                   e.stopPropagation()
                                   moveBlock(block.id, 'down')
                                 }}
-                                className="p-2 hover:bg-white rounded disabled:opacity-30"
+                                className="p-2 hover:bg-card rounded disabled:opacity-30"
                                 disabled={index === blocks.length - 1}
                               >
                                 <MoveDown className="h-4 w-4" />
@@ -984,7 +984,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                                   e.stopPropagation()
                                   deleteBlock(block.id)
                                 }}
-                                className="p-2 text-red-500 hover:bg-red-50 rounded"
+                                className="p-2 text-danger hover:bg-danger-soft rounded"
                               >
                                 <Trash2 className="h-4 w-4" />
                               </button>
@@ -997,8 +997,8 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                       <div
                         className={`rounded-lg transition-all ${
                           selectedBlockId === block.id && !previewMode
-                            ? 'ring-2 ring-blue-500'
-                            : 'hover:bg-gray-50'
+                            ? 'ring-2 ring-primary'
+                            : 'hover:bg-muted/40'
                         }`}
                         style={{
                           backgroundColor: block.style?.backgroundColor || undefined,
@@ -1032,19 +1032,19 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                         )}
 
                         {block.type === 'quote' && (
-                          <div className="border-l-4 border-blue-500 pl-3 sm:pl-4 py-2">
+                          <div className="border-l-4 border-primary pl-3 sm:pl-4 py-2">
                             <textarea
                               value={block.content}
                               onChange={e => updateBlockContent(block.id, e.target.value)}
                               placeholder="인용구를 입력하세요..."
-                              className="w-full min-h-[60px] sm:min-h-[40px] bg-transparent border-none resize-none focus:outline-none text-gray-600 italic text-sm sm:text-base"
+                              className="w-full min-h-[60px] sm:min-h-[40px] bg-transparent border-none resize-none focus:outline-none text-muted-foreground italic text-sm sm:text-base"
                               disabled={previewMode}
                             />
                           </div>
                         )}
 
                         {block.type === 'divider' && (
-                          <hr className="my-4 border-gray-300" />
+                          <hr className="my-4 border-border" />
                         )}
                       </div>
 
@@ -1055,7 +1055,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                             e.stopPropagation()
                             deleteBlock(block.id)
                           }}
-                          className="absolute -right-8 top-1/2 -translate-y-1/2 p-1 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50 rounded hidden lg:block"
+                          className="absolute -right-8 top-1/2 -translate-y-1/2 p-1 text-danger opacity-0 group-hover:opacity-100 transition-opacity hover:bg-danger-soft rounded hidden lg:block"
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
@@ -1067,7 +1067,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                   {!previewMode && (
                     <button
                       onClick={() => addBlock('text')}
-                      className="w-full py-6 sm:py-4 border-2 border-dashed border-gray-200 rounded-lg text-gray-400 hover:border-blue-400 hover:text-blue-500 active:bg-blue-50 transition-colors flex items-center justify-center gap-2"
+                      className="w-full py-6 sm:py-4 border-2 border-dashed border-border rounded-lg text-muted-foreground hover:border-primary hover:text-primary active:bg-accent transition-colors flex items-center justify-center gap-2"
                     >
                       <Plus className="h-5 w-5 sm:h-4 sm:w-4" />
                       블록 추가
@@ -1176,8 +1176,8 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                           }
                           className={`h-10 sm:h-8 rounded border-2 transition-all active:scale-95 ${
                             selectedBlock.style?.backgroundColor === color.value
-                              ? 'border-blue-500 scale-110'
-                              : 'border-gray-200 hover:border-gray-400'
+                              ? 'border-primary scale-110'
+                              : 'border-border hover:border-muted-foreground'
                           }`}
                           style={{ backgroundColor: color.value || '#fff' }}
                           title={color.name}
@@ -1200,7 +1200,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                     {post.seo_keywords.map((keyword, i) => (
                       <span
                         key={i}
-                        className="px-2 py-0.5 bg-blue-50 text-blue-700 text-xs rounded"
+                        className="px-2 py-0.5 bg-accent text-accent-foreground text-xs rounded"
                       >
                         {keyword}
                       </span>
@@ -1221,7 +1221,7 @@ export function BlogEditor({ post, onSave }: BlogEditorProps) {
                     {post.hashtags.slice(0, 10).map((tag, i) => (
                       <span
                         key={i}
-                        className="px-2 py-0.5 bg-gray-100 text-gray-700 text-xs rounded"
+                        className="px-2 py-0.5 bg-muted text-muted-foreground text-xs rounded"
                       >
                         {tag}
                       </span>

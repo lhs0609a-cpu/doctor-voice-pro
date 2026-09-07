@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import Script from 'next/script'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { PageHeader } from '@/components/app-shell/page-header'
 import { Loader2, CreditCard, ArrowLeft, Shield, CheckCircle } from 'lucide-react'
 import { subscriptionAPI, paymentAPI, type Plan } from '@/lib/api'
 import { toast } from 'sonner'
@@ -124,8 +125,8 @@ function CheckoutContent() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
       </div>
     )
   }
@@ -139,116 +140,116 @@ function CheckoutContent() {
         onLoad={() => setTossLoaded(true)}
       />
 
-      <div className="min-h-screen bg-muted/30 py-8">
-        <div className="container mx-auto px-4 max-w-4xl">
-          <Button
-            variant="ghost"
-            onClick={() => router.push('/pricing')}
-            className="mb-6"
-          >
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            요금제로 돌아가기
-          </Button>
+      <div className="min-h-screen bg-background">
+        <div className="mx-auto max-w-2xl space-y-6 px-4 py-8">
+          <PageHeader
+            title="결제하기"
+            description="선택한 플랜을 확인하고 결제를 진행하세요."
+            actions={
+              <Button variant="ghost" size="sm" onClick={() => router.push('/pricing')}>
+                <ArrowLeft />
+                요금제로 돌아가기
+              </Button>
+            }
+          />
 
-          <div className="grid md:grid-cols-2 gap-6">
-            {/* Order Summary */}
-            <Card>
-              <CardHeader>
-                <CardTitle>주문 요약</CardTitle>
-                <CardDescription>선택한 플랜을 확인하세요</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex justify-between items-center p-4 bg-muted rounded-lg">
-                  <div>
-                    <h3 className="font-semibold">{plan.name} 플랜</h3>
-                    <p className="text-sm text-muted-foreground">{plan.description}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-2xl font-bold">₩{formatPrice(plan.price_monthly)}</p>
-                    <p className="text-sm text-muted-foreground">/월</p>
-                  </div>
+          {/* Order Summary */}
+          <Card>
+            <CardHeader>
+              <CardTitle>주문 요약</CardTitle>
+              <CardDescription>선택한 플랜을 확인하세요</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between rounded-lg border bg-muted/40 p-4">
+                <div className="min-w-0">
+                  <div className="font-semibold">{plan.name} 플랜</div>
+                  <p className="text-sm text-muted-foreground">{plan.description}</p>
                 </div>
-
-                <div className="space-y-2">
-                  <h4 className="font-medium">포함된 기능</h4>
-                  <ul className="space-y-1 text-sm text-muted-foreground">
-                    <li className="flex items-center gap-2">
-                      <CheckCircle className="h-4 w-4 text-green-500" />
-                      월 글 생성 {plan.posts_per_month === -1 ? '무제한' : `${plan.posts_per_month}회`}
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle className="h-4 w-4 text-green-500" />
-                      상위노출 분석 {plan.analysis_per_month === -1 ? '무제한' : `${plan.analysis_per_month}회`}
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle className="h-4 w-4 text-green-500" />
-                      키워드 연구 {plan.keywords_per_month === -1 ? '무제한' : `${plan.keywords_per_month}회`}
-                    </li>
-                  </ul>
+                <div className="shrink-0 text-right">
+                  <div className="kpi">₩{formatPrice(plan.price_monthly)}</div>
+                  <div className="text-xs text-muted-foreground">/월</div>
                 </div>
+              </div>
 
-                <div className="border-t pt-4">
-                  <div className="flex justify-between items-center">
-                    <span className="font-medium">총 결제 금액</span>
-                    <span className="text-2xl font-bold text-primary">
-                      ₩{formatPrice(plan.price_monthly)}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    * 7일 무료 체험 후 자동 결제됩니다
-                  </p>
+              <div className="space-y-2">
+                <div className="text-[13px] font-medium text-muted-foreground">포함된 기능</div>
+                <ul className="space-y-1.5 text-sm">
+                  <li className="flex items-center gap-2">
+                    <CheckCircle className="h-4 w-4 text-success" />
+                    월 글 생성 {plan.posts_per_month === -1 ? '무제한' : `${plan.posts_per_month}회`}
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <CheckCircle className="h-4 w-4 text-success" />
+                    상위노출 분석 {plan.analysis_per_month === -1 ? '무제한' : `${plan.analysis_per_month}회`}
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <CheckCircle className="h-4 w-4 text-success" />
+                    키워드 연구 {plan.keywords_per_month === -1 ? '무제한' : `${plan.keywords_per_month}회`}
+                  </li>
+                </ul>
+              </div>
+
+              <div className="border-t pt-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">총 결제 금액</span>
+                  <span className="text-lg font-semibold tabular-nums text-primary">
+                    ₩{formatPrice(plan.price_monthly)}
+                  </span>
                 </div>
-
-                <div className="flex items-center gap-2 text-sm text-muted-foreground bg-green-50 dark:bg-green-900/20 p-3 rounded-lg">
-                  <Shield className="h-4 w-4 text-green-600" />
-                  <span>안전한 결제가 보장됩니다</span>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Payment Method */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <CreditCard className="h-5 w-5" />
-                  결제 수단
-                </CardTitle>
-                <CardDescription>결제 수단을 선택하세요</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {!tossLoaded ? (
-                  <div className="flex items-center justify-center h-40">
-                    <Loader2 className="h-6 w-6 animate-spin" />
-                  </div>
-                ) : (
-                  <>
-                    <div id="payment-method" className="min-h-[200px]" />
-                    <div id="agreement" />
-                  </>
-                )}
-
-                <Button
-                  className="w-full"
-                  size="lg"
-                  disabled={!tossLoaded || processing}
-                  onClick={handlePayment}
-                >
-                  {processing ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      결제 처리 중...
-                    </>
-                  ) : (
-                    <>₩{formatPrice(plan.price_monthly)} 결제하기</>
-                  )}
-                </Button>
-
-                <p className="text-xs text-center text-muted-foreground">
-                  결제를 진행하면 이용약관 및 개인정보처리방침에 동의하는 것으로 간주됩니다.
+                <p className="mt-1 text-xs text-muted-foreground">
+                  * 7일 무료 체험 후 자동 결제됩니다
                 </p>
-              </CardContent>
-            </Card>
-          </div>
+              </div>
+
+              <div className="flex items-center gap-2 rounded-lg bg-success-soft p-3 text-sm text-success">
+                <Shield className="h-4 w-4" />
+                <span>안전한 결제가 보장됩니다</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Payment Method */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <CreditCard className="h-4 w-4 text-muted-foreground" />
+                결제 수단
+              </CardTitle>
+              <CardDescription>결제 수단을 선택하세요</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {!tossLoaded ? (
+                <div className="flex h-40 items-center justify-center">
+                  <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
+                </div>
+              ) : (
+                <>
+                  <div id="payment-method" className="min-h-[200px]" />
+                  <div id="agreement" />
+                </>
+              )}
+
+              <Button
+                className="w-full tabular-nums"
+                size="lg"
+                disabled={!tossLoaded || processing}
+                onClick={handlePayment}
+              >
+                {processing ? (
+                  <>
+                    <Loader2 className="animate-spin" />
+                    결제 처리 중...
+                  </>
+                ) : (
+                  <>₩{formatPrice(plan.price_monthly)} 결제하기</>
+                )}
+              </Button>
+
+              <p className="text-center text-xs text-muted-foreground">
+                결제를 진행하면 이용약관 및 개인정보처리방침에 동의하는 것으로 간주됩니다.
+              </p>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </>
@@ -258,8 +259,8 @@ function CheckoutContent() {
 export default function CheckoutPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
       </div>
     }>
       <CheckoutContent />

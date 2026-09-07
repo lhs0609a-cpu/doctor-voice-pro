@@ -6,8 +6,9 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
+import { PageHeader } from '@/components/app-shell/page-header'
+import { Pill, StatTile, EmptyState } from '@/components/app-shell/ui-kit'
 import {
   Select,
   SelectContent,
@@ -309,67 +310,39 @@ export default function PublicLeadsPage() {
   }
 
   const getStatusBadge = (status: string) => {
-    const statusMap: Record<string, { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
-      new: { label: '신규', variant: 'default' },
-      contacted: { label: '연락함', variant: 'secondary' },
-      interested: { label: '관심있음', variant: 'default' },
-      not_interested: { label: '관심없음', variant: 'destructive' },
-      converted: { label: '전환됨', variant: 'outline' },
+    const statusMap: Record<string, { label: string; tone: 'ok' | 'warn' | 'danger' | 'accent' | 'muted' }> = {
+      new: { label: '신규', tone: 'accent' },
+      contacted: { label: '연락함', tone: 'muted' },
+      interested: { label: '관심있음', tone: 'ok' },
+      not_interested: { label: '관심없음', tone: 'danger' },
+      converted: { label: '전환됨', tone: 'ok' },
     }
-    const config = statusMap[status] || { label: status, variant: 'default' as const }
-    return <Badge variant={config.variant}>{config.label}</Badge>
+    const config = statusMap[status] || { label: status, tone: 'muted' as const }
+    return <Pill tone={config.tone}>{config.label}</Pill>
   }
 
+  const getScorePill = (score: number) => (
+    <Pill tone={score >= 70 ? 'ok' : score >= 40 ? 'accent' : 'muted'}>
+      <span className="tabular-nums">{score}</span>점
+    </Pill>
+  )
+
+  const thCls = 'text-[12px] font-medium uppercase tracking-wide text-muted-foreground'
+
   return (
-    <div className="container mx-auto py-6 space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold">공공데이터 리드 수집</h1>
-          <p className="text-muted-foreground">
-            공공데이터 API를 활용하여 자영업자 정보를 수집합니다
-          </p>
-        </div>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="공공데이터 리드 수집"
+        description="공공데이터 API로 자영업자 정보를 모아 리드로 저장합니다."
+      />
 
       {/* 통계 카드 */}
       {leadStats && (
         <div className="grid gap-4 md:grid-cols-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">총 리드</CardTitle>
-              <Database className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{leadStats.total}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">오늘 수집</CardTitle>
-              <TrendingUp className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{leadStats.recent_collected}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">연락 완료</CardTitle>
-              <Phone className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{leadStats.by_status?.contacted || 0}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">전환됨</CardTitle>
-              <Users className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{leadStats.by_status?.converted || 0}</div>
-            </CardContent>
-          </Card>
+          <StatTile label="총 리드" value={leadStats.total} icon={<Database className="h-4 w-4" />} />
+          <StatTile label="오늘 수집" value={leadStats.recent_collected} icon={<TrendingUp className="h-4 w-4" />} />
+          <StatTile label="연락 완료" value={leadStats.by_status?.contacted || 0} icon={<Phone className="h-4 w-4" />} />
+          <StatTile label="전환됨" value={leadStats.by_status?.converted || 0} tone="ok" icon={<Users className="h-4 w-4" />} />
         </div>
       )}
 
@@ -442,7 +415,7 @@ export default function PublicLeadsPage() {
                 </div>
               </div>
 
-              <div className="flex gap-4 items-end">
+              <div className="flex items-end gap-4">
                 <div className="space-y-2">
                   <Label>수집 개수</Label>
                   <Select value={String(searchLimit)} onValueChange={(v) => setSearchLimit(Number(v))}>
@@ -460,9 +433,9 @@ export default function PublicLeadsPage() {
 
                 <Button onClick={handleSearch} disabled={isSearching}>
                   {isSearching ? (
-                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    <RefreshCw className="animate-spin" />
                   ) : (
-                    <Search className="h-4 w-4 mr-2" />
+                    <Search />
                   )}
                   검색
                 </Button>
@@ -474,62 +447,60 @@ export default function PublicLeadsPage() {
           {searchResults.length > 0 && (
             <Card>
               <CardHeader>
-                <div className="flex justify-between items-center">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <CardTitle>검색 결과</CardTitle>
-                    <CardDescription>{searchResults.length}개의 리드를 찾았습니다</CardDescription>
+                    <CardDescription><span className="tabular-nums">{searchResults.length}</span>개의 리드를 찾았습니다</CardDescription>
                   </div>
                   <div className="flex gap-2">
-                    <Button variant="outline" onClick={handleSaveSelected} disabled={selectedLeads.size === 0}>
-                      <Save className="h-4 w-4 mr-2" />
-                      선택 저장 ({selectedLeads.size})
+                    <Button variant="outline" size="sm" onClick={handleSaveSelected} disabled={selectedLeads.size === 0}>
+                      <Save />
+                      선택 저장 (<span className="tabular-nums">{selectedLeads.size}</span>)
                     </Button>
-                    <Button onClick={handleSaveResults}>
-                      <Download className="h-4 w-4 mr-2" />
+                    <Button variant="outline" size="sm" onClick={handleSaveResults}>
+                      <Download />
                       전체 저장
                     </Button>
                   </div>
                 </div>
               </CardHeader>
               <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-12">
-                        <Checkbox
-                          checked={selectedLeads.size === searchResults.length}
-                          onCheckedChange={(checked) => handleSelectAll(searchResults, checked as boolean)}
-                        />
-                      </TableHead>
-                      <TableHead>상호명</TableHead>
-                      <TableHead>업종</TableHead>
-                      <TableHead>주소</TableHead>
-                      <TableHead>전화번호</TableHead>
-                      <TableHead>스코어</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {searchResults.map((lead) => (
-                      <TableRow key={lead.id} className="cursor-pointer" onClick={() => setDetailLead(lead)}>
-                        <TableCell onClick={(e) => e.stopPropagation()}>
+                <div className="overflow-x-auto">
+                  <Table className="text-sm">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-12">
                           <Checkbox
-                            checked={selectedLeads.has(lead.id)}
-                            onCheckedChange={(checked) => handleSelectLead(lead.id, checked as boolean)}
+                            checked={selectedLeads.size === searchResults.length}
+                            onCheckedChange={(checked) => handleSelectAll(searchResults, checked as boolean)}
                           />
-                        </TableCell>
-                        <TableCell className="font-medium">{lead.business_name}</TableCell>
-                        <TableCell>{lead.category}</TableCell>
-                        <TableCell className="max-w-[200px] truncate">{lead.address}</TableCell>
-                        <TableCell>{lead.phone || '-'}</TableCell>
-                        <TableCell>
-                          <Badge variant={lead.score >= 70 ? 'default' : lead.score >= 40 ? 'secondary' : 'outline'}>
-                            {lead.score}점
-                          </Badge>
-                        </TableCell>
+                        </TableHead>
+                        <TableHead className={thCls}>상호명</TableHead>
+                        <TableHead className={thCls}>업종</TableHead>
+                        <TableHead className={thCls}>주소</TableHead>
+                        <TableHead className={thCls}>전화번호</TableHead>
+                        <TableHead className={`${thCls} text-right`}>스코어</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {searchResults.map((lead) => (
+                        <TableRow key={lead.id} className="cursor-pointer hover:bg-muted/40" onClick={() => setDetailLead(lead)}>
+                          <TableCell className="py-2.5" onClick={(e) => e.stopPropagation()}>
+                            <Checkbox
+                              checked={selectedLeads.has(lead.id)}
+                              onCheckedChange={(checked) => handleSelectLead(lead.id, checked as boolean)}
+                            />
+                          </TableCell>
+                          <TableCell className="py-2.5 font-medium">{lead.business_name}</TableCell>
+                          <TableCell className="py-2.5">{lead.category}</TableCell>
+                          <TableCell className="max-w-[200px] truncate py-2.5">{lead.address}</TableCell>
+                          <TableCell className="py-2.5 tabular-nums">{lead.phone || '-'}</TableCell>
+                          <TableCell className="py-2.5 text-right">{getScorePill(lead.score)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </CardContent>
             </Card>
           )}
@@ -539,34 +510,35 @@ export default function PublicLeadsPage() {
         <TabsContent value="saved" className="space-y-4">
           <Card>
             <CardHeader>
-              <div className="flex justify-between items-center">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <CardTitle>저장된 리드</CardTitle>
-                  <CardDescription>수집하여 저장한 리드를 관리합니다</CardDescription>
+                  <CardDescription>수집해 저장한 리드를 관리합니다</CardDescription>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button
-                    variant="default"
+                    size="sm"
                     onClick={handleBatchExtractEmails}
                     disabled={selectedLeads.size === 0 || isExtracting}
                   >
                     {isExtracting ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      <Loader2 className="animate-spin" />
                     ) : (
-                      <Zap className="h-4 w-4 mr-2" />
+                      <Zap />
                     )}
                     이메일 추출
                   </Button>
                   <Button
                     variant="outline"
+                    size="sm"
                     onClick={handleExportToOutreach}
                     disabled={selectedLeads.size === 0}
                   >
-                    <Send className="h-4 w-4 mr-2" />
+                    <Send />
                     이메일 영업으로 내보내기
                   </Button>
-                  <Button variant="outline" onClick={loadSavedLeads}>
-                    <RefreshCw className="h-4 w-4 mr-2" />
+                  <Button variant="ghost" size="sm" onClick={loadSavedLeads}>
+                    <RefreshCw />
                     새로고침
                   </Button>
                 </div>
@@ -574,7 +546,7 @@ export default function PublicLeadsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               {/* 필터 */}
-              <div className="flex gap-4">
+              <div className="flex flex-wrap gap-3">
                 <Select value={filterStatus} onValueChange={(v) => { setFilterStatus(v); loadSavedLeads() }}>
                   <SelectTrigger className="w-40">
                     <SelectValue placeholder="상태 필터" />
@@ -601,7 +573,7 @@ export default function PublicLeadsPage() {
                   </SelectContent>
                 </Select>
 
-                <div className="flex-1">
+                <div className="min-w-[200px] flex-1">
                   <Input
                     value={filterSearch}
                     onChange={(e) => setFilterSearch(e.target.value)}
@@ -609,131 +581,132 @@ export default function PublicLeadsPage() {
                     onKeyDown={(e) => e.key === 'Enter' && loadSavedLeads()}
                   />
                 </div>
-                <Button variant="outline" onClick={loadSavedLeads}>
+                <Button variant="outline" size="icon" onClick={loadSavedLeads} title="필터 적용">
                   <Filter className="h-4 w-4" />
                 </Button>
               </div>
 
               {/* 리드 테이블 */}
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-12">
-                      <Checkbox
-                        checked={selectedLeads.size === savedLeads.length && savedLeads.length > 0}
-                        onCheckedChange={(checked) => handleSelectAll(savedLeads, checked as boolean)}
-                      />
-                    </TableHead>
-                    <TableHead>상호명</TableHead>
-                    <TableHead>업종</TableHead>
-                    <TableHead>지역</TableHead>
-                    <TableHead>연락처</TableHead>
-                    <TableHead>상태</TableHead>
-                    <TableHead>스코어</TableHead>
-                    <TableHead>작업</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {isLoadingLeads ? (
-                    <TableRow>
-                      <TableCell colSpan={8} className="text-center py-8">
-                        <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2" />
-                        로딩 중...
-                      </TableCell>
-                    </TableRow>
-                  ) : savedLeads.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
-                        저장된 리드가 없습니다
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    savedLeads.map((lead) => (
-                      <TableRow key={lead.id}>
-                        <TableCell>
+              {isLoadingLeads ? (
+                <div className="flex justify-center py-16">
+                  <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
+                </div>
+              ) : savedLeads.length === 0 ? (
+                <EmptyState
+                  icon={<Database className="h-8 w-8" />}
+                  title="저장된 리드가 없습니다"
+                  description="리드 수집 탭에서 지역과 업종을 골라 검색한 뒤 저장하세요."
+                  action={
+                    <Button variant="outline" size="sm" onClick={() => setActiveTab('search')}>
+                      <Search />
+                      리드 수집하기
+                    </Button>
+                  }
+                />
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table className="text-sm">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-12">
                           <Checkbox
-                            checked={selectedLeads.has(lead.id)}
-                            onCheckedChange={(checked) => handleSelectLead(lead.id, checked as boolean)}
+                            checked={selectedLeads.size === savedLeads.length && savedLeads.length > 0}
+                            onCheckedChange={(checked) => handleSelectAll(savedLeads, checked as boolean)}
                           />
-                        </TableCell>
-                        <TableCell className="font-medium">
-                          <button
-                            className="text-left hover:underline"
-                            onClick={() => setDetailLead(lead)}
-                          >
-                            {lead.business_name}
-                          </button>
-                        </TableCell>
-                        <TableCell>{lead.category}</TableCell>
-                        <TableCell>{lead.sigungu}</TableCell>
-                        <TableCell>
-                          <div className="space-y-1">
-                            {lead.phone && (
-                              <a href={`tel:${lead.phone}`} className="flex items-center gap-1 text-sm hover:underline">
-                                <Phone className="h-3 w-3" /> {lead.phone}
-                              </a>
-                            )}
-                            {lead.email && (
-                              <a href={`mailto:${lead.email}`} className="flex items-center gap-1 text-sm hover:underline">
-                                <Mail className="h-3 w-3" /> {lead.email}
-                              </a>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Select
-                            value={lead.status}
-                            onValueChange={(v) => handleUpdateStatus(lead.id, v)}
-                          >
-                            <SelectTrigger className="w-28 h-8">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="new">신규</SelectItem>
-                              <SelectItem value="contacted">연락함</SelectItem>
-                              <SelectItem value="interested">관심있음</SelectItem>
-                              <SelectItem value="not_interested">관심없음</SelectItem>
-                              <SelectItem value="converted">전환됨</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={lead.score >= 70 ? 'default' : lead.score >= 40 ? 'secondary' : 'outline'}>
-                            {lead.score}점
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-1">
-                            {!lead.email && (
+                        </TableHead>
+                        <TableHead className={thCls}>상호명</TableHead>
+                        <TableHead className={thCls}>업종</TableHead>
+                        <TableHead className={thCls}>지역</TableHead>
+                        <TableHead className={thCls}>연락처</TableHead>
+                        <TableHead className={thCls}>상태</TableHead>
+                        <TableHead className={`${thCls} text-right`}>스코어</TableHead>
+                        <TableHead className={`${thCls} text-right`}>작업</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {savedLeads.map((lead) => (
+                        <TableRow key={lead.id} className="hover:bg-muted/40">
+                          <TableCell className="py-2.5">
+                            <Checkbox
+                              checked={selectedLeads.has(lead.id)}
+                              onCheckedChange={(checked) => handleSelectLead(lead.id, checked as boolean)}
+                            />
+                          </TableCell>
+                          <TableCell className="py-2.5 font-medium">
+                            <button
+                              className="text-left hover:underline"
+                              onClick={() => setDetailLead(lead)}
+                            >
+                              {lead.business_name}
+                            </button>
+                          </TableCell>
+                          <TableCell className="py-2.5">{lead.category}</TableCell>
+                          <TableCell className="py-2.5">{lead.sigungu}</TableCell>
+                          <TableCell className="py-2.5">
+                            <div className="space-y-1">
+                              {lead.phone && (
+                                <a href={`tel:${lead.phone}`} className="flex items-center gap-1 tabular-nums hover:underline">
+                                  <Phone className="h-3 w-3 text-muted-foreground" /> {lead.phone}
+                                </a>
+                              )}
+                              {lead.email && (
+                                <a href={`mailto:${lead.email}`} className="flex items-center gap-1 hover:underline">
+                                  <Mail className="h-3 w-3 text-muted-foreground" /> {lead.email}
+                                </a>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="py-2.5">
+                            <Select
+                              value={lead.status}
+                              onValueChange={(v) => handleUpdateStatus(lead.id, v)}
+                            >
+                              <SelectTrigger className="h-8 w-28">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="new">신규</SelectItem>
+                                <SelectItem value="contacted">연락함</SelectItem>
+                                <SelectItem value="interested">관심있음</SelectItem>
+                                <SelectItem value="not_interested">관심없음</SelectItem>
+                                <SelectItem value="converted">전환됨</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </TableCell>
+                          <TableCell className="py-2.5 text-right">{getScorePill(lead.score)}</TableCell>
+                          <TableCell className="py-2.5 text-right">
+                            <div className="flex justify-end gap-1">
+                              {!lead.email && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleExtractEmail(lead.id)}
+                                  disabled={extractingLeadId === lead.id}
+                                  title="이메일 추출"
+                                >
+                                  {extractingLeadId === lead.id ? (
+                                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                                  ) : (
+                                    <Zap className="h-4 w-4 text-primary" />
+                                  )}
+                                </Button>
+                              )}
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                onClick={() => handleExtractEmail(lead.id)}
-                                disabled={extractingLeadId === lead.id}
-                                title="이메일 추출"
+                                onClick={() => handleDeleteLead(lead.id)}
+                                title="삭제"
                               >
-                                {extractingLeadId === lead.id ? (
-                                  <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
-                                ) : (
-                                  <Zap className="h-4 w-4 text-blue-500" />
-                                )}
+                                <Trash2 className="h-4 w-4 text-danger" />
                               </Button>
-                            )}
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleDeleteLead(lead.id)}
-                              title="삭제"
-                            >
-                              <Trash2 className="h-4 w-4 text-red-500" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -748,22 +721,22 @@ export default function PublicLeadsPage() {
           </DialogHeader>
 
           {detailLead && (
-            <div className="space-y-4">
+            <div className="space-y-4 text-sm">
               <div className="grid gap-3">
                 <div className="flex items-start gap-2">
-                  <MapPin className="h-4 w-4 mt-1 text-muted-foreground" />
+                  <MapPin className="mt-0.5 h-4 w-4 text-muted-foreground" />
                   <div>
-                    <p className="font-medium">주소</p>
-                    <p className="text-sm text-muted-foreground">{detailLead.road_address || detailLead.address}</p>
+                    <p className="text-[13px] font-medium text-muted-foreground">주소</p>
+                    <p>{detailLead.road_address || detailLead.address}</p>
                   </div>
                 </div>
 
                 {detailLead.phone && (
                   <div className="flex items-start gap-2">
-                    <Phone className="h-4 w-4 mt-1 text-muted-foreground" />
+                    <Phone className="mt-0.5 h-4 w-4 text-muted-foreground" />
                     <div>
-                      <p className="font-medium">전화번호</p>
-                      <a href={`tel:${detailLead.phone}`} className="text-sm text-blue-600 hover:underline">
+                      <p className="text-[13px] font-medium text-muted-foreground">전화번호</p>
+                      <a href={`tel:${detailLead.phone}`} className="tabular-nums text-primary hover:underline">
                         {detailLead.phone}
                       </a>
                     </div>
@@ -772,10 +745,10 @@ export default function PublicLeadsPage() {
 
                 {detailLead.email && (
                   <div className="flex items-start gap-2">
-                    <Mail className="h-4 w-4 mt-1 text-muted-foreground" />
+                    <Mail className="mt-0.5 h-4 w-4 text-muted-foreground" />
                     <div>
-                      <p className="font-medium">이메일</p>
-                      <a href={`mailto:${detailLead.email}`} className="text-sm text-blue-600 hover:underline">
+                      <p className="text-[13px] font-medium text-muted-foreground">이메일</p>
+                      <a href={`mailto:${detailLead.email}`} className="text-primary hover:underline">
                         {detailLead.email}
                       </a>
                     </div>
@@ -784,14 +757,14 @@ export default function PublicLeadsPage() {
 
                 {detailLead.website && (
                   <div className="flex items-start gap-2">
-                    <ExternalLink className="h-4 w-4 mt-1 text-muted-foreground" />
+                    <ExternalLink className="mt-0.5 h-4 w-4 text-muted-foreground" />
                     <div>
-                      <p className="font-medium">웹사이트</p>
+                      <p className="text-[13px] font-medium text-muted-foreground">웹사이트</p>
                       <a
                         href={detailLead.website}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-sm text-blue-600 hover:underline"
+                        className="break-all text-primary hover:underline"
                       >
                         {detailLead.website}
                       </a>
@@ -801,20 +774,18 @@ export default function PublicLeadsPage() {
 
                 {detailLead.owner_name && (
                   <div className="flex items-start gap-2">
-                    <Building2 className="h-4 w-4 mt-1 text-muted-foreground" />
+                    <Building2 className="mt-0.5 h-4 w-4 text-muted-foreground" />
                     <div>
-                      <p className="font-medium">대표자</p>
-                      <p className="text-sm text-muted-foreground">{detailLead.owner_name}</p>
+                      <p className="text-[13px] font-medium text-muted-foreground">대표자</p>
+                      <p>{detailLead.owner_name}</p>
                     </div>
                   </div>
                 )}
 
-                <div className="flex justify-between items-center pt-2">
-                  <div>
-                    <span className="text-sm text-muted-foreground">리드 스코어: </span>
-                    <Badge variant={detailLead.score >= 70 ? 'default' : detailLead.score >= 40 ? 'secondary' : 'outline'}>
-                      {detailLead.score}점
-                    </Badge>
+                <div className="flex items-center justify-between border-t pt-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">리드 스코어</span>
+                    {getScorePill(detailLead.score)}
                   </div>
                   <div>
                     {getStatusBadge(detailLead.status)}
@@ -829,7 +800,7 @@ export default function PublicLeadsPage() {
           )}
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDetailLead(null)}>
+            <Button variant="ghost" onClick={() => setDetailLead(null)}>
               닫기
             </Button>
           </DialogFooter>

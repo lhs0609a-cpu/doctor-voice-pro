@@ -1,13 +1,16 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { CheckCircle2, XCircle, Loader2, Wifi, WifiOff, Sparkles } from 'lucide-react'
+import { Loader2, Wifi, WifiOff, Sparkles } from 'lucide-react'
 import axios from 'axios'
 
 interface AIStatus {
   connected: boolean
   model?: string | null
 }
+
+/** 우측 하단 상태 알약 공통 껍데기 */
+const chipBase = 'flex items-center gap-2 rounded-full border bg-card px-3.5 py-1.5 text-[13px] font-medium shadow-card'
 
 export function ServerStatus() {
   const [backendStatus, setBackendStatus] = useState<'connected' | 'disconnected' | 'checking'>('checking')
@@ -54,13 +57,13 @@ export function ServerStatus() {
   if (backendStatus === 'checking') {
     return (
       <div className="fixed bottom-4 right-4 z-50">
-        <div className="flex flex-col gap-1 px-4 py-3 rounded-lg bg-blue-50 border border-blue-300 shadow-lg max-w-xs">
+        <div className="surface flex max-w-xs flex-col gap-1 px-4 py-3">
           <div className="flex items-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
-            <span className="text-sm font-medium text-blue-700">서버 연결 중...</span>
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            <span className="text-[13px] font-medium">서버 연결 중...</span>
           </div>
-          <span className="text-xs text-blue-600 ml-6">
-            최초 연결 시 10-30초 소요될 수 있습니다
+          <span className="ml-6 text-xs text-muted-foreground">
+            처음 연결할 때는 10~30초 걸릴 수 있어요
           </span>
         </div>
       </div>
@@ -70,15 +73,15 @@ export function ServerStatus() {
   if (backendStatus === 'connected') {
     return (
       <div className="fixed bottom-4 right-4 z-50">
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-green-50 border border-green-300 shadow-lg">
+        <div className="flex flex-col items-end gap-2">
+          <div className={chipBase}>
             <div className="relative">
-              <Wifi className="h-4 w-4 text-green-600" />
-              <div className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-green-500 animate-pulse"></div>
+              <Wifi className="h-4 w-4 text-success" />
+              <div className="absolute -right-1 -top-1 h-2 w-2 animate-pulse rounded-full bg-success" />
             </div>
-            <span className="text-sm font-medium text-green-700">서버 연결됨</span>
+            <span className="text-success">서버 연결됨</span>
             {lastCheck && (
-              <span className="text-xs text-green-600">
+              <span className="text-xs text-muted-foreground tabular-nums">
                 {lastCheck.toLocaleTimeString()}
               </span>
             )}
@@ -86,23 +89,13 @@ export function ServerStatus() {
 
           {/* AI 연동 상태 */}
           {aiStatus && (
-            <div className={`flex items-center gap-2 px-4 py-2 rounded-full shadow-lg ${
-              aiStatus.connected
-                ? 'bg-purple-50 border border-purple-300'
-                : 'bg-gray-50 border border-gray-300'
-            }`}>
-              <Sparkles className={`h-4 w-4 ${
-                aiStatus.connected ? 'text-purple-600' : 'text-gray-400'
-              }`} />
-              <span className={`text-sm font-medium ${
-                aiStatus.connected ? 'text-purple-700' : 'text-gray-500'
-              }`}>
+            <div className={chipBase}>
+              <Sparkles className={`h-4 w-4 ${aiStatus.connected ? 'text-primary' : 'text-muted-foreground'}`} />
+              <span className={aiStatus.connected ? 'text-foreground' : 'text-muted-foreground'}>
                 {aiStatus.connected ? 'Claude AI 연동됨' : 'Claude AI 미연동'}
               </span>
               {aiStatus.connected && aiStatus.model && (
-                <span className="text-xs text-purple-600 bg-purple-100 px-2 py-0.5 rounded">
-                  Sonnet 4.5
-                </span>
+                <span className="pill pill-accent">Sonnet 4.5</span>
               )}
             </div>
           )}
@@ -113,14 +106,15 @@ export function ServerStatus() {
 
   return (
     <div className="fixed bottom-4 right-4 z-50">
-      <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-red-50 border border-red-300 shadow-lg">
-        <WifiOff className="h-4 w-4 text-red-600" />
-        <span className="text-sm font-medium text-red-700">서버 연결 끊김</span>
+      <div className={chipBase}>
+        <WifiOff className="h-4 w-4 text-danger" />
+        <span className="text-danger">서버 연결 끊김</span>
         <button
+          type="button"
           onClick={() => checkBackendConnection()}
-          className="text-xs text-red-600 hover:text-red-800 underline"
+          className="text-xs text-primary underline-offset-4 hover:underline"
         >
-          재연결
+          다시 연결
         </button>
       </div>
     </div>

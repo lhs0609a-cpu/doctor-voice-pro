@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { DashboardNav } from '@/components/dashboard-nav'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -11,6 +10,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { PageHeader } from '@/components/app-shell/page-header'
+import { Pill, EmptyState } from '@/components/app-shell/ui-kit'
 import {
   Share2,
   Instagram,
@@ -26,12 +27,10 @@ import {
   Video,
   Image as ImageIcon,
   FileText,
-  Hash,
   ExternalLink,
   Trash2,
   Send,
-  Clock,
-  RefreshCw
+  Clock
 } from 'lucide-react'
 import { snsAPI, postsAPI, type SNSPlatform, type SNSContentType, type SNSConnection, type SNSPost } from '@/lib/api'
 import { toast } from 'sonner'
@@ -241,40 +240,39 @@ export default function SNSPage() {
   const getPlatformColor = (platform: string) => {
     switch (platform.toLowerCase()) {
       case 'instagram':
-        return 'bg-gradient-to-r from-purple-500 to-pink-500'
       case 'facebook':
-        return 'bg-blue-600'
+        return 'bg-accent text-primary'
       default:
-        return 'bg-gray-500'
+        return 'bg-muted text-muted-foreground'
     }
   }
 
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'draft':
-        return <Badge variant="secondary"><FileText className="h-3 w-3 mr-1" />초안</Badge>
+        return <Pill tone="muted"><FileText className="mr-1 h-3 w-3" />초안</Pill>
       case 'scheduled':
-        return <Badge className="bg-blue-100 text-blue-700"><Clock className="h-3 w-3 mr-1" />예약됨</Badge>
+        return <Pill tone="accent"><Clock className="mr-1 h-3 w-3" />예약됨</Pill>
       case 'published':
-        return <Badge className="bg-green-100 text-green-700"><CheckCircle2 className="h-3 w-3 mr-1" />발행됨</Badge>
+        return <Pill tone="ok"><CheckCircle2 className="mr-1 h-3 w-3" />발행됨</Pill>
       case 'failed':
-        return <Badge className="bg-red-100 text-red-700"><AlertCircle className="h-3 w-3 mr-1" />실패</Badge>
+        return <Pill tone="danger"><AlertCircle className="mr-1 h-3 w-3" />실패</Pill>
       default:
-        return <Badge variant="secondary">{status}</Badge>
+        return <Pill tone="muted">{status}</Pill>
     }
   }
 
   const getContentTypeBadge = (type: string) => {
     switch (type) {
       case 'post':
-        return <Badge variant="outline"><ImageIcon className="h-3 w-3 mr-1" />이미지</Badge>
+        return <Pill tone="muted"><ImageIcon className="mr-1 h-3 w-3" />이미지</Pill>
       case 'story':
-        return <Badge variant="outline"><FileText className="h-3 w-3 mr-1" />스토리</Badge>
+        return <Pill tone="muted"><FileText className="mr-1 h-3 w-3" />스토리</Pill>
       case 'reel':
       case 'short':
-        return <Badge variant="outline"><Video className="h-3 w-3 mr-1" />숏폼</Badge>
+        return <Pill tone="muted"><Video className="mr-1 h-3 w-3" />숏폼</Pill>
       default:
-        return <Badge variant="outline">{type}</Badge>
+        return <Pill tone="muted">{type}</Pill>
     }
   }
 
@@ -284,266 +282,242 @@ export default function SNSPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-        <DashboardNav />
-        <main className="container mx-auto px-4 py-8">
-          <div className="flex items-center justify-center h-64">
-            <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-          </div>
-        </main>
+      <div className="flex justify-center py-16">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-      <DashboardNav />
-
-      <main className="container mx-auto px-4 py-8">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-              <Share2 className="h-8 w-8 text-blue-600" />
-              SNS 멀티 포스팅
-            </h1>
-            <p className="text-gray-600 mt-1">
-              블로그 글을 SNS 콘텐츠로 변환하고 발행하세요
-            </p>
-          </div>
-
-          <div className="flex gap-2">
+    <div className="space-y-6">
+      <PageHeader
+        title="SNS 멀티 포스팅"
+        description="블로그 글을 SNS 콘텐츠로 바꾸고 발행하세요"
+        actions={
+          <>
             <Button variant="outline" onClick={() => setScriptDialogOpen(true)}>
-              <Video className="h-4 w-4 mr-2" />
+              <Video className="h-4 w-4" />
               숏폼 스크립트
             </Button>
             <Button onClick={() => setConvertDialogOpen(true)}>
-              <Wand2 className="h-4 w-4 mr-2" />
+              <Wand2 className="h-4 w-4" />
               콘텐츠 변환
             </Button>
-          </div>
-        </div>
+          </>
+        }
+      />
 
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-6">
-            <TabsTrigger value="posts">SNS 포스트</TabsTrigger>
-            <TabsTrigger value="connections">계정 연동</TabsTrigger>
-          </TabsList>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="mb-6">
+          <TabsTrigger value="posts">SNS 포스트</TabsTrigger>
+          <TabsTrigger value="connections">계정 연동</TabsTrigger>
+        </TabsList>
 
-          <TabsContent value="posts">
-            {snsPosts.length === 0 ? (
-              <Card>
-                <CardContent className="py-16 text-center">
-                  <Share2 className="h-16 w-16 mx-auto text-gray-300 mb-4" />
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">SNS 포스트가 없습니다</h3>
-                  <p className="text-gray-500 mb-6">
-                    블로그 글을 SNS 콘텐츠로 변환하여 발행해보세요
-                  </p>
-                  <Button onClick={() => setConvertDialogOpen(true)}>
-                    <Wand2 className="h-4 w-4 mr-2" />
-                    콘텐츠 변환하기
-                  </Button>
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="grid gap-4">
-                {snsPosts.map((post) => (
-                  <Card key={post.id} className="hover:shadow-md transition-shadow">
-                    <CardHeader>
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white ${getPlatformColor(post.platform)}`}>
-                            {getPlatformIcon(post.platform)}
+        <TabsContent value="posts">
+          {snsPosts.length === 0 ? (
+            <EmptyState
+              icon={<Share2 className="h-8 w-8" />}
+              title="SNS 포스트가 없습니다"
+              description="블로그 글을 SNS 콘텐츠로 바꿔 발행해보세요"
+              action={
+                <Button onClick={() => setConvertDialogOpen(true)}>
+                  <Wand2 className="h-4 w-4" />
+                  콘텐츠 변환하기
+                </Button>
+              }
+            />
+          ) : (
+            <div className="grid gap-4">
+              {snsPosts.map((post) => (
+                <Card key={post.id}>
+                  <CardHeader>
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${getPlatformColor(post.platform)}`}>
+                          {getPlatformIcon(post.platform)}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            {getStatusBadge(post.status)}
+                            {getContentTypeBadge(post.content_type)}
                           </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              {getStatusBadge(post.status)}
-                              {getContentTypeBadge(post.content_type)}
-                            </div>
-                            <CardDescription className="mt-1">
-                              {format(new Date(post.created_at), 'yyyy.MM.dd HH:mm', { locale: ko })}
-                              {post.published_at && (
-                                <span className="ml-2 text-green-600">
-                                  (발행: {format(new Date(post.published_at), 'yyyy.MM.dd HH:mm', { locale: ko })})
-                                </span>
-                              )}
-                            </CardDescription>
-                          </div>
-                        </div>
-                      </div>
-                    </CardHeader>
-
-                    <CardContent>
-                      {post.caption && (
-                        <div className="mb-4">
-                          <p className="text-gray-700 whitespace-pre-wrap line-clamp-3">{post.caption}</p>
-                        </div>
-                      )}
-
-                      {post.hashtags && post.hashtags.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mb-4">
-                          {post.hashtags.map((tag, i) => (
-                            <span key={i} className="text-blue-600 text-sm">#{tag}</span>
-                          ))}
-                        </div>
-                      )}
-
-                      {post.script && (
-                        <div className="bg-gray-50 rounded-lg p-4">
-                          <div className="flex items-center gap-2 mb-2">
-                            <Video className="h-4 w-4 text-purple-600" />
-                            <span className="text-sm font-medium">숏폼 스크립트</span>
-                            {post.script_duration && (
-                              <Badge variant="secondary">{post.script_duration}초</Badge>
+                          <CardDescription className="mt-1 tabular-nums">
+                            {format(new Date(post.created_at), 'yyyy.MM.dd HH:mm', { locale: ko })}
+                            {post.published_at && (
+                              <span className="ml-2 text-success">
+                                (발행: {format(new Date(post.published_at), 'yyyy.MM.dd HH:mm', { locale: ko })})
+                              </span>
                             )}
-                          </div>
-                          <p className="text-sm text-gray-600 whitespace-pre-wrap line-clamp-3">{post.script}</p>
+                          </CardDescription>
                         </div>
-                      )}
+                      </div>
+                    </div>
+                  </CardHeader>
 
-                      {post.error_message && (
-                        <div className="bg-red-50 text-red-700 rounded-lg p-3 text-sm">
-                          <AlertCircle className="h-4 w-4 inline mr-1" />
-                          {post.error_message}
+                  <CardContent className="space-y-4">
+                    {post.caption && (
+                      <p className="line-clamp-3 whitespace-pre-wrap text-sm">{post.caption}</p>
+                    )}
+
+                    {post.hashtags && post.hashtags.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {post.hashtags.map((tag, i) => (
+                          <span key={i} className="text-sm text-primary">#{tag}</span>
+                        ))}
+                      </div>
+                    )}
+
+                    {post.script && (
+                      <div className="rounded-lg border bg-muted/40 p-4">
+                        <div className="mb-2 flex items-center gap-2">
+                          <Video className="h-4 w-4 text-primary" />
+                          <span className="text-sm font-medium">숏폼 스크립트</span>
+                          {post.script_duration && (
+                            <Pill tone="muted">{post.script_duration}초</Pill>
+                          )}
                         </div>
-                      )}
-                    </CardContent>
-
-                    <CardFooter className="flex justify-between">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                        onClick={() => handleDeletePost(post.id)}
-                      >
-                        <Trash2 className="h-4 w-4 mr-1" />
-                        삭제
-                      </Button>
-
-                      <div className="flex gap-2">
-                        {post.caption && (
-                          <Button variant="outline" size="sm" onClick={() => copyToClipboard(post.caption!)}>
-                            <Copy className="h-4 w-4 mr-1" />
-                            복사
-                          </Button>
-                        )}
-                        {post.platform_post_url && (
-                          <Button variant="outline" size="sm" asChild>
-                            <a href={post.platform_post_url} target="_blank" rel="noopener noreferrer">
-                              <ExternalLink className="h-4 w-4 mr-1" />
-                              보기
-                            </a>
-                          </Button>
-                        )}
-                        {post.status === 'draft' && isConnected(post.platform) && (
-                          <Button size="sm" onClick={() => handlePublish(post.id)}>
-                            <Send className="h-4 w-4 mr-1" />
-                            발행
-                          </Button>
-                        )}
+                        <p className="line-clamp-3 whitespace-pre-wrap text-sm text-muted-foreground">{post.script}</p>
                       </div>
-                    </CardFooter>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </TabsContent>
+                    )}
 
-          <TabsContent value="connections">
-            <div className="grid md:grid-cols-2 gap-4">
-              {/* Instagram */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center text-white">
-                      <Instagram className="h-6 w-6" />
-                    </div>
-                    <div>
-                      <CardTitle>Instagram</CardTitle>
-                      <CardDescription>비즈니스 계정 연동</CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {isConnected('instagram') ? (
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-2 text-green-600">
-                        <CheckCircle2 className="h-4 w-4" />
-                        <span className="text-sm">연동됨</span>
+                    {post.error_message && (
+                      <div className="rounded-lg bg-danger-soft p-3 text-sm text-danger">
+                        <AlertCircle className="mr-1 inline h-4 w-4" />
+                        {post.error_message}
                       </div>
-                      {connections.find(c => c.platform === 'instagram')?.platform_username && (
-                        <p className="text-sm text-gray-600">
-                          @{connections.find(c => c.platform === 'instagram')?.platform_username}
-                        </p>
-                      )}
-                      <Button variant="outline" className="w-full" onClick={() => handleDisconnect('instagram')}>
-                        <Unlink className="h-4 w-4 mr-2" />
-                        연동 해제
-                      </Button>
-                    </div>
-                  ) : (
-                    <Button className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600" onClick={() => handleConnect('instagram')}>
-                      <Link2 className="h-4 w-4 mr-2" />
-                      Instagram 연동
+                    )}
+                  </CardContent>
+
+                  <CardFooter className="flex justify-between">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-danger hover:text-danger"
+                      onClick={() => handleDeletePost(post.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      삭제
                     </Button>
-                  )}
-                </CardContent>
-              </Card>
 
-              {/* Facebook */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-full bg-blue-600 flex items-center justify-center text-white">
-                      <Facebook className="h-6 w-6" />
-                    </div>
-                    <div>
-                      <CardTitle>Facebook</CardTitle>
-                      <CardDescription>페이지 연동</CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {isConnected('facebook') ? (
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-2 text-green-600">
-                        <CheckCircle2 className="h-4 w-4" />
-                        <span className="text-sm">연동됨</span>
-                      </div>
-                      {connections.find(c => c.platform === 'facebook')?.page_name && (
-                        <p className="text-sm text-gray-600">
-                          {connections.find(c => c.platform === 'facebook')?.page_name}
-                        </p>
+                    <div className="flex gap-2">
+                      {post.caption && (
+                        <Button variant="outline" size="sm" onClick={() => copyToClipboard(post.caption!)}>
+                          <Copy className="h-4 w-4" />
+                          복사
+                        </Button>
                       )}
-                      <Button variant="outline" className="w-full" onClick={() => handleDisconnect('facebook')}>
-                        <Unlink className="h-4 w-4 mr-2" />
-                        연동 해제
-                      </Button>
+                      {post.platform_post_url && (
+                        <Button variant="outline" size="sm" asChild>
+                          <a href={post.platform_post_url} target="_blank" rel="noopener noreferrer">
+                            <ExternalLink className="h-4 w-4" />
+                            보기
+                          </a>
+                        </Button>
+                      )}
+                      {post.status === 'draft' && isConnected(post.platform) && (
+                        <Button variant="secondary" size="sm" onClick={() => handlePublish(post.id)}>
+                          <Send className="h-4 w-4" />
+                          발행
+                        </Button>
+                      )}
                     </div>
-                  ) : (
-                    <Button className="w-full bg-blue-600 hover:bg-blue-700" onClick={() => handleConnect('facebook')}>
-                      <Link2 className="h-4 w-4 mr-2" />
-                      Facebook 연동
-                    </Button>
-                  )}
-                </CardContent>
-              </Card>
+                  </CardFooter>
+                </Card>
+              ))}
             </div>
+          )}
+        </TabsContent>
 
-            <Card className="mt-4">
+        <TabsContent value="connections">
+          <div className="grid gap-4 md:grid-cols-2">
+            {/* Instagram */}
+            <Card>
               <CardHeader>
-                <CardTitle className="text-lg">연동 안내</CardTitle>
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent text-primary">
+                    <Instagram className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <CardTitle>Instagram</CardTitle>
+                    <CardDescription>비즈니스 계정 연동</CardDescription>
+                  </div>
+                </div>
               </CardHeader>
-              <CardContent className="text-sm text-gray-600 space-y-2">
-                <p>• Instagram은 비즈니스 또는 크리에이터 계정이 필요합니다.</p>
-                <p>• Facebook은 관리하는 페이지가 있어야 합니다.</p>
-                <p>• Instagram 연동 시 Facebook 페이지와 연결되어 있어야 합니다.</p>
-                <p>• 연동 후 포스트를 직접 발행하거나 예약 발행할 수 있습니다.</p>
+              <CardContent>
+                {isConnected('instagram') ? (
+                  <div className="space-y-3">
+                    <Pill tone="ok"><CheckCircle2 className="mr-1 h-3 w-3" />연동됨</Pill>
+                    {connections.find(c => c.platform === 'instagram')?.platform_username && (
+                      <p className="text-sm text-muted-foreground">
+                        @{connections.find(c => c.platform === 'instagram')?.platform_username}
+                      </p>
+                    )}
+                    <Button variant="outline" className="w-full" onClick={() => handleDisconnect('instagram')}>
+                      <Unlink className="h-4 w-4" />
+                      연동 해제
+                    </Button>
+                  </div>
+                ) : (
+                  <Button variant="outline" className="w-full" onClick={() => handleConnect('instagram')}>
+                    <Link2 className="h-4 w-4" />
+                    Instagram 연동
+                  </Button>
+                )}
               </CardContent>
             </Card>
-          </TabsContent>
-        </Tabs>
-      </main>
+
+            {/* Facebook */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent text-primary">
+                    <Facebook className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <CardTitle>Facebook</CardTitle>
+                    <CardDescription>페이지 연동</CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {isConnected('facebook') ? (
+                  <div className="space-y-3">
+                    <Pill tone="ok"><CheckCircle2 className="mr-1 h-3 w-3" />연동됨</Pill>
+                    {connections.find(c => c.platform === 'facebook')?.page_name && (
+                      <p className="text-sm text-muted-foreground">
+                        {connections.find(c => c.platform === 'facebook')?.page_name}
+                      </p>
+                    )}
+                    <Button variant="outline" className="w-full" onClick={() => handleDisconnect('facebook')}>
+                      <Unlink className="h-4 w-4" />
+                      연동 해제
+                    </Button>
+                  </div>
+                ) : (
+                  <Button variant="outline" className="w-full" onClick={() => handleConnect('facebook')}>
+                    <Link2 className="h-4 w-4" />
+                    Facebook 연동
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="mt-4">
+            <CardHeader>
+              <CardTitle>연동 안내</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                <li>Instagram은 비즈니스 또는 크리에이터 계정이 필요합니다.</li>
+                <li>Facebook은 관리하는 페이지가 있어야 합니다.</li>
+                <li>Instagram 연동 시 Facebook 페이지와 연결되어 있어야 합니다.</li>
+                <li>연동 후 포스트를 직접 발행하거나 예약 발행할 수 있습니다.</li>
+              </ul>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
 
       {/* Convert Dialog */}
       <Dialog open={convertDialogOpen} onOpenChange={setConvertDialogOpen}>
@@ -604,17 +578,17 @@ export default function SNSPage() {
             {!convertedContent && (
               <Button onClick={handleConvert} disabled={isConverting || !selectedBlogPost} className="w-full">
                 {isConverting ? (
-                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" />변환 중...</>
+                  <><Loader2 className="h-4 w-4 animate-spin" />변환 중...</>
                 ) : (
-                  <><Wand2 className="h-4 w-4 mr-2" />AI로 변환하기</>
+                  <><Wand2 className="h-4 w-4" />AI로 변환하기</>
                 )}
               </Button>
             )}
 
             {convertedContent && (
-              <div className="space-y-4 border rounded-lg p-4 bg-gray-50">
+              <div className="space-y-4 rounded-lg border bg-muted/40 p-4">
                 <div className="flex items-center justify-between">
-                  <h4 className="font-medium">변환 결과</h4>
+                  <h4 className="text-sm font-medium">변환 결과</h4>
                   <Button variant="ghost" size="sm" onClick={() => copyToClipboard(convertedContent.caption)}>
                     <Copy className="h-4 w-4" />
                   </Button>
@@ -650,7 +624,7 @@ export default function SNSPage() {
             </Button>
             {convertedContent && (
               <Button onClick={handleCreatePost}>
-                <Plus className="h-4 w-4 mr-2" />
+                <Plus className="h-4 w-4" />
                 포스트 저장
               </Button>
             )}
@@ -703,27 +677,27 @@ export default function SNSPage() {
             {!generatedScript && (
               <Button onClick={handleGenerateScript} disabled={isGeneratingScript || !selectedBlogPost} className="w-full">
                 {isGeneratingScript ? (
-                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" />생성 중...</>
+                  <><Loader2 className="h-4 w-4 animate-spin" />생성 중...</>
                 ) : (
-                  <><Video className="h-4 w-4 mr-2" />스크립트 생성</>
+                  <><Video className="h-4 w-4" />스크립트 생성</>
                 )}
               </Button>
             )}
 
             {generatedScript && (
-              <div className="space-y-4 border rounded-lg p-4 bg-gray-50">
+              <div className="space-y-4 rounded-lg border bg-muted/40 p-4">
                 <div className="flex items-center justify-between">
-                  <h4 className="font-medium flex items-center gap-2">
-                    <Video className="h-4 w-4 text-purple-600" />
+                  <h4 className="flex items-center gap-2 text-sm font-medium">
+                    <Video className="h-4 w-4 text-primary" />
                     생성된 스크립트
-                    <Badge variant="secondary">{generatedScript.duration}초</Badge>
+                    <Pill tone="muted">{generatedScript.duration}초</Pill>
                   </h4>
                   <Button variant="ghost" size="sm" onClick={() => copyToClipboard(generatedScript.script)}>
                     <Copy className="h-4 w-4" />
                   </Button>
                 </div>
 
-                <div className="bg-white rounded-lg p-4 border">
+                <div className="rounded-lg border bg-card p-4">
                   <p className="whitespace-pre-wrap text-sm">{generatedScript.script}</p>
                 </div>
 
@@ -732,8 +706,8 @@ export default function SNSPage() {
                     <Label className="text-sm">후킹 멘트 제안</Label>
                     <ul className="mt-1 space-y-1">
                       {generatedScript.hooks.map((hook: string, i: number) => (
-                        <li key={i} className="text-sm text-gray-600 flex items-start gap-2">
-                          <span className="text-purple-500">•</span>
+                        <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+                          <span className="text-primary">•</span>
                           {hook}
                         </li>
                       ))}
@@ -746,8 +720,8 @@ export default function SNSPage() {
                     <Label className="text-sm">CTA 제안</Label>
                     <ul className="mt-1 space-y-1">
                       {generatedScript.cta.map((cta: string, i: number) => (
-                        <li key={i} className="text-sm text-gray-600 flex items-start gap-2">
-                          <span className="text-blue-500">•</span>
+                        <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+                          <span className="text-primary">•</span>
                           {cta}
                         </li>
                       ))}
@@ -771,7 +745,7 @@ export default function SNSPage() {
                 setScriptDialogOpen(false)
                 setGeneratedScript(null)
               }}>
-                <Copy className="h-4 w-4 mr-2" />
+                <Copy className="h-4 w-4" />
                 복사하고 닫기
               </Button>
             )}

@@ -1,8 +1,8 @@
 'use client'
 
-import { Card, CardContent } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Hash, Star } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
+import { Pill } from '@/components/app-shell/ui-kit'
 
 interface Keyword {
   word: string
@@ -20,41 +20,40 @@ export function KeywordTags({ keywords }: KeywordTagsProps) {
     return null
   }
 
+  const medicalCount = keywords.filter((k) => k.is_medical).length
+
   return (
     <Card>
-      <CardContent className="p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <Hash className="h-4 w-4 text-green-600" />
-          <h3 className="font-semibold text-sm">키워드 분석</h3>
-          <Badge variant="outline" className="ml-auto">
-            {keywords.length}개
-          </Badge>
-        </div>
-
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <CardTitle className="flex items-center gap-2">
+          <Hash className="h-4 w-4 text-muted-foreground" />
+          키워드 분석
+        </CardTitle>
+        <Pill tone="muted">{keywords.length}개</Pill>
+      </CardHeader>
+      <CardContent className="space-y-4">
         <div className="flex flex-wrap gap-2">
           {keywords.map((keyword, index) => (
-            <div
+            <span
               key={index}
-              className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm ${
+              className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-sm ${
                 keyword.is_medical
-                  ? 'bg-green-100 text-green-800 border border-green-300'
-                  : 'bg-gray-100 text-gray-700 border border-gray-300'
+                  ? 'border-primary/20 bg-accent text-accent-foreground'
+                  : 'bg-muted text-muted-foreground'
               }`}
             >
-              {keyword.is_medical && (
-                <Star className="h-3 w-3 fill-current" />
-              )}
+              {keyword.is_medical && <Star className="h-3 w-3 fill-current text-primary" />}
               <span className="font-medium">{keyword.word}</span>
-              <span className="text-xs opacity-70">×{keyword.count}</span>
-            </div>
+              <span className="text-xs tabular-nums opacity-70">×{keyword.count}</span>
+            </span>
           ))}
         </div>
 
-        <div className="mt-3 pt-3 border-t text-xs text-gray-500 flex items-center gap-2">
-          <Star className="h-3 w-3 text-green-600 fill-current" />
+        <div className="flex items-center gap-2 border-t pt-3 text-xs text-muted-foreground">
+          <Star className="h-3 w-3 fill-current text-primary" />
           <span>의료 전문 키워드</span>
-          <span className="ml-auto">
-            {keywords.filter(k => k.is_medical).length}개 /  {keywords.length}개
+          <span className="ml-auto tabular-nums">
+            {medicalCount}개 / {keywords.length}개
           </span>
         </div>
       </CardContent>

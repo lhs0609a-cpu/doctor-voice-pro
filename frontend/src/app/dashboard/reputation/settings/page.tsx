@@ -2,26 +2,23 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { DashboardNav } from '@/components/dashboard-nav'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { PageHeader } from '@/components/app-shell/page-header'
+import { Pill, EmptyState, ListRow } from '@/components/app-shell/ui-kit'
 import {
-  Shield,
   Plus,
   Trash2,
-  Save,
   Loader2,
   ArrowLeft,
   MapPin,
   Bell,
-  Settings,
   Users,
 } from 'lucide-react'
 import { reputationAPI } from '@/lib/api'
@@ -46,6 +43,12 @@ const BUSINESS_TYPES = [
   '음식점', '카페', '미용실', '네일샵', '학원',
   '호텔/숙박', '기타',
 ]
+
+const SEVERITY_LABELS: Record<string, string> = {
+  critical: '긴급',
+  warning: '주의',
+  info: '정보',
+}
 
 
 export default function ReputationSettingsPage() {
@@ -258,524 +261,540 @@ export default function ReputationSettingsPage() {
     }))
   }
 
+  const severityTone = (severity: string | null): 'danger' | 'warn' | 'muted' =>
+    severity === 'critical' ? 'danger' : severity === 'warning' ? 'warn' : 'muted'
+
   return (
-    <div className="min-h-screen bg-gray-50">
-      <DashboardNav />
-      <main className="container mx-auto px-4 py-6">
-        {/* 헤더 */}
-        <div className="flex items-center gap-4 mb-6">
-          <Button variant="ghost" size="icon" onClick={() => router.push('/dashboard/reputation')}>
+    <div className="space-y-6">
+      <PageHeader
+        title="평판 모니터링 설정"
+        description="사업장, 알림 규칙, 경쟁사를 관리합니다."
+        actions={
+          <Button variant="outline" size="sm" onClick={() => router.push('/dashboard/reputation')}>
             <ArrowLeft className="h-4 w-4" />
+            평판 홈
           </Button>
-          <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              <Settings className="h-6 w-6 text-gray-600" />
-              평판 모니터링 설정
-            </h1>
-            <p className="text-sm text-gray-500 mt-1">사업장, 알림, 경쟁사 관리</p>
-          </div>
-        </div>
+        }
+      />
 
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="mb-6">
-            <TabsTrigger value="profiles">
-              <MapPin className="h-4 w-4 mr-1" />
-              사업장
-            </TabsTrigger>
-            <TabsTrigger value="alerts">
-              <Bell className="h-4 w-4 mr-1" />
-              알림 규칙
-            </TabsTrigger>
-            <TabsTrigger value="competitors">
-              <Users className="h-4 w-4 mr-1" />
-              경쟁사
-            </TabsTrigger>
-          </TabsList>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="mb-6">
+          <TabsTrigger value="profiles">
+            <MapPin className="mr-1 h-4 w-4" />
+            사업장
+          </TabsTrigger>
+          <TabsTrigger value="alerts">
+            <Bell className="mr-1 h-4 w-4" />
+            알림 규칙
+          </TabsTrigger>
+          <TabsTrigger value="competitors">
+            <Users className="mr-1 h-4 w-4" />
+            경쟁사
+          </TabsTrigger>
+        </TabsList>
 
-          {/* 사업장 관리 */}
-          <TabsContent value="profiles">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-semibold">등록된 사업장</h2>
-              <Button onClick={() => setIsProfileDialogOpen(true)}>
-                <Plus className="h-4 w-4 mr-1" />
+        {/* 사업장 관리 */}
+        <TabsContent value="profiles">
+          <Card>
+            <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
+              <div>
+                <CardTitle>등록된 사업장</CardTitle>
+                <CardDescription className="mt-1">모니터링 중인 사업장 목록입니다.</CardDescription>
+              </div>
+              <Button size="sm" onClick={() => setIsProfileDialogOpen(true)}>
+                <Plus className="h-4 w-4" />
                 사업장 추가
               </Button>
-            </div>
-
-            {isLoading ? (
-              <div className="flex justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin" />
-              </div>
-            ) : profiles.length === 0 ? (
-              <Card>
-                <CardContent className="py-12 text-center">
-                  <MapPin className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-                  <p className="text-gray-500">등록된 사업장이 없습니다.</p>
-                  <Button
-                    className="mt-4"
-                    onClick={() => setIsProfileDialogOpen(true)}
-                  >
-                    첫 사업장 등록하기
-                  </Button>
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="space-y-4">
-                {profiles.map(profile => (
-                  <Card key={profile.id}>
-                    <CardContent className="pt-6">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <h3 className="font-semibold text-lg">{profile.business_name}</h3>
-                          <p className="text-sm text-gray-500">
-                            {profile.business_type || '업종 미지정'} | {profile.address || '주소 미지정'}
-                          </p>
-                          <div className="flex flex-wrap gap-1 mt-2">
+            </CardHeader>
+            <CardContent>
+              {isLoading ? (
+                <div className="flex justify-center py-16">
+                  <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
+                </div>
+              ) : profiles.length === 0 ? (
+                <EmptyState
+                  icon={<MapPin className="h-8 w-8" />}
+                  title="등록된 사업장이 없습니다"
+                  description="첫 사업장을 등록하면 리뷰와 멘션 수집이 시작됩니다."
+                  action={
+                    <Button variant="outline" size="sm" onClick={() => setIsProfileDialogOpen(true)}>
+                      <Plus className="h-4 w-4" />
+                      첫 사업장 등록하기
+                    </Button>
+                  }
+                />
+              ) : (
+                <div className="space-y-3">
+                  {profiles.map(profile => (
+                    <div key={profile.id} className="rounded-lg border bg-muted/40 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 space-y-2">
+                          <div>
+                            <h3 className="text-sm font-semibold">{profile.business_name}</h3>
+                            <p className="text-[13px] text-muted-foreground">
+                              {profile.business_type || '업종 미지정'} | {profile.address || '주소 미지정'}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-1">
                             {(profile.enabled_platforms || []).map(p => (
-                              <Badge key={p} variant="secondary" className="text-xs">
+                              <Pill key={p} tone="accent">
                                 {PLATFORM_LABELS[p as keyof typeof PLATFORM_LABELS] || p}
-                              </Badge>
+                              </Pill>
                             ))}
                           </div>
-                          <div className="flex flex-wrap gap-1 mt-2">
-                            {(profile.keywords || []).map(kw => (
-                              <Badge key={kw} variant="outline" className="text-xs">
-                                {kw}
-                              </Badge>
-                            ))}
-                          </div>
-                          <p className="text-xs text-gray-400 mt-2">
-                            크롤링 주기: {profile.crawl_interval_minutes}분 |
+                          {(profile.keywords || []).length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {(profile.keywords || []).map(kw => (
+                                <Pill key={kw} tone="muted">{kw}</Pill>
+                              ))}
+                            </div>
+                          )}
+                          <p className="text-xs tabular-nums text-muted-foreground">
+                            수집 주기: {profile.crawl_interval_minutes}분 |
                             상태: {profile.is_active ? '활성' : '비활성'}
                           </p>
                         </div>
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="text-red-500 hover:text-red-600"
+                          className="shrink-0 text-muted-foreground hover:text-destructive"
                           onClick={() => handleDeleteProfile(profile.id)}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </TabsContent>
-
-          {/* 알림 규칙 */}
-          <TabsContent value="alerts">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-semibold">
-                알림 규칙
-                {selectedProfile && (
-                  <span className="text-sm font-normal text-gray-500 ml-2">
-                    ({selectedProfile.business_name})
-                  </span>
-                )}
-              </h2>
-              <Button onClick={() => setIsAlertDialogOpen(true)} disabled={!selectedProfile}>
-                <Plus className="h-4 w-4 mr-1" />
-                규칙 추가
-              </Button>
-            </div>
-
-            {!selectedProfile ? (
-              <Card>
-                <CardContent className="py-12 text-center text-gray-500">
-                  먼저 사업장을 등록해주세요.
-                </CardContent>
-              </Card>
-            ) : alertRules.length === 0 ? (
-              <Card>
-                <CardContent className="py-12 text-center">
-                  <Bell className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-                  <p className="text-gray-500">등록된 알림 규칙이 없습니다.</p>
-                  <p className="text-xs text-gray-400 mt-1">부정적 리뷰가 감지되면 즉시 알림을 받아보세요.</p>
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="space-y-3">
-                {alertRules.map(rule => (
-                  <Card key={rule.id}>
-                    <CardContent className="pt-4 pb-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h3 className="font-medium">{rule.name}</h3>
-                            <Badge variant={
-                              rule.severity === 'critical' ? 'destructive'
-                              : rule.severity === 'warning' ? 'default'
-                              : 'secondary'
-                            }>
-                              {rule.severity}
-                            </Badge>
-                            {!rule.is_active && <Badge variant="outline">비활성</Badge>}
-                          </div>
-                          <p className="text-xs text-gray-500 mt-1">
-                            위험도 {rule.min_risk_score}+ |
-                            {rule.notify_email && ' 이메일'}
-                            {rule.notify_sms && ' SMS'}
-                            {rule.notify_kakao && ' 카카오'}
-                            {' | 쿨다운 '}
-                            {rule.cooldown_minutes}분
-                          </p>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-red-500"
-                          onClick={() => handleDeleteAlertRule(rule.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </TabsContent>
-
-          {/* 경쟁사 관리 */}
-          <TabsContent value="competitors">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-semibold">
-                경쟁사
-                {selectedProfile && (
-                  <span className="text-sm font-normal text-gray-500 ml-2">
-                    ({selectedProfile.business_name})
-                  </span>
-                )}
-              </h2>
-              <Button onClick={() => setIsCompetitorDialogOpen(true)} disabled={!selectedProfile}>
-                <Plus className="h-4 w-4 mr-1" />
-                경쟁사 추가
-              </Button>
-            </div>
-
-            {!selectedProfile ? (
-              <Card>
-                <CardContent className="py-12 text-center text-gray-500">
-                  먼저 사업장을 등록해주세요.
-                </CardContent>
-              </Card>
-            ) : competitors.length === 0 ? (
-              <Card>
-                <CardContent className="py-12 text-center">
-                  <Users className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-                  <p className="text-gray-500">등록된 경쟁사가 없습니다.</p>
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="space-y-3">
-                {competitors.map(comp => (
-                  <Card key={comp.id}>
-                    <CardContent className="pt-4 pb-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h3 className="font-medium">{comp.business_name}</h3>
-                          <p className="text-xs text-gray-500 mt-1">
-                            {comp.address || '주소 미지정'}
-                            {comp.current_rating && ` | 별점 ${comp.current_rating}`}
-                            {comp.review_count > 0 && ` | 리뷰 ${comp.review_count}건`}
-                          </p>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-red-500"
-                          onClick={() => handleDeleteCompetitor(comp.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </TabsContent>
-        </Tabs>
-
-        {/* 사업장 등록 다이얼로그 */}
-        <Dialog open={isProfileDialogOpen} onOpenChange={setIsProfileDialogOpen}>
-          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>사업장 등록</DialogTitle>
-              <DialogDescription>모니터링할 사업장 정보를 입력하세요.</DialogDescription>
-            </DialogHeader>
-
-            <div className="space-y-4">
-              <div>
-                <Label>상호명 *</Label>
-                <Input
-                  value={profileForm.business_name}
-                  onChange={e => setProfileForm(f => ({ ...f, business_name: e.target.value }))}
-                  placeholder="예: 닥터보이스 의원"
-                />
-              </div>
-
-              <div>
-                <Label>업종</Label>
-                <Select
-                  value={profileForm.business_type}
-                  onValueChange={v => setProfileForm(f => ({ ...f, business_type: v }))}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="업종 선택" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {BUSINESS_TYPES.map(t => (
-                      <SelectItem key={t} value={t}>{t}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label>주소</Label>
-                <Input
-                  value={profileForm.address}
-                  onChange={e => setProfileForm(f => ({ ...f, address: e.target.value }))}
-                  placeholder="서울시 강남구..."
-                />
-              </div>
-
-              <div>
-                <Label>네이버 플레이스 ID</Label>
-                <Input
-                  value={profileForm.naver_place_id}
-                  onChange={e => setProfileForm(f => ({ ...f, naver_place_id: e.target.value }))}
-                  placeholder="숫자 ID (URL에서 확인)"
-                />
-              </div>
-
-              <div>
-                <Label>구글 플레이스 ID</Label>
-                <Input
-                  value={profileForm.google_place_id}
-                  onChange={e => setProfileForm(f => ({ ...f, google_place_id: e.target.value }))}
-                  placeholder="ChIJ..."
-                />
-              </div>
-
-              <div>
-                <Label>모니터링 키워드 (쉼표로 구분)</Label>
-                <Input
-                  value={profileForm.keywords}
-                  onChange={e => setProfileForm(f => ({ ...f, keywords: e.target.value }))}
-                  placeholder="상호명, 원장님이름, 대표메뉴"
-                />
-              </div>
-
-              <div>
-                <Label>부정 키워드 알림 (쉼표로 구분)</Label>
-                <Input
-                  value={profileForm.negative_keywords}
-                  onChange={e => setProfileForm(f => ({ ...f, negative_keywords: e.target.value }))}
-                  placeholder="불친절, 비위생, 사기"
-                />
-              </div>
-
-              <div>
-                <Label>모니터링 플랫폼</Label>
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {PLATFORM_OPTIONS.map(opt => (
-                    <Badge
-                      key={opt.value}
-                      variant={profileForm.enabled_platforms.includes(opt.value) ? 'default' : 'outline'}
-                      className="cursor-pointer"
-                      onClick={() => togglePlatform(opt.value)}
-                    >
-                      {opt.label}
-                    </Badge>
+                    </div>
                   ))}
                 </div>
-              </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
+        {/* 알림 규칙 */}
+        <TabsContent value="alerts">
+          <Card>
+            <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
               <div>
-                <Label>크롤링 주기 (분)</Label>
-                <Select
-                  value={String(profileForm.crawl_interval_minutes)}
-                  onValueChange={v => setProfileForm(f => ({ ...f, crawl_interval_minutes: Number(v) }))}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="30">30분</SelectItem>
-                    <SelectItem value="60">1시간</SelectItem>
-                    <SelectItem value="120">2시간</SelectItem>
-                    <SelectItem value="360">6시간</SelectItem>
-                    <SelectItem value="720">12시간</SelectItem>
-                    <SelectItem value="1440">24시간</SelectItem>
-                  </SelectContent>
-                </Select>
+                <CardTitle>알림 규칙</CardTitle>
+                <CardDescription className="mt-1">
+                  {selectedProfile ? `${selectedProfile.business_name}의 알림 조건입니다.` : '위험 멘션이 감지되면 알림을 받습니다.'}
+                </CardDescription>
               </div>
-
-              <div>
-                <Label>알림 이메일</Label>
-                <Input
-                  type="email"
-                  value={profileForm.alert_email}
-                  onChange={e => setProfileForm(f => ({ ...f, alert_email: e.target.value }))}
-                  placeholder="alert@example.com"
-                />
-              </div>
-            </div>
-
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setIsProfileDialogOpen(false)}>취소</Button>
-              <Button onClick={handleSaveProfile} disabled={isSaving}>
-                {isSaving && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
-                등록
+              <Button size="sm" onClick={() => setIsAlertDialogOpen(true)} disabled={!selectedProfile}>
+                <Plus className="h-4 w-4" />
+                규칙 추가
               </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* 알림 규칙 추가 다이얼로그 */}
-        <Dialog open={isAlertDialogOpen} onOpenChange={setIsAlertDialogOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>알림 규칙 추가</DialogTitle>
-              <DialogDescription>위험 멘션 감지 시 알림을 받을 조건을 설정하세요.</DialogDescription>
-            </DialogHeader>
-
-            <div className="space-y-4">
-              <div>
-                <Label>규칙 이름 *</Label>
-                <Input
-                  value={alertForm.name}
-                  onChange={e => setAlertForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="예: 별점 2점 이하 즉시 알림"
+            </CardHeader>
+            <CardContent>
+              {!selectedProfile ? (
+                <EmptyState
+                  icon={<MapPin className="h-8 w-8" />}
+                  title="먼저 사업장을 등록해주세요"
+                  description="알림 규칙은 등록된 사업장에 연결됩니다."
+                  action={
+                    <Button variant="outline" size="sm" onClick={() => setActiveTab('profiles')}>
+                      사업장 탭으로 이동
+                    </Button>
+                  }
                 />
-              </div>
-
-              <div>
-                <Label>심각도</Label>
-                <Select
-                  value={alertForm.severity}
-                  onValueChange={v => setAlertForm(f => ({ ...f, severity: v }))}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="critical">긴급 (즉시 알림)</SelectItem>
-                    <SelectItem value="warning">주의 (30분 내)</SelectItem>
-                    <SelectItem value="info">정보 (다이제스트)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label>최소 위험도 점수 (0-100)</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={alertForm.min_risk_score}
-                  onChange={e => setAlertForm(f => ({ ...f, min_risk_score: Number(e.target.value) }))}
+              ) : alertRules.length === 0 ? (
+                <EmptyState
+                  icon={<Bell className="h-8 w-8" />}
+                  title="등록된 알림 규칙이 없습니다"
+                  description="부정적 리뷰가 감지되면 즉시 알림을 받아보세요."
+                  action={
+                    <Button variant="outline" size="sm" onClick={() => setIsAlertDialogOpen(true)}>
+                      <Plus className="h-4 w-4" />
+                      첫 규칙 추가하기
+                    </Button>
+                  }
                 />
-              </div>
-
-              <div>
-                <Label>쿨다운 (분)</Label>
-                <Input
-                  type="number"
-                  min={5}
-                  value={alertForm.cooldown_minutes}
-                  onChange={e => setAlertForm(f => ({ ...f, cooldown_minutes: Number(e.target.value) }))}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>알림 채널</Label>
-                <div className="flex items-center gap-4">
-                  <label className="flex items-center gap-2 text-sm">
-                    <Switch
-                      checked={alertForm.notify_email}
-                      onCheckedChange={v => setAlertForm(f => ({ ...f, notify_email: v }))}
-                    />
-                    이메일
-                  </label>
-                  <label className="flex items-center gap-2 text-sm">
-                    <Switch
-                      checked={alertForm.notify_sms}
-                      onCheckedChange={v => setAlertForm(f => ({ ...f, notify_sms: v }))}
-                    />
-                    SMS
-                  </label>
-                  <label className="flex items-center gap-2 text-sm">
-                    <Switch
-                      checked={alertForm.notify_kakao}
-                      onCheckedChange={v => setAlertForm(f => ({ ...f, notify_kakao: v }))}
-                    />
-                    카카오
-                  </label>
+              ) : (
+                <div className="rounded-lg border">
+                  {alertRules.map(rule => (
+                    <ListRow key={rule.id}>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="font-medium">{rule.name}</h3>
+                          <Pill tone={severityTone(rule.severity)}>
+                            {(rule.severity && SEVERITY_LABELS[rule.severity]) || rule.severity || '-'}
+                          </Pill>
+                          {!rule.is_active && <Pill tone="muted">비활성</Pill>}
+                        </div>
+                        <p className="mt-1 text-xs tabular-nums text-muted-foreground">
+                          위험도 {rule.min_risk_score}+ |
+                          {rule.notify_email && ' 이메일'}
+                          {rule.notify_sms && ' SMS'}
+                          {rule.notify_kakao && ' 카카오'}
+                          {' | 쿨다운 '}
+                          {rule.cooldown_minutes}분
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="shrink-0 text-muted-foreground hover:text-destructive"
+                        onClick={() => handleDeleteAlertRule(rule.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </ListRow>
+                  ))}
                 </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* 경쟁사 관리 */}
+        <TabsContent value="competitors">
+          <Card>
+            <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
+              <div>
+                <CardTitle>경쟁사</CardTitle>
+                <CardDescription className="mt-1">
+                  {selectedProfile ? `${selectedProfile.business_name}과 비교할 경쟁사입니다.` : '평판을 비교할 경쟁사를 등록합니다.'}
+                </CardDescription>
+              </div>
+              <Button size="sm" onClick={() => setIsCompetitorDialogOpen(true)} disabled={!selectedProfile}>
+                <Plus className="h-4 w-4" />
+                경쟁사 추가
+              </Button>
+            </CardHeader>
+            <CardContent>
+              {!selectedProfile ? (
+                <EmptyState
+                  icon={<MapPin className="h-8 w-8" />}
+                  title="먼저 사업장을 등록해주세요"
+                  description="경쟁사는 등록된 사업장에 연결됩니다."
+                  action={
+                    <Button variant="outline" size="sm" onClick={() => setActiveTab('profiles')}>
+                      사업장 탭으로 이동
+                    </Button>
+                  }
+                />
+              ) : competitors.length === 0 ? (
+                <EmptyState
+                  icon={<Users className="h-8 w-8" />}
+                  title="등록된 경쟁사가 없습니다"
+                  description="경쟁사를 추가하면 별점과 리뷰 수를 비교할 수 있습니다."
+                  action={
+                    <Button variant="outline" size="sm" onClick={() => setIsCompetitorDialogOpen(true)}>
+                      <Plus className="h-4 w-4" />
+                      첫 경쟁사 추가하기
+                    </Button>
+                  }
+                />
+              ) : (
+                <div className="rounded-lg border">
+                  {competitors.map(comp => (
+                    <ListRow key={comp.id}>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="font-medium">{comp.business_name}</h3>
+                        <p className="mt-1 text-xs tabular-nums text-muted-foreground">
+                          {comp.address || '주소 미지정'}
+                          {comp.current_rating && ` | 별점 ${comp.current_rating}`}
+                          {comp.review_count > 0 && ` | 리뷰 ${comp.review_count}건`}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="shrink-0 text-muted-foreground hover:text-destructive"
+                        onClick={() => handleDeleteCompetitor(comp.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </ListRow>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* 사업장 등록 다이얼로그 */}
+      <Dialog open={isProfileDialogOpen} onOpenChange={setIsProfileDialogOpen}>
+        <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>사업장 등록</DialogTitle>
+            <DialogDescription>모니터링할 사업장 정보를 입력하세요.</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>상호명 *</Label>
+              <Input
+                value={profileForm.business_name}
+                onChange={e => setProfileForm(f => ({ ...f, business_name: e.target.value }))}
+                placeholder="예: 닥터보이스 의원"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>업종</Label>
+              <Select
+                value={profileForm.business_type}
+                onValueChange={v => setProfileForm(f => ({ ...f, business_type: v }))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="업종 선택" />
+                </SelectTrigger>
+                <SelectContent>
+                  {BUSINESS_TYPES.map(t => (
+                    <SelectItem key={t} value={t}>{t}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>주소</Label>
+              <Input
+                value={profileForm.address}
+                onChange={e => setProfileForm(f => ({ ...f, address: e.target.value }))}
+                placeholder="서울시 강남구..."
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>네이버 플레이스 ID</Label>
+              <Input
+                value={profileForm.naver_place_id}
+                onChange={e => setProfileForm(f => ({ ...f, naver_place_id: e.target.value }))}
+                placeholder="숫자 ID (URL에서 확인)"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>구글 플레이스 ID</Label>
+              <Input
+                value={profileForm.google_place_id}
+                onChange={e => setProfileForm(f => ({ ...f, google_place_id: e.target.value }))}
+                placeholder="ChIJ..."
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>모니터링 키워드 (쉼표로 구분)</Label>
+              <Input
+                value={profileForm.keywords}
+                onChange={e => setProfileForm(f => ({ ...f, keywords: e.target.value }))}
+                placeholder="상호명, 원장님이름, 대표메뉴"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>부정 키워드 알림 (쉼표로 구분)</Label>
+              <Input
+                value={profileForm.negative_keywords}
+                onChange={e => setProfileForm(f => ({ ...f, negative_keywords: e.target.value }))}
+                placeholder="불친절, 비위생, 사기"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>모니터링 플랫폼</Label>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {PLATFORM_OPTIONS.map(opt => {
+                  const on = profileForm.enabled_platforms.includes(opt.value)
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => togglePlatform(opt.value)}
+                      className={`pill cursor-pointer border transition-colors ${
+                        on ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-card text-muted-foreground hover:bg-muted'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  )
+                })}
               </div>
             </div>
 
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setIsAlertDialogOpen(false)}>취소</Button>
-              <Button onClick={handleSaveAlertRule} disabled={isSaving}>
-                {isSaving && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
-                생성
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* 경쟁사 추가 다이얼로그 */}
-        <Dialog open={isCompetitorDialogOpen} onOpenChange={setIsCompetitorDialogOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>경쟁사 추가</DialogTitle>
-              <DialogDescription>평판을 비교할 경쟁사를 추가하세요.</DialogDescription>
-            </DialogHeader>
-
-            <div className="space-y-4">
-              <div>
-                <Label>경쟁사명 *</Label>
-                <Input
-                  value={competitorForm.business_name}
-                  onChange={e => setCompetitorForm(f => ({ ...f, business_name: e.target.value }))}
-                  placeholder="경쟁사 상호명"
-                />
-              </div>
-              <div>
-                <Label>네이버 플레이스 ID</Label>
-                <Input
-                  value={competitorForm.naver_place_id}
-                  onChange={e => setCompetitorForm(f => ({ ...f, naver_place_id: e.target.value }))}
-                  placeholder="숫자 ID"
-                />
-              </div>
-              <div>
-                <Label>주소</Label>
-                <Input
-                  value={competitorForm.address}
-                  onChange={e => setCompetitorForm(f => ({ ...f, address: e.target.value }))}
-                  placeholder="주소"
-                />
-              </div>
+            <div className="space-y-1.5">
+              <Label>수집 주기</Label>
+              <Select
+                value={String(profileForm.crawl_interval_minutes)}
+                onValueChange={v => setProfileForm(f => ({ ...f, crawl_interval_minutes: Number(v) }))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="30">30분</SelectItem>
+                  <SelectItem value="60">1시간</SelectItem>
+                  <SelectItem value="120">2시간</SelectItem>
+                  <SelectItem value="360">6시간</SelectItem>
+                  <SelectItem value="720">12시간</SelectItem>
+                  <SelectItem value="1440">24시간</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setIsCompetitorDialogOpen(false)}>취소</Button>
-              <Button onClick={handleSaveCompetitor} disabled={isSaving}>
-                {isSaving && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
-                추가
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </main>
+            <div className="space-y-1.5">
+              <Label>알림 이메일</Label>
+              <Input
+                type="email"
+                value={profileForm.alert_email}
+                onChange={e => setProfileForm(f => ({ ...f, alert_email: e.target.value }))}
+                placeholder="alert@example.com"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsProfileDialogOpen(false)}>취소</Button>
+            <Button onClick={handleSaveProfile} disabled={isSaving}>
+              {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+              등록
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 알림 규칙 추가 다이얼로그 */}
+      <Dialog open={isAlertDialogOpen} onOpenChange={setIsAlertDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>알림 규칙 추가</DialogTitle>
+            <DialogDescription>위험 멘션 감지 시 알림을 받을 조건을 설정하세요.</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>규칙 이름 *</Label>
+              <Input
+                value={alertForm.name}
+                onChange={e => setAlertForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="예: 별점 2점 이하 즉시 알림"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>심각도</Label>
+              <Select
+                value={alertForm.severity}
+                onValueChange={v => setAlertForm(f => ({ ...f, severity: v }))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="critical">긴급 (즉시 알림)</SelectItem>
+                  <SelectItem value="warning">주의 (30분 내)</SelectItem>
+                  <SelectItem value="info">정보 (다이제스트)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>최소 위험도 점수 (0-100)</Label>
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                value={alertForm.min_risk_score}
+                onChange={e => setAlertForm(f => ({ ...f, min_risk_score: Number(e.target.value) }))}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>쿨다운 (분)</Label>
+              <Input
+                type="number"
+                min={5}
+                value={alertForm.cooldown_minutes}
+                onChange={e => setAlertForm(f => ({ ...f, cooldown_minutes: Number(e.target.value) }))}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>알림 채널</Label>
+              <div className="flex items-center gap-4">
+                <label className="flex items-center gap-2 text-sm">
+                  <Switch
+                    checked={alertForm.notify_email}
+                    onCheckedChange={v => setAlertForm(f => ({ ...f, notify_email: v }))}
+                  />
+                  이메일
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <Switch
+                    checked={alertForm.notify_sms}
+                    onCheckedChange={v => setAlertForm(f => ({ ...f, notify_sms: v }))}
+                  />
+                  SMS
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <Switch
+                    checked={alertForm.notify_kakao}
+                    onCheckedChange={v => setAlertForm(f => ({ ...f, notify_kakao: v }))}
+                  />
+                  카카오
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAlertDialogOpen(false)}>취소</Button>
+            <Button onClick={handleSaveAlertRule} disabled={isSaving}>
+              {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+              생성
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 경쟁사 추가 다이얼로그 */}
+      <Dialog open={isCompetitorDialogOpen} onOpenChange={setIsCompetitorDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>경쟁사 추가</DialogTitle>
+            <DialogDescription>평판을 비교할 경쟁사를 추가하세요.</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>경쟁사명 *</Label>
+              <Input
+                value={competitorForm.business_name}
+                onChange={e => setCompetitorForm(f => ({ ...f, business_name: e.target.value }))}
+                placeholder="경쟁사 상호명"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>네이버 플레이스 ID</Label>
+              <Input
+                value={competitorForm.naver_place_id}
+                onChange={e => setCompetitorForm(f => ({ ...f, naver_place_id: e.target.value }))}
+                placeholder="숫자 ID"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>주소</Label>
+              <Input
+                value={competitorForm.address}
+                onChange={e => setCompetitorForm(f => ({ ...f, address: e.target.value }))}
+                placeholder="주소"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsCompetitorDialogOpen(false)}>취소</Button>
+            <Button onClick={handleSaveCompetitor} disabled={isSaving}>
+              {isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+              추가
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -4,17 +4,16 @@ import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
+import { Pill } from '@/components/app-shell/ui-kit'
 import {
   CheckCircle2,
+  Check,
   Circle,
-  ArrowRight,
   Download,
   Settings,
   Globe,
   Upload,
   MousePointer,
-  Copy,
-  ExternalLink,
   Sparkles,
   X,
   ChevronRight,
@@ -190,104 +189,83 @@ export function PublishGuide({
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-      <Card className="w-full max-w-lg max-h-[90vh] overflow-hidden bg-white shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/50 p-4">
+      <Card className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden shadow-pop">
         {/* 헤더 */}
-        <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-4 text-white">
-          <div className="flex items-center justify-between">
+        <div className="border-b p-5">
+          <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-white/20 rounded-lg">
-                <Play className="h-5 w-5" />
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent text-accent-foreground">
+                <Play className="h-4 w-4" />
               </div>
               <div>
-                <h2 className="font-bold text-lg">블로그 발행 가이드</h2>
-                <p className="text-sm text-white/80">단계별로 따라하세요</p>
+                <h2 className="section-title">블로그 발행 가이드</h2>
+                <p className="text-[13px] text-muted-foreground">단계별로 따라하세요</p>
               </div>
             </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="text-white hover:bg-white/20"
-              onClick={onClose}
-            >
-              <X className="h-5 w-5" />
+            <Button variant="ghost" size="icon" onClick={onClose} aria-label="닫기">
+              <X />
             </Button>
           </div>
 
           {/* 진행률 바 */}
           <div className="mt-4">
-            <div className="flex justify-between text-sm mb-1">
+            <div className="mb-1 flex justify-between text-[13px] text-muted-foreground">
               <span>진행률</span>
-              <span>{Math.round(progress)}%</span>
+              <span className="tabular-nums">{Math.round(progress)}%</span>
             </div>
-            <Progress value={progress} className="h-2 bg-white/30" />
+            <Progress value={progress} className="h-1.5" />
           </div>
         </div>
 
         {/* 단계 목록 */}
-        <CardContent className="p-0 max-h-[60vh] overflow-y-auto">
+        <CardContent className="max-h-[60vh] overflow-y-auto p-0">
           <div className="divide-y">
-            {steps.map((step, index) => (
+            {steps.map((step) => (
               <div
                 key={step.id}
-                className={`p-4 transition-all duration-300 ${
-                  step.current
-                    ? 'bg-green-50 border-l-4 border-green-500'
-                    : step.completed
-                    ? 'bg-gray-50'
-                    : 'bg-white opacity-60'
+                className={`p-4 transition-colors ${
+                  step.current ? 'bg-accent/60' : step.completed ? '' : 'opacity-60'
                 } ${isAnimating && step.current ? 'animate-pulse' : ''}`}
               >
                 <div className="flex items-start gap-4">
                   {/* 단계 번호/체크 */}
                   <div
-                    className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all ${
+                    className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-xs font-semibold tabular-nums ${
                       step.completed
-                        ? 'bg-green-500 text-white'
+                        ? 'bg-success-soft text-success'
                         : step.current
-                        ? 'bg-green-100 text-green-700 ring-2 ring-green-500 ring-offset-2'
-                        : 'bg-gray-200 text-gray-500'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted text-muted-foreground'
                     }`}
                   >
-                    {step.completed ? (
-                      <CheckCircle2 className="h-5 w-5" />
-                    ) : (
-                      step.id
-                    )}
+                    {step.completed ? <Check className="h-4 w-4" /> : step.id}
                   </div>
 
                   {/* 내용 */}
-                  <div className="flex-1 min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className={`${step.current || step.completed ? 'text-gray-900' : 'text-gray-500'}`}>
+                      <span className={step.current || step.completed ? 'text-foreground' : 'text-muted-foreground'}>
                         {step.icon}
                       </span>
-                      <h3
-                        className={`font-semibold ${
-                          step.current ? 'text-green-700' : step.completed ? 'text-gray-700' : 'text-gray-500'
-                        }`}
-                      >
+                      <h3 className={`text-sm font-semibold ${step.current ? 'text-accent-foreground' : step.completed ? 'text-foreground' : 'text-muted-foreground'}`}>
                         {step.title}
                       </h3>
                     </div>
-                    <p className="text-sm text-gray-500 mt-1">{step.description}</p>
+                    <p className="mt-1 text-[13px] text-muted-foreground">{step.description}</p>
 
                     {/* 현재 단계 액션 버튼 */}
                     {step.current && !step.completed && (
                       <div className="mt-3">
                         {step.actionType === 'auto' ? (
-                          <div className="text-sm text-amber-600 bg-amber-50 px-3 py-2 rounded-lg inline-flex items-center gap-2">
+                          <Pill tone="warn">
                             <Circle className="h-3 w-3 animate-pulse" />
                             {step.action}
-                          </div>
+                          </Pill>
                         ) : (
-                          <Button
-                            size="sm"
-                            className="bg-green-600 hover:bg-green-700 gap-2"
-                            onClick={() => handleStepAction(step)}
-                          >
+                          <Button size="sm" onClick={() => handleStepAction(step)}>
                             {step.action}
-                            <ChevronRight className="h-4 w-4" />
+                            <ChevronRight />
                           </Button>
                         )}
                       </div>
@@ -295,34 +273,27 @@ export function PublishGuide({
 
                     {/* 완료 표시 */}
                     {step.completed && (
-                      <div className="mt-2 text-sm text-green-600 flex items-center gap-1">
+                      <div className="mt-2 flex items-center gap-1 text-[13px] text-success">
                         <CheckCircle2 className="h-4 w-4" />
                         완료됨
                       </div>
                     )}
                   </div>
                 </div>
-
-                {/* 연결선 (마지막 제외) */}
-                {index < steps.length - 1 && (
-                  <div className="ml-5 mt-2 mb-2 pl-4 border-l-2 border-dashed border-gray-200 h-2" />
-                )}
               </div>
             ))}
           </div>
         </CardContent>
 
         {/* 푸터 */}
-        <div className="p-4 bg-gray-50 border-t flex items-center justify-between">
-          <Button variant="outline" size="sm" onClick={resetGuide} className="gap-2">
-            <RotateCcw className="h-4 w-4" />
+        <div className="flex items-center justify-between border-t bg-muted/30 p-4">
+          <Button variant="outline" size="sm" onClick={resetGuide}>
+            <RotateCcw />
             처음부터
           </Button>
 
-          <div className="flex items-center gap-2 text-sm text-gray-500">
-            <span>{completedSteps.size}</span>
-            <span>/</span>
-            <span>{steps.length} 완료</span>
+          <div className="text-[13px] tabular-nums text-muted-foreground">
+            {completedSteps.size} / {steps.length} 완료
           </div>
         </div>
       </Card>

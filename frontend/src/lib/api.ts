@@ -424,8 +424,17 @@ export const keywordBatchAPI = {
   },
 
   // 실검색량/경쟁도 조회 (네이버 검색광고 API, 하루 단위 캐시)
-  getVolumes: async (keywords: string[]): Promise<KeywordVolumeDTO[]> => {
-    const response = await api.post<KeywordVolumeDTO[]>('/api/v1/keyword-batch/volumes', { keywords })
+  // includeRelated: 검색광고가 함께 주는 연관검색어(검색량 포함)도 받는다. is_related 로 구분.
+  getVolumes: async (
+    keywords: string[],
+    opts: { includeRelated?: boolean; relatedLimit?: number; relatedMinVolume?: number } = {},
+  ): Promise<KeywordVolumeDTO[]> => {
+    const response = await api.post<KeywordVolumeDTO[]>('/api/v1/keyword-batch/volumes', {
+      keywords,
+      include_related: opts.includeRelated ?? true,
+      related_limit: opts.relatedLimit ?? 80,
+      related_min_volume: opts.relatedMinVolume ?? 0,
+    }, { timeout: 300000 })
     return response.data
   },
 
@@ -444,6 +453,8 @@ export interface KeywordVolumeDTO {
   competition: 'low' | 'mid' | 'high'
   comp_idx_raw?: string
   est_cpc?: number
+  is_related?: boolean   // 입력한 키워드가 아니라 검색광고 연관검색어
+  related_of?: string
 }
 
 // System API
