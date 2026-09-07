@@ -15,11 +15,15 @@ from openai import OpenAI
 
 # Gemini SDK
 try:
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types as genai_types
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
     genai = None
+    genai_types = None
+
+from app.services.ai_rewrite_engine import DEFAULT_MODEL
 
 from app.db.database import get_db
 from app.schemas.user import UserResponse
@@ -395,16 +399,18 @@ async def test_api_key(
             if not GEMINI_AVAILABLE:
                 message = "Gemini SDK가 설치되어 있지 않습니다"
             else:
-                genai.configure(api_key=api_key)
-                # 안정적인 gemini-2.0-flash 모델 사용
-                gemini_model = genai.GenerativeModel('gemini-2.0-flash')
-                response = gemini_model.generate_content(
-                    "test",
-                    generation_config=genai.GenerationConfig(max_output_tokens=10)
+                client = genai.Client(api_key=api_key)
+                client.models.generate_content(
+                    model=DEFAULT_MODEL,
+                    contents="test",
+                    config=genai_types.GenerateContentConfig(
+                        max_output_tokens=16,
+                        thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+                    ),
                 )
                 connected = True
                 message = "Gemini API 연결 성공"
-                model = "gemini-2.0-flash"
+                model = DEFAULT_MODEL
         else:
             message = f"지원하지 않는 provider: {provider}"
 

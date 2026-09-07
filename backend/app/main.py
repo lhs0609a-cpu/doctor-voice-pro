@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.core.config import settings
+from app.services.ai_rewrite_engine import DEFAULT_MODEL
 from app.api import api_router
 from contextlib import asynccontextmanager
 import traceback
@@ -15,6 +16,17 @@ import traceback
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """애플리케이션 시작 시 실행"""
+    # 0. 앱 로그가 운영(Fly) 로그에 보이도록 루트 로거를 설정한다(uvicorn 은 자기 로거만 설정한다)
+    try:
+        import logging as _logging
+        _root = _logging.getLogger()
+        if not _root.handlers:
+            _logging.basicConfig(level=_logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+        for _n in ("app.blogindex", "app.services.blog_index_jobs", "app.services.job_worker", "app.services.campaign_jobs"):
+            _logging.getLogger(_n).setLevel(_logging.INFO)
+        _logging.getLogger("httpx").setLevel(_logging.WARNING)
+    except Exception:
+        pass
     # 1. 먼저 데이터베이스 테이블 생성
     try:
         from app.db.database import engine, Base
@@ -44,6 +56,10 @@ async def lifespan(app: FastAPI):
         from app.models.media_pool import PoolImage, ImageVariant, FixedFooterImage
         # 대량 자동발행 큐 모델
         from app.models.publish_queue import PublishBatch, QueuedPost, NaverCategoryCache, ScheduleMark
+        # 캠페인(병원 단위 대량 발행) + 작업 큐
+        from app.models.campaign import Client, Blog, BriefPreset, Campaign, CampaignKeyword, SerpSnapshot, Draft, PublishJob
+        from app.models.background_job import BackgroundJob
+        from app.models.blog_index import BlogIndexSnapshot, PostAnalysisCache, SerpCache, BlogScoreSample, CompetitorScore, CeilingCache, VerdictResult
 
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -369,9 +385,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[WARNING] Reputation scheduler failed to start: {e}")
 
+    # 캠페인 작업 워커(키워드 확장·통검 분석·원고 생성·사진 태깅·유니크화) — DB 큐 기반
+    try:
+        if settings.RUN_WORKER_IN_APP:
+            from app.services import job_worker
+            job_worker.start_in_app()
+            print("[OK] Campaign job worker started (in-app)")
+    except Exception as e:
+        print(f"[WARNING] Campaign job worker failed to start: {e}")
+
     yield
 
     # 애플리케이션 종료 시 실행
+    try:
+        from app.services import job_worker
+        await job_worker.stop_in_app()
+    except Exception:
+        pass
     try:
         from app.services.reputation_scheduler import reputation_scheduler
         await reputation_scheduler.stop()
@@ -443,8 +473,8 @@ async def health_check():
     """
     # AI 연동 상태 확인
     ai_status = {
-        "connected": bool(settings.OPENAI_API_KEY and settings.OPENAI_API_KEY.startswith("sk-")),
-        "model": "gpt-4o-mini" if settings.OPENAI_API_KEY else None
+        "connected": bool(settings.GEMINI_API_KEY),
+        "model": DEFAULT_MODEL if settings.GEMINI_API_KEY else None
     }
 
     return {

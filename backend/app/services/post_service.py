@@ -20,6 +20,7 @@ from app.services.seo_optimizer import seo_optimizer
 from app.services.forbidden_words_checker import forbidden_words_checker
 from app.services.content_analyzer import content_analyzer
 from app.services.dia_crank_analyzer import dia_crank_analyzer
+from app.services.quality_scorer import quality_scorer
 from app.services.top_post_analyzer import detect_category, CATEGORIES
 
 
@@ -140,6 +141,10 @@ class PostService:
             industry_type=industry_type,
         )
 
+        # 품질 채점 결과. generate() 직후에 읽어야 한다
+        # (싱글턴에 담기므로 사이에 await 이 끼면 다른 요청 것과 섞인다)
+        quality_report = getattr(ai_rewrite_engine, "last_quality", None)
+
         # AI 사용량 기록
         usage_info = None
         if hasattr(ai_rewrite_engine, 'last_usage') and ai_rewrite_engine.last_usage:
@@ -227,6 +232,19 @@ class PostService:
         # 제목도 금칙어 검사
         title, title_replacements = forbidden_words_checker.check_and_replace(title)
 
+        # 금칙어 치환으로 본문이 바뀌었으면 품질 점수를 다시 매긴다.
+        # (치환 전 점수를 저장하면 화면에 뜨는 점수와 실제 원고가 어긋난다)
+        if forbidden_replacements and quality_report:
+            try:
+                rules = quality_scorer.score_rules(
+                    generated_content,
+                    differentiators=profile_dict.get("differentiators") or None,
+                    source_text=original_content,
+                )
+                quality_report = quality_scorer.combine(rules, quality_report.get("llm_judge"))
+            except Exception as e:
+                print(f"금칙어 치환 후 재채점 실패: {e}")
+
         forbidden_check_result = {
             "content_replacements": forbidden_replacements,
             "title_replacements": title_replacements,
@@ -277,6 +295,9 @@ class PostService:
             content_analysis=content_analysis,
             forbidden_words_check=forbidden_check_result,
             dia_crank_analysis=dia_crank_analysis,
+            quality_score=(quality_report or {}).get("total", 0.0),
+            quality_grade=(quality_report or {}).get("grade"),
+            quality_report=quality_report,
         )
 
         db.add(post)
@@ -303,7 +324,9 @@ class PostService:
         await send_progress("completed", 100, "포스팅 생성이 완료되었습니다!", {
             "post_id": str(post.id),
             "title": title,
-            "persuasion_score": persuasion_scores["total"]
+            "persuasion_score": persuasion_scores["total"],
+            "quality_score": (quality_report or {}).get("total"),
+            "quality_grade": (quality_report or {}).get("grade"),
         })
 
         if websocket_manager:
@@ -511,6 +534,7 @@ class PostService:
                 },
                 "signature_phrases": [],
                 "target_audience": {},
+                "differentiators": {},
             }
 
         # 프로필이 dict인 경우 (익명 프로필)
@@ -521,6 +545,7 @@ class PostService:
                 "writing_style": profile.get("writing_style", {}),
                 "signature_phrases": profile.get("signature_phrases", []),
                 "target_audience": profile.get("target_audience", {}),
+                "differentiators": profile.get("differentiators", {}),
             }
 
         # 일반 프로필
@@ -537,6 +562,7 @@ class PostService:
                 },
                 "signature_phrases": [],
                 "target_audience": {},
+                "differentiators": {},
             }
 
         return {
@@ -545,6 +571,7 @@ class PostService:
             "writing_style": profile.writing_style or {},
             "signature_phrases": profile.signature_phrases or [],
             "target_audience": profile.target_audience or {},
+            "differentiators": profile.differentiators or {},
         }
 
     def _extract_location(self, hospital_name: str) -> str:

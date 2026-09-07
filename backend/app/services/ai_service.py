@@ -9,11 +9,18 @@ from app.core.config import settings
 
 # Gemini SDK 임포트 (설치되어 있는 경우)
 try:
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types as genai_types
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
     genai = None
+    genai_types = None
+
+from app.services.ai_rewrite_engine import (
+    DEFAULT_MODEL as GEMINI_DEFAULT_MODEL,
+    get_api_key_from_db,
+)
 
 
 class AIService:
@@ -52,17 +59,18 @@ class AIService:
         else:
             self.openai_client = None
 
-        # Gemini 클라이언트 초기화
-        self.gemini_available = GEMINI_AVAILABLE and bool(settings.GEMINI_API_KEY)
-        if self.gemini_available:
-            genai.configure(api_key=settings.GEMINI_API_KEY)
+        # Gemini 는 호출 시점에 DB/환경변수 키로 클라이언트를 만든다.
+        # 환경변수가 비어 있어도 DB 에 키가 있을 수 있으므로 SDK 유무만 본다.
+        self.gemini_available = GEMINI_AVAILABLE
 
     async def generate_text(
         self,
         prompt: str,
         max_tokens: int = 2000,
         temperature: float = 0.7,
-        system_prompt: Optional[str] = None
+        system_prompt: Optional[str] = None,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> str:
         """
         AI를 사용하여 텍스트를 생성합니다.
@@ -76,17 +84,20 @@ class AIService:
         Returns:
             생성된 텍스트
         """
+        # 호출 시점에 provider 를 넘기면 그쪽을 우선한다 (model 은 Gemini 경로에서만 의미 있음)
+        active_provider = provider or self.provider
+
         # Claude 사용 (기본)
-        if self.provider == "claude" and self.claude_client:
+        if active_provider == "claude" and self.claude_client:
             return await self._generate_with_claude(prompt, max_tokens, temperature, system_prompt)
 
         # GPT 사용
-        elif self.provider == "gpt" and self.openai_client:
+        elif active_provider == "gpt" and self.openai_client:
             return await self._generate_with_gpt(prompt, max_tokens, temperature, system_prompt)
 
         # Gemini 사용
-        elif self.provider == "gemini" and self.gemini_available:
-            return await self._generate_with_gemini(prompt, max_tokens, temperature, system_prompt)
+        elif active_provider == "gemini" and self.gemini_available:
+            return await self._generate_with_gemini(prompt, max_tokens, temperature, system_prompt, model)
 
         # 기본값: 사용 가능한 첫 번째 제공자 사용
         if self.claude_client:
@@ -160,27 +171,33 @@ class AIService:
         prompt: str,
         max_tokens: int,
         temperature: float,
-        system_prompt: Optional[str]
+        system_prompt: Optional[str],
+        model: Optional[str] = None,
     ) -> str:
         """Gemini를 사용하여 텍스트 생성"""
         try:
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            # 관리자 화면(DB)에 등록한 키를 우선 쓰고, 없으면 환경변수로 떨어진다
+            api_key = await get_api_key_from_db("gemini")
+            if not api_key:
+                raise ValueError("Gemini API 키가 설정되지 않았습니다.")
+            client = genai.Client(api_key=api_key)
 
-            full_prompt = prompt
+            config_kwargs = {
+                "max_output_tokens": max_tokens,
+                "temperature": temperature,
+                # 짧은 보조 작업이므로 사고 토큰을 쓰지 않는다
+                "thinking_config": genai_types.ThinkingConfig(thinking_budget=0),
+            }
             if system_prompt:
-                full_prompt = f"{system_prompt}\n\n{prompt}"
+                config_kwargs["system_instruction"] = system_prompt
 
-            generation_config = genai.GenerationConfig(
-                max_output_tokens=max_tokens,
-                temperature=temperature
+            response = client.models.generate_content(
+                model=model or GEMINI_DEFAULT_MODEL,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(**config_kwargs),
             )
 
-            response = model.generate_content(
-                full_prompt,
-                generation_config=generation_config
-            )
-
-            return response.text
+            return response.text or ""
 
         except Exception as e:
             print(f"[ERROR] Gemini API 오류: {e}")

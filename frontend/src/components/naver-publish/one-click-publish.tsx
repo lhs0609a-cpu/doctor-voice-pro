@@ -16,11 +16,13 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
+import { toastExtensionMissing } from '@/lib/extension-toast'
 import { Send, Upload, Image as ImageIcon, X, Loader2, FileEdit, Zap, Clock } from 'lucide-react'
 import { ExtensionStatusCard } from '@/components/extension-status'
 import { useExtensionStatus } from '@/lib/use-extension-status'
 import { publishQueueAPI, type NaverCategory } from '@/lib/api'
 import type { Post } from '@/types'
+import { cn } from '@/lib/utils'
 
 type FinalAction = 'draft' | 'publishNow' | 'schedule'
 type OpenType = 'public' | 'neighbor' | 'both' | 'private'
@@ -67,6 +69,9 @@ function imageToCleanBase64(file: File, maxWidth = 1280, quality = 0.9): Promise
 interface OneClickPublishProps {
   post: Post
 }
+
+const LABEL = 'text-[13px] font-medium text-muted-foreground'
+const SELECT = 'mt-1 h-9 w-full rounded-lg border border-input bg-card px-3 text-sm disabled:opacity-60'
 
 export function OneClickPublish({ post }: OneClickPublishProps) {
   const ext = useExtensionStatus()
@@ -140,7 +145,7 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
 
   const publish = async () => {
     if (!ext.connected || !ext.extensionId) {
-      toast.error('확장 프로그램이 연결되지 않았습니다')
+      toastExtensionMissing()
       return
     }
     let scheduleISO: string | null = null
@@ -187,18 +192,15 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
 
   return (
     <>
-      <Button className="w-full bg-emerald-600 hover:bg-emerald-700 gap-2" size="lg" onClick={() => setOpen(true)}>
-        <Send className="h-4 w-4" />
+      <Button className="w-full" size="lg" onClick={() => setOpen(true)}>
+        <Send />
         네이버 블로그 발행
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-h-[90vh] max-w-md overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Send className="h-5 w-5 text-emerald-600" />
-              네이버 블로그 발행
-            </DialogTitle>
+            <DialogTitle>네이버 블로그 발행</DialogTitle>
             <DialogDescription>사진과 발행 방식만 고르면 자동으로 작성됩니다</DialogDescription>
           </DialogHeader>
 
@@ -208,19 +210,19 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
 
             {/* 이미지 */}
             <div className="space-y-2">
-              <Label className="flex items-center gap-2"><ImageIcon className="h-4 w-4" />사진 추가 (선택)</Label>
+              <Label className={cn(LABEL, 'flex items-center gap-2')}><ImageIcon className="h-4 w-4" />사진 추가 (선택)</Label>
               <input ref={fileInputRef} type="file" multiple accept="image/*" onChange={handleImageUpload} className="hidden" />
               <Button type="button" variant="outline" className="w-full" onClick={() => fileInputRef.current?.click()}>
-                <Upload className="h-4 w-4 mr-2" />사진 선택 (촬영정보 자동 제거)
+                <Upload />사진 선택 (촬영정보 자동 제거)
               </Button>
               {images.length > 0 && (
-                <div className="grid grid-cols-4 gap-2 mt-2">
+                <div className="mt-2 grid grid-cols-4 gap-2">
                   {images.map((img, index) => (
-                    <div key={index} className="relative group">
+                    <div key={index} className="group relative">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={img.preview} alt="" className="w-full h-16 object-cover rounded border" />
+                      <img src={img.preview} alt="" className="h-16 w-full rounded-md border object-cover" />
                       <button onClick={() => removeImage(index)}
-                        className="absolute -top-1 -right-1 bg-rose-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition">
+                        className="absolute -right-1 -top-1 rounded-full bg-destructive p-0.5 text-destructive-foreground opacity-0 transition group-hover:opacity-100">
                         <X className="h-3 w-3" />
                       </button>
                     </div>
@@ -231,17 +233,18 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
 
             {/* 발행 방식 */}
             <div className="space-y-2">
-              <Label>발행 방식</Label>
+              <Label className={LABEL}>발행 방식</Label>
               <div className="grid grid-cols-3 gap-2">
                 {ACTIONS.map((opt) => {
                   const Icon = opt.icon
                   const active = finalAction === opt.key
                   return (
                     <button key={opt.key} onClick={() => setFinalAction(opt.key)}
-                      className={`flex flex-col items-center gap-1 rounded-lg border p-2.5 transition ${
-                        active ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500' : 'border-gray-200 hover:border-emerald-300'
-                      }`}>
-                      <Icon className={`w-4 h-4 ${active ? 'text-emerald-600' : 'text-gray-400'}`} />
+                      className={cn(
+                        'flex flex-col items-center gap-1 rounded-lg border p-2.5 transition-colors',
+                        active ? 'border-primary bg-accent text-accent-foreground' : 'hover:bg-muted'
+                      )}>
+                      <Icon className={cn('h-4 w-4', active ? 'text-primary' : 'text-muted-foreground')} />
                       <span className="text-xs font-medium">{opt.label}</span>
                     </button>
                   )
@@ -252,15 +255,14 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
                 <div className="grid grid-cols-2 gap-2 pt-1">
                   <Input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} />
                   <Input type="time" step={600} value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)} />
-                  <p className="col-span-2 text-[11px] text-gray-500">※ 네이버 예약은 10분 단위 — 분은 자동 내림</p>
+                  <p className="col-span-2 text-[11px] text-muted-foreground">※ 네이버 예약은 10분 단위 — 분은 자동 내림</p>
                 </div>
               )}
 
               {finalAction !== 'draft' && (
                 <div className="pt-1">
-                  <Label className="text-xs text-gray-500">공개 범위</Label>
-                  <select value={openType} onChange={(e) => setOpenType(e.target.value as OpenType)}
-                    className="mt-1 w-full h-9 rounded-md border border-input bg-background px-3 text-sm">
+                  <Label className={LABEL}>공개 범위</Label>
+                  <select value={openType} onChange={(e) => setOpenType(e.target.value as OpenType)} className={SELECT}>
                     <option value="public">전체 공개</option>
                     <option value="neighbor">이웃 공개</option>
                     <option value="both">서로이웃 공개</option>
@@ -273,25 +275,25 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
               {finalAction !== 'draft' && (
                 <div className="pt-1">
                   <div className="flex items-center justify-between">
-                    <Label className="text-xs text-gray-500">카테고리</Label>
+                    <Label className={LABEL}>카테고리</Label>
                     <button type="button" onClick={() => syncCategories(false)} disabled={syncingCats}
-                      className="text-xs text-blue-600 hover:underline disabled:opacity-50">
+                      className="text-xs font-medium text-primary hover:underline disabled:opacity-50">
                       {syncingCats ? '불러오는 중...' : '목록 새로고침'}
                     </button>
                   </div>
                   <select value={category} onChange={(e) => setCategory(e.target.value)}
                     disabled={syncingCats}
-                    className="mt-1 w-full h-9 rounded-md border border-input bg-background px-3 text-sm disabled:opacity-60">
+                    className={SELECT}>
                     <option value="">네이버 기본 카테고리</option>
                     {categories.map((c) => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
                   {syncingCats && categories.length === 0 && (
-                    <p className="mt-1 text-[11px] text-gray-500">네이버에서 카테고리를 불러오는 중...</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">네이버에서 카테고리를 불러오는 중...</p>
                   )}
                   {!syncingCats && categories.length === 0 && (
-                    <p className="mt-1 text-[11px] text-gray-500">
+                    <p className="mt-1 text-[11px] text-muted-foreground">
                       카테고리를 불러오지 못했습니다. 네이버 로그인 상태를 확인한 뒤 &lsquo;목록 새로고침&rsquo;을 눌러주세요.
                     </p>
                   )}
@@ -300,23 +302,23 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
             </div>
 
             {/* 글 미리보기 */}
-            <div className="p-3 bg-gray-50 rounded-lg space-y-1">
-              <p className="text-sm font-medium truncate">{post.title || post.suggested_titles?.[0] || '제목 없음'}</p>
-              <p className="text-xs text-gray-500">{(post.generated_content || '').slice(0, 100)}...</p>
+            <div className="space-y-1 rounded-lg bg-muted p-3">
+              <p className="truncate text-sm font-medium">{post.title || post.suggested_titles?.[0] || '제목 없음'}</p>
+              <p className="text-xs text-muted-foreground">{(post.generated_content || '').slice(0, 100)}...</p>
             </div>
 
-            <p className="text-[11px] text-muted-foreground text-center">
+            <p className="text-center text-[11px] text-muted-foreground">
               브라우저에 네이버가 로그인되어 있어야 합니다(비밀번호 저장 안 함). 미로그인 시 로그인 창이 열립니다.
             </p>
           </div>
 
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setOpen(false)}>취소</Button>
-            <Button className="bg-emerald-600 hover:bg-emerald-700 gap-2" onClick={publish} disabled={publishing || !ext.connected}>
+            <Button onClick={publish} disabled={publishing || !ext.connected}>
               {publishing ? (
-                <><Loader2 className="h-4 w-4 animate-spin" />발행 중...</>
+                <><Loader2 className="animate-spin" />발행 중...</>
               ) : (
-                <><Send className="h-4 w-4" />
+                <><Send />
                   {finalAction === 'draft' ? '임시저장' : finalAction === 'schedule' ? '예약 발행' : '지금 발행'}
                 </>
               )}

@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
+import { toastExtensionMissing } from '@/lib/extension-toast'
 import {
   FileText,
   Trash2,
@@ -28,8 +29,11 @@ import {
   Layers,
   Folder,
   Upload,
+  Check,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
+import { PageHeader } from '@/components/app-shell/page-header'
+import { Pill, EmptyState } from '@/components/app-shell/ui-kit'
 import { ExtensionStatusBadge, ExtensionStatusCard, EXTENSION_DOWNLOAD_URL } from '@/components/extension-status'
 import { useExtensionStatus } from '@/lib/use-extension-status'
 import { PublishGuide } from './publish-guide'
@@ -878,9 +882,7 @@ export function SavedPostsManager() {
     const { title: finalTitle, body: finalBody } = splitTitleBody(draftTitle, draftBody)
     if (!finalBody && !finalTitle) { toast.error('발행할 글을 입력하세요'); return }
     if (!ext.connected || !ext.extensionId) {
-      toast.error('확장 프로그램이 연결되지 않았습니다', {
-        description: '상단 안내에서 확장 프로그램을 설치/실행한 뒤 다시 시도하세요',
-      })
+      toastExtensionMissing()
       return
     }
 
@@ -1065,7 +1067,7 @@ export function SavedPostsManager() {
 
   // 준비함의 모든 글을 확장으로 한 번에 예약 발행
   const publishAllPrepared = async () => {
-    if (!ext.connected || !ext.extensionId) { toast.error('확장 프로그램이 연결되지 않았습니다'); return }
+    if (!ext.connected || !ext.extensionId) { toastExtensionMissing(); return }
     if (prepared.length === 0) return
     setFailedIds({})
     const t = toast.loading(`준비한 ${prepared.length}건 예약 등록 시작...`)
@@ -1109,101 +1111,112 @@ export function SavedPostsManager() {
   const intervalSlot = computeIntervalSlot()
 
   return (
-    <div className="container mx-auto p-6 space-y-5 max-w-6xl">
-      {/* 헤더 */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold">네이버 블로그 자동 발행</h1>
-          <p className="text-muted-foreground mt-1">글을 붙여넣고 사진을 더한 뒤 바로 발행 — 한 화면에서 끝납니다</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <ExtensionStatusBadge />
-          <Button variant="outline" onClick={() => router.push('/dashboard/bulk')} className="gap-2">
-            <Layers className="w-4 h-4" />
-            대량 발행
-          </Button>
-          <Button variant="outline" onClick={() => setGuideOpen(true)} className="gap-2">
-            <PlayCircle className="w-4 h-4" />
-            발행 가이드
-          </Button>
-        </div>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="블로그 발행"
+        description="글을 붙여넣고 사진을 더한 뒤 네이버 블로그에 바로 발행하세요. 한 화면에서 끝납니다."
+        actions={
+          <>
+            <ExtensionStatusBadge />
+            <Button variant="outline" onClick={() => router.push('/dashboard/bulk')}>
+              <Layers />
+              대량 발행
+            </Button>
+            <Button variant="outline" onClick={() => setGuideOpen(true)}>
+              <PlayCircle />
+              발행 가이드
+            </Button>
+          </>
+        }
+      />
 
       {/* 실시간 연동 신호등 + 버전 + 자동 업데이트 */}
       <ExtensionStatusCard />
 
       {/* 본문: 좌 저장 목록(재사용) / 우 인라인 작성+발행 */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
         {/* 왼쪽: 저장된 글(재사용 라이브러리) */}
         <Card className="lg:col-span-2">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <FileText className="w-4 h-4 text-emerald-600" />
-              저장된 글
-            </CardTitle>
-            <CardDescription>글 {savedPosts.length}개 · 클릭하면 오른쪽에서 바로 수정·발행</CardDescription>
+          <CardHeader>
+            <CardTitle>저장된 글</CardTitle>
+            <CardDescription>
+              <span className="tabular-nums">{savedPosts.length}</span>개 · 누르면 오른쪽에서 바로 수정·발행
+            </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-2 max-h-[620px] overflow-y-auto">
+          <CardContent className="max-h-[620px] overflow-y-auto p-0">
             {savedPosts.length === 0 ? (
-              <div className="text-center py-10 text-muted-foreground">
-                <FileText className="w-10 h-10 mx-auto mb-2 opacity-50" />
-                <p>저장된 글이 없습니다</p>
+              <div className="p-5">
+                <EmptyState
+                  icon={<FileText className="h-8 w-8" />}
+                  title="저장된 글이 없어요"
+                  description="글 작성에서 만든 글을 저장하면 여기에 모입니다."
+                  action={
+                    <Button variant="outline" size="sm" onClick={() => router.push('/dashboard/create')}>
+                      <Plus /> 글 작성하러 가기
+                    </Button>
+                  }
+                />
               </div>
             ) : (
-              savedPosts.map((post) => {
-                const active = selectedId === post.id
-                return (
-                  <div
-                    key={post.id}
-                    onClick={() => loadPost(post)}
-                    className={`p-3 border rounded-lg cursor-pointer transition-all ${
-                      active ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500'
-                        : 'border-gray-200 hover:border-emerald-300 hover:bg-emerald-50/40'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <h3 className="font-semibold text-sm line-clamp-2 flex-1">{listTitle(post)}</h3>
-                      {active ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-none" />
-                      ) : post.sourceType === 'database' ? (
-                        <span className="flex-none inline-flex items-center gap-1 px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-medium rounded">
-                          <Database className="w-2.5 h-2.5" />DB
+              <div className="divide-y">
+                {savedPosts.map((post) => {
+                  const active = selectedId === post.id
+                  return (
+                    <div
+                      key={post.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => loadPost(post)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); loadPost(post) } }}
+                      className={`cursor-pointer px-5 py-3 transition-colors ${
+                        active ? 'bg-accent' : 'hover:bg-muted/40'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <h3 className={`flex-1 text-sm font-medium leading-5 line-clamp-2 ${active ? 'text-accent-foreground' : ''}`}>
+                          {listTitle(post)}
+                        </h3>
+                        {active ? (
+                          <CheckCircle2 className="h-4 w-4 flex-none text-primary" />
+                        ) : post.sourceType === 'database' ? (
+                          <Pill tone="muted"><Database className="h-3 w-3" />DB</Pill>
+                        ) : null}
+                      </div>
+                      <div className="mt-1.5 flex items-center justify-between">
+                        <span className="text-xs tabular-nums text-muted-foreground">
+                          {new Date(post.savedAt).toLocaleDateString('ko-KR')}
                         </span>
-                      ) : null}
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-danger"
+                          aria-label="삭제"
+                          onClick={(e) => { e.stopPropagation(); deletePost(post.id) }}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between mt-2">
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(post.savedAt).toLocaleDateString('ko-KR')}
-                      </span>
-                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-rose-500 hover:text-rose-600 hover:bg-rose-50"
-                        onClick={(e) => { e.stopPropagation(); deletePost(post.id) }}>
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-                  </div>
-                )
-              })
+                  )
+                })}
+              </div>
             )}
           </CardContent>
         </Card>
 
         {/* 오른쪽: 인라인 작성 → 사진 → 발행 (한 화면) */}
         <Card className="lg:col-span-3">
-          <CardHeader className="pb-3 flex flex-row items-start justify-between space-y-0">
+          <CardHeader className="flex flex-row items-start justify-between space-y-0">
             <div>
-              <CardTitle className="text-base">발행 준비</CardTitle>
+              <CardTitle>발행 준비</CardTitle>
               <CardDescription>
                 {selectedId ? '불러온 글을 수정할 수 있어요' : '여기에 글을 붙여넣고 바로 발행하세요'}
               </CardDescription>
             </div>
-            <Button size="sm" variant="outline" onClick={newDraft} className="gap-1.5 flex-none">
-              <Plus className="w-3.5 h-3.5" /> 새 글
+            <Button size="sm" variant="outline" onClick={newDraft} className="flex-none">
+              <Plus /> 새 글
             </Button>
           </CardHeader>
           <CardContent className="space-y-6">
             {/* STEP 1. 글 작성/붙여넣기 (인라인) */}
-            <section className="space-y-2">
-              <div className="flex items-center gap-2 font-semibold">
+            <section className="space-y-3">
+              <div className="flex items-center gap-2 text-sm font-semibold">
                 <StepDot n={1} done={hasContent} />
                 글 작성 · 붙여넣기
               </div>
@@ -1223,7 +1236,7 @@ export function SavedPostsManager() {
 
             {/* STEP 2. 사진 */}
             <section className="space-y-3">
-              <div className="flex items-center gap-2 font-semibold">
+              <div className="flex items-center gap-2 text-sm font-semibold">
                 <StepDot n={2} done={photoMode === 'collection' ? !!selectedCollectionId : uploadedImages.length > 0} />
                 사진 추가 <span className="text-xs font-normal text-muted-foreground">(선택)</span>
               </div>
@@ -1231,43 +1244,45 @@ export function SavedPostsManager() {
               {/* 소스 토글 */}
               <div className="grid grid-cols-2 gap-2">
                 <button
+                  type="button"
                   onClick={() => setPhotoMode('upload')}
-                  className={`flex items-center justify-center gap-2 h-10 rounded-lg border text-sm transition ${
+                  className={`flex h-10 items-center justify-center gap-2 rounded-lg border text-sm transition-colors ${
                     photoMode === 'upload'
-                      ? 'border-emerald-500 bg-emerald-50 text-emerald-700 ring-1 ring-emerald-500'
-                      : 'border-gray-200 text-gray-600 hover:border-emerald-300'
+                      ? 'border-primary bg-accent text-accent-foreground ring-1 ring-primary'
+                      : 'text-muted-foreground hover:bg-muted/40'
                   }`}
                 >
-                  <Upload className="w-4 h-4" /> 직접 업로드
+                  <Upload className="h-4 w-4" /> 직접 업로드
                 </button>
                 <button
+                  type="button"
                   onClick={() => setPhotoMode('collection')}
-                  className={`flex items-center justify-center gap-2 h-10 rounded-lg border text-sm transition ${
+                  className={`flex h-10 items-center justify-center gap-2 rounded-lg border text-sm transition-colors ${
                     photoMode === 'collection'
-                      ? 'border-emerald-500 bg-emerald-50 text-emerald-700 ring-1 ring-emerald-500'
-                      : 'border-gray-200 text-gray-600 hover:border-emerald-300'
+                      ? 'border-primary bg-accent text-accent-foreground ring-1 ring-primary'
+                      : 'text-muted-foreground hover:bg-muted/40'
                   }`}
                 >
-                  <Folder className="w-4 h-4" /> 저장된 목록에서
+                  <Folder className="h-4 w-4" /> 저장된 목록에서
                 </button>
               </div>
 
               {photoMode === 'upload' ? (
                 <>
-                  <label className="flex items-center justify-center gap-2 h-11 rounded-lg border-2 border-dashed border-gray-300 cursor-pointer hover:border-emerald-400 hover:bg-emerald-50/40 text-sm text-gray-600">
-                    <ImageIcon className="w-4 h-4" />
+                  <label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed text-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground">
+                    <ImageIcon className="h-4 w-4" />
                     사진 선택 (여러 장 가능 · 촬영정보 자동 제거)
                     <input type="file" multiple accept="image/*" onChange={handleImageUpload} className="hidden" />
                   </label>
                   {uploadedImages.length > 0 && (
                     <div className="grid grid-cols-5 gap-2">
                       {imagePreview.map((src, i) => (
-                        <div key={i} className="relative group">
+                        <div key={i} className="group relative">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={src} alt="" className="w-full h-16 object-cover rounded-md border" />
-                          <button onClick={() => removeImage(i)}
-                            className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition">
-                            <X className="w-3 h-3" />
+                          <img src={src} alt="" className="h-16 w-full rounded-md border object-cover" />
+                          <button type="button" onClick={() => removeImage(i)} aria-label="사진 제거"
+                            className="absolute -right-1.5 -top-1.5 rounded-full bg-destructive p-0.5 text-destructive-foreground opacity-0 transition-opacity group-hover:opacity-100">
+                            <X className="h-3 w-3" />
                           </button>
                         </div>
                       ))}
@@ -1277,40 +1292,41 @@ export function SavedPostsManager() {
               ) : (
                 <div className="space-y-3">
                   {collections.length === 0 ? (
-                    <div className="rounded-lg border border-dashed border-gray-300 p-4 text-sm text-gray-500 text-center">
-                      저장된 목록이 없습니다.{' '}
-                      <button
-                        onClick={() => router.push('/dashboard/media')}
-                        className="text-emerald-600 underline underline-offset-2"
-                      >
-                        사진 페이지
-                      </button>
-                      에서 목록을 만들고 사진을 담아주세요.
-                    </div>
+                    <EmptyState
+                      className="py-8"
+                      title="저장된 사진 목록이 없어요"
+                      description="사진 풀에서 목록을 만들고 사진을 담아두면 발행할 때마다 자동으로 골라 넣습니다."
+                      action={
+                        <Button variant="outline" size="sm" onClick={() => router.push('/dashboard/media')}>
+                          <ImageIcon /> 사진 풀로 가기
+                        </Button>
+                      }
+                    />
                   ) : (
                     <>
                       {/* 목록 선택 칩 */}
                       <div className="flex flex-wrap gap-2">
                         {collections.map((c) => (
                           <button
+                            type="button"
                             key={c.id}
                             onClick={() => setSelectedCollectionId(c.id)}
-                            className={`flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-full text-sm border transition ${
+                            className={`flex items-center gap-1.5 rounded-full border py-1.5 pl-3 pr-2 text-sm transition-colors ${
                               selectedCollectionId === c.id
-                                ? 'border-emerald-500 bg-emerald-50 text-emerald-700 ring-1 ring-emerald-500'
-                                : 'border-gray-200 text-gray-600 hover:border-emerald-300'
+                                ? 'border-primary bg-accent text-accent-foreground ring-1 ring-primary'
+                                : 'text-muted-foreground hover:bg-muted/40'
                             }`}
                           >
-                            <Folder className="w-3.5 h-3.5" />
+                            <Folder className="h-3.5 w-3.5" />
                             {c.name}
-                            <span className="text-[11px] text-muted-foreground">{c.count}장</span>
+                            <span className="text-[11px] tabular-nums text-muted-foreground">{c.count}장</span>
                           </button>
                         ))}
                       </div>
                       {/* 장수 입력(기억됨) + 빠른 선택 */}
                       <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <Label htmlFor="colCount" className="text-sm text-gray-600">이 글에 넣을 사진 수</Label>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Label htmlFor="colCount" className="text-[13px] font-medium text-muted-foreground">이 글에 넣을 사진 수</Label>
                           <Input
                             id="colCount"
                             type="number"
@@ -1318,18 +1334,19 @@ export function SavedPostsManager() {
                             max={30}
                             value={collectionCount}
                             onChange={(e) => setCollectionCount(Math.max(1, Math.min(30, Number(e.target.value) || 1)))}
-                            className="w-20 h-9"
+                            className="h-9 w-20 tabular-nums"
                           />
                           <span className="text-xs text-muted-foreground">장</span>
                           <div className="flex gap-1">
                             {[8, 10, 12, 15].map((n) => (
                               <button
+                                type="button"
                                 key={n}
                                 onClick={() => setCollectionCount(n)}
-                                className={`px-2.5 h-8 rounded-md text-xs border transition ${
+                                className={`h-8 rounded-md border px-2.5 text-xs tabular-nums transition-colors ${
                                   collectionCount === n
-                                    ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
-                                    : 'border-gray-200 text-gray-600 hover:border-emerald-300'
+                                    ? 'border-primary bg-accent text-accent-foreground'
+                                    : 'text-muted-foreground hover:bg-muted/40'
                                 }`}
                               >
                                 {n}
@@ -1342,9 +1359,9 @@ export function SavedPostsManager() {
                         </p>
                       </div>
                       {selectedCollectionId && (
-                        <p className="text-xs text-emerald-700 bg-emerald-50 rounded-md px-3 py-2">
+                        <p className="rounded-md bg-accent px-3 py-2 text-xs text-accent-foreground">
                           &lsquo;{collections.find((c) => c.id === selectedCollectionId)?.name}&rsquo; 목록에서{' '}
-                          {collectionCount}장이 유니크화되어 자동으로 들어갑니다.
+                          <span className="tabular-nums">{collectionCount}</span>장이 유니크화되어 자동으로 들어갑니다.
                         </p>
                       )}
                     </>
@@ -1353,30 +1370,30 @@ export function SavedPostsManager() {
               )}
 
               {/* 고정 하단 이미지 — 모든 글 맨 아래에 항상(유니크화되어) */}
-              <div className="rounded-lg border border-dashed border-gray-300 p-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-medium flex items-center gap-1.5">
-                    <ImageIcon className="w-4 h-4 text-emerald-600" /> 고정 하단 이미지 <span className="text-xs font-normal text-muted-foreground">(선택 · 모든 글 맨 아래)</span>
+              <div className="rounded-lg border border-dashed p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 text-sm font-medium">
+                    <ImageIcon className="h-4 w-4 text-muted-foreground" /> 고정 하단 이미지 <span className="text-xs font-normal text-muted-foreground">(선택 · 모든 글 맨 아래)</span>
                   </div>
                   {fixedImage ? (
-                    <button onClick={removeFixedImage} className="text-xs text-rose-500 hover:text-rose-600 underline">해제</button>
+                    <button type="button" onClick={removeFixedImage} className="text-xs text-danger underline underline-offset-2">해제</button>
                   ) : (
-                    <label className="text-xs text-emerald-600 hover:text-emerald-700 underline cursor-pointer">
+                    <label className="cursor-pointer text-xs text-primary underline underline-offset-2">
                       등록
                       <input type="file" accept="image/*" onChange={handleFixedImageUpload} className="hidden" />
                     </label>
                   )}
                 </div>
                 {fixedImage ? (
-                  <div className="flex items-center gap-2 mt-2">
+                  <div className="mt-2 flex items-center gap-2">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={fixedImage} alt="고정" className="w-16 h-16 object-cover rounded border" />
+                    <img src={fixedImage} alt="고정" className="h-16 w-16 rounded border object-cover" />
                     <p className="text-xs text-muted-foreground">
-                      등록됨 — 발행할 때마다 <b>유니크화(보정)</b>되어 본문 맨 아래에 자동으로 들어갑니다.
+                      등록됨 — 발행할 때마다 <b className="font-medium text-foreground">유니크화(보정)</b>되어 본문 맨 아래에 자동으로 들어갑니다.
                     </p>
                   </div>
                 ) : (
-                  <p className="text-[11px] text-muted-foreground mt-1">
+                  <p className="mt-1 text-xs text-muted-foreground">
                     로고·연락처·안내 이미지 등을 등록하면, 랜덤 사진 외에 모든 글 하단에 항상 붙습니다(매번 다른 변형).
                   </p>
                 )}
@@ -1385,7 +1402,7 @@ export function SavedPostsManager() {
 
             {/* STEP 3. 발행 방식 */}
             <section className="space-y-3">
-              <div className="flex items-center gap-2 font-semibold">
+              <div className="flex items-center gap-2 text-sm font-semibold">
                 <StepDot n={3} done={false} />
                 발행 방식 선택
               </div>
@@ -1394,14 +1411,13 @@ export function SavedPostsManager() {
                   const Icon = opt.icon
                   const active = finalAction === opt.key
                   return (
-                    <button key={opt.key} onClick={() => setFinalAction(opt.key)}
-                      className={`flex flex-col items-center gap-1 rounded-lg border p-3 text-center transition ${
-                        active ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500'
-                          : 'border-gray-200 hover:border-emerald-300'
+                    <button type="button" key={opt.key} onClick={() => setFinalAction(opt.key)}
+                      className={`flex flex-col items-center gap-1 rounded-lg border p-3 text-center transition-colors ${
+                        active ? 'border-primary bg-accent ring-1 ring-primary' : 'hover:bg-muted/40'
                       }`}>
-                      <Icon className={`w-5 h-5 ${active ? 'text-emerald-600' : 'text-gray-400'}`} />
-                      <span className="text-sm font-medium">{opt.label}</span>
-                      <span className="text-[11px] text-muted-foreground leading-tight">{opt.desc}</span>
+                      <Icon className={`h-5 w-5 ${active ? 'text-primary' : 'text-muted-foreground'}`} />
+                      <span className={`text-sm font-medium ${active ? 'text-accent-foreground' : ''}`}>{opt.label}</span>
+                      <span className="text-[11px] leading-tight text-muted-foreground">{opt.desc}</span>
                     </button>
                   )
                 })}
@@ -1409,25 +1425,27 @@ export function SavedPostsManager() {
 
               {/* 예약 발행 상세 */}
               {finalAction === 'schedule' && (
-                <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 space-y-3">
+                <div className="space-y-3 rounded-lg border bg-muted/30 p-4">
                   {/* 방식 토글: 직접 지정 / 간격 예약 */}
                   <div className="grid grid-cols-2 gap-2">
                     <button
+                      type="button"
                       onClick={() => setScheduleMode('manual')}
-                      className={`h-9 rounded-md border text-sm transition ${
+                      className={`h-9 rounded-md border text-sm transition-colors ${
                         scheduleMode === 'manual'
-                          ? 'border-amber-500 bg-white text-amber-800 ring-1 ring-amber-400'
-                          : 'border-amber-200 text-amber-700 hover:bg-white/60'
+                          ? 'border-primary bg-card text-foreground ring-1 ring-primary'
+                          : 'bg-card text-muted-foreground hover:bg-muted/40'
                       }`}
                     >
                       날짜·시간 직접 지정
                     </button>
                     <button
+                      type="button"
                       onClick={() => setScheduleMode('interval')}
-                      className={`h-9 rounded-md border text-sm transition ${
+                      className={`h-9 rounded-md border text-sm transition-colors ${
                         scheduleMode === 'interval'
-                          ? 'border-amber-500 bg-white text-amber-800 ring-1 ring-amber-400'
-                          : 'border-amber-200 text-amber-700 hover:bg-white/60'
+                          ? 'border-primary bg-card text-foreground ring-1 ring-primary'
+                          : 'bg-card text-muted-foreground hover:bg-muted/40'
                       }`}
                     >
                       간격으로 예약
@@ -1437,82 +1455,83 @@ export function SavedPostsManager() {
                   {scheduleMode === 'manual' ? (
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <Label className="text-xs text-amber-800">날짜</Label>
+                        <Label className="text-[13px] font-medium text-muted-foreground">날짜</Label>
                         <Input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} className="mt-1" />
                       </div>
                       <div>
-                        <Label className="text-xs text-amber-800">시간</Label>
+                        <Label className="text-[13px] font-medium text-muted-foreground">시간</Label>
                         <Input type="time" step={600} value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)} className="mt-1" />
                       </div>
-                      <p className="col-span-2 text-[11px] text-amber-700">※ 네이버 예약은 10분 단위 — 분은 자동 내림 처리됩니다</p>
+                      <p className="col-span-2 text-xs text-muted-foreground">※ 네이버 예약은 10분 단위 — 분은 자동 내림 처리됩니다</p>
                     </div>
                   ) : (
                     <div className="space-y-2.5">
                       {/* 간격 프리셋 + 커스텀 */}
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs text-amber-800">발행 간격</span>
+                        <span className="text-[13px] font-medium text-muted-foreground">발행 간격</span>
                         {INTERVAL_PRESETS.map((h) => (
                           <button
+                            type="button"
                             key={h}
                             onClick={() => setIntervalHours(h)}
-                            className={`px-2.5 h-8 rounded-full text-sm border transition ${
+                            className={`h-8 rounded-full border px-2.5 text-sm tabular-nums transition-colors ${
                               intervalHours === h
-                                ? 'border-amber-500 bg-amber-500 text-white'
-                                : 'border-amber-300 bg-white text-amber-700 hover:bg-amber-100'
+                                ? 'border-primary bg-primary text-primary-foreground'
+                                : 'bg-card text-muted-foreground hover:bg-muted/40'
                             }`}
                           >
                             {h}시간
                           </button>
                         ))}
-                        <span className="mx-1 text-amber-300">|</span>
+                        <span className="mx-1 text-border">|</span>
                         <Input
                           type="number"
                           min={1}
                           max={48}
                           value={intervalHours}
                           onChange={(e) => setIntervalHours(Math.max(1, Math.min(48, Number(e.target.value) || 1)))}
-                          className="w-16 h-8 bg-white"
+                          className="h-8 w-16 tabular-nums"
                         />
-                        <span className="text-xs text-amber-800">시간마다</span>
+                        <span className="text-xs text-muted-foreground">시간마다</span>
                       </div>
 
                       {/* 어느 블로그 기준인지 — 계정마다 예약 기준이 따로 관리된다 */}
-                      <div className="flex items-center justify-between rounded-md bg-white border border-amber-200 px-3 py-1.5 text-xs">
-                        <span className="text-amber-900">
+                      <div className="flex items-center justify-between gap-2 rounded-md border bg-card px-3 py-1.5 text-xs">
+                        <span className="text-muted-foreground">
                           기준 블로그{' '}
                           {blogConfirmed ? (
-                            <b className="font-semibold">{blogId}</b>
+                            <b className="font-semibold text-foreground">{blogId}</b>
                           ) : cachedBlogId ? (
                             <>
-                              <b className="font-semibold">{cachedBlogId}</b>
-                              <span className="ml-1 text-amber-600">(지난 기록 · 확인 전)</span>
+                              <b className="font-semibold text-foreground">{cachedBlogId}</b>
+                              <span className="ml-1 text-warning">(지난 기록 · 확인 전)</span>
                             </>
                           ) : (
-                            <span className="text-red-600">확인 안 됨 — 간격 예약을 쓸 수 없습니다</span>
+                            <span className="text-danger">확인 안 됨 — 간격 예약을 쓸 수 없습니다</span>
                           )}
                         </span>
-                        <button onClick={() => detectBlog(false)} disabled={blogChecking}
-                          className="text-amber-700 underline underline-offset-2 disabled:opacity-50">
+                        <button type="button" onClick={() => detectBlog(false)} disabled={blogChecking}
+                          className="shrink-0 text-primary underline underline-offset-2 disabled:opacity-50">
                           {blogChecking ? '확인 중...' : '다시 확인'}
                         </button>
                       </div>
 
                       {/* 다음 예약 시각 */}
-                      <div className="flex items-center justify-between rounded-md bg-white border border-amber-200 px-3 py-2">
+                      <div className="flex items-center justify-between gap-2 rounded-md border bg-card px-3 py-2">
                         <div className="flex items-center gap-2">
-                          <Clock className="w-4 h-4 text-amber-600" />
-                          <span className="text-sm font-medium text-amber-900">
+                          <Clock className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-sm font-medium tabular-nums">
                             예약 시각 {fmtKo(intervalSlot)}
                           </span>
                         </div>
                         {lastScheduledAt && (
-                          <button onClick={resetSchedule} className="text-xs text-amber-700 underline underline-offset-2">
+                          <button type="button" onClick={resetSchedule} className="shrink-0 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground">
                             기준 초기화
                           </button>
                         )}
                       </div>
 
-                      <p className="text-[11px] text-amber-700">
+                      <p className={`text-xs ${!intervalReady ? 'text-warning' : 'text-muted-foreground'}`}>
                         {!intervalReady
                           ? '기준 블로그를 확인해야 간격 예약을 쓸 수 있어요. 기준을 모르면 이미 잡아둔 예약 위에 겹쳐 잡힙니다.'
                           : lastScheduledAt
@@ -1522,18 +1541,18 @@ export function SavedPostsManager() {
 
                       {/* 예약 현황 — 이미 잡아둔 예약들(중복 방지 확인용) */}
                       {upcomingLog.length > 0 && (
-                        <div className="rounded-md bg-white border border-amber-200 p-3">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-semibold text-amber-900">
-                              예약 대기 {upcomingLog.length}건
+                        <div className="rounded-md border bg-card p-3">
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold">
+                              예약 대기 <span className="tabular-nums">{upcomingLog.length}</span>건
                             </span>
-                            <span className="text-[11px] text-amber-600">다음 글은 맨 아래 예약 다음으로 잡힙니다</span>
+                            <span className="text-[11px] text-muted-foreground">다음 글은 맨 아래 예약 다음으로 잡힙니다</span>
                           </div>
-                          <div className="max-h-40 overflow-y-auto divide-y divide-amber-50">
+                          <div className="max-h-40 divide-y overflow-y-auto">
                             {upcomingLog.map((x, i) => (
                               <div key={i} className="flex items-center gap-2 py-1.5 text-xs">
-                                <span className="tabular-nums text-amber-800 w-40 shrink-0">{fmtKo(new Date(x.at))}</span>
-                                <span className="truncate text-gray-700">{x.title}</span>
+                                <span className="w-40 shrink-0 tabular-nums text-muted-foreground">{fmtKo(new Date(x.at))}</span>
+                                <span className="truncate">{x.title}</span>
                               </div>
                             ))}
                           </div>
@@ -1547,9 +1566,9 @@ export function SavedPostsManager() {
               {/* 공개 범위 (발행 계열) */}
               {finalAction !== 'draft' && (
                 <div>
-                  <Label className="text-xs text-muted-foreground">공개 범위</Label>
+                  <Label className="text-[13px] font-medium text-muted-foreground">공개 범위</Label>
                   <select value={openType} onChange={(e) => setOpenType(e.target.value as OpenType)}
-                    className="mt-1 w-full h-10 rounded-md border border-input bg-background px-3 text-sm">
+                    className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
                     <option value="public">전체 공개</option>
                     <option value="neighbor">이웃 공개</option>
                     <option value="both">서로이웃 공개</option>
@@ -1562,22 +1581,22 @@ export function SavedPostsManager() {
               {finalAction !== 'draft' && (
                 <div>
                   <div className="flex items-center justify-between">
-                    <Label className="text-xs text-muted-foreground">카테고리</Label>
+                    <Label className="text-[13px] font-medium text-muted-foreground">카테고리</Label>
                     <button type="button" onClick={() => syncCategories(false)} disabled={syncingCats}
-                      className="text-xs text-emerald-700 hover:underline disabled:opacity-50">
+                      className="text-xs text-primary hover:underline disabled:opacity-50">
                       {syncingCats ? '불러오는 중...' : '목록 새로고침'}
                     </button>
                   </div>
                   <select value={category} onChange={(e) => setCategory(e.target.value)}
                     disabled={syncingCats}
-                    className="mt-1 w-full h-10 rounded-md border border-input bg-background px-3 text-sm disabled:opacity-60">
+                    className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:opacity-60">
                     <option value="">네이버 기본 카테고리</option>
                     {categories.map((c) => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
                   {!syncingCats && categories.length === 0 && (
-                    <p className="mt-1 text-[11px] text-muted-foreground">
+                    <p className="mt-1 text-xs text-muted-foreground">
                       카테고리를 불러오지 못했습니다. 네이버 로그인 상태를 확인한 뒤 &lsquo;목록 새로고침&rsquo;을 눌러주세요.
                     </p>
                   )}
@@ -1586,18 +1605,16 @@ export function SavedPostsManager() {
             </section>
 
             {/* 저장 + 발행 */}
-            <div className="pt-1">
+            <div className="space-y-2 border-t pt-4">
               <div className="flex gap-2">
-                <Button size="lg" variant="outline" onClick={() => saveDraft(false)} disabled={!hasContent}
-                  className="h-12 gap-2">
-                  <Save className="w-4 h-4" /> 저장
+                <Button size="lg" variant="outline" onClick={() => saveDraft(false)} disabled={!hasContent}>
+                  <Save /> 저장
                 </Button>
-                <Button size="lg" disabled={!canPublish} onClick={publish}
-                  className="flex-1 h-12 text-base gap-2 bg-emerald-600 hover:bg-emerald-700">
+                <Button size="lg" disabled={!canPublish} onClick={publish} className="flex-1">
                   {publishing ? (
-                    <><Loader2 className="w-5 h-5 animate-spin" />발행 중...</>
+                    <><Loader2 className="animate-spin" />발행 중...</>
                   ) : (
-                    <><Send className="w-5 h-5" />
+                    <><Send />
                       {finalAction === 'draft' ? '임시저장하기' : finalAction === 'schedule' ? '예약 발행하기' : '지금 발행하기'}
                     </>
                   )}
@@ -1606,68 +1623,68 @@ export function SavedPostsManager() {
 
               {/* 예약 준비함에 담기 (지금 발행하지 않고 모아두기) */}
               {finalAction === 'schedule' && (
-                <Button variant="outline" onClick={preparePost} disabled={!hasContent || preparing}
-                  className="w-full mt-2 h-11 gap-2 border-amber-300 text-amber-700 hover:bg-amber-50">
-                  {preparing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Layers className="w-4 h-4" />}
+                <Button variant="outline" onClick={preparePost} disabled={!hasContent || preparing} className="w-full">
+                  {preparing ? <Loader2 className="animate-spin" /> : <Layers />}
                   예약 준비함에 담기 (지금 발행 안 함)
                 </Button>
               )}
 
               {!ext.connected && (
-                <p className="mt-2 text-center text-xs text-rose-600">
+                <p className="text-center text-xs text-danger">
                   확장 프로그램이 연결되어야 발행할 수 있어요 —{' '}
-                  <a href={EXTENSION_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer" className="underline font-medium">
+                  <a href={EXTENSION_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer" className="font-medium underline">
                     설치하기
                   </a>
                 </p>
               )}
-              <p className="mt-2 text-center text-[11px] text-muted-foreground">
+              <p className="text-center text-xs text-muted-foreground">
                 브라우저에 네이버가 로그인되어 있어야 합니다(비밀번호는 저장하지 않아요). 미로그인 시 로그인 창이 열립니다.
               </p>
 
               {/* 예약 준비함 — 모아둔 글을 한 번에 발행 */}
               {prepared.length > 0 && (
-                <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50/60 p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-semibold text-amber-900 flex items-center gap-1.5">
-                      <Layers className="w-4 h-4" /> 예약 준비함 {prepared.length}건
+                <div className="mt-4 rounded-lg border p-4">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-1.5 text-sm font-semibold">
+                      <Layers className="h-4 w-4 text-muted-foreground" /> 예약 준비함
+                      <Pill tone="accent"><span className="tabular-nums">{prepared.length}</span>건</Pill>
                     </span>
-                    <Button size="sm" onClick={publishAllPrepared} disabled={!ext.connected || publishing}
-                      className="h-8 gap-1.5 bg-emerald-600 hover:bg-emerald-700">
-                      {publishing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                    <Button size="sm" onClick={publishAllPrepared} disabled={!ext.connected || publishing}>
+                      {publishing ? <Loader2 className="animate-spin" /> : <Send />}
                       준비한 {prepared.length}건 한번에 발행
                     </Button>
                   </div>
                   {batchProgress && (
-                    <div className="mb-2">
-                      <div className="flex items-center justify-between text-[11px] text-amber-800 mb-1">
+                    <div className="mb-3">
+                      <div className="mb-1 flex items-center justify-between text-[11px] tabular-nums text-muted-foreground">
                         <span>등록 중… {batchProgress.done}/{batchProgress.total}건</span>
                         <span>성공 {batchProgress.ok}건{batchProgress.done > batchProgress.ok && ` · 실패 ${batchProgress.done - batchProgress.ok}건`}</span>
                       </div>
-                      <div className="h-1.5 rounded-full bg-amber-100 overflow-hidden">
-                        <div className="h-full bg-emerald-500 transition-all"
+                      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                        <div className="h-full bg-primary transition-all"
                           style={{ width: `${Math.round((batchProgress.done / batchProgress.total) * 100)}%` }} />
                       </div>
                     </div>
                   )}
-                  <div className="max-h-52 overflow-y-auto divide-y divide-amber-100">
+                  <div className="max-h-52 divide-y overflow-y-auto">
                     {prepared.map((p) => (
-                      <div key={p.id} className="flex items-center gap-2 py-1.5 text-xs">
-                        <span className="tabular-nums text-amber-800 w-36 shrink-0">{fmtKo(new Date(p.scheduleISO))}</span>
-                        <span className="flex-1 truncate text-gray-700">{p.title || '(제목 없음)'}</span>
+                      <div key={p.id} className="flex items-center gap-2 py-2 text-xs">
+                        <span className="w-36 shrink-0 tabular-nums text-muted-foreground">{fmtKo(new Date(p.scheduleISO))}</span>
+                        <span className="flex-1 truncate">{p.title || '(제목 없음)'}</span>
                         {failedIds[p.id] && (
-                          <span className="text-[11px] text-rose-600 shrink-0 max-w-40 truncate" title={failedIds[p.id]}>
-                            실패: {failedIds[p.id]}
-                          </span>
+                          <Pill tone="danger" className="max-w-40 shrink-0 truncate" >
+                            <span className="truncate" title={failedIds[p.id]}>실패: {failedIds[p.id]}</span>
+                          </Pill>
                         )}
-                        <span className="text-[11px] text-muted-foreground shrink-0">사진 {p.imageCount}</span>
-                        <button onClick={() => removePrepared(p.id)} className="text-rose-500 hover:text-rose-600 shrink-0">
-                          <X className="w-3.5 h-3.5" />
+                        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">사진 {p.imageCount}</span>
+                        <button type="button" onClick={() => removePrepared(p.id)} aria-label="준비함에서 제거"
+                          className="shrink-0 text-muted-foreground hover:text-danger">
+                          <X className="h-3.5 w-3.5" />
                         </button>
                       </div>
                     ))}
                   </div>
-                  <p className="mt-2 text-[11px] text-amber-700">
+                  <p className="mt-3 text-xs text-muted-foreground">
                     담아둔 글은 여기 저장돼요(새로고침해도 유지). 다 모은 뒤 &lsquo;한번에 발행&rsquo;을 누르면 확장이 순서대로
                     네이버 예약발행에 등록하고, 등록에 성공한 글만 목록에서 빠집니다.
                   </p>
@@ -1692,12 +1709,13 @@ export function SavedPostsManager() {
   )
 }
 
+/** 단계 번호 원(28px). 완료 = 성공색 + 체크, 미완 = 중립. */
 function StepDot({ n, done }: { n: number; done: boolean }) {
   return (
-    <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${
-      done ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-600'
+    <span className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold tabular-nums ${
+      done ? 'bg-success-soft text-success' : 'bg-muted text-muted-foreground'
     }`}>
-      {done ? <CheckCircle2 className="w-4 h-4" /> : n}
+      {done ? <Check className="h-4 w-4" /> : n}
     </span>
   )
 }

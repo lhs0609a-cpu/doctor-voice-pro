@@ -36,6 +36,19 @@ class DoctorProfile(Base):
     # Signature phrases
     signature_phrases = Column(JSON, nullable=True)
 
+    # 이 병원만의 것 (차별점). 글에서 "여기는 다르네" 를 만드는 유일한 재료다.
+    differentiators = Column(JSON, nullable=True)
+    # {
+    #   "philosophy": "진료 원칙 한 문장",
+    #   "items": [
+    #     {"category": "장비", "text": "초기 연골 손상은 엑스레이로 안 보여서 초음파로 한 번 더 본다"},
+    #     {"category": "검사", "text": "보행 분석으로 무릎에 실리는 축을 먼저 확인한다"},
+    #     {"category": "술기", "text": "주사는 초음파 유도로만 놓는다"},
+    #     {"category": "과정", "text": "첫 진료 때 운동 처방지를 종이로 드리고 4주 뒤 다시 본다"},
+    #     {"category": "경력", "text": "관절 내시경 세부전공"}
+    #   ]
+    # }
+
     # Sample posts for learning
     sample_posts = Column(JSON, nullable=True)
 

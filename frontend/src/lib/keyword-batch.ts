@@ -249,7 +249,7 @@ function sendToExtension<T = unknown>(msg: unknown): Promise<T> {
     const id = extensionId();
     const chromeApi = (window as unknown as { chrome?: ChromeRuntime }).chrome;
     if (!id || !chromeApi?.runtime?.sendMessage) {
-      reject(new Error('확장 프로그램이 연결되지 않았습니다. 설치 후 페이지를 새로고침하세요.'));
+      reject(new Error('확장 프로그램이 연결되지 않았습니다'));
       return;
     }
     try {

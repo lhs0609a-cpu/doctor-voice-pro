@@ -66,64 +66,53 @@ class AIUsage(Base):
     memo = Column(Text, nullable=True)
 
 
-# AI 모델별 가격 정보 (2024년 11월 기준, USD per 1M tokens)
+# AI 모델별 가격 정보 (USD per 1M tokens)
+# 원고 생성은 Gemini 단일 스택. Claude 항목은 캠페인/카페리뷰/DIA 분석이 계속 쓰므로 남겨둔다.
+# 주의: Gemini 2.5 계열의 사고(thinking) 토큰은 출력 단가로 과금된다.
+#       ai_rewrite_engine 은 사고 토큰을 output_tokens 에 합산해서 넘긴다.
 AI_PRICING = {
-    # Claude 모델 (Anthropic)
-    "claude-sonnet-4-5-20250929": {
-        "input": 3.00,   # $3.00 / 1M input tokens
-        "output": 15.00,  # $15.00 / 1M output tokens
-        "name": "Claude Sonnet 4.5",
-    },
-    "claude-3-5-sonnet-20241022": {
-        "input": 3.00,
-        "output": 15.00,
-        "name": "Claude 3.5 Sonnet",
-    },
-    "claude-3-opus-20240229": {
-        "input": 15.00,
-        "output": 75.00,
-        "name": "Claude 3 Opus",
-    },
-    "claude-3-haiku-20240307": {
-        "input": 0.25,
-        "output": 1.25,
-        "name": "Claude 3 Haiku",
-    },
-
-    # GPT 모델 (OpenAI)
-    "gpt-4o-mini": {
-        "input": 0.15,
-        "output": 0.60,
-        "name": "GPT-4o Mini",
-    },
-
-    # Gemini 모델 (Google) - 무료 티어 이후 가격
-    "gemini-2.5-flash-preview-05-20": {
-        "input": 0.15,    # $0.15 / 1M input tokens
-        "output": 0.60,   # $0.60 / 1M output tokens (non-thinking)
+    # Gemini (Google) - 원고 생성 기본
+    "gemini-2.5-flash": {
+        "input": 0.30,
+        "output": 2.50,
         "name": "Gemini 2.5 Flash",
     },
-    "gemini-2.0-flash": {
-        "input": 0.10,    # $0.10 / 1M input tokens
-        "output": 0.40,   # $0.40 / 1M output tokens
-        "name": "Gemini 2.0 Flash",
+    # gemini-2.5-flash-lite 는 신규 사용자에게 차단됨(404). 3.5 계열 lite 로 대체.
+    # 아래 두 단가는 서드파티 집계 기준이라 공식 pricing 으로 한 번 확인 필요.
+    "gemini-3.5-flash-lite": {
+        "input": 0.30,
+        "output": 2.50,
+        "name": "Gemini 3.5 Flash Lite",
     },
-    "gemini-2.0-flash-exp": {
-        "input": 0.075,   # $0.075 / 1M input tokens (128K 이하)
-        "output": 0.30,   # $0.30 / 1M output tokens
-        "name": "Gemini 2.0 Flash Exp",
+    "gemini-3.5-flash": {
+        "input": 0.50,
+        "output": 3.00,
+        "name": "Gemini 3.5 Flash",
     },
-    "gemini-1.5-pro": {
-        "input": 1.25,    # $1.25 / 1M input tokens (128K 이하)
-        "output": 5.00,   # $5.00 / 1M output tokens
-        "name": "Gemini 1.5 Pro",
+    "gemini-2.5-pro": {
+        "input": 1.25,
+        "output": 10.00,
+        "name": "Gemini 2.5 Pro",
     },
-    "gemini-1.5-flash": {
-        "input": 0.075,
-        "output": 0.30,
-        "name": "Gemini 1.5 Flash",
+
+    # Claude (Anthropic) - 캠페인/카페리뷰/DIA 분석
+    "claude-opus-5": {
+        "input": 15.00,
+        "output": 75.00,
+        "name": "Claude Opus 5",
+    },
+    "claude-sonnet-4-5-20250929": {
+        "input": 3.00,
+        "output": 15.00,
+        "name": "Claude Sonnet 4.5",
+    },
+    "claude-haiku-4-5": {
+        "input": 1.00,
+        "output": 5.00,
+        "name": "Claude Haiku 4.5",
     },
 }
+
 
 # 환율 (USD to KRW)
 USD_TO_KRW = 1350
@@ -180,9 +169,14 @@ def get_estimated_cost_per_request(model: str, target_length: int = 1800) -> dic
         dict: 예상 비용 정보
     """
     # 한국어 기준 예상 토큰 수
-    # 입력: 프롬프트 + 원본 내용 (약 2000-3000 토큰)
-    # 출력: 목표 글자수 * 2.5 (한국어는 글자당 약 2-3 토큰)
+    # 입력: 시스템 프롬프트 + 원본 내용
+    # 출력: 목표 글자수 * 1.5 (Gemini 토크나이저 기준 한국어는 글자당 약 1.2~1.5 토큰)
     estimated_input_tokens = 3000
-    estimated_output_tokens = int(target_length * 2.5)
+    estimated_output_tokens = int(target_length * 1.5)
+
+    # Gemini 2.5 계열은 사고 토큰이 출력 단가로 함께 과금된다.
+    # ai_rewrite_engine.THINKING_BUDGET 과 맞춰둔다.
+    if model.startswith("gemini-2.5") and not model.endswith("-lite"):
+        estimated_output_tokens += 2048
 
     return calculate_cost(model, estimated_input_tokens, estimated_output_tokens)

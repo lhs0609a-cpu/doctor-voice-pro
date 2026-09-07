@@ -18,11 +18,15 @@ from openai import OpenAI
 
 # Gemini SDK 임포트 (설치되어 있는 경우)
 try:
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types as genai_types
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
     genai = None
+    genai_types = None
+
+from app.services.ai_rewrite_engine import DEFAULT_MODEL
 
 # AI 사용량 모델 임포트
 from app.models.ai_usage import AIUsage, AI_PRICING, USD_TO_KRW, calculate_cost, get_estimated_cost_per_request
@@ -266,7 +270,7 @@ async def get_gemini_api_status():
     if not GEMINI_AVAILABLE:
         return {
             "connected": False,
-            "error": "google-generativeai 패키지가 설치되지 않았습니다",
+            "error": "google-genai 패키지가 설치되지 않았습니다",
             "api_key_set": False,
             "sdk_available": False
         }
@@ -283,24 +287,27 @@ async def get_gemini_api_status():
         }
 
     try:
-        # Gemini 클라이언트 설정 및 간단한 API 호출 테스트
-        genai.configure(api_key=api_key)
-
-        # 안정적인 gemini-2.0-flash 모델로 테스트
-        model = genai.GenerativeModel('gemini-2.0-flash')
-        response = model.generate_content("test", generation_config=genai.GenerationConfig(max_output_tokens=10))
+        client = genai.Client(api_key=api_key)
+        client.models.generate_content(
+            model=DEFAULT_MODEL,
+            contents="test",
+            config=genai_types.GenerateContentConfig(
+                max_output_tokens=16,
+                thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+            ),
+        )
 
         return {
             "connected": True,
             "api_key_set": True,
             "api_key_prefix": api_key[:10] + "..." if len(api_key) > 10 else "***",
-            "model": "gemini-2.0-flash",
+            "model": DEFAULT_MODEL,
             "test_successful": True,
             "sdk_available": True,
             "available_models": [
-                "gemini-2.0-flash",
-                "gemini-1.5-pro",
-                "gemini-2.0-flash-exp"
+                "gemini-2.5-flash",
+                "gemini-2.5-flash-lite",
+                "gemini-2.5-pro"
             ]
         }
     except Exception as e:

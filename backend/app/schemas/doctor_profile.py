@@ -27,6 +27,7 @@ class DoctorProfileCreate(BaseModel):
 
     writing_style: Optional[WritingStyle] = None
     signature_phrases: List[str] = []
+    differentiators: Optional[Dict] = None
     sample_posts: List[str] = []
     target_audience: Optional[TargetAudience] = None
     preferred_structure: str = "story_problem_solution"
@@ -37,6 +38,7 @@ class DoctorProfileUpdate(BaseModel):
 
     writing_style: Optional[WritingStyle] = None
     signature_phrases: Optional[List[str]] = None
+    differentiators: Optional[Dict] = None
     sample_posts: Optional[List[str]] = None
     target_audience: Optional[TargetAudience] = None
     preferred_structure: Optional[str] = None
@@ -49,6 +51,7 @@ class DoctorProfileResponse(BaseModel):
     user_id: UUID
     writing_style: Optional[Dict]
     signature_phrases: List[str]
+    differentiators: Optional[Dict] = None
     target_audience: Optional[Dict]
     preferred_structure: str
     learned_at: Optional[datetime]

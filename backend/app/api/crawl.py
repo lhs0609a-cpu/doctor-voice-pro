@@ -168,8 +168,8 @@ class OneClickRequest(BaseModel):
     """원클릭 자동화 요청"""
     url: str
     category_no: Optional[str] = None  # 네이버 블로그 카테고리
-    ai_provider: str = "gpt"  # gpt, gemini, claude
-    ai_model: str = "gpt-4o-mini"
+    ai_provider: str = "gemini"
+    ai_model: Optional[str] = None  # 비우면 서버 기본 모델(gemini-2.5-flash)
     target_length: int = 1800
     framework: str = "관심유도형"
     persuasion_level: int = 4

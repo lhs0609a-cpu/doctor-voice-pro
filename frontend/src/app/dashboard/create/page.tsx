@@ -40,6 +40,7 @@ import { TitleSelector } from '@/components/post/title-selector'
 import { SubtitlePreview } from '@/components/post/subtitle-preview'
 import { ForbiddenWordsAlert } from '@/components/post/forbidden-words-alert'
 import { DIACRANKScore } from '@/components/post/dia-crank-score'
+import { QualityScore } from '@/components/post/quality-score'
 import { WritingStyleConfig } from '@/components/post/writing-style-config'
 import { RequestRequirementsInput } from '@/components/post/request-requirements-input'
 import { Slider } from '@/components/ui/slider'
@@ -47,6 +48,8 @@ import { Input } from '@/components/ui/input'
 import { CafeReviewCreator } from '@/components/cafe-review/cafe-review-creator'
 import { OneClickPublish } from '@/components/naver-publish/one-click-publish'
 import { TopPostAnalyzer } from '@/components/post/top-post-analyzer'
+import { PageHeader } from '@/components/app-shell/page-header'
+import { Pill, EmptyState } from '@/components/app-shell/ui-kit'
 
 // P1: 프리셋 정의
 const PRESETS = {
@@ -217,8 +220,8 @@ export default function CreatePostPage() {
     target_length: 1800,
     writing_perspective: '1인칭',
     count: 1, // 생성할 원고 개수
-    ai_provider: 'gpt', // AI 제공자: 'claude' or 'gpt'
-    ai_model: 'gpt-4o-mini', // AI 모델 (기본: GPT-4o Mini - 빠름/저렴)
+    ai_provider: 'gemini', // 원고 생성은 Gemini 단일 스택
+    ai_model: 'gemini-2.5-flash', // 기본 모델
   })
   const [seoOptimization, setSeoOptimization] = useState({
     enabled: false,
@@ -975,8 +978,8 @@ export default function CreatePostPage() {
 
       const result = await crawlAPI.oneClick({
         url: blogUrl,
-        ai_provider: 'gpt',
-        ai_model: 'gpt-4o-mini',
+        ai_provider: 'gemini',
+        ai_model: 'gemini-2.5-flash',
         target_length: 1800,
         framework: '관심유도형',
         persuasion_level: 4
@@ -1015,56 +1018,53 @@ export default function CreatePostPage() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold mb-2">AI 글 작성</h1>
-          <p className="text-muted-foreground">
-            블로그 글과 카페 바이럴 후기를 AI로 쉽게 작성하세요
-          </p>
-        </div>
-        <div className="flex items-center gap-4">
-          {lastSaved && !generatedPost && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Clock className="h-4 w-4" />
-              <span>마지막 저장: {formatLastSaved(lastSaved)}</span>
+    <div className="space-y-6">
+      <PageHeader
+        title="AI 글 작성"
+        description="원본 의료 정보를 붙여넣으면 AI가 블로그 글과 카페 후기로 바꿔 드립니다."
+        actions={
+          <>
+            {lastSaved && !generatedPost && (
+              <div className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
+                <Clock className="h-3.5 w-3.5" />
+                <span>마지막 저장 {formatLastSaved(lastSaved)}</span>
+              </div>
+            )}
+            {/* P1: 간편/전문가 모드 전환 */}
+            <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
+              <Button
+                variant={editorMode === 'simple' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setEditorMode('simple')}
+                className="gap-1"
+              >
+                <Zap className="h-3 w-3" />
+                간편
+              </Button>
+              <Button
+                variant={editorMode === 'advanced' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setEditorMode('advanced')}
+                className="gap-1"
+              >
+                <Sparkles className="h-3 w-3" />
+                전문가
+              </Button>
             </div>
-          )}
-          {/* P1: 간편/전문가 모드 전환 */}
-          <div className="flex items-center gap-2 p-1 bg-gray-100 rounded-lg">
-            <Button
-              variant={editorMode === 'simple' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setEditorMode('simple')}
-              className="gap-1"
-            >
-              <Zap className="h-3 w-3" />
-              간편
-            </Button>
-            <Button
-              variant={editorMode === 'advanced' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setEditorMode('advanced')}
-              className="gap-1"
-            >
-              <Sparkles className="h-3 w-3" />
-              전문가
-            </Button>
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {/* 업종별 템플릿 (간편 모드에서만 표시) */}
       {editorMode === 'simple' && industryTemplates.length > 0 && (
-        <Card className="bg-gradient-to-r from-purple-50 to-pink-50 border-purple-200">
-          <CardContent className="py-4">
-            <div className="flex items-center justify-between mb-3">
+        <Card>
+          <CardContent className="p-5">
+            <div className="mb-3 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <span className="text-lg">{industryIcon}</span>
-                <span className="font-medium text-purple-900">{industryName} 전용 템플릿</span>
+                <span className="section-title">{industryName} 전용 템플릿</span>
               </div>
-              <span className="text-xs text-purple-600">업종에 최적화된 글쓰기 설정</span>
+              <span className="text-[13px] text-muted-foreground">업종에 맞춘 글쓰기 설정</span>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               {industryTemplates.map((template) => (
@@ -1073,16 +1073,12 @@ export default function CreatePostPage() {
                   variant={selectedTemplate === template.id ? 'default' : 'outline'}
                   size="sm"
                   onClick={() => applyTemplate(template)}
-                  className={`justify-start gap-2 h-auto py-2 ${
-                    selectedTemplate === template.id
-                      ? 'bg-purple-600 hover:bg-purple-700'
-                      : 'hover:bg-purple-50 border-purple-200'
-                  }`}
+                  className="justify-start gap-2 h-auto py-2"
                 >
                   <span className="text-lg">{template.icon}</span>
                   <div className="text-left">
                     <div className="font-medium text-xs">{template.name}</div>
-                    <div className={`text-[10px] ${selectedTemplate === template.id ? 'text-purple-100' : 'text-gray-500'}`}>
+                    <div className={`text-[11px] ${selectedTemplate === template.id ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
                       {template.description.length > 20 ? template.description.slice(0, 20) + '...' : template.description}
                     </div>
                   </div>
@@ -1095,14 +1091,14 @@ export default function CreatePostPage() {
 
       {/* P1: 프리셋 선택 (간편 모드에서만 표시) */}
       {editorMode === 'simple' && (
-        <Card className="bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200">
-          <CardContent className="py-4">
-            <div className="flex items-center justify-between mb-3">
+        <Card>
+          <CardContent className="p-5">
+            <div className="mb-3 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <Lightbulb className="h-4 w-4 text-blue-600" />
-                <span className="font-medium text-blue-900">빠른 시작 프리셋</span>
+                <Lightbulb className="h-4 w-4 text-muted-foreground" />
+                <span className="section-title">빠른 시작 프리셋</span>
               </div>
-              <span className="text-xs text-blue-600">원클릭으로 최적 설정 적용</span>
+              <span className="text-[13px] text-muted-foreground">한 번 눌러 추천 설정 적용</span>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               {Object.entries(PRESETS).map(([key, preset]) => (
@@ -1114,16 +1110,12 @@ export default function CreatePostPage() {
                     applyPreset(key)
                     setSelectedTemplate(null)
                   }}
-                  className={`justify-start gap-2 h-auto py-2 ${
-                    selectedPreset === key
-                      ? 'bg-blue-600 hover:bg-blue-700'
-                      : 'hover:bg-blue-50 border-blue-200'
-                  }`}
+                  className="justify-start gap-2 h-auto py-2"
                 >
                   <span className="text-lg">{preset.icon}</span>
                   <div className="text-left">
                     <div className="font-medium text-xs">{preset.name}</div>
-                    <div className={`text-[10px] ${selectedPreset === key ? 'text-blue-100' : 'text-gray-500'}`}>
+                    <div className={`text-[11px] ${selectedPreset === key ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
                       {preset.description}
                     </div>
                   </div>
@@ -1150,34 +1142,34 @@ export default function CreatePostPage() {
 
       {/* GPT API Status - 관리자만 표시 */}
       {currentUser?.is_admin && (checkingGptApi ? (
-        <Card className="bg-blue-50 border-blue-200">
-          <CardContent className="flex items-center gap-3 py-4">
-            <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
+        <Card>
+          <CardContent className="flex items-center gap-3 p-4">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             <div>
-              <p className="font-medium text-blue-900">GPT API 연결 확인 중...</p>
-              <p className="text-sm text-blue-700">잠시만 기다려주세요</p>
+              <p className="font-medium">GPT API 연결 확인 중...</p>
+              <p className="text-sm text-muted-foreground">잠시만 기다려주세요</p>
             </div>
           </CardContent>
         </Card>
       ) : gptApiStatus?.connected ? (
-        <Card className="bg-green-50 border-green-200">
-          <CardContent className="flex items-center gap-3 py-4">
-            <CheckCircle2 className="h-5 w-5 text-green-600" />
+        <Card>
+          <CardContent className="flex items-center gap-3 p-4">
+            <CheckCircle2 className="h-5 w-5 text-success" />
             <div className="flex-1">
-              <p className="font-medium text-green-900">GPT API 연결됨</p>
-              <p className="text-sm text-green-700">
+              <p className="font-medium">GPT API 연결됨</p>
+              <p className="text-sm text-muted-foreground">
                 API 키: {gptApiStatus.api_key_prefix} | 모델: {gptApiStatus.model}
               </p>
             </div>
           </CardContent>
         </Card>
       ) : (
-        <Card className="bg-red-50 border-red-200">
-          <CardContent className="flex items-center gap-3 py-4">
-            <AlertCircle className="h-5 w-5 text-red-600" />
+        <Card>
+          <CardContent className="flex items-center gap-3 p-4">
+            <AlertCircle className="h-5 w-5 text-danger" />
             <div className="flex-1">
-              <p className="font-medium text-red-900">GPT API 연결 실패</p>
-              <p className="text-sm text-red-700">
+              <p className="font-medium">GPT API 연결 실패</p>
+              <p className="text-sm text-muted-foreground">
                 {gptApiStatus?.error || 'API 키를 확인해주세요'}
               </p>
             </div>
@@ -1187,34 +1179,34 @@ export default function CreatePostPage() {
 
       {/* Gemini API Status - 관리자만 표시 */}
       {currentUser?.is_admin && (checkingGeminiApi ? (
-        <Card className="bg-blue-50 border-blue-200">
-          <CardContent className="flex items-center gap-3 py-4">
-            <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
+        <Card>
+          <CardContent className="flex items-center gap-3 p-4">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             <div>
-              <p className="font-medium text-blue-900">Gemini API 연결 확인 중...</p>
-              <p className="text-sm text-blue-700">잠시만 기다려주세요</p>
+              <p className="font-medium">Gemini API 연결 확인 중...</p>
+              <p className="text-sm text-muted-foreground">잠시만 기다려주세요</p>
             </div>
           </CardContent>
         </Card>
       ) : geminiApiStatus?.connected ? (
-        <Card className="bg-green-50 border-green-200">
-          <CardContent className="flex items-center gap-3 py-4">
-            <CheckCircle2 className="h-5 w-5 text-green-600" />
+        <Card>
+          <CardContent className="flex items-center gap-3 p-4">
+            <CheckCircle2 className="h-5 w-5 text-success" />
             <div className="flex-1">
-              <p className="font-medium text-green-900">Gemini API 연결됨</p>
-              <p className="text-sm text-green-700">
+              <p className="font-medium">Gemini API 연결됨</p>
+              <p className="text-sm text-muted-foreground">
                 API 키: {geminiApiStatus.api_key_prefix} | 모델: {geminiApiStatus.model}
               </p>
             </div>
           </CardContent>
         </Card>
       ) : (
-        <Card className="bg-yellow-50 border-yellow-200">
-          <CardContent className="flex items-center gap-3 py-4">
-            <AlertCircle className="h-5 w-5 text-yellow-600" />
+        <Card>
+          <CardContent className="flex items-center gap-3 p-4">
+            <AlertCircle className="h-5 w-5 text-warning" />
             <div className="flex-1">
-              <p className="font-medium text-yellow-900">Gemini API 미연결</p>
-              <p className="text-sm text-yellow-700">
+              <p className="font-medium">Gemini API 미연결</p>
+              <p className="text-sm text-muted-foreground">
                 {geminiApiStatus?.error || 'GEMINI_API_KEY를 설정하면 사용 가능'}
               </p>
             </div>
@@ -1224,41 +1216,41 @@ export default function CreatePostPage() {
 
       {/* AI 사용량 및 비용 현황 - 관리자만 표시 */}
       {currentUser?.is_admin && aiUsageStats && (
-        <Card className="bg-gradient-to-r from-purple-50 to-blue-50 border-purple-200">
-          <CardContent className="py-4">
+        <Card>
+          <CardContent className="p-5">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="flex items-center gap-6">
                 <div>
-                  <p className="text-xs text-gray-500">오늘 사용</p>
-                  <p className="text-lg font-bold text-purple-700">
+                  <p className="text-[13px] font-medium text-muted-foreground">오늘 사용</p>
+                  <p className="text-lg font-semibold tabular-nums">
                     {aiUsageStats.today?.requests || 0}건 / ₩{(aiUsageStats.today?.cost_krw || 0).toLocaleString()}
                   </p>
                 </div>
-                <div className="h-8 w-px bg-gray-300" />
+                <div className="h-8 w-px bg-border" />
                 <div>
-                  <p className="text-xs text-gray-500">이번달 누적</p>
-                  <p className="text-lg font-bold text-blue-700">
+                  <p className="text-[13px] font-medium text-muted-foreground">이번달 누적</p>
+                  <p className="text-lg font-semibold tabular-nums">
                     {aiUsageStats.this_month?.requests || 0}건 / ₩{(aiUsageStats.this_month?.cost_krw || 0).toLocaleString()}
                   </p>
                 </div>
-                <div className="h-8 w-px bg-gray-300" />
+                <div className="h-8 w-px bg-border" />
                 <div>
-                  <p className="text-xs text-gray-500">전체 누적</p>
-                  <p className="text-lg font-bold text-gray-700">
+                  <p className="text-[13px] font-medium text-muted-foreground">전체 누적</p>
+                  <p className="text-lg font-semibold tabular-nums">
                     {aiUsageStats.total?.requests || 0}건 / ₩{(aiUsageStats.total?.cost_krw || 0).toLocaleString()}
                   </p>
                 </div>
               </div>
               <div className="text-right">
-                <p className="text-xs text-gray-500">선택한 모델 예상 비용</p>
-                <p className="text-lg font-bold text-green-700">
+                <p className="text-[13px] font-medium text-muted-foreground">선택한 모델 예상 비용</p>
+                <p className="text-lg font-semibold tabular-nums text-success">
                   {(() => {
                     const modelPricing = aiPricing?.pricing?.find((p: any) => p.model_id === config.ai_model)
                     return modelPricing
                       ? `₩${Math.round(modelPricing.estimated_cost_per_post_krw * config.count).toLocaleString()}`
                       : '계산 중...'
                   })()}
-                  <span className="text-xs font-normal text-gray-500"> / {config.count}건</span>
+                  <span className="text-xs font-normal text-muted-foreground"> / {config.count}건</span>
                 </p>
               </div>
             </div>
@@ -1266,85 +1258,46 @@ export default function CreatePostPage() {
         </Card>
       )}
 
-      {/* AI 제공자 선택 - 전문가 모드에서만 표시 */}
+      {/* AI 모델 선택 - 전문가 모드에서만 표시 */}
       {editorMode === 'advanced' && (
       <Card>
         <CardHeader>
-          <CardTitle>AI 제공자 선택</CardTitle>
-          <CardDescription>사용할 AI를 선택하고 모델을 선택하세요</CardDescription>
+          <CardTitle>AI 모델</CardTitle>
+          <CardDescription>원고 생성에 사용할 Gemini 모델을 선택하세요</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {!geminiApiStatus?.connected && (
+            <p className="text-sm text-muted-foreground">
+              Gemini API 키가 연결되지 않았습니다. 관리자 &gt; API 키에서 등록해주세요.
+            </p>
+          )}
+
           <div className="space-y-2">
-            <Label>AI 제공자</Label>
-            <div className="grid grid-cols-2 gap-2">
+            <Label>모델</Label>
+            <div className="grid grid-cols-1 gap-2">
               <Button
-                variant={config.ai_provider === 'gpt' ? 'default' : 'outline'}
+                variant={config.ai_model === 'gemini-2.5-flash' ? 'default' : 'outline'}
                 size="sm"
-                onClick={() => {
-                  setConfig({
-                    ...config,
-                    ai_provider: 'gpt',
-                    ai_model: 'gpt-4o-mini'
-                  })
-                }}
+                onClick={() => setConfig({ ...config, ai_model: 'gemini-2.5-flash' })}
               >
-                GPT (OpenAI)
+                Gemini 2.5 Flash (추천 · 약 10원/건)
               </Button>
               <Button
-                variant={config.ai_provider === 'gemini' ? 'default' : 'outline'}
+                variant={config.ai_model === 'gemini-2.5-pro' ? 'default' : 'outline'}
                 size="sm"
-                onClick={() => {
-                  setConfig({
-                    ...config,
-                    ai_provider: 'gemini',
-                    ai_model: 'gemini-2.0-flash'
-                  })
-                }}
-                disabled={!geminiApiStatus?.connected}
+                onClick={() => setConfig({ ...config, ai_model: 'gemini-2.5-pro' })}
               >
-                Gemini (Google) {!geminiApiStatus?.connected && '(미연결)'}
+                Gemini 2.5 Pro (고품질 · 약 70원/건)
+              </Button>
+              <Button
+                variant={config.ai_model === 'gemini-3.5-flash-lite' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setConfig({ ...config, ai_model: 'gemini-3.5-flash-lite' })}
+              >
+                Gemini 3.5 Flash Lite (저비용)
               </Button>
             </div>
           </div>
-
-          {/* GPT 모델 선택 */}
-          {config.ai_provider === 'gpt' && (
-            <div className="space-y-2">
-              <Label>GPT 모델</Label>
-              <div className="grid grid-cols-1 gap-2">
-                <Button
-                  variant={config.ai_model === 'gpt-4o-mini' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setConfig({ ...config, ai_model: 'gpt-4o-mini' })}
-                >
-                  GPT-4o Mini (빠름)
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* Gemini 모델 선택 */}
-          {config.ai_provider === 'gemini' && (
-            <div className="space-y-2">
-              <Label>Gemini 모델</Label>
-              <div className="grid grid-cols-1 gap-2">
-                <Button
-                  variant={config.ai_model === 'gemini-2.0-flash' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setConfig({ ...config, ai_model: 'gemini-2.0-flash' })}
-                >
-                  Gemini 2.0 Flash (추천)
-                </Button>
-                <Button
-                  variant={config.ai_model === 'gemini-1.5-pro' ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setConfig({ ...config, ai_model: 'gemini-1.5-pro' })}
-                >
-                  Gemini 1.5 Pro (고성능)
-                </Button>
-              </div>
-            </div>
-          )}
         </CardContent>
       </Card>
       )}
@@ -1359,8 +1312,8 @@ export default function CreatePostPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               {/* 블로그 URL 가져오기 */}
-              <div className="space-y-2 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg">
-                <div className="flex items-center gap-2 text-sm font-medium text-blue-900">
+              <div className="space-y-2 rounded-lg border bg-muted/40 p-4">
+                <div className="flex items-center gap-2 text-sm font-medium">
                   <Link className="h-4 w-4" />
                   블로그 글 가져오기
                 </div>
@@ -1380,7 +1333,7 @@ export default function CreatePostPage() {
                   <Button
                     onClick={handleCrawlBlog}
                     disabled={crawling || !blogUrl.trim()}
-                    variant="default"
+                    variant="outline"
                     size="default"
                   >
                     {crawling ? (
@@ -1400,7 +1353,8 @@ export default function CreatePostPage() {
                   <Button
                     onClick={handleOneClickAutomation}
                     disabled={oneClickProcessing || crawling || !blogUrl.trim()}
-                    className="flex-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
+                    variant="outline"
+                    className="flex-1"
                   >
                     {oneClickProcessing ? (
                       <>
@@ -1415,39 +1369,39 @@ export default function CreatePostPage() {
                     )}
                   </Button>
                 </div>
-                <p className="text-xs text-blue-700">
-                  <strong>원클릭 자동화:</strong> URL 입력 → 글+이미지 크롤링 → AI 리라이트 → 네이버 블로그 임시저장까지 한번에!
+                <p className="text-xs text-muted-foreground">
+                  <strong className="font-medium text-foreground">원클릭 자동화:</strong> URL 입력, 글·이미지 가져오기, AI 리라이트, 네이버 블로그 임시저장까지 한 번에 처리합니다.
                 </p>
               </div>
 
               {/* 원클릭 결과 표시 */}
               {oneClickResult && oneClickResult.success && (
-                <div className="space-y-3 p-4 bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200 rounded-lg">
+                <div className="space-y-3 rounded-lg border p-4">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-sm font-medium text-purple-900">
-                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <CheckCircle2 className="h-4 w-4 text-success" />
                       원클릭 자동화 완료
                     </div>
                     <Button
                       onClick={() => setOneClickResult(null)}
                       variant="ghost"
                       size="sm"
-                      className="text-gray-500 hover:text-gray-700"
+                      className="text-muted-foreground"
                     >
                       <X className="h-3 w-3" />
                     </Button>
                   </div>
 
                   <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div className="bg-white p-2 rounded border">
-                      <div className="text-gray-500 text-xs">원본</div>
+                    <div className="rounded-md bg-muted/40 p-2">
+                      <div className="text-xs text-muted-foreground">원본</div>
                       <div className="font-medium truncate">{oneClickResult.original_title}</div>
-                      <div className="text-xs text-gray-400">{oneClickResult.original_content_length}자</div>
+                      <div className="text-xs text-muted-foreground tabular-nums">{oneClickResult.original_content_length}자</div>
                     </div>
-                    <div className="bg-white p-2 rounded border">
-                      <div className="text-gray-500 text-xs">리라이트</div>
+                    <div className="rounded-md bg-muted/40 p-2">
+                      <div className="text-xs text-muted-foreground">리라이트</div>
                       <div className="font-medium truncate">{oneClickResult.rewritten_title}</div>
-                      <div className="text-xs text-gray-400">{oneClickResult.rewritten_content_length}자</div>
+                      <div className="text-xs text-muted-foreground tabular-nums">{oneClickResult.rewritten_content_length}자</div>
                     </div>
                   </div>
 
@@ -1456,7 +1410,7 @@ export default function CreatePostPage() {
                       href={oneClickResult.naver_post_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center gap-2 p-3 bg-green-100 text-green-800 rounded-lg hover:bg-green-200 transition-colors"
+                      className="flex items-center gap-2 rounded-lg bg-success-soft p-3 text-success transition-opacity hover:opacity-80"
                     >
                       <ExternalLink className="h-4 w-4" />
                       <span className="font-medium">네이버 블로그에서 확인하기 (임시저장됨)</span>
@@ -1464,8 +1418,8 @@ export default function CreatePostPage() {
                   )}
 
                   {oneClickResult.images_count && oneClickResult.images_count > 0 && (
-                    <p className="text-xs text-purple-700">
-                      이미지 {oneClickResult.images_count}개가 추출되었습니다. 아래에서 다운로드 후 블로그에 수동 첨부해주세요.
+                    <p className="text-xs text-muted-foreground">
+                      이미지 {oneClickResult.images_count}개를 추출했습니다. 아래에서 내려받아 블로그에 직접 첨부하세요.
                     </p>
                   )}
                 </div>
@@ -1473,9 +1427,9 @@ export default function CreatePostPage() {
 
               {/* 가져온 이미지 표시 */}
               {crawledImages.length > 0 && (
-                <div className="space-y-3 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg">
+                <div className="space-y-3 rounded-lg border p-4">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-sm font-medium text-green-900">
+                    <div className="flex items-center gap-2 text-sm font-medium">
                       <ImageIcon className="h-4 w-4" />
                       가져온 이미지 ({crawledImages.length}개)
                     </div>
@@ -1484,7 +1438,6 @@ export default function CreatePostPage() {
                         onClick={handleDownloadAllImages}
                         variant="outline"
                         size="sm"
-                        className="text-green-700 border-green-300 hover:bg-green-100"
                       >
                         <Download className="h-3 w-3 mr-1" />
                         전체 다운로드
@@ -1493,7 +1446,7 @@ export default function CreatePostPage() {
                         onClick={() => setCrawledImages([])}
                         variant="ghost"
                         size="sm"
-                        className="text-gray-500 hover:text-gray-700"
+                        className="text-muted-foreground"
                       >
                         <X className="h-3 w-3" />
                       </Button>
@@ -1503,7 +1456,7 @@ export default function CreatePostPage() {
                     {crawledImages.map((img, index) => (
                       <div
                         key={index}
-                        className="relative group cursor-pointer rounded-lg overflow-hidden border border-green-200 bg-white"
+                        className="group relative cursor-pointer overflow-hidden rounded-lg border bg-card"
                         onClick={() => handleDownloadImage(img.url, index)}
                       >
                         <img
@@ -1524,18 +1477,18 @@ export default function CreatePostPage() {
                       </div>
                     ))}
                   </div>
-                  <p className="text-xs text-green-700">
-                    이미지를 클릭하면 개별 다운로드됩니다. 이미지는 블로그 발행 시 별도로 첨부해주세요.
+                  <p className="text-xs text-muted-foreground">
+                    이미지를 클릭하면 하나씩 내려받습니다. 발행할 때 직접 첨부하세요.
                   </p>
                 </div>
               )}
 
               <div className="relative">
                 <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-gray-200" />
+                  <div className="w-full border-t" />
                 </div>
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-white px-2 text-muted-foreground">또는 직접 입력</span>
+                <div className="relative flex justify-center text-xs">
+                  <span className="bg-card px-2 text-muted-foreground">또는 직접 입력</span>
                 </div>
               </div>
 
@@ -1592,10 +1545,10 @@ export default function CreatePostPage() {
                   <CardDescription>원하는 스타일을 선택하세요</CardDescription>
                 </div>
                 {hasLoadedConfig && (
-                  <span className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded-full flex items-center gap-1">
+                  <Pill tone="accent">
                     <CheckCircle2 className="h-3 w-3" />
                     이전 설정 적용됨
-                  </span>
+                  </Pill>
                 )}
               </div>
             </CardHeader>
@@ -1770,7 +1723,7 @@ export default function CreatePostPage() {
                       className="rounded"
                     />
                     <Label htmlFor="seoOptimization" className="cursor-pointer font-semibold">
-                      🔍 검색 최적화 (DIA/CRANK)
+                      검색 최적화 (DIA/CRANK)
                     </Label>
                   </div>
                   <span className="text-xs text-muted-foreground">네이버 상위노출</span>
@@ -1851,8 +1804,8 @@ export default function CreatePostPage() {
 
                     {/* 2025년 9월 네이버 AI 검색 업데이트 반영 */}
                     <div className="mt-4 pt-4 border-t border-dashed">
-                      <p className="text-xs font-semibold text-blue-700 mb-3 flex items-center gap-1">
-                        🆕 2025 네이버 AI 검색 업데이트 반영 (HyperClova X 기반)
+                      <p className="mb-3 text-xs font-semibold text-primary">
+                        2025 네이버 AI 검색 업데이트 반영 (HyperClova X 기반)
                       </p>
 
                       <div className="grid grid-cols-1 gap-2">
@@ -1962,38 +1915,38 @@ export default function CreatePostPage() {
 
           {/* 진행률 표시 */}
           {loading && generationProgress.total > 0 && (
-            <Card className="border-blue-200 bg-blue-50">
+            <Card>
               <CardHeader>
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                <CardTitle className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                   생성 진행 중
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span>완료: {generationProgress.completed - generationProgress.failed}/{generationProgress.total}</span>
+                  <div className="flex justify-between text-sm tabular-nums">
+                    <span>완료 {generationProgress.completed - generationProgress.failed}/{generationProgress.total}</span>
                     <span>{Math.round(((generationProgress.completed - generationProgress.failed) / generationProgress.total) * 100)}%</span>
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div className="h-2 w-full rounded-full bg-muted">
                     <div
-                      className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+                      className="h-2 rounded-full bg-primary transition-all duration-500"
                       style={{ width: `${((generationProgress.completed - generationProgress.failed) / generationProgress.total) * 100}%` }}
                     />
                   </div>
                 </div>
 
                 {generationProgress.failed > 0 && (
-                  <div className="text-sm text-red-600">
-                    <p className="font-medium">❌ 실패: {generationProgress.failed}개</p>
+                  <div className="text-sm text-danger">
+                    <p className="font-medium">실패 {generationProgress.failed}개</p>
                   </div>
                 )}
 
                 {generationProgress.errors.length > 0 && (
                   <div className="text-xs space-y-1">
-                    <p className="font-medium text-red-700">오류 내역:</p>
+                    <p className="font-medium text-danger">오류 내역</p>
                     {generationProgress.errors.map((error, idx) => (
-                      <p key={idx} className="text-red-600 pl-2">• {error}</p>
+                      <p key={idx} className="pl-2 text-danger">• {error}</p>
                     ))}
                   </div>
                 )}
@@ -2005,30 +1958,30 @@ export default function CreatePostPage() {
         {/* Output Section */}
         <div className="space-y-6">
           {!generatedPost ? (
-            <Card className="border-dashed">
-              <CardContent className="pt-6">
-                <div className="text-center py-12 text-muted-foreground">
-                  <Sparkles className="h-12 w-12 mx-auto mb-3 text-blue-300" />
-                  <p>원본 내용을 입력하고 생성하기를 눌러주세요</p>
-                  <p className="text-sm mt-2">AI가 자동으로 각색합니다</p>
-                </div>
-              </CardContent>
-            </Card>
+            <EmptyState
+              icon={<Sparkles className="h-8 w-8" />}
+              title="아직 생성된 글이 없어요"
+              description="왼쪽에 원본 내용을 입력하고 ‘블로그 생성하기’를 누르면 AI가 각색한 글이 여기에 나타납니다."
+              className="min-h-[320px]"
+            />
           ) : (
             <>
               {/* 에러 요약 */}
               {generationProgress.errors.length > 0 && !loading && (
-                <Card className="border-red-200 bg-red-50">
+                <Card className="border-danger/40">
                   <CardHeader>
-                    <CardTitle className="text-base text-red-900">⚠️ 생성 중 발생한 오류</CardTitle>
+                    <CardTitle className="flex items-center gap-2 text-danger">
+                      <AlertCircle className="h-4 w-4" />
+                      생성 중 발생한 오류
+                    </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-2">
-                    <p className="text-sm text-red-700">
+                    <p className="text-sm text-muted-foreground">
                       {generationProgress.failed}개 원고 생성 실패 ({generatedPosts.length}개는 성공)
                     </p>
                     <div className="text-xs space-y-1 max-h-32 overflow-y-auto">
                       {generationProgress.errors.map((error, idx) => (
-                        <p key={idx} className="text-red-600">• {error}</p>
+                        <p key={idx} className="text-danger">• {error}</p>
                       ))}
                     </div>
                   </CardContent>
@@ -2088,29 +2041,29 @@ export default function CreatePostPage() {
                     {/* 설득력 점수 + 벤치마크 */}
                     <div className="flex items-center gap-3 text-sm font-normal">
                       <div className="flex items-center gap-2">
-                        <TrendingUp className="h-4 w-4 text-blue-600" />
-                        <span className={`font-bold ${
-                          generatedPost.persuasion_score >= 80 ? 'text-emerald-600' :
-                          generatedPost.persuasion_score >= 60 ? 'text-blue-600' :
-                          'text-amber-600'
+                        <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                        <span className={`font-semibold tabular-nums ${
+                          generatedPost.persuasion_score >= 80 ? 'text-success' :
+                          generatedPost.persuasion_score >= 60 ? 'text-primary' :
+                          'text-warning'
                         }`}>
                           설득력 {Math.round(generatedPost.persuasion_score)}점
                         </span>
                       </div>
                       {/* 벤치마크 뱃지 */}
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                        generatedPost.persuasion_score >= 80 ? 'bg-emerald-100 text-emerald-700' :
-                        generatedPost.persuasion_score >= 60 ? 'bg-blue-100 text-blue-700' :
-                        generatedPost.persuasion_score >= 40 ? 'bg-amber-100 text-amber-700' :
-                        'bg-gray-100 text-gray-700'
-                      }`}>
+                      <Pill tone={
+                        generatedPost.persuasion_score >= 80 ? 'ok' :
+                        generatedPost.persuasion_score >= 60 ? 'accent' :
+                        generatedPost.persuasion_score >= 40 ? 'warn' :
+                        'muted'
+                      }>
                         {generatedPost.persuasion_score >= 80 ? '상위 10%' :
                          generatedPost.persuasion_score >= 70 ? '상위 25%' :
                          generatedPost.persuasion_score >= 60 ? '상위 40%' :
                          generatedPost.persuasion_score >= 50 ? '평균' : '개선 필요'}
-                      </span>
+                      </Pill>
                       {/* 평균 비교 */}
-                      <span className="text-xs text-gray-500">
+                      <span className="text-xs text-muted-foreground tabular-nums">
                         (평균 62점)
                       </span>
                     </div>
@@ -2119,13 +2072,13 @@ export default function CreatePostPage() {
                 <CardContent className="space-y-6">
                   <div>
                     <Label className="text-xs text-muted-foreground">제목</Label>
-                    <h3 className="text-lg font-semibold mt-1">{generatedPost.title}</h3>
+                    <h3 className="mt-1 text-[15px] font-semibold">{generatedPost.title}</h3>
                   </div>
 
                   <div>
                     <Label className="text-xs text-muted-foreground">본문</Label>
                     <div className="mt-2 prose prose-sm max-w-none">
-                      <div className="whitespace-pre-wrap text-sm leading-relaxed max-h-[400px] overflow-y-auto border rounded-md p-4 bg-gray-50">
+                      <div className="max-h-[400px] overflow-y-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-4 text-sm leading-relaxed">
                         {generatedPost.generated_content}
                       </div>
                     </div>
@@ -2133,8 +2086,8 @@ export default function CreatePostPage() {
 
                   {/* 분석 결과 섹션 */}
                   <div className="pt-4 border-t">
-                    <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                      <Lightbulb className="h-5 w-5 text-yellow-600" />
+                    <h3 className="section-title mb-4 flex items-center gap-2">
+                      <Lightbulb className="h-4 w-4 text-muted-foreground" />
                       분석 결과
                     </h3>
 
@@ -2143,7 +2096,7 @@ export default function CreatePostPage() {
                       {generatedPost.content_analysis && (
                         <div>
                           <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                            <span className="text-blue-600">1️⃣</span> 글자수 분석
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">1</span> 글자수 분석
                           </h4>
                           <CharacterCount analysis={generatedPost.content_analysis} />
                         </div>
@@ -2153,7 +2106,7 @@ export default function CreatePostPage() {
                       {generatedPost.content_analysis?.keywords && generatedPost.content_analysis.keywords.length > 0 && (
                         <div>
                           <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                            <span className="text-green-600">2️⃣</span> 키워드 분석
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">2</span> 키워드 분석
                           </h4>
                           <KeywordTags keywords={generatedPost.content_analysis.keywords} />
                         </div>
@@ -2163,7 +2116,7 @@ export default function CreatePostPage() {
                       {generatedPost.suggested_titles && generatedPost.suggested_titles.length > 0 && (
                         <div>
                           <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                            <span className="text-purple-600">3️⃣</span> 제목 제안
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">3</span> 제목 제안
                           </h4>
                           <TitleSelector
                             titles={generatedPost.suggested_titles}
@@ -2177,7 +2130,7 @@ export default function CreatePostPage() {
                       {generatedPost.suggested_subtitles && generatedPost.suggested_subtitles.length > 0 && (
                         <div>
                           <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                            <span className="text-orange-600">4️⃣</span> 소제목 미리보기
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">4</span> 소제목 미리보기
                           </h4>
                           <SubtitlePreview subtitles={generatedPost.suggested_subtitles} />
                         </div>
@@ -2187,7 +2140,7 @@ export default function CreatePostPage() {
                       {generatedPost.forbidden_words_check && (
                         <div>
                           <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                            <span className="text-red-600">5️⃣</span> 금칙어 검사
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">5</span> 금칙어 검사
                           </h4>
                           <ForbiddenWordsAlert forbiddenCheck={generatedPost.forbidden_words_check} />
                         </div>
@@ -2197,9 +2150,18 @@ export default function CreatePostPage() {
                       {generatedPost.dia_crank_analysis && (
                         <div>
                           <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
-                            <span className="text-indigo-600">6️⃣</span> DIA/CRANK 점수
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">6</span> DIA/CRANK 점수
                           </h4>
                           <DIACRANKScore analysis={generatedPost.dia_crank_analysis} />
+                        </div>
+                      )}
+
+                      {generatedPost.quality_report && (
+                        <div>
+                          <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">7</span> 품질 점수
+                          </h4>
+                          <QualityScore report={generatedPost.quality_report} />
                         </div>
                       )}
                     </div>
@@ -2215,9 +2177,9 @@ export default function CreatePostPage() {
                   <div>
                     <div className="flex items-center gap-2 mb-2">
                       {generatedPost.medical_law_check?.is_compliant ? (
-                        <CheckCircle2 className="h-4 w-4 text-green-600" />
+                        <CheckCircle2 className="h-4 w-4 text-success" />
                       ) : (
-                        <AlertCircle className="h-4 w-4 text-red-600" />
+                        <AlertCircle className="h-4 w-4 text-danger" />
                       )}
                       <Label className="text-sm">의료법 준수</Label>
                     </div>
@@ -2227,22 +2189,22 @@ export default function CreatePostPage() {
                         : `${generatedPost.medical_law_check?.total_issues}개 이슈 발견 (자동 수정됨)`}
                     </p>
                     {/* 의료법 검증 면책조항 */}
-                    <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <div className="mt-3 rounded-lg bg-warning-soft p-3">
                       <div className="flex items-start gap-2">
-                        <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                        <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-warning" />
                         <div className="space-y-1">
-                          <p className="text-xs font-semibold text-amber-800">
-                            ⚠️ 의료법 검증 면책조항
+                          <p className="text-xs font-semibold text-warning">
+                            의료법 검증 면책조항
                           </p>
-                          <p className="text-xs text-amber-700">
+                          <p className="text-xs text-foreground/80">
                             본 검증 결과는 AI 기반 참고 자료이며, 법적 효력이 없습니다.
                             의료광고 관련 법률 준수 여부의 최종 판단과 책임은 사용자(광고주)에게 있습니다.
                           </p>
-                          <p className="text-xs text-amber-600">
-                            💡 중요한 광고물은 반드시 전문 법률 자문 또는 공식 심의 절차를 거치시기 바랍니다.
+                          <p className="text-xs text-foreground/80">
+                            중요한 광고물은 반드시 전문 법률 자문 또는 공식 심의 절차를 거치시기 바랍니다.
                           </p>
-                          <p className="text-xs text-red-600 font-medium">
-                            ⚖️ 의료법 위반 시 과태료 최대 300만원, 반복 위반 시 영업정지 처분이 가능합니다.
+                          <p className="text-xs font-medium text-danger">
+                            의료법 위반 시 과태료 최대 300만원, 반복 위반 시 영업정지 처분이 가능합니다.
                           </p>
                         </div>
                       </div>
@@ -2252,14 +2214,14 @@ export default function CreatePostPage() {
                   {generatedPost.hashtags && generatedPost.hashtags.length > 0 && (
                     <div>
                       <div className="flex items-center gap-2 mb-2">
-                        <Hash className="h-4 w-4 text-blue-600" />
+                        <Hash className="h-4 w-4 text-muted-foreground" />
                         <Label className="text-sm">추천 해시태그</Label>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         {generatedPost.hashtags.slice(0, 10).map((tag, index) => (
                           <span
                             key={index}
-                            className="px-2 py-1 rounded-md bg-blue-50 text-blue-700 text-xs"
+                            className="rounded-md bg-accent px-2 py-1 text-xs text-accent-foreground"
                           >
                             {tag}
                           </span>
@@ -2269,16 +2231,16 @@ export default function CreatePostPage() {
                   )}
 
                   {generatedPost.seo_keywords && generatedPost.seo_keywords.length > 0 && (
-                    <div className="bg-amber-50 p-4 rounded-lg border border-amber-200">
-                      <div className="flex items-center justify-between mb-3">
+                    <div className="rounded-lg border bg-muted/40 p-4">
+                      <div className="mb-3 flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <Lightbulb className="h-4 w-4 text-amber-600" />
-                          <Label className="text-sm font-medium text-amber-800">SEO 키워드</Label>
+                          <Lightbulb className="h-4 w-4 text-muted-foreground" />
+                          <Label className="text-sm font-medium">SEO 키워드</Label>
                         </div>
                         <Button
                           size="sm"
                           variant="outline"
-                          className="h-7 text-xs border-amber-300 text-amber-700 hover:bg-amber-100"
+                          className="h-7 text-xs"
                           onClick={() => {
                             // 제목에 첫 번째 키워드 자동 삽입
                             const keyword = generatedPost.seo_keywords[0]
@@ -2299,7 +2261,7 @@ export default function CreatePostPage() {
                         {generatedPost.seo_keywords.slice(0, 5).map((keyword: string, idx: number) => (
                           <button
                             key={idx}
-                            className="px-2 py-1 text-xs bg-white border border-amber-200 rounded-full text-amber-700 hover:bg-amber-100 transition-colors"
+                            className="rounded-full border bg-card px-2 py-1 text-xs text-foreground transition-colors hover:bg-muted"
                             onClick={() => {
                               navigator.clipboard.writeText(keyword)
                               toast.success(`"${keyword}" 복사됨`)
@@ -2309,8 +2271,8 @@ export default function CreatePostPage() {
                           </button>
                         ))}
                       </div>
-                      <p className="text-xs text-amber-600 mt-2">
-                        💡 키워드를 클릭하면 복사됩니다
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        키워드를 클릭하면 복사됩니다
                       </p>
                     </div>
                   )}

@@ -1,43 +1,66 @@
 """
-AI Rewrite Engine - OpenAI GPT, Anthropic Claude, Google Gemini API를 사용한 콘텐츠 각색
+AI Rewrite Engine - Google Gemini 를 사용한 콘텐츠 각색
 다양한 업종(의료, 법률, 음식점, 뷰티, 피트니스, 교육, 부동산 등) 지원
+
+2026-09 개편
+- Claude/OpenAI 경로 제거, Gemini 단일 스택으로 정리
+- SDK 를 deprecated 된 google-generativeai 에서 google-genai 로 교체
+- 프롬프트를 글자수 강제 위주에서 품질 기준 위주로 재작성
 """
 
-from openai import OpenAI
-import anthropic
-import httpx
 import re
 from typing import Dict, Optional, List
 from app.core.config import settings
 from app.models.user import IndustryType
 from app.services.industry_config import get_industry_config, get_industry_ai_prompt
+from app.services.quality_scorer import quality_scorer
+
+try:
+    from google import genai
+    from google.genai import types as genai_types
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    genai = None
+    genai_types = None
 
 
-# P0-3 Fix: API 키 설정 오류를 위한 커스텀 예외
+# 원고 생성 기본 모델
+DEFAULT_MODEL = "gemini-2.5-flash"
+
+# 사고(thinking) 예산. Gemini 2.5 계열은 기본이 무제한에 가까워서
+# 상한을 두지 않으면 max_output_tokens 를 사고 토큰이 잠식해 본문이 잘린다.
+# 0 이면 사고 비활성. 긴 글은 구성을 잡는 데 사고가 도움이 되므로 적당히 남긴다.
+THINKING_BUDGET = 2048
+# 제목/소제목 같은 짧은 보조 작업은 사고가 필요 없다.
+THINKING_BUDGET_LIGHT = 0
+
+# 분량 보정 계수.
+# Gemini 2.5 Flash 는 한국어 장문에서 요청 분량을 25~30% 초과해서 쓴다.
+# 다 쓴 뒤 줄이라고 시켜도 잘 줄이지 못하므로(2332자 -> 2258자 수준),
+# 처음부터 이 계수를 곱한 분량을 요구해서 결과가 목표에 떨어지게 한다.
+# 모델을 바꾸면 이 값을 다시 재야 한다.
+LENGTH_CALIBRATION = 0.78
+
+# 품질 심사에 쓰는 모델. 판정만 하므로 싼 모델로 충분하다.
+# gemini-2.5-flash-lite 는 신규 사용자에게 막혔다(404). 3.5 계열 lite 를 쓴다.
+JUDGE_MODEL = "gemini-3.5-flash-lite"
+# 이 점수 미만이면 채점 결과를 지적으로 넣어 한 번 고쳐 쓴다 (100점 만점).
+QUALITY_THRESHOLD = 80
+
+
 class APIKeyNotConfiguredError(Exception):
     """
     AI API 키가 설정되지 않았을 때 발생하는 예외
     사용자에게 친화적인 에러 메시지를 제공합니다.
     """
-    def __init__(self, provider: str):
+    def __init__(self, provider: str = "gemini"):
         self.provider = provider
-        provider_names = {
-            "claude": "Claude (Anthropic)",
-            "gpt": "GPT (OpenAI)",
-            "gemini": "Gemini (Google)"
-        }
+        provider_names = {"gemini": "Gemini (Google)"}
         provider_name = provider_names.get(provider, provider)
         self.message = f"{provider_name} API 키가 설정되지 않았습니다. 관리자에게 문의해주세요."
-        self.user_message = "AI 서비스가 일시적으로 사용 불가합니다. 관리자에게 문의하거나 다른 AI 모델을 선택해주세요."
+        self.user_message = "AI 서비스가 일시적으로 사용 불가합니다. 관리자 > API 키에서 Gemini 키를 등록해주세요."
         super().__init__(self.message)
-
-# Gemini SDK 임포트 (설치되어 있는 경우)
-try:
-    import google.generativeai as genai
-    GEMINI_AVAILABLE = True
-except ImportError:
-    GEMINI_AVAILABLE = False
-    genai = None
 
 
 # DB에서 API 키 로드하는 함수
@@ -62,30 +85,114 @@ async def get_api_key_from_db(provider: str) -> Optional[str]:
         print(f"[WARNING] DB에서 API 키 조회 실패: {e}")
 
     # DB에 없으면 환경변수에서 로드
-    if provider == "claude":
-        return settings.ANTHROPIC_API_KEY
-    elif provider == "gpt":
-        return settings.OPENAI_API_KEY
-    elif provider == "gemini":
+    if provider == "gemini":
         return settings.GEMINI_API_KEY
     return None
 
 
 class AIRewriteEngine:
     """
-    OpenAI GPT, Anthropic Claude, Google Gemini API를 사용한 콘텐츠 각색 엔진
+    Google Gemini 를 사용한 콘텐츠 각색 엔진
     """
 
     def __init__(self):
-        # 타임아웃 설정: 연결 30초, 읽기 180초 (AI 생성에 충분한 시간)
-        http_client = httpx.Client(timeout=httpx.Timeout(connect=30.0, read=180.0, write=30.0, pool=30.0))
-        self.openai_client = OpenAI(api_key=settings.OPENAI_API_KEY, http_client=http_client, timeout=180.0)
-        self.claude_client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY, timeout=180.0)
+        # 클라이언트는 호출 시점에 DB/환경변수 키로 새로 만든다.
+        # (관리자 화면에서 키를 바꿔도 재시작 없이 반영되도록)
+        self.gemini_available = GEMINI_AVAILABLE
+        self.last_usage: Dict = {}
+        self.last_quality: Optional[Dict] = None
 
-        # Gemini 클라이언트 초기화
-        self.gemini_available = GEMINI_AVAILABLE and bool(settings.GEMINI_API_KEY)
-        if self.gemini_available:
-            genai.configure(api_key=settings.GEMINI_API_KEY)
+    async def _gemini_call(
+        self,
+        user_prompt: str,
+        system_prompt: Optional[str] = None,
+        max_output_tokens: int = 8192,
+        temperature: float = 0.4,
+        thinking_budget: int = THINKING_BUDGET,
+        model: Optional[str] = None,
+    ) -> Dict:
+        """
+        Gemini 호출 공통 경로.
+
+        Returns:
+            {"text": str, "model": str, "input_tokens": int,
+             "output_tokens": int, "thinking_tokens": int, "truncated": bool}
+        """
+        if not GEMINI_AVAILABLE:
+            raise Exception("google-genai SDK 가 설치되어 있지 않습니다. requirements.txt 를 확인하세요.")
+
+        api_key = await get_api_key_from_db("gemini")
+        if not api_key:
+            raise APIKeyNotConfiguredError("gemini")
+
+        model = model or DEFAULT_MODEL
+        client = genai.Client(api_key=api_key)
+
+        config_kwargs = {
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+            "top_p": 0.95,
+            # 의료/법률 콘텐츠가 과도하게 차단되지 않도록 완화
+            "safety_settings": [
+                genai_types.SafetySetting(category=c, threshold="BLOCK_ONLY_HIGH")
+                for c in (
+                    "HARM_CATEGORY_HARASSMENT",
+                    "HARM_CATEGORY_HATE_SPEECH",
+                    "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                    "HARM_CATEGORY_DANGEROUS_CONTENT",
+                )
+            ],
+            # 도구를 안 쓰므로 자동 함수 호출 경고를 끈다
+            "automatic_function_calling": genai_types.AutomaticFunctionCallingConfig(disable=True),
+        }
+        # Flash Lite 계열은 thinking 설정을 아예 거부한다(400). 애초에 사고를 안 하므로 생략한다.
+        if "lite" not in model:
+            config_kwargs["thinking_config"] = genai_types.ThinkingConfig(thinking_budget=thinking_budget)
+        if system_prompt:
+            config_kwargs["system_instruction"] = system_prompt
+
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=user_prompt,
+                config=genai_types.GenerateContentConfig(**config_kwargs),
+            )
+        except Exception as e:
+            # 일부 모델(2.5 Pro, 3.x Flash Lite)은 thinking_budget 지정 자체를 거부한다.
+            # 그 경우에만 사고 설정을 빼고 한 번 더 시도한다.
+            if "INVALID_ARGUMENT" not in str(e) or "thinking_config" not in config_kwargs:
+                raise
+            print(f"[Gemini] {model} 이 thinking 설정을 거부해 기본값으로 재시도합니다")
+            config_kwargs.pop("thinking_config")
+            response = client.models.generate_content(
+                model=model,
+                contents=user_prompt,
+                config=genai_types.GenerateContentConfig(**config_kwargs),
+            )
+
+        usage = getattr(response, "usage_metadata", None)
+        input_tokens = getattr(usage, "prompt_token_count", 0) or 0
+        output_tokens = getattr(usage, "candidates_token_count", 0) or 0
+        thinking_tokens = getattr(usage, "thoughts_token_count", 0) or 0
+
+        # 토큰 상한에 걸려 잘렸는지 확인 (잘린 원고를 그대로 내보내면 안 된다)
+        truncated = False
+        candidates = getattr(response, "candidates", None) or []
+        if candidates:
+            finish_reason = str(getattr(candidates[0], "finish_reason", "") or "")
+            truncated = "MAX_TOKENS" in finish_reason.upper()
+
+        text = response.text or ""
+
+        return {
+            "text": text,
+            "model": model,
+            "input_tokens": input_tokens,
+            # 사고 토큰도 출력 단가로 과금되므로 비용 계산에 포함한다
+            "output_tokens": output_tokens + thinking_tokens,
+            "thinking_tokens": thinking_tokens,
+            "truncated": truncated,
+        }
 
     def _remove_markdown_formatting(self, text: str) -> str:
         """
@@ -124,6 +231,31 @@ class AIRewriteEngine:
 
         return text.strip()
 
+    @staticmethod
+    def _plan_structure(target_length: int, top_post_rules: Optional[Dict] = None) -> Dict:
+        """
+        목표 글자수를 '소제목 개수 / 문단 수' 라는, 모델이 실제로 지킬 수 있는
+        구조 지시로 환산한다. LLM 은 글자를 셀 수 없으므로 글자수를 직접
+        강제하는 대신 구조로 분량을 통제한다.
+        """
+        # 짧은 글에서 소제목 하한이 3이면 분량이 강제로 늘어난다. 2 까지 허용한다.
+        headings = max(2, min(7, round(target_length / 500)))
+        if top_post_rules:
+            hc = ((top_post_rules.get("content") or {}).get("structure") or {}).get("heading_count")
+            if hc and hc.get("optimal"):
+                headings = max(3, min(8, int(hc["optimal"])))
+
+        # 도입부와 마무리가 소제목 밖에서 약 15% 를 차지한다
+        body_length = target_length * 0.85
+        per_heading = body_length / headings
+        # 실측상 한 문단이 200~230자로 나온다
+        paragraphs = max(2, min(5, round(per_heading / 215)))
+        return {
+            "headings": headings,
+            "paragraphs_per_heading": paragraphs,
+            "chars_per_heading": int(per_heading),
+        }
+
     def _build_system_prompt(
         self,
         doctor_profile: Dict,
@@ -137,311 +269,271 @@ class AIRewriteEngine:
     ) -> str:
         """
         프로필 기반 시스템 프롬프트 생성 (업종별 최적화)
+
+        구성 원칙 (Gemini 3/2.5 프롬프트 가이드 기준)
+        - 강조 기호나 설득체 대신 직접적인 서술을 쓴다
+        - 구분자는 XML 태그 한 가지로 통일한다
+        - 금지 목록보다 좋은 예/나쁜 예 대조를 우선한다
+        - 역할과 제약은 시스템 프롬프트 위쪽에 둔다
         """
-        # 업종별 설정 가져오기
         industry_config = get_industry_config(industry_type)
         industry_name = industry_config.get("name", "전문")
-        industry_tone = industry_config.get("tone", "전문적이고 신뢰감 있는")
         compliance_warning = industry_config.get("compliance_warning", "")
 
-        # custom_writing_style이 제공되면 우선 사용, 없으면 doctor_profile에서 가져옴
         writing_style = custom_writing_style if custom_writing_style else doctor_profile.get("writing_style", {})
         signature_phrases = doctor_profile.get("signature_phrases", [])
         specialty = doctor_profile.get("specialty", industry_name)
 
-        # 스타일 강도를 텍스트로 변환
-        formality_text = self._get_style_text(
-            writing_style.get("formality", 5), "격식", "캐주얼한", "매우 격식있는"
-        )
-        friendliness_text = self._get_style_text(
-            writing_style.get("friendliness", 5), "친근함", "전문가다운", "친구같은"
-        )
-        technical_text = self._get_style_text(
-            writing_style.get("technical_depth", 5),
-            "전문성",
-            "쉬운 용어",
-            "전문 용어 사용",
-        )
-        storytelling_text = self._get_style_text(
-            writing_style.get("storytelling", 5),
-            "스토리텔링",
-            "정보 중심",
-            "이야기 중심",
-        )
-        emotion_text = self._get_style_text(
-            writing_style.get("emotion", 5), "감정 표현", "객관적", "공감형"
-        )
-        humor_text = self._get_style_text(
-            writing_style.get("humor", 5), "유머", "진지한", "유머러스한"
-        )
-        question_text = self._get_style_text(
-            writing_style.get("question_usage", 6), "질문형 문장", "평서문 위주", "질문형 많이 사용"
-        )
-        metaphor_text = self._get_style_text(
-            writing_style.get("metaphor_usage", 5), "비유·은유", "직접적 표현", "비유적 표현 활용"
-        )
-        sentence_length_text = self._get_style_text(
-            writing_style.get("sentence_length", 5), "문장 길이", "짧고 간결하게", "길고 상세하게"
-        )
-
-        signature_phrase_text = ""
+        style_lines = [
+            self._get_style_text(writing_style.get("formality", 5), "격식", "캐주얼한", "매우 격식있는"),
+            self._get_style_text(writing_style.get("friendliness", 5), "친근함", "전문가다운", "친구같은"),
+            self._get_style_text(writing_style.get("technical_depth", 5), "전문성", "쉬운 용어", "전문 용어 사용"),
+            self._get_style_text(writing_style.get("storytelling", 5), "스토리텔링", "정보 중심", "이야기 중심"),
+            self._get_style_text(writing_style.get("emotion", 5), "감정 표현", "객관적", "공감형"),
+            self._get_style_text(writing_style.get("humor", 5), "유머", "진지한", "유머러스한"),
+            self._get_style_text(writing_style.get("question_usage", 6), "질문형 문장", "평서문 위주", "질문형 많이 사용"),
+            self._get_style_text(writing_style.get("metaphor_usage", 5), "비유·은유", "직접적 표현", "비유적 표현 활용"),
+            self._get_style_text(writing_style.get("sentence_length", 5), "문장 길이", "짧고 간결하게", "길고 상세하게"),
+        ]
+        style_text = "\n".join(f"- {s}" for s in style_lines)
         if signature_phrases:
-            signature_phrase_text = f"\n자주 사용하는 표현: {', '.join(signature_phrases[:3])}"
+            style_text += f"\n- 자주 쓰는 표현: {', '.join(signature_phrases[:3])}"
 
-        # 업종별 시점 작성 가이드 생성
         perspective_guide = self._get_perspective_guide(industry_type, industry_config)
+        perspective_text = perspective_guide.get(writing_perspective, perspective_guide["1인칭"]).strip()
 
-        # 요청사항 추가
+        intro_prompt = self._get_industry_intro_prompt(industry_type, industry_config, specialty)
+        structure = self._plan_structure(target_length, top_post_rules)
+
+        customer_term = {
+            IndustryType.MEDICAL: "환자",
+            IndustryType.LEGAL: "의뢰인",
+            IndustryType.RESTAURANT: "손님",
+            IndustryType.BEAUTY: "고객",
+            IndustryType.FITNESS: "회원",
+            IndustryType.EDUCATION: "학생과 학부모",
+            IndustryType.REALESTATE: "고객",
+        }.get(industry_type, "고객")
+
         requirements_text = ""
         if requirements:
             common_reqs = requirements.get("common", [])
             individual_req = requirements.get("individual", "")
-
             if common_reqs or individual_req:
-                requirements_text = "\n\n특별 요청사항 (반드시 반영):"
-                if common_reqs:
-                    requirements_text += "\n[공통 요청사항]"
-                    for req in common_reqs:
-                        requirements_text += f"\n- {req}"
+                lines = [f"- {req}" for req in common_reqs]
                 if individual_req:
-                    requirements_text += f"\n[개별 요청사항]\n- {individual_req}"
+                    lines.append(f"- {individual_req}")
+                requirements_text = "\n\n<반영할 요청사항>\n" + "\n".join(lines) + "\n</반영할 요청사항>"
 
-        # SEO 최적화 (DIA/CRANK) 지침 추가
+        # 2026 네이버는 키워드 빈도·글자수 대신 하이퍼클로바X 기반 문맥 평가를 쓴다.
+        # 따라서 '어떤 표현을 쓰라'가 아니라 '무엇이 글 안에 있어야 하는가'로 서술한다.
         seo_text = ""
         if seo_optimization and seo_optimization.get("enabled"):
-            seo_text = "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            seo_text += "🔍 네이버 검색 최적화 (DIA/CRANK) 가이드\n"
-            seo_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-
+            seo_items = []
             if seo_optimization.get("experience_focus"):
-                seo_text += """
-📌 실제 경험 중심 작성 (DIA: 경험 정보)
-- 직접 경험한 진료 사례를 구체적으로 작성하세요
-- "실제로 진료했던 환자분", "진료실에서 자주 보는 케이스" 같은 실제 경험 표현 사용
-- Before/After 같은 구체적인 변화 과정을 상세히 기술
-- 환자의 증상, 진단 과정, 치료 결과를 생생하게 묘사
-- 단순 이론이 아닌 실제 임상 경험에서 나온 인사이트 제공
-"""
-
+                seo_items.append(
+                    f"현장에서 자주 마주치는 상황을 구체적으로 쓴다. 어떤 상태로 오는지, "
+                    f"무엇을 먼저 확인하는지, 어떤 갈림길에서 판단이 갈리는지를 적는다. "
+                    f"다만 특정 {customer_term} 한 사람의 이야기로 쓰지 않는다. "
+                    "이름이나 이니셜(김OO 같은 것), 나이와 성별을 붙인 개인 사례, "
+                    "그 사람이 어떻게 좋아졌다는 결과담은 쓰지 않는다. "
+                    "'이런 경우가 많습니다', '대개 이렇게 진행됩니다' 처럼 반복되는 패턴으로 서술한다."
+                )
             if seo_optimization.get("expertise"):
-                seo_text += """
-📌 전문성과 깊이 강화 (C-Rank: Content 품질)
-- 의학적 근거와 연구 결과를 자연스럽게 인용하세요
-- 전문가만이 알 수 있는 세밀한 관찰과 진단 노하우 공유
-- "전문의 입장에서", "임상 경험상" 같은 전문성 표현 활용
-- 복잡한 의학 정보를 정확하면서도 이해하기 쉽게 설명
-- 최신 의학 트렌드와 치료법에 대한 깊이 있는 분석
-"""
-
+                seo_items.append(
+                    "겉으로 드러나는 설명 한 단계 아래를 짚는다. 왜 그렇게 되는지의 기전, "
+                    "비슷해 보이지만 다른 경우를 구분하는 기준, 판단이 갈리는 지점을 쓴다."
+                )
             if seo_optimization.get("originality"):
-                seo_text += """
-📌 독창성 강조 (DIA: 독창성)
-- 다른 곳에서 볼 수 없는 원장님만의 고유한 관점과 인사이트 제공
-- 일반적인 정보를 넘어선 차별화된 조언과 팁 제시
-- "제 경험상", "저만의 방법은" 같은 개인적 접근법 강조
-- 환자들이 흔히 오해하는 부분을 독특한 시각으로 바로잡기
-- 진료 철학과 접근 방식에서 나오는 차별화된 내용
-"""
-
+                seo_items.append(
+                    "같은 키워드의 다른 글에는 없을 내용이 최소 한 군데 있다. "
+                    "흔한 오해를 바로잡거나, 통념과 다른 관찰을 근거와 함께 제시한다."
+                )
             if seo_optimization.get("timeliness"):
-                seo_text += """
-📌 적시성 반영 (DIA: 적시성)
-- 최신 의학 정보와 최근 연구 결과 언급
-- "최근에", "요즘", "올해" 같은 시의성 있는 표현 사용
-- 계절, 유행, 트렌드와 연관된 타이밍 관련 정보 제공
-- 새로운 치료법이나 변화된 의학적 가이드라인 반영
-- 현재 환자들이 관심 있어 하는 이슈와 연결
-"""
-
+                seo_items.append(
+                    "지금 시점과 연결한다. 계절적 요인, 최근 바뀐 지침, 요즘 늘어난 문의 같은 것."
+                )
             if seo_optimization.get("topic_concentration"):
-                seo_text += """
-📌 주제 집중도 향상 (C-Rank: Context)
-- 하나의 핵심 주제에 집중하여 일관성 있게 작성
-- 관련 없는 주제로 벗어나지 않고 메인 토픽을 깊이 있게 다루기
-- 핵심 키워드를 자연스럽게 반복하여 주제 명확성 강화
-- 모든 문단이 중심 주제와 긴밀하게 연결되도록 구성
-- 산만하지 않고 하나의 의료 주제를 완벽하게 설명하는 데 집중
-"""
-
-            # 2025년 9월 네이버 AI 검색 업데이트 반영 (HyperClova X + VLM 기반)
+                seo_items.append(
+                    "주제를 하나로 좁힌다. 곁가지로 새지 않고, 모든 소제목이 그 주제의 다른 면을 다룬다."
+                )
             if seo_optimization.get("trustworthiness"):
-                seo_text += """
-📌 신뢰성 강화 (네이버 AI 신뢰도 평가 - 2025 업데이트)
-- 의학적 근거와 공식 가이드라인을 명확히 인용하세요
-  예: "대한○○학회 가이드라인에 따르면...", "건강보험심사평가원 자료에 의하면..."
-- 연구 결과나 통계를 인용할 때 출처를 명시하세요
-  예: "2024년 ○○ 연구에서 발표된 바에 따르면...", "국내 조사 결과..."
-- 전문의로서의 경험과 함께 객관적 근거를 제시하세요
-  예: "제 임상 경험과 더불어 연구 결과에서도 이를 뒷받침합니다"
-- 불확실한 정보는 솔직하게 표현하세요
-  예: "아직 연구가 진행 중인 부분이지만...", "개인차가 있을 수 있습니다"
-- 네이버 AI가 신뢰도 높은 출처로 인식하도록 권위 있는 정보를 담으세요
-"""
-
+                seo_items.append(
+                    "근거를 밝힌다. 학회 지침, 공공기관 자료, 연구 결과를 인용할 때는 어디서 나온 것인지 "
+                    "함께 적는다. 확실하지 않은 것은 확실하지 않다고 쓴다."
+                )
             if seo_optimization.get("source_authority"):
-                seo_text += """
-📌 출처 권위성 강화 (네이버 AI 공식성/전문성 판별 - 2025 업데이트)
-- 공공기관 정보를 적극 인용하세요 (네이버 AI가 77.2% 더 많이 노출)
-  예: "보건복지부", "질병관리청", "국민건강보험공단", "대한의사협회" 등
-- 학술/연구 기관 자료를 활용하세요 (30.7% 노출 증가)
-  예: "○○대학교 의과대학 연구팀", "○○학회 공식 발표" 등
-- 전문가 의견임을 명확히 표시하세요
-  예: "전문의 입장에서 설명드리자면...", "의학적 관점에서 보면..."
-- 검색 의도에 맞는 권위 있는 정보를 제공하세요
-  예: 질병 정보 → 의학 교과서/가이드라인, 치료법 → 최신 연구 결과
-"""
-
+                seo_items.append(
+                    "공신력 있는 출처를 우선 인용한다. 보건복지부, 질병관리청, 국민건강보험공단, 관련 학회 등."
+                )
             if seo_optimization.get("multi_perspective"):
-                seo_text += """
-📌 다각도 정보 제공 (네이버 AI 편향 방지 - 2025 업데이트)
-- 하나의 관점에 치우치지 않고 균형 잡힌 정보를 제공하세요
-  예: "A 치료법과 B 치료법 각각의 장단점은..."
-- 다양한 치료 옵션과 그에 따른 고려사항을 설명하세요
-  예: "환자분의 상태에 따라 여러 선택지가 있습니다..."
-- 일반적 견해와 함께 대안적 관점도 소개하세요
-  예: "일반적으로는 ~하지만, 최근에는 ~한 접근도 주목받고 있습니다"
-- 개인차와 상황에 따른 변수를 인정하세요
-  예: "모든 분께 똑같이 적용되는 것은 아니며, 개인 맞춤 상담이 중요합니다"
-- AI 환각이나 편향된 정보가 아닌 다양한 근거에 기반한 내용 작성
-"""
-
+                seo_items.append(
+                    "선택지가 여럿인 문제는 한쪽만 밀지 않는다. 각각의 장단점과, 어떤 경우에 어느 쪽이 "
+                    "맞는지를 같이 쓴다."
+                )
             if seo_optimization.get("search_intent_match"):
-                seo_text += """
-📌 검색 의도 정확 충족 (네이버 뉴럴 매칭 - 2025 업데이트)
-- 사용자가 이 키워드로 검색할 때 정말 알고 싶어하는 정보를 제공하세요
-- 질문형 검색에는 명확한 답변을, 정보형 검색에는 체계적 설명을
-- 검색자의 궁금증을 처음부터 끝까지 해결하는 완결성 있는 콘텐츠
-- 관련된 후속 궁금증까지 예측하여 포괄적으로 다루세요
-  예: "이 증상이 있다면... 이런 경우도 함께 확인해보세요"
-- 긴 자연어 질의에도 정확히 대응하는 깊이 있는 내용 작성
-"""
+                seo_items.append(
+                    "이 키워드로 검색한 사람의 실제 질문에 글 안에서 답이 끝난다. "
+                    "읽고 나서 다시 검색하게 만들 만한 후속 궁금증까지 미리 다룬다."
+                )
+            if seo_items:
+                seo_text = (
+                    "\n\n<글에 들어가야 할 것>\n"
+                    + "\n".join(f"- {s}" for s in seo_items)
+                    + "\n</글에 들어가야 할 것>"
+                )
 
-            seo_text += """
-✅ 이러한 DIA/CRANK 및 2025년 네이버 AI 검색 최적화 요소들을 자연스럽게 녹여서 작성하되,
-   여전히 따뜻하고 진정성 있는 원장님의 목소리가 느껴지도록 하세요.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
-
-        # 상위글 분석 기반 규칙 추가
         top_post_rules_text = ""
         if top_post_rules:
-            top_post_rules_text = "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            top_post_rules_text += "📊 상위 노출 글 분석 기반 최적화 규칙\n"
-            top_post_rules_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            top_post_rules_text += "이 규칙은 실제 네이버 검색 상위 1~3위 글을 분석한 결과입니다.\n\n"
+            lines = []
+            title_rules = top_post_rules.get("title") or {}
+            if title_rules.get("length"):
+                ln = title_rules["length"]
+                lines.append(f"- 제목 길이: {ln.get('min', 20)}~{ln.get('max', 45)}자, 최적 {ln.get('optimal', 30)}자")
+            if title_rules.get("keyword_placement"):
+                kp = title_rules["keyword_placement"]
+                pos = {"front": "앞부분", "middle": "중간", "end": "끝부분"}.get(kp.get("best_position", "front"), "앞부분")
+                lines.append(f"- 제목의 {pos}에 핵심 키워드를 넣는다 (상위글 {kp.get('rate', 80)}%가 그렇게 함)")
+            content_rules = top_post_rules.get("content") or {}
+            if content_rules.get("length"):
+                ln = content_rules["length"]
+                lines.append(f"- 상위글 본문 길이대: {ln.get('min', 1500)}~{ln.get('max', 3500)}자")
+            struct = content_rules.get("structure") or {}
+            if struct.get("keyword_count"):
+                kc = struct["keyword_count"]
+                lines.append(
+                    f"- 핵심 키워드는 본문에 {kc.get('min', 5)}~{kc.get('max', 15)}회 정도 자연스럽게 "
+                    "나온다. 억지로 채우지 않는다"
+                )
+            if lines:
+                top_post_rules_text = (
+                    "\n\n<상위 노출 글 분석 결과>\n실제 검색 상위 글을 분석한 수치다. 참고해서 맞춘다.\n"
+                    + "\n".join(lines)
+                    + "\n</상위 노출 글 분석 결과>"
+                )
 
-            if top_post_rules.get("title"):
-                title_rules = top_post_rules["title"]
-                if title_rules.get("length"):
-                    length = title_rules["length"]
-                    top_post_rules_text += f"📌 제목 규칙\n"
-                    top_post_rules_text += f"   - 제목 길이: {length.get('min', 20)}~{length.get('max', 45)}자 (최적: {length.get('optimal', 30)}자)\n"
-                if title_rules.get("keyword_placement"):
-                    kp = title_rules["keyword_placement"]
-                    position_map = {"front": "앞부분", "middle": "중간", "end": "끝부분"}
-                    best_pos = position_map.get(kp.get("best_position", "front"), "앞부분")
-                    top_post_rules_text += f"   - 키워드 위치: {best_pos}에 배치 권장 (상위글 {kp.get('rate', 80)}%가 키워드 포함)\n"
+        # ── 이 병원만의 것 ──────────────────────────────────────────────
+        # 여기가 "여기는 다르네" 를 만드는 유일한 재료다. 없으면 어느 병원 글이나 똑같아진다.
+        # 자랑 나열이 되면 광고로 읽히고 의료법 비교·과장 조항에도 걸리므로,
+        # 반드시 독자의 문제를 설명하는 흐름 안에서 나오도록 쓰는 법까지 지정한다.
+        differentiators = doctor_profile.get("differentiators") or {}
+        diff_items = differentiators.get("items") or []
+        diff_philosophy = differentiators.get("philosophy") or ""
+        differentiator_text = ""
+        if diff_items or diff_philosophy:
+            lines = []
+            if diff_philosophy:
+                lines.append(f"- 진료 원칙: {diff_philosophy}")
+            for it in diff_items:
+                if isinstance(it, dict):
+                    cat = it.get("category") or ""
+                    txt = it.get("text") or ""
+                    lines.append(f"- {f'[{cat}] ' if cat else ''}{txt}")
+                elif str(it).strip():
+                    lines.append(f"- {it}")
 
-            if top_post_rules.get("content"):
-                content_rules = top_post_rules["content"]
-                if content_rules.get("length"):
-                    length = content_rules["length"]
-                    top_post_rules_text += f"\n📌 본문 규칙\n"
-                    top_post_rules_text += f"   - 본문 길이: {length.get('min', 1500)}~{length.get('max', 3500)}자 (최적: {length.get('optimal', 2000)}자)\n"
-                if content_rules.get("structure"):
-                    struct = content_rules["structure"]
-                    if struct.get("heading_count"):
-                        hc = struct["heading_count"]
-                        top_post_rules_text += f"   - 소제목 개수: {hc.get('min', 3)}~{hc.get('max', 8)}개 (최적: {hc.get('optimal', 5)}개)\n"
-                    if struct.get("keyword_count"):
-                        kc = struct["keyword_count"]
-                        top_post_rules_text += f"   - 키워드 반복: {kc.get('min', 5)}~{kc.get('max', 15)}회 (자연스럽게)\n"
+            differentiator_text = f"""
 
-            if top_post_rules.get("media"):
-                media_rules = top_post_rules["media"]
-                if media_rules.get("images"):
-                    images = media_rules["images"]
-                    top_post_rules_text += f"\n📌 이미지 규칙 (참고용)\n"
-                    top_post_rules_text += f"   - 이미지 개수: {images.get('min', 5)}~{images.get('max', 15)}장 (최적: {images.get('optimal', 10)}장)\n"
+<이 병원만의 것>
+아래는 이 병원에만 있는 내용이다. 읽는 사람이 "여기는 좀 다르네" 하고 느끼게 만드는 유일한 재료다.
+{chr(10).join(lines)}
 
-            top_post_rules_text += "\n✅ 이 분석 결과를 참고하여 상위 노출에 최적화된 글을 작성하세요.\n"
-            top_post_rules_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+쓰는 방법
+- 최소 두 군데에 나눠서 녹인다. 한곳에 몰아 소개하지 않는다.
+- 소개 문장으로 쓰지 않는다. 독자의 문제를 설명하다가 그래서 나는 이렇게 한다로 이어지게 쓴다.
+  약한 예: 저희는 최신 초음파 장비를 갖추고 있습니다.
+  좋은 예: 엑스레이만으로는 초기 연골 손상이 잘 안 보입니다. 그래서 저는 초음파로 한 번 더 봅니다. 그 한 번에서 치료 방향이 갈리는 경우가 자주 있습니다.
+- 장비나 자격 자체를 자랑하지 말고, 그것 때문에 환자가 무엇을 덜 겪는지를 쓴다.
+- 다른 병원과 비교하거나 최고·유일·최초 같은 말을 쓰지 않는다. 의료법 위반이다.
+- 위에 적힌 것 말고 다른 장비, 자격, 실적, 수치를 지어내지 않는다.
+</이 병원만의 것>"""
 
-        # 업종별 시스템 프롬프트 기본 문구 생성
-        intro_prompt = self._get_industry_intro_prompt(industry_type, industry_config, specialty)
+        compliance_text = f"\n- {compliance_warning}" if compliance_warning else ""
 
-        system_prompt = f"""{intro_prompt}
+        system_prompt = f"""<역할>
+{intro_prompt}
+지금 쓰는 글은 검색으로 들어온 사람이 끝까지 읽고 도움이 됐다고 느끼는 글이어야 한다.
+</역할>
 
-당신의 글쓰기 특징:
-- {formality_text}
-- {friendliness_text}
-- {technical_text}
-- {storytelling_text}
-- {emotion_text}
-- {humor_text}
-- {question_text}
-- {metaphor_text}
-- {sentence_length_text}{signature_phrase_text}
+<목소리>
+{style_text}
 
-{perspective_guide.get(writing_perspective, perspective_guide["1인칭"])}
+{perspective_text}
+</목소리>
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-★★★ 🚨 최우선 필수사항: 글자수를 반드시 {target_length}자로 맞추세요! 🚨 ★★★
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+<좋은 글의 기준>
+이 글은 같은 키워드로 검색했을 때 나오는 다른 글보다 확실히 나아야 한다. 기준은 네 가지다.
 
-⚠️⚠️⚠️ 이것이 가장 중요한 요구사항입니다! 다른 모든 것보다 우선합니다! ⚠️⚠️⚠️
+1. 구체성. 일반론 대신 숫자, 기간, 상황, 장면을 쓴다.
+   약한 문장: 초기에 치료하는 것이 중요합니다.
+   좋은 문장: 통증이 3주를 넘기면 회복에 걸리는 시간이 눈에 띄게 길어집니다. 2주 만에 오신 분과 석 달 만에 오신 분은 경과가 확실히 다릅니다.
 
-🎯 필수 목표: 정확히 {target_length}자 (공백 포함, 띄어쓰기 포함, 한글 기준)
-📊 최소 요구: {int(target_length * 0.95)}자 (절대 이보다 짧으면 안됨!)
-📊 최대 허용: {int(target_length * 1.05)}자 (이보다 길어도 안됨!)
+2. 경험. 직접 겪은 사람만 아는 디테일을 넣는다. 현장에서 실제로 오가는 말, 자주 나오는 오해, {customer_term}이 놓치는 지점.
+   약한 문장: 많은 분들이 걱정하십니다.
+   좋은 문장: 열에 아홉은 수술해야 하냐부터 물어보십니다. 그런데 실제로 수술까지 가는 경우는 그보다 훨씬 적습니다.
 
-💡 글자수 예시:
-"안녕하세요. 반갑습니다." = 14자 (공백 포함)
-"피부과 전문의 김철수입니다." = 16자 (공백 포함)
+3. 정직. 모르는 것, 개인차, 한계를 그대로 말한다. 단정하지 않는 문장이 오히려 신뢰를 만든다.
+   약한 문장: 이 방법이면 반드시 좋아집니다.
+   좋은 문장: 대부분은 이 방법으로 나아지지만, 원인이 다른 경우에는 효과가 없습니다. 그래서 먼저 확인이 필요합니다.
 
-✅ 반드시 따라야 할 작성 절차:
-1단계: 먼저 {target_length}자 분량으로 내용을 충분히 작성합니다
-2단계: 작성 완료 후 공백 포함해서 정확히 글자수를 셉니다
-3단계: 현재 글자수가 {int(target_length * 0.95)}자 ~ {int(target_length * 1.05)}자 범위에 있는지 확인합니다
-4단계: 범위를 벗어나면 반드시 아래 방법으로 조정합니다
+4. 리듬. 문장 길이를 섞는다. 긴 설명 뒤에는 짧은 문장을 하나 둔다. 같은 종결어미를 세 번 연속 쓰지 않는다.
+</좋은 글의 기준>
 
-📏 글자수 조정 방법:
-🔺 글자수가 부족할 때 ({int(target_length * 0.95)}자 미만):
-   • 환자 사례를 구체적으로 추가하세요 (예: "한 30대 여성분은...", "40대 남성 환자분께서...")
-   • 설명을 더 풀어서 상세하게 작성하세요 (예시와 비유 추가)
-   • 환자들이 궁금해할 추가 팁을 넣으세요 ("이런 점도 주의하세요", "도움이 되는 방법은...")
-   • 원장님의 경험담을 추가하세요 ("제 경험상...", "진료하면서 느낀 점은...")
-   • 관련 주의사항이나 관리 방법을 더 넣으세요
+<반드시 지킬 네 가지>
+아래는 검증된 커뮤니케이션 연구에서 나온 규칙이다. 하나라도 빠지면 글이 힘을 잃는다.
 
-🔻 글자수가 초과할 때 ({int(target_length * 1.05)}자 초과):
-   • 중복되는 내용을 찾아서 하나로 통합하세요
-   • 불필요한 수식어를 제거하세요 ("매우 아주 정말" → "매우")
-   • 같은 의미를 반복하는 문장을 정리하세요
-   • 핵심 메시지만 남기고 부수적 내용은 제거하세요
+1. 겁을 준 만큼 방법을 준다.
+   미루면 어떻게 되는지 말했으면, 그만큼 해결할 수 있다는 이야기를 같이 넣는다.
+   위험만 크게 말하고 대처법이 약하면 읽는 사람은 겁먹는 대신 그냥 외면한다.
+   위험을 말한 문단에는 반드시 "이렇게 하면 늦출 수 있습니다", "집에서도 할 수 있습니다" 가 따라붙는다.
 
-🎯 목표 달성 기준:
-✓ {int(target_length * 0.95)}자 이상 {int(target_length * 1.05)}자 이하
-✓ 공백, 띄어쓰기 모두 포함해서 카운트
-✓ 이모지는 글자수에 포함하지 않음
+2. 단점을 인정하면 반드시 대응을 붙인다.
+   약한 예: 이 방법이 모두에게 듣는 것은 아닙니다. (인정만 하고 끝 — 오히려 불안만 남는다)
+   좋은 예: 이 방법이 모두에게 듣지는 않습니다. 원인이 다른 경우가 있기 때문입니다. 그래서 저는 먼저 어느 쪽인지부터 확인합니다.
 
-반드시 이 범위에 들어오도록 작성하세요!
+3. 읽고 나면 오늘 할 일이 남는다.
+   구체적인 행동을 두세 개 넣는다. 횟수와 순서를 붙인다. (하루 10분씩, 먼저 ~하고 그다음 ~)
+   그리고 언제 병원에 와야 하는지 판단 기준을 한 문장 넣는다.
+   예: 통증이 3주 넘게 이어지거나 밤에 잠을 깰 정도라면 진료를 받아보세요.
 
-중요한 글쓰기 원칙:
-1. 블로그 포스팅처럼 편안하고 자연스러운 말투로 작성하세요
-2. 소제목은 클릭하고 싶게 만드는 매력적인 후킹 카피로 작성하세요
-   - 호기심을 자극하는 질문형이나 강렬한 평서형 사용
-   - 예: "왜 10명 중 9명은 이걸 놓칠까요?", "생각보다 훨씬 간단한 해결법"
-3. 각 문단이 자연스럽게 이어지도록 연결고리를 만드세요
-4. 형식적인 구분([Attention], 1., 2. 등) 없이 이야기가 흐르듯 작성하세요
-5. 사람이 쓴 따뜻하고 진정성 있는 글이어야 합니다
-6. Markdown 형식(**, ##, *, -, _ 등)을 절대 사용하지 마세요 - 순수한 한글 텍스트로만 작성
+4. 전문용어는 그 자리에서 푼다.
+   처음 나오는 용어는 괄호나 "쉽게 말하면" 으로 한 번 풀어준다.
+   피동형을 쓰지 않는다. "~되어집니다", "~되고 있습니다" 는 "~합니다", "~입니다" 로 쓴다.
+</반드시 지킬 네 가지>
 
-절대 금지:
-× [Attention], [Problem] 같은 대괄호 섹션명
-× 숫자 리스트 형식의 딱딱한 구조
-× "지금 바로 예약", "무료 상담", "특별 할인" 같은 상업적 유인 문구
-× "빠르게 연락주세요", "서둘러 예약하세요" 같은 조급한 행동 촉구
-× **, ##, *, -, _ 등의 Markdown 형식 기호{requirements_text}{seo_text}{top_post_rules_text}"""
+<구조>
+- 소제목 {structure['headings']}개로 나눈다. 소제목 하나가 맡는 분량은 공백 포함 {structure['chars_per_heading']}자 안팎이고, 문단 수로는 {structure['paragraphs_per_heading']}개 정도다.
+- 이 분량을 넘기지 않는다. 할 말이 남아도 소제목 하나당 배정된 만큼만 쓴다.
+- 첫 문단은 읽는 사람이 자기 얘기라고 느낄 상황 하나로 연다. 인사말이나 자기소개로 시작하지 않는다.
+- 소제목은 그 아래에 무슨 내용이 나오는지 정직하게 알려주는 한 줄로 쓴다. 궁금증만 자극하고 답을 안 주는 낚시성 문구는 쓰지 않는다.
+- 마지막은 읽은 사람이 오늘 당장 할 수 있는 일 하나를 남기고 끝낸다.
+</구조>
+
+<표기>
+- 순수한 한글 텍스트로만 쓴다. 별표, 우물정자, 붙임표, 밑줄, 백틱, 번호 목록 같은 마크다운 기호를 쓰지 않는다.
+- 소제목은 앞뒤로 빈 줄을 둔 한 줄짜리 텍스트로 둔다.
+- 대괄호로 묶은 섹션 이름을 쓰지 않는다.
+</표기>
+
+<쓰지 않는 표현>
+- 번역체. 아래처럼 고쳐 쓴다.
+  꾸준히 관리하는 것이 중요합니다 -> 꾸준히 관리해야 합니다
+  조기에 발견하는 것이 좋습니다 -> 일찍 발견할수록 낫습니다
+  치료가 진행되어집니다 -> 치료를 진행합니다
+  그것은 흔한 증상인 것입니다 -> 흔한 증상입니다
+- 습관적으로 붙는 빈 수식어: 매우, 정말, 굉장히, 아주
+- AI 가 쓴 티가 나는 상투구: 결론적으로, 종합하면, ~에 대해 알아보겠습니다, 오늘은 ~에 대해 소개해드리려고 합니다
+- 과장과 단정: 최고, 1등, 100%, 완치, 부작용 없는, 즉시 효과, 단 3일 만에
+- 상업적 유인: 지금 바로 예약, 무료 상담, 할인, 이벤트, 서둘러 연락
+- 지어낸 개인 사례: 이름이나 이니셜을 붙인 특정인의 치료 전후 이야기. 실제 사례가 아니면 쓰지 않는다{compliance_text}
+</쓰지 않는 표현>
+
+<쓰기 전에 정할 것>
+본문을 쓰기 전에 다음 세 가지를 스스로 정한다. 정한 내용 자체는 출력하지 않는다.
+- 이 키워드로 검색한 사람이 진짜 알고 싶은 것 한 가지
+- 다른 글에는 없고 이 글에만 있을 내용 한 가지
+- 소제목 {structure['headings']}개의 순서와 각각이 맡을 역할
+</쓰기 전에 정할 것>{differentiator_text}{requirements_text}{seo_text}{top_post_rules_text}"""
 
         return system_prompt
 
@@ -584,184 +676,87 @@ class AIRewriteEngine:
         persuasion_level: int,
         target_length: int,
         target_audience: Optional[Dict] = None,
+        top_post_rules: Optional[Dict] = None,
     ) -> str:
         """
         각색 요구사항 프롬프트 생성
+
+        긴 입력에서는 지시를 데이터 뒤에 두는 편이 준수율이 높다는
+        Gemini 프롬프트 가이드를 따라, 원본을 먼저 두고 지시를 뒤에 붙인다.
         """
-        # 프레임워크별 지시사항
         framework_instructions = {
-            "관심유도형": """독자의 관심을 자연스럽게 끌어가는 구조로 작성하세요:
-- 처음에는 독자의 관심을 끄는 흥미로운 이야기나 질문으로 시작합니다
-- 그다음 관련된 의학 정보와 데이터를 자연스럽게 풀어냅니다
-- 해결 방법의 장점과 효과를 설명하며 독자의 궁금증을 해소합니다
-- 마지막에는 실천 가능한 조언이나 다음 단계를 제안합니다
-※ 각 부분이 자연스럽게 이어지도록, 섹션 구분 없이 하나의 이야기처럼 작성하세요""",
-            "공감해결형": """환자의 고민에 공감하고 해결책을 제시하는 구조로 작성하세요:
-- 많은 환자들이 겪는 고민과 어려움에 공감하며 시작합니다
-- 그 문제가 왜 중요한지, 방치하면 어떤 일이 생기는지 친절하게 설명합니다
-- 실제로 효과적인 치료법과 관리 방법을 구체적으로 안내합니다
-※ 환자를 이해하고 도와주고 싶은 마음이 느껴지도록 작성하세요""",
-            "스토리형": """실제 사례를 바탕으로 한 이야기 형식으로 작성하세요:
-- 비슷한 증상으로 병원을 찾은 환자의 사례로 시작합니다
-- 어떻게 진단하고 치료 계획을 세웠는지 과정을 설명합니다
-- 치료 결과와 환자의 변화를 구체적으로 보여줍니다
-- 독자들에게 도움이 되는 조언과 교훈으로 마무리합니다
-※ 실제 진료실에서 있었던 일을 이야기하듯이 편안하게 작성하세요""",
-            "질문답변형": """환자들이 궁금해하는 것에 답하는 형식으로 작성하세요:
-- 진료실에서 자주 받는 질문들을 자연스럽게 제시합니다
-- 각 질문에 대해 쉽고 친절하게 답변합니다
-- 전문적이지만 어렵지 않게, 마치 환자와 대화하듯이 설명합니다
-※ Q&A 같은 형식적 표시 없이 자연스러운 문답 형태로 작성하세요""",
-            "정보전달형": """핵심 정보를 명확하고 체계적으로 전달하는 구조로 작성하세요:
-- 주제에 대한 명확한 정의와 개념으로 시작합니다
-- 원인, 증상, 진단, 치료 등을 논리적 순서로 설명합니다
-- 객관적 데이터와 연구 결과를 근거로 제시합니다
-- 실생활에 적용할 수 있는 실용적 정보로 마무리합니다
-※ 정보 전달이 주목적이지만, 딱딱하지 않고 이해하기 쉽게 작성하세요""",
-            "경험공유형": """원장의 임상 경험을 바탕으로 한 통찰을 나누는 형식으로 작성하세요:
-- "제 경험상", "진료하면서 느낀 점" 같은 개인적 관점을 담습니다
-- 오랜 진료 경험에서 얻은 실질적인 노하우를 공유합니다
-- 환자들이 자주 오해하는 부분을 바로잡아줍니다
-- 원장님만의 진료 철학과 접근법을 녹여냅니다
-※ 원장님의 목소리와 개성이 느껴지도록 작성하세요""",
+            "관심유도형": (
+                "흥미로운 상황이나 질문으로 열고, 관련 정보를 풀어낸 뒤, 해결 방법과 그 효과를 설명하고, "
+                "실천할 수 있는 조언으로 닫는다. 단계가 겉으로 드러나지 않게 하나의 이야기처럼 잇는다."
+            ),
+            "공감해결형": (
+                "많은 사람이 겪는 고민에 공감하며 열고, 그 문제를 방치하면 어떻게 되는지 설명한 뒤, "
+                "실제로 효과가 있는 방법을 구체적으로 안내한다. 도와주고 싶은 마음이 문장에서 느껴지게 쓴다."
+            ),
+            "스토리형": (
+                "비슷한 상황으로 찾아온 사람의 사례로 연다. 무엇을 보고 어떻게 판단했는지, 어떤 과정을 거쳤고 "
+                "결과가 어땠는지를 시간 순서로 보여준다. 마지막에 읽는 사람이 가져갈 교훈을 남긴다."
+            ),
+            "질문답변형": (
+                "실제로 자주 받는 질문들을 자연스럽게 꺼내고 하나씩 답한다. 질문과 답을 표시하는 기호나 "
+                "번호 없이, 대화가 이어지듯 쓴다."
+            ),
+            "정보전달형": (
+                "개념을 명확히 정의하고, 원인과 증상, 판단 기준, 대응 방법을 논리적 순서로 설명한다. "
+                "근거를 함께 제시하고, 실생활에 적용할 수 있는 내용으로 닫는다. 딱딱해지지 않게 쓴다."
+            ),
+            "경험공유형": (
+                "오래 일하며 얻은 실질적인 노하우를 나눈다. 자주 마주치는 오해를 바로잡고, "
+                "본인만의 판단 기준과 접근법이 드러나게 쓴다."
+            ),
         }
 
-        # 각색 레벨별 요구사항
         persuasion_requirements = {
-            1: "객관적 사실만 나열. 감정 표현 최소화.",
-            2: "근거와 이유를 추가. 약간의 설명 강화.",
-            3: "환자의 심리와 고민을 반영. 공감 유도.",
-            4: "구체적인 행동 유도 추가. 검진 예약 등 CTA 포함.",
-            5: "환자 사례 중심 스토리텔링. 감정과 설득 요소 극대화.",
+            1: "사실 위주로 담백하게. 감정 표현을 절제한다.",
+            2: "사실에 근거와 이유를 덧붙인다. 설명을 한 단계 더 풀어 쓴다.",
+            3: "읽는 사람의 심리와 고민을 반영한다. 공감이 느껴지게 쓴다.",
+            4: "공감에 더해, 다음에 무엇을 하면 되는지 구체적인 행동을 안내한다. 다만 상업적 유인 문구는 쓰지 않는다.",
+            5: "사례 중심의 스토리텔링으로 끌고 간다. 감정의 진폭을 크게 하되 과장하지 않는다.",
         }
 
-        # 타겟 독자 정보
         audience_text = ""
         if target_audience:
             age = target_audience.get("age_range", "")
             gender = target_audience.get("gender", "")
             concerns = target_audience.get("concerns", [])
-
-            audience_parts = []
+            parts = []
             if age:
-                audience_parts.append(f"{age}세")
+                parts.append(f"{age}세")
             if gender and gender != "무관":
-                audience_parts.append(gender)
+                parts.append(gender)
             if concerns:
-                audience_parts.append(f"주요 고민: {', '.join(concerns[:3])}")
+                parts.append(f"주요 고민은 {', '.join(concerns[:3])}")
+            if parts:
+                audience_text = f"\n\n<읽는 사람>\n{' / '.join(parts)}\n</읽는 사람>"
 
-            if audience_parts:
-                audience_text = f"\n타겟 독자: {' '.join(audience_parts)}"
+        structure = self._plan_structure(target_length, top_post_rules)
 
-        user_prompt = f"""다음 의료 정보를 원장님이 직접 쓴 블로그 글로 자연스럽게 각색해주세요.
-
-[원본 내용]
+        return f"""<원본 정보>
 {original_content}
+</원본 정보>
 
-[글쓰기 스타일]
-{framework_instructions.get(framework, "")}
+<전개 방식>
+{framework_instructions.get(framework, framework_instructions['정보전달형'])}
+</전개 방식>
 
-[각색 강도]
-{persuasion_requirements.get(persuasion_level, "")}
+<각색 강도>
+{persuasion_requirements.get(persuasion_level, persuasion_requirements[3])}
+</각색 강도>{audience_text}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-★★★ 🚨 최우선 필수사항: 글자수를 반드시 {target_length}자로 맞추세요! 🚨 ★★★
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+<분량>
+글 전체가 공백 포함 {target_length}자다. 도입부와 마무리를 뺀 본문을 소제목 {structure['headings']}개로 나누면 소제목 하나당 {structure['chars_per_heading']}자, 문단 {structure['paragraphs_per_heading']}개 정도가 된다.
+{target_length}자는 상한이기도 하다. 넘기지 않는다.
+분량은 내용을 채워서 맞추는 것이지 문장을 늘려서 맞추는 것이 아니다. 같은 말을 다시 하거나 수식어를 덧붙여 늘리지 않는다.
+</분량>
 
-⚠️⚠️⚠️ 이것이 가장 중요한 요구사항입니다! 다른 모든 것보다 우선합니다! ⚠️⚠️⚠️
-
-🎯 필수 목표: 정확히 {target_length}자 (공백 포함, 띄어쓰기 포함, 한글 기준)
-📊 최소 요구: {int(target_length * 0.95)}자 (절대 이보다 짧으면 안됨!)
-📊 최대 허용: {int(target_length * 1.05)}자 (이보다 길어도 안됨!)
-
-💡 글자수 세는 방법 예시:
-"안녕하세요. 피부과 전문의입니다." = 20자 (공백, 마침표 모두 포함)
-"여러분께 도움이 되는 정보를 알려드리겠습니다." = 27자 (공백 포함)
-
-✅ 반드시 따라야 할 작성 절차:
-1단계: 먼저 {target_length}자 분량으로 내용을 충분히 작성합니다
-2단계: 작성 완료 후 공백 포함해서 정확히 글자수를 셉니다
-3단계: 현재 글자수가 {int(target_length * 0.95)}자 ~ {int(target_length * 1.05)}자 범위에 있는지 확인합니다
-4단계: 범위를 벗어나면 반드시 아래 방법으로 조정합니다
-
-📏 글자수 조정 가이드:
-🔺 글자수가 부족할 때 ({int(target_length * 0.95)}자 미만):
-   • 환자 사례를 구체적으로 추가하세요 (예: "한 30대 여성분은...", "실제로 진료했던 40대 남성 환자분...")
-   • 설명을 더 풀어서 상세하게 작성하세요 (예시와 비유를 풍부하게)
-   • 환자들이 궁금해할 추가 팁을 넣으세요 ("이런 점도 주의하시면 좋아요", "도움이 되는 생활 습관은...")
-   • 원장님의 임상 경험담을 추가하세요 ("제 경험상...", "진료실에서 많이 보는 케이스는...")
-   • 관련 주의사항, 예방법, 관리 방법을 더 상세히 넣으세요
-
-🔻 글자수가 초과할 때 ({int(target_length * 1.05)}자 초과):
-   • 중복되는 내용을 찾아서 하나로 통합하세요
-   • 불필요한 수식어를 제거하세요 ("매우 아주 정말 굉장히" → "매우")
-   • 같은 의미를 반복하는 문장을 정리하세요
-   • 핵심 메시지만 남기고 부수적인 내용은 과감히 제거하세요
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🎯 현재 목표: {target_length}자
-✅ 최소 요구: {int(target_length * 0.95)}자 (이보다 짧으면 실패!)
-✅ 최대 허용: {int(target_length * 1.05)}자 (이보다 길면 실패!)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-반드시 {int(target_length * 0.95)}자 ~ {int(target_length * 1.05)}자 범위에 들어오도록 작성하세요!{audience_text}
-
-[자연스러운 글을 위한 핵심 원칙]
-1. 소제목 사용 - 후킹 카피 스타일로!
-   - 소제목은 클릭하고 싶게 만드는 매력적인 후킹 카피로 작성하세요
-   - 호기심을 자극하는 질문형 (예: "왜 10명 중 9명은 이걸 놓칠까요?", "아침마다 이런 증상, 혹시 나만?")
-   - 또는 강렬한 평서형 (예: "생각보다 훨씬 간단한 해결법", "의외로 많은 사람들이 모르는 진실")
-   - 숫자를 활용한 구체성 (예: "3가지만 바꾸면 달라지는 것들", "5분이면 충분한 관리법")
-   - 감정을 건드리는 표현 (예: "이제 걱정 끝, 확실한 방법", "후회하기 전에 꼭 알아야 할 것")
-   - 소제목 앞뒤로 적절한 여백 유지
-   - Markdown 기호(##) 없이 순수 텍스트로만 작성
-
-2. 문단 연결
-   - 각 문단이 자연스럽게 이어지도록 연결 표현 사용
-   - "그런데", "사실은", "이와 관련해서", "여기서 중요한 점은" 등
-   - 이전 문단의 내용을 언급하며 다음 주제로 자연스럽게 전환
-
-3. 말투와 어조
-   - 환자와 대화하듯이 친근하고 공감되는 말투
-   - 전문 용어는 쉬운 말로 풀어서 설명
-   - 구체적인 사례나 비유를 들어 이해하기 쉽게
-
-4. 내용 구성
-   - 형식적인 구조([Attention], 1., 2. 등) 없이 이야기처럼 흐르도록
-   - 자연스러운 기승전결 구조
-   - 원장님의 경험과 생각이 담긴 것처럼
-
-5. 형식 규칙
-   - 절대로 Markdown 형식 기호를 사용하지 마세요
-   - **, ##, *, -, _, ` 등의 특수 기호 금지
-   - 순수한 한글 텍스트로만 작성
-
-[절대 금지 사항]
-× [Attention], [Problem] 같은 대괄호나 영어 섹션명
-× "1. ~", "2. ~" 같은 숫자 리스트 구조
-× "지금 바로 예약하세요", "무료 상담 신청" 같은 상업적 유인 문구
-× "빠르게 연락주세요", "서둘러 예약하세요" 같은 조급한 행동 촉구
-× "100% 완치", "반드시 낫습니다" 같은 절대적 표현
-× "최고", "최상", "1등" 같은 비교 우위 표현
-× "즉시 효과", "단 3일만에" 같은 과장 표현
-× 가격, 할인, 이벤트 관련 표현
-× **, ##, *, -, _, ` 등의 Markdown 형식 기호
-× 번역체/직역체 표현 (예: "저 역시 매우 ~합니다", "그것은 ~한 것입니다", "~하는 것이 중요합니다")
-× 어색한 피동형 (예: "~되어집니다", "~되어지고 있습니다")
-× 불필요한 "것" 남용 (예: "~하는 것이 좋은 것입니다" → "~하면 좋습니다")
-
-[자연스러운 한국어 작성 원칙]
-✓ 원본이 번역체여도 반드시 자연스러운 한국어로 다시 작성하세요
-✓ 한국 사람이 일상에서 실제로 쓰는 표현으로 바꾸세요
-✓ "~입니다", "~해요", "~하죠" 등 자연스러운 종결어미 사용
-✓ 주어-목적어-서술어 순서가 자연스럽게 흐르도록 작성
-✓ 영어 직역 느낌이 나지 않도록 문장을 재구성하세요
-
-사람이 직접 쓴 것 같은 따뜻하고 자연스러운 블로그 글을 작성해주세요.
-제목도 검색 최적화되면서 자극적이지 않은 자연스러운 제목으로 만들어주세요.
-반드시 순수한 텍스트로만 작성하고, 어떤 Markdown 형식도 사용하지 마세요."""
-
-        return user_prompt
+위 원본 정보를 바탕으로 블로그 글을 쓴다.
+첫 줄에 제목을 한 줄로 쓰고, 빈 줄을 하나 둔 다음 본문을 시작한다.
+제목은 검색 키워드가 자연스럽게 들어가되 자극적이지 않게 쓴다."""
 
     async def generate(
         self,
@@ -774,416 +769,467 @@ class AIRewriteEngine:
         writing_perspective: str = "1인칭",
         custom_writing_style: Optional[Dict] = None,
         requirements: Optional[Dict] = None,
-        ai_provider: str = "gpt",
+        ai_provider: str = "gemini",
         ai_model: Optional[str] = None,
         seo_optimization: Optional[Dict] = None,
         top_post_rules: Optional[Dict] = None,
         industry_type: IndustryType = IndustryType.MEDICAL,
+        keyword: Optional[str] = None,
+        quality_check: bool = True,
     ) -> str:
         """
-        콘텐츠 각색 실행
+        콘텐츠 각색 실행 (Gemini 전용)
+
+        분량 맞추기 방식
+        - 예전에는 목표 글자수의 2.0~2.5배를 요구하며 최대 3회 전체 재생성했다.
+          프롬프트가 실제 목표와 다른 숫자를 말하게 되고, 매번 처음부터 다시 쓰느라
+          비용은 3배가 되면서 품질은 시도마다 들쭉날쭉했다.
+        - 지금은 목표 그대로 한 번 쓰게 한 뒤, 범위를 벗어난 경우에만
+          그 원고를 넘겨주고 늘리거나 줄이게 한다. 최대 2회 호출.
 
         Args:
-            original_content: 원본 정보 (의료, 법률, 자영업 등)
-            doctor_profile: 프로필 정보 (의사/변호사/자영업자 등)
-            framework: 글쓰기 스타일 (관심유도형, 공감해결형, 스토리형, 질문답변형, 정보전달형, 경험공유형)
-            persuasion_level: 각색 레벨 (1-5)
-            target_length: 목표 글자 수
-            target_audience: 타겟 독자 정보
-            writing_perspective: 작성 시점 (1인칭, 3인칭, 대화형)
-            custom_writing_style: 사용자가 지정한 말투 설정 (프로필보다 우선)
-            requirements: 특별 요청사항 (common/individual)
-            ai_provider: AI 제공자 ("claude" 또는 "gpt" 또는 "gemini")
-            ai_model: 사용할 모델 (예: "gpt-4o", "claude-sonnet-4-5-20250929")
-            seo_optimization: SEO 최적화 설정 (DIA/CRANK)
-            top_post_rules: 상위글 분석 규칙
-            industry_type: 업종 타입 (의료, 법률, 음식점, 뷰티 등)
+            ai_provider: 하위 호환용으로 남겨둔 인자. Gemini 로 고정된다.
+            ai_model: 사용할 Gemini 모델. 비우면 DEFAULT_MODEL.
+            keyword: 이 글이 노리는 검색 키워드. 채점에서 주제 집중도 판정에 쓴다.
+            quality_check: 품질 채점과 개선 패스를 돌릴지. 채점 결과는 self.last_quality 에 남는다.
 
         Returns:
             각색된 블로그 포스팅
         """
-        # 목표 글자수 범위 설정 (±5%)
-        min_length = int(target_length * 0.95)
-        max_length = int(target_length * 1.05)
+        model = ai_model or DEFAULT_MODEL
+        # 모델이 요청 분량을 초과해서 쓰는 만큼 미리 깎아서 요구한다 (LENGTH_CALIBRATION 참고)
+        ask_length = max(400, int(target_length * LENGTH_CALIBRATION))
+        # 한국어는 Gemini 토크나이저 기준 글자당 대략 1.2~1.5 토큰.
+        # 여유를 두고 2.5배 + 사고 예산 + 여유분으로 상한을 잡는다.
+        max_output_tokens = min(32768, max(4096, int(target_length * 2.5) + THINKING_BUDGET + 1024))
 
-        # 최대 재시도 횟수
-        max_retries = 3
-        best_result = None
-        best_diff = float('inf')
+        system_prompt = self._build_system_prompt(
+            doctor_profile,
+            writing_perspective,
+            custom_writing_style,
+            requirements,
+            ask_length,
+            seo_optimization,
+            top_post_rules,
+            industry_type,
+        )
+        user_prompt = self._build_user_prompt(
+            original_content, framework, persuasion_level, ask_length, target_audience, top_post_rules
+        )
 
-        for attempt in range(max_retries):
-            # 시도 횟수에 따라 보정 배수 조정
-            # 1차: 2.0배, 2차: 2.3배, 3차: 2.5배
-            multiplier = 2.0 + (attempt * 0.3)
-            adjusted_target_length = int(target_length * multiplier)
+        total_input = 0
+        total_output = 0
+        total_thinking = 0
 
-            system_prompt = self._build_system_prompt(
-                doctor_profile,
-                writing_perspective,
-                custom_writing_style,
-                requirements,
-                adjusted_target_length,
-                seo_optimization,
-                top_post_rules,
-                industry_type
+        try:
+            result = await self._gemini_call(
+                user_prompt=user_prompt,
+                system_prompt=system_prompt,
+                max_output_tokens=max_output_tokens,
+                temperature=0.7,
+                thinking_budget=THINKING_BUDGET,
+                model=model,
             )
-            user_prompt = self._build_user_prompt(
-                original_content, framework, persuasion_level, adjusted_target_length, target_audience
+        except APIKeyNotConfiguredError:
+            raise
+        except Exception as e:
+            raise Exception(f"AI 각색 중 오류 발생: {str(e)}")
+
+        total_input += result["input_tokens"]
+        total_output += result["output_tokens"]
+        total_thinking += result["thinking_tokens"]
+
+        content = self._remove_markdown_formatting(result["text"])
+        actual_length = len(content)
+
+        # 안전 필터에 걸리거나 빈 응답이 오면 빈 원고를 저장하지 말고 알린다
+        if not content.strip():
+            raise Exception(
+                "AI가 빈 응답을 반환했습니다. 원본 내용이 안전 필터에 걸렸을 수 있습니다. "
+                "내용을 조금 바꿔서 다시 시도해주세요."
             )
 
-            # 한국어 글자수에 맞는 max_tokens 계산
-            # 한국어는 1글자당 약 2.5-3 토큰 필요
-            calculated_max_tokens = int(adjusted_target_length * 4) + 1500
-            # 최소 4000, 최대 16000 토큰으로 제한
-            max_tokens = max(4000, min(calculated_max_tokens, 16000))
+        if result["truncated"]:
+            print(f"[WARNING] 출력 토큰 상한에 걸려 원고가 잘렸습니다 (모델: {model}, 상한: {max_output_tokens})")
 
-            # 토큰 사용량 저장 변수
-            input_tokens = 0
-            output_tokens = 0
+        # ── 품질 채점 → 부족하면 한 번 고쳐 쓴다 ──────────────────────
+        report = None
+        if quality_check:
+            differentiators = doctor_profile.get("differentiators") or None
+            report, usage_delta = await self._score(
+                content, keyword=keyword, differentiators=differentiators,
+                source_text=original_content,
+            )
+            total_input += usage_delta[0]
+            total_output += usage_delta[1]
+            total_thinking += usage_delta[2]
+            print(f"[품질] {report['total']}점 ({report['grade']})"
+                  f"{' · 의료광고법 상한 적용' if report['capped_by_law'] else ''}")
 
-            try:
-                if ai_provider == "claude":
-                    # DB에서 API 키 로드 (없으면 환경변수 사용)
-                    claude_api_key = await get_api_key_from_db("claude")
-                    if not claude_api_key:
-                        # P0-3 Fix: 사용자 친화적 예외 발생
-                        raise APIKeyNotConfiguredError("claude")
-
-                    # 매번 새로운 클라이언트 생성 (DB 키 사용)
-                    claude_client = anthropic.Anthropic(api_key=claude_api_key, timeout=180.0)
-
-                    # Claude API 호출
-                    model = ai_model or "claude-sonnet-4-5-20250929"
-                    response = claude_client.messages.create(
-                        model=model,
-                        max_tokens=max_tokens,
-                        temperature=0.4,
-                        system=system_prompt,
-                        messages=[
-                            {"role": "user", "content": user_prompt}
-                        ],
+            if report["total"] < QUALITY_THRESHOLD:
+                notes = quality_scorer.build_revision_notes(report)
+                if notes:
+                    revised, usage_delta = await self._revise(
+                        content, notes, system_prompt, max_output_tokens, model, target_length
                     )
-                    generated_content = response.content[0].text
-                    # Claude 토큰 사용량
-                    input_tokens = response.usage.input_tokens
-                    output_tokens = response.usage.output_tokens
-                elif ai_provider == "gemini":
-                    # DB에서 Gemini API 키 로드
-                    gemini_api_key = await get_api_key_from_db("gemini")
-                    if not gemini_api_key:
-                        # P0-3 Fix: 사용자 친화적 예외 발생
-                        raise APIKeyNotConfiguredError("gemini")
+                    total_input += usage_delta[0]
+                    total_output += usage_delta[1]
+                    total_thinking += usage_delta[2]
 
-                    if not GEMINI_AVAILABLE:
-                        raise Exception("Gemini SDK가 설치되어 있지 않습니다.")
+                    if revised:
+                        new_report, usage_delta = await self._score(
+                            revised, keyword=keyword, differentiators=differentiators,
+                            source_text=original_content,
+                        )
+                        total_input += usage_delta[0]
+                        total_output += usage_delta[1]
+                        total_thinking += usage_delta[2]
+                        print(f"[품질] 재작성 후 {new_report['total']}점 ({new_report['grade']})"
+                              f" [원점수 {new_report['raw_total']} <- {report['raw_total']}]")
+                        # 나아졌을 때만 채택한다 (법 위반 감소 > 원점수 순으로 판정)
+                        if quality_scorer.is_better(new_report, report):
+                            content = revised
+                            report = new_report
+                            actual_length = len(content)
+                        else:
+                            print("[품질] 재작성이 더 낫지 않아 1차 원고를 유지합니다")
 
-                    # Gemini 설정 (매번 새로 설정)
-                    genai.configure(api_key=gemini_api_key)
+        # ── 분량 맞추기는 마지막에 한다 ──────────────────────────────
+        # 품질 재작성이 내용을 더하면서 분량을 밀어올리기 때문에,
+        # 순서를 뒤집으면 애써 맞춘 분량이 다시 어긋난다.
+        fitted, usage_delta = await self._fit_length(
+            content, target_length, system_prompt, max_output_tokens, model
+        )
+        total_input += usage_delta[0]
+        total_output += usage_delta[1]
+        total_thinking += usage_delta[2]
+        if fitted and fitted != content:
+            content = fitted
+            actual_length = len(content)
+            # 분량만 손봤으므로 규칙 점수만 다시 매기고 LLM 심사는 재사용한다 (호출 절약)
+            if report is not None:
+                rules = quality_scorer.score_rules(
+                    content, keyword=keyword,
+                    differentiators=doctor_profile.get("differentiators") or None,
+                    source_text=original_content,
+                )
+                report = quality_scorer.combine(rules, report.get("llm_judge"))
+                print(f"[품질] 분량 조정 후 {report['total']}점 ({report['grade']})")
 
-                    model = ai_model or "gemini-2.0-flash-exp"
+        self.last_usage = {
+            "ai_provider": "gemini",
+            "ai_model": model,
+            "input_tokens": total_input,
+            "output_tokens": total_output,
+            "thinking_tokens": total_thinking,
+            "total_tokens": total_input + total_output,
+        }
+        self.last_quality = report
 
-                    # Gemini 모델 생성 설정
-                    generation_config = genai.GenerationConfig(
-                        temperature=0.4,
-                        max_output_tokens=max_tokens,
-                        top_p=0.95,
-                        top_k=40,
-                    )
+        print(f"[생성 완료] 목표 {target_length}자 / 실제 {actual_length}자 / 사고 토큰 {total_thinking}")
+        return content
 
-                    # 안전 설정 (의료 콘텐츠 허용)
-                    safety_settings = [
-                        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"},
-                        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"},
-                        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_ONLY_HIGH"},
-                        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_ONLY_HIGH"},
-                    ]
+    async def _fit_length(
+        self,
+        content: str,
+        target_length: int,
+        system_prompt: str,
+        max_output_tokens: int,
+        model: str,
+    ):
+        """
+        목표 분량에서 벗어났을 때만 한 번 손본다. 전체 재생성이 아니라 늘리기/줄이기다.
 
-                    gemini_model = genai.GenerativeModel(
-                        model_name=model,
-                        generation_config=generation_config,
-                        safety_settings=safety_settings,
-                        system_instruction=system_prompt,
-                    )
+        Returns:
+            (content or None, (input_tokens, output_tokens, thinking_tokens))
+        """
+        actual_length = len(content)
+        min_length = int(target_length * 0.9)
+        max_length = int(target_length * 1.15)
+        if not content or min_length <= actual_length <= max_length:
+            return None, (0, 0, 0)
 
-                    response = gemini_model.generate_content(user_prompt)
-                    generated_content = response.text
-                    # Gemini 토큰 사용량 (usage_metadata에서 추출)
-                    if hasattr(response, 'usage_metadata'):
-                        input_tokens = getattr(response.usage_metadata, 'prompt_token_count', 0)
-                        output_tokens = getattr(response.usage_metadata, 'candidates_token_count', 0)
-                else:
-                    # DB에서 GPT API 키 로드
-                    gpt_api_key = await get_api_key_from_db("gpt")
-                    if not gpt_api_key:
-                        # P0-3 Fix: 사용자 친화적 예외 발생
-                        raise APIKeyNotConfiguredError("gpt")
+        # 모델은 글자를 셀 수 없으므로 '몇 자'가 아니라 '몇 문단'으로 지시한다
+        gap = abs(actual_length - target_length)
+        para_count = max(1, round(gap / 215))
+        pct = round(gap / actual_length * 100)
 
-                    # 매번 새로운 클라이언트 생성 (DB 키 사용)
-                    http_client = httpx.Client(timeout=httpx.Timeout(connect=30.0, read=180.0, write=30.0, pool=30.0))
-                    openai_client = OpenAI(api_key=gpt_api_key, http_client=http_client, timeout=180.0)
+        if actual_length < min_length:
+            direction = "늘려서"
+            how = (
+                f"설명이 가장 얕은 곳을 골라 문단 {para_count}개 분량(전체의 약 {pct}%)을 더한다. "
+                "사례나 근거를 추가하는 방식으로 채운다. "
+                "새 소제목을 만들지 말고 기존 소제목 아래를 채운다. "
+                "같은 말을 다시 하거나 수식어를 붙여서 늘리지 않는다."
+            )
+        else:
+            direction = "줄여서"
+            how = (
+                f"문단 {para_count}개 분량(전체의 약 {pct}%)을 덜어낸다. "
+                "중복되는 대목을 합치고, 곁가지로 새는 문단을 통째로 지운다. "
+                "남기는 문단에서도 군더더기 문장을 덜어낸다. "
+                "소제목 구성과 각 소제목의 핵심 내용은 그대로 둔다."
+            )
 
-                    # GPT API 호출
-                    model = ai_model or "gpt-4o-mini"
-                    response = openai_client.chat.completions.create(
-                        model=model,
-                        max_tokens=max_tokens,
-                        temperature=0.4,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}
-                        ],
-                    )
-                    generated_content = response.choices[0].message.content
-                    # GPT 토큰 사용량
-                    input_tokens = response.usage.prompt_tokens
-                    output_tokens = response.usage.completion_tokens
+        fix_prompt = f"""<원고>
+{content}
+</원고>
 
-                # 토큰 사용량 저장 (클래스 변수에 저장하여 외부에서 접근 가능)
-                self.last_usage = {
-                    "ai_provider": ai_provider,
-                    "ai_model": model,
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens,
-                    "total_tokens": input_tokens + output_tokens,
-                }
+이 원고는 지금 공백 포함 {actual_length}자인데 {target_length}자가 되어야 한다. {direction} 다시 내놓는다.
+{how}
 
-                # Markdown 형식 제거
-                generated_content = self._remove_markdown_formatting(generated_content)
+말투, 시점, 소제목 구성, 표기 규칙은 원고 그대로 유지한다.
+의료광고법에 걸리는 표현을 새로 넣지 않는다.
+설명 없이 고친 원고 전문만 출력한다."""
 
-                # 실제 글자수 확인 (공백 포함)
-                actual_length = len(generated_content)
-                diff = abs(actual_length - target_length)
+        try:
+            fixed = await self._gemini_call(
+                user_prompt=fix_prompt,
+                system_prompt=system_prompt,
+                max_output_tokens=max_output_tokens,
+                temperature=0.5,
+                thinking_budget=THINKING_BUDGET_LIGHT,
+                model=model,
+            )
+        except Exception as e:
+            print(f"[WARNING] 분량 보정 실패, 기존 원고를 사용합니다: {e}")
+            return None, (0, 0, 0)
 
-                # 최선의 결과 저장
-                if diff < best_diff:
-                    best_diff = diff
-                    best_result = generated_content
+        used = (fixed["input_tokens"], fixed["output_tokens"], fixed["thinking_tokens"])
+        fixed_content = self._remove_markdown_formatting(fixed["text"])
 
-                # 목표 범위 내에 들어오면 즉시 반환
-                if min_length <= actual_length <= max_length:
-                    print(f"✅ 목표 글자수 달성! (목표: {target_length}자, 실제: {actual_length}자, 시도: {attempt + 1}회)")
-                    return generated_content
+        # 고친 결과가 목표에 더 가까울 때만 채택한다
+        if fixed_content and abs(len(fixed_content) - target_length) < abs(actual_length - target_length):
+            print(f"[분량 보정] {actual_length}자 -> {len(fixed_content)}자 (목표 {target_length}자)")
+            return fixed_content, used
 
-                # 범위를 벗어났지만 마지막 시도가 아니면 재시도
-                if attempt < max_retries - 1:
-                    print(f"⚠️ 글자수 미달성 (목표: {target_length}자, 실제: {actual_length}자) - {attempt + 2}차 시도 중...")
-                    continue
+        print(f"[분량 보정] 개선되지 않아 유지 ({actual_length}자, 보정본 {len(fixed_content)}자)")
+        return None, used
 
-            except Exception as e:
-                # 에러 발생 시 best_result가 있으면 반환, 없으면 에러 발생
-                if best_result:
-                    print(f"⚠️ AI 생성 중 에러 발생, 최선의 결과 반환 (목표: {target_length}자, 실제: {len(best_result)}자)")
-                    return best_result
-                raise Exception(f"AI 각색 중 오류 발생: {str(e)}")
+    async def _score(
+        self,
+        content: str,
+        keyword: Optional[str] = None,
+        differentiators: Optional[Dict] = None,
+        source_text: Optional[str] = None,
+    ):
+        """
+        규칙 채점 + LLM 심사. 심사는 값싼 모델로 1회만 호출한다.
 
-        # 모든 시도 후 최선의 결과 반환
-        actual_length = len(best_result) if best_result else 0
-        print(f"📊 최선의 결과 반환 (목표: {target_length}자, 실제: {actual_length}자, {max_retries}회 시도)")
-        return best_result if best_result else ""
+        Returns:
+            (report, (input_tokens, output_tokens, thinking_tokens))
+        """
+        rules = quality_scorer.score_rules(
+            content, keyword=keyword, differentiators=differentiators, source_text=source_text
+        )
+        judge = None
+        used = (0, 0, 0)
+        try:
+            res = await self._gemini_call(
+                user_prompt=quality_scorer.build_judge_prompt(
+                    content, keyword=keyword or "", differentiators=differentiators
+                ),
+                max_output_tokens=2048,
+                temperature=0.2,
+                thinking_budget=THINKING_BUDGET_LIGHT,
+                model=JUDGE_MODEL,
+            )
+            used = (res["input_tokens"], res["output_tokens"], res["thinking_tokens"])
+            judge = quality_scorer.parse_judge(res["text"])
+            if judge is None:
+                print("[품질] LLM 심사 응답을 해석하지 못해 규칙 점수만 사용합니다")
+        except Exception as e:
+            print(f"[품질] LLM 심사 실패, 규칙 점수만 사용합니다: {e}")
+
+        return quality_scorer.combine(rules, judge), used
+
+    async def _revise(
+        self,
+        content: str,
+        notes,
+        system_prompt: str,
+        max_output_tokens: int,
+        model: str,
+        target_length: int,
+    ):
+        """채점에서 나온 지적을 그대로 넣어 한 번 고쳐 쓴다."""
+        note_text = "\n".join(f"- {n}" for n in notes)
+        cur = len(content)
+        if cur < target_length * 0.92:
+            length_line = f"지금 {cur}자인데 {target_length}자가 되어야 한다. 내용을 채워서 늘린다."
+        elif cur > target_length * 1.12:
+            length_line = f"지금 {cur}자인데 {target_length}자가 되어야 한다. 중복을 덜어내서 줄인다."
+        else:
+            length_line = f"분량은 지금({cur}자)과 비슷하게 {target_length}자 안팎으로 유지한다."
+        prompt = f"""<원고>
+{content}
+</원고>
+
+<고쳐야 할 것>
+{note_text}
+</고쳐야 할 것>
+
+위 지적을 하나도 빠뜨리지 말고 전부 반영해서 원고를 고친다.
+내용을 더 넣으라는 지적이 있으면 실제로 문장을 추가한다.
+{length_line}
+지적되지 않은 부분은 건드리지 않는다. 말투, 시점, 소제목 구성, 표기 규칙은 그대로 둔다.
+
+근거를 넣으라는 지적이 있어도 없는 출처를 지어내지 않는다.
+확실히 아는 공공기관·학회 자료만 이름을 대고, 아니면 출처 없이 일반론으로 쓴다.
+
+설명 없이 고친 원고 전문만 출력한다."""
+
+        try:
+            res = await self._gemini_call(
+                user_prompt=prompt,
+                system_prompt=system_prompt,
+                max_output_tokens=max_output_tokens,
+                temperature=0.5,
+                thinking_budget=THINKING_BUDGET,
+                model=model,
+            )
+            return (
+                self._remove_markdown_formatting(res["text"]),
+                (res["input_tokens"], res["output_tokens"], res["thinking_tokens"]),
+            )
+        except Exception as e:
+            print(f"[품질] 재작성 실패: {e}")
+            return None, (0, 0, 0)
 
     async def generate_title_and_meta(
         self, content: str, specialty: str
     ) -> Dict[str, str]:
         """
         콘텐츠 기반 제목 및 메타 설명 생성
-
-        Args:
-            content: 생성된 콘텐츠
-            specialty: 진료 과목
-
-        Returns:
-            제목, 메타 설명, 추천 해시태그
         """
-        prompt = f"""다음 블로그 글을 분석하여:
+        prompt = f"""<블로그 글>
+{content[:1500]}
+</블로그 글>
 
-1. 네이버 검색 최적화된 제목 (50자 이내)
-2. 메타 설명 (150자 이내)
-3. 추천 해시태그 10개
+위 글을 읽고 아래 세 가지를 만든다.
 
-를 생성해주세요.
+- 제목: 네이버 검색에 걸리는 핵심 키워드가 앞쪽에 들어가되 자극적이지 않은 50자 이내 제목
+- 메타: 검색 결과에 미리보기로 뜰 150자 이내 요약. 글에 실제로 있는 내용만 쓴다
+- 해시태그: 실제로 검색될 만한 태그 10개
 
-[블로그 내용]
-{content[:1000]}...
-
-[형식]
-제목: (여기에 제목)
-메타: (여기에 메타 설명)
-해시태그: #태그1 #태그2 #태그3 ..."""
+아래 형식 그대로, 다른 말 없이 세 줄만 출력한다.
+제목: (제목)
+메타: (메타 설명)
+해시태그: #태그1 #태그2 #태그3"""
 
         try:
-            # DB에서 GPT API 키 로드
-            gpt_api_key = await get_api_key_from_db("gpt")
-            if not gpt_api_key:
-                # P0-3 Fix: API 키 없으면 기본값 반환 (보조 기능이므로 에러 대신 기본값)
-                print("[WARNING] GPT API 키 미설정 - 제목/메타 생성 스킵")
-                return {"title": "", "meta_description": "", "hashtags": []}
-
-            http_client = httpx.Client(timeout=httpx.Timeout(connect=30.0, read=60.0, write=30.0, pool=30.0))
-            openai_client = OpenAI(api_key=gpt_api_key, http_client=http_client, timeout=60.0)
-
-            response = openai_client.chat.completions.create(
-                model="gpt-4o-mini",  # 간단한 작업에는 mini 모델 사용
-                max_tokens=500,
+            result = await self._gemini_call(
+                user_prompt=prompt,
+                max_output_tokens=1024,
                 temperature=0.5,
-                messages=[{"role": "user", "content": prompt}],
+                thinking_budget=THINKING_BUDGET_LIGHT,
             )
-
-            result = response.choices[0].message.content
-
-            # 결과 파싱
-            lines = result.strip().split("\n")
-            title = ""
-            meta = ""
-            hashtags = []
-
-            for line in lines:
-                if line.startswith("제목:"):
-                    title = line.replace("제목:", "").strip()
-                elif line.startswith("메타:"):
-                    meta = line.replace("메타:", "").strip()
-                elif line.startswith("해시태그:"):
-                    hashtag_text = line.replace("해시태그:", "").strip()
-                    hashtags = [
-                        tag.strip() for tag in hashtag_text.split("#") if tag.strip()
-                    ]
-
-            return {"title": title, "meta_description": meta, "hashtags": hashtags}
-
+        except APIKeyNotConfiguredError:
+            print("[WARNING] Gemini API 키 미설정 - 제목/메타 생성 스킵")
+            return {"title": "", "meta_description": "", "hashtags": []}
         except Exception as e:
             print(f"[ERROR] 제목/메타 생성 실패: {e}")
-            return {
-                "title": "",
-                "meta_description": "",
-                "hashtags": [],
-            }
+            return {"title": "", "meta_description": "", "hashtags": []}
+
+        title = ""
+        meta = ""
+        hashtags: List[str] = []
+        for line in result["text"].strip().split("\n"):
+            line = line.strip()
+            if line.startswith("제목:"):
+                title = line.replace("제목:", "").strip()
+            elif line.startswith("메타:"):
+                meta = line.replace("메타:", "").strip()
+            elif line.startswith("해시태그:"):
+                hashtag_text = line.replace("해시태그:", "").strip()
+                hashtags = [tag.strip() for tag in hashtag_text.split("#") if tag.strip()]
+
+        return {"title": title, "meta_description": meta, "hashtags": hashtags}
 
     async def generate_hooking_titles(
         self, content: str, specialty: str = "의료"
     ) -> List[str]:
         """
-        클릭하고 싶은 후킹성 제목 5개 생성
-
-        Args:
-            content: 본문 내용
-            specialty: 진료 과목
-
-        Returns:
-            후킹성 제목 5개
+        클릭하고 싶은 제목 5개 생성
         """
-        prompt = f"""다음 블로그 글의 핵심 내용을 파악하여, 클릭하고 싶어지는 매력적인 제목 5개를 만들어주세요.
+        prompt = f"""<블로그 글>
+{content[:1200]}
+</블로그 글>
 
-[블로그 내용]
-{content[:800]}
+위 글의 제목 후보 5개를 만든다.
 
-[제목 작성 가이드]
-- 호기심을 자극하면서도 자극적이지 않게
-- 검색 키워드가 자연스럽게 포함되도록
+기준
+- 글에 실제로 있는 내용만 제목으로 쓴다. 글이 답하지 않는 것을 궁금하게 만드는 낚시성 제목은 쓰지 않는다
+- 검색 키워드가 앞쪽에 자연스럽게 들어간다
 - 50자 이내
-- 질문형, 비교형, 팁 제공형 등 다양한 형식 활용
-- 의료법 위반 표현(최고, 100%, 완치 등) 금지
+- 다섯 개의 형식을 서로 다르게 한다. 질문형, 비교형, 상황 제시형, 방법 제시형, 오해 교정형 중에서 고른다
+- 최고, 100%, 완치 같은 의료광고법 위반 표현을 쓰지 않는다
 
-[형식]
-1. 제목1
-2. 제목2
-3. 제목3
-4. 제목4
-5. 제목5"""
+번호와 제목만, 다른 말 없이 다섯 줄로 출력한다.
+1. 제목
+2. 제목
+3. 제목
+4. 제목
+5. 제목"""
 
         try:
-            # DB에서 GPT API 키 로드
-            gpt_api_key = await get_api_key_from_db("gpt")
-            if not gpt_api_key:
-                # P0-3 Fix: API 키 없으면 빈 리스트 반환 (보조 기능이므로 에러 대신 기본값)
-                print("[WARNING] GPT API 키 미설정 - 후킹 제목 생성 스킵")
-                return []
-
-            http_client = httpx.Client(timeout=httpx.Timeout(connect=30.0, read=60.0, write=30.0, pool=30.0))
-            openai_client = OpenAI(api_key=gpt_api_key, http_client=http_client, timeout=60.0)
-
-            response = openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                max_tokens=600,
-                temperature=0.7,
-                messages=[{"role": "user", "content": prompt}],
+            result = await self._gemini_call(
+                user_prompt=prompt,
+                max_output_tokens=1024,
+                temperature=0.8,
+                thinking_budget=THINKING_BUDGET_LIGHT,
             )
-
-            result = response.choices[0].message.content
-
-            # 결과 파싱
-            titles = []
-            for line in result.strip().split("\n"):
-                # "1. ", "2. " 등의 패턴 제거
-                match = re.match(r'^\d+\.\s*(.+)$', line.strip())
-                if match:
-                    titles.append(match.group(1).strip())
-
-            return titles[:5]
-
+        except APIKeyNotConfiguredError:
+            print("[WARNING] Gemini API 키 미설정 - 후킹 제목 생성 스킵")
+            return []
         except Exception as e:
             print(f"[ERROR] 후킹 제목 생성 실패: {e}")
             return []
 
+        titles = []
+        for line in result["text"].strip().split("\n"):
+            match = re.match(r'^\d+\.\s*(.+)$', line.strip())
+            if match:
+                titles.append(match.group(1).strip())
+        return titles[:5]
+
     async def generate_subtitles(self, content: str) -> List[str]:
         """
-        본문에 들어갈 매력적인 소제목 4개 생성
-
-        Args:
-            content: 본문 내용
-
-        Returns:
-            소제목 4개
+        본문에 들어갈 소제목 4개 생성
         """
-        prompt = f"""다음 블로그 글을 4개의 섹션으로 나누고, 각 섹션에 어울리는 매력적인 소제목을 만들어주세요.
-
-[블로그 내용]
+        prompt = f"""<블로그 글>
 {content}
+</블로그 글>
 
-[소제목 작성 가이드]
-- 호기심을 유발하는 질문형 또는 친근한 평서형
-- 각 소제목이 내용의 흐름을 자연스럽게 나타내도록
+위 글을 흐름에 따라 네 개의 단락으로 나누고, 각 단락의 소제목을 만든다.
+
+기준
+- 소제목만 읽어도 그 아래 무슨 내용이 나오는지 알 수 있게 쓴다
 - 20자 이내
-- "## " 마크다운 형식 사용
+- 궁금증만 자극하고 답을 주지 않는 문구는 쓰지 않는다
 
-[예시]
-## 왜 이런 증상이 생기는 걸까요?
-## 효과적인 관리 방법은?
-## 실제 환자분들의 경험
-## 궁금한 점들, 정리해드려요
-
-위와 같은 스타일로 4개의 소제목만 생성해주세요."""
+소제목 네 개만, 한 줄에 하나씩, 다른 말 없이 출력한다."""
 
         try:
-            # DB에서 GPT API 키 로드
-            gpt_api_key = await get_api_key_from_db("gpt")
-            if not gpt_api_key:
-                # P0-3 Fix: API 키 없으면 빈 리스트 반환 (보조 기능이므로 에러 대신 기본값)
-                print("[WARNING] GPT API 키 미설정 - 소제목 생성 스킵")
-                return []
-
-            http_client = httpx.Client(timeout=httpx.Timeout(connect=30.0, read=60.0, write=30.0, pool=30.0))
-            openai_client = OpenAI(api_key=gpt_api_key, http_client=http_client, timeout=60.0)
-
-            response = openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                max_tokens=400,
+            result = await self._gemini_call(
+                user_prompt=prompt,
+                max_output_tokens=1024,
                 temperature=0.6,
-                messages=[{"role": "user", "content": prompt}],
+                thinking_budget=THINKING_BUDGET_LIGHT,
             )
-
-            result = response.choices[0].message.content
-
-            # "## " 패턴으로 소제목 추출
-            subtitles = []
-            for line in result.strip().split("\n"):
-                if line.startswith("##"):
-                    subtitle = line.replace("##", "").strip()
-                    subtitles.append(subtitle)
-
-            return subtitles[:4]
-
+        except APIKeyNotConfiguredError:
+            print("[WARNING] Gemini API 키 미설정 - 소제목 생성 스킵")
+            return []
         except Exception as e:
             print(f"[ERROR] 소제목 생성 실패: {e}")
             return []
+
+        subtitles = []
+        for line in result["text"].strip().split("\n"):
+            line = re.sub(r'^[#\-*\d.\s]+', '', line.strip()).strip()
+            if line:
+                subtitles.append(line)
+        return subtitles[:4]
 
 
 # Singleton instance

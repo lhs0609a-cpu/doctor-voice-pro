@@ -127,6 +127,9 @@ export interface Post {
   content_analysis: ContentAnalysis | null
   forbidden_words_check: ForbiddenWordsCheck | null
   dia_crank_analysis: DIACRANKAnalysis | null
+  quality_score?: number | null
+  quality_grade?: string | null
+  quality_report?: any | null
 }
 
 // 로컬 저장 글 타입 (localStorage에 저장되는 글)
@@ -254,11 +257,23 @@ export interface TargetAudience {
   concerns: string[]
 }
 
+export interface DifferentiatorItem {
+  category: string
+  text: string
+}
+
+export interface Differentiators {
+  philosophy: string
+  items: DifferentiatorItem[]
+}
+
 export interface DoctorProfile {
   id: string
   user_id: string
   writing_style: WritingStyle | null
   signature_phrases: string[]
+  // 이 병원만의 것. 글의 차별화 점수를 결정한다
+  differentiators?: Differentiators | null
   sample_posts: string[]
   target_audience: TargetAudience | null
   preferred_structure: string
