@@ -23,7 +23,7 @@ bcrypt==4.0.1
 # AI APIs (Python 3.14 compatible versions)
 anthropic>=0.72.0
 openai==1.10.0
-google-genai>=1.0.0
+google-genai==2.22.0  # ThinkingConfig.thinking_budget 는 2.x 부터. 1.2.0 은 이 필드를 거부한다
 
 # Utilities
 python-dotenv==1.0.0
