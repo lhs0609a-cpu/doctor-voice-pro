@@ -730,7 +730,12 @@ async function startBatch(metas, sender) {
       reportJobResult(
         webTabId, meta.id, !!(result && result.ok),
         (result && (result.error || result.action)) || '',
-        !!(result && result.uncertain)
+        !!(result && result.uncertain),
+        {
+          captcha: !!(result && result.captcha),
+          needLogin: !!(result && result.needLogin),
+          url: (result && result.url) || null,
+        }
       );
 
       // 로그인이 풀린 상태면 남은 건도 전부 같은 이유로 실패한다. 19번을 더 헛돌며
@@ -738,7 +743,18 @@ async function startBatch(metas, sender) {
       if (result && result.needLogin) {
         log('로그인이 풀려 배치 중단');
         for (let k = i + 1; k < metas.length; k++) {
-          reportJobResult(webTabId, metas[k].id, false, '네이버 로그인이 풀려 중단됨 — 로그인 후 다시 발행하세요');
+          reportJobResult(webTabId, metas[k].id, false,
+            '네이버 로그인이 풀려 중단됨 — 로그인 후 다시 발행하세요', false, { needLogin: true });
+        }
+        break;
+      }
+
+      // 캡차가 떠서 시간 안에 안 풀렸으면 다음 건도 똑같이 캡차에 걸린다(같은 세션).
+      // 로그인 풀림과 같은 방식으로 남은 건을 되돌려주고 멈춘다.
+      if (result && result.captcha) {
+        log('캡차로 배치 중단');
+        for (let k = i + 1; k < metas.length; k++) {
+          reportJobResult(webTabId, metas[k].id, false, '캡차로 중단됨', false, { captcha: true });
         }
         break;
       }
@@ -773,7 +789,7 @@ async function startBatch(metas, sender) {
 function jobGuardMs(job) {
   const imgs = (job.blocks || []).filter((b) => b.type === 'image' && b.image).length
     || (job.images || []).length;
-  const base = 180000;          // 페이지 로드 + 타이핑 + finalize
+  const base = 195000;          // 페이지 로드 + 타이핑 + finalize(태그 입력 + 글 주소 수확 8초 포함)
   const captcha = 200000;       // 캡차 대기(180초)보다 반드시 길게
   return base + captcha + imgs * 30000; // 이미지 1장당 30초(재시도 3회 여유 포함)
 }
@@ -810,8 +826,19 @@ function finishJob(result) {
 // 결과를 닥터보이스 웹 탭으로 전달(content-website 가 CustomEvent 로 페이지에 알림)
 // uncertain = 가드 시간 초과로 끝난 건. 실제로는 발행됐을 수 있으므로 프론트가
 // 그냥 재시도하면 중복 예약이 된다 → 별도로 표시해 사용자가 네이버에서 확인하게 한다.
-function reportJobResult(webTabId, id, ok, message, uncertain) {
-  const payload = { action: 'JOB_RESULT', id, ok, message, uncertain: !!uncertain };
+// extra = { captcha, needLogin, url }
+//  captcha   = 캡차가 시간 안에 안 풀려 끝난 건(그 뒤 건은 '캡차로 중단됨')
+//  needLogin = 로그인이 풀려 끝난 건
+//  url       = 발행된 글 주소(best effort, 못 찾으면 null)
+function reportJobResult(webTabId, id, ok, message, uncertain, extra) {
+  const x = extra || {};
+  const payload = {
+    action: 'JOB_RESULT', id, ok, message,
+    uncertain: !!uncertain,
+    captcha: !!x.captcha,
+    needLogin: !!x.needLogin,
+    url: x.url || null,
+  };
   try {
     if (webTabId) {
       chrome.tabs.sendMessage(webTabId, payload, () => void chrome.runtime.lastError);
@@ -1138,6 +1165,7 @@ function reportGenResult(webTabId, id, ok, extra) {
 // ============================================================
 async function runAutomation(tabId, job) {
   log('=== 자동화 시작 ===', tabId);
+  let finalizeStarted = false; // 최종 발행 단계에 들어갔는가(= 글이 나갔을 수 있는가)
   try {
     // 글을 쓰기 전에 계정부터 확인한다. 세션이 끊겨 로그인 창이 떴을 때 사용자가
     // 다른 계정으로 로그인하면, 예전엔 그대로 진행돼 남의 블로그에 글이 올라갔다.
@@ -1211,24 +1239,60 @@ async function runAutomation(tabId, job) {
 
     // 최종 동작 (임시저장 / 발행 / 예약)
     await progress(tabId, '마무리 중...', 88);
+    finalizeStarted = true;
     const fin = await sendToTab(tabId, { action: 'FINALIZE', job });
     log('최종 동작 결과:', fin);
+    if (!fin) {
+      // 응답이 없다 = 최종 클릭 뒤 프레임이 글 보기로 옮겨갔거나 탭이 닫힌 것. 발행됐을
+      // 수 있으므로 uncertain 으로 알려 프론트가 자동 재시도(중복 발행)하지 않게 한다.
+      const err = new Error('발행 응답 없음(페이지가 이동했거나 탭이 닫힘) — 네이버에서 발행 여부를 확인하세요');
+      err.uncertain = true;
+      throw err;
+    }
+    if (!fin.ok) throw new Error(fin.error || '최종 동작 실패');
+
+    // 글 주소: 에디터 프레임이 못 건졌으면 최상위 문서에 한 번 더 묻는다(프레임이 옮겨간 경우).
+    let url = fin.url || null;
+    if (!url && job.finalAction !== 'draft') url = await harvestPostUrlFromTab(tabId);
 
     // 완료
     await chrome.storage.local.remove('pendingJob');
     currentJob = null;
     await chrome.storage.local.set({
-      lastResult: { ok: !!(fin && fin.ok), action: job.finalAction, title: job.title, at: Date.now() },
+      lastResult: { ok: true, action: job.finalAction, title: job.title, url, at: Date.now() },
     });
-    log('=== 자동화 완료 ===');
-    finishJob({ ok: !!(fin && fin.ok), action: job.finalAction });
+    log('=== 자동화 완료 ===', url ? `url=${url}` : '(url 없음)');
+    finishJob({ ok: true, action: job.finalAction, url });
   } catch (e) {
     log('자동화 오류:', e);
     try { await detachDebugger(tabId); } catch (_) {}
+    const captcha = /^CAPTCHA:/.test(e.message || '');
+    if (finalizeStarted) {
+      // 최종 클릭까지 갔으면 글이 이미 나갔을 수 있다. pendingJob 을 남겨두면 다음에
+      // 글쓰기 탭이 열릴 때 EDITOR_READY 가 같은 글을 다시 써 중복 발행된다.
+      try { await chrome.storage.local.remove('pendingJob'); } catch (_) {}
+      currentJob = null;
+    }
     await sendToTab(tabId, { action: 'PROGRESS', text: '⚠️ 오류: ' + e.message, pct: 100 });
-    await chrome.storage.local.set({ lastResult: { ok: false, error: e.message, at: Date.now() } });
-    finishJob({ ok: false, error: e.message });
+    await chrome.storage.local.set({ lastResult: { ok: false, error: e.message, captcha, at: Date.now() } });
+    // 캡차 중단은 최종 발행 버튼을 누른 뒤의 일이라, 사용자가 캡차를 풀면 그대로 나간다
+    // → 발행됐을 수 있으므로 uncertain 도 함께 표시한다.
+    finishJob({ ok: false, error: e.message, captcha, uncertain: !!(e.uncertain || captcha) });
   }
+}
+
+// 발행 뒤 글 주소를 최상위 문서에 물어본다(READ_POST_URL 은 최상위 문서만 답한다).
+// 짧게 두 번만 — 예약발행은 보통 페이지 이동이 없어 어차피 못 찾고, 건마다 오래 기다리면
+// 100건 배치가 눈에 띄게 늘어진다.
+async function harvestPostUrlFromTab(tabId) {
+  for (let i = 0; i < 2; i++) {
+    try {
+      const r = await sendToTab(tabId, { action: 'READ_POST_URL' });
+      if (r && r.url) return r.url;
+    } catch (_) { /* URL 은 덤이다 */ }
+    await sleep(700);
+  }
+  return null;
 }
 
 // 본문: 줄바꿈을 문단으로 처리. emphasize(키워드) 는 Ctrl+B 로 자동 굵게.

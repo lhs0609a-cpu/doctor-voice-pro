@@ -7,6 +7,10 @@
   'use strict';
   const TAG = '[닥터보이스]';
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // manifest 에서 읽는다 — 하드코딩하면 릴리스 때 빠뜨려 오버레이/PING 이 옛 버전을 보인다.
+  const EXT_VERSION = (() => {
+    try { return chrome.runtime.getManifest().version; } catch (e) { return '?'; }
+  })();
 
   // 이 프레임이 실제 에디터가 있는 프레임인지 판별
   const isEditorFrame = () =>
@@ -59,7 +63,7 @@
           <div class="dv-ov-spinner"></div>
           <div class="dv-ov-text">준비 중...</div>
           <div class="dv-ov-bar"><i></i></div>
-          <div class="dv-ov-ver">닥터보이스 프로 v15.0.1</div>
+          <div class="dv-ov-ver">닥터보이스 프로 v${EXT_VERSION}</div>
         </div>`;
       const s = document.createElement('style');
       s.textContent = `
@@ -376,9 +380,14 @@
       '#ncaptcha, .captcha_wrap, [class*="captcha"] input[type="text"]'
     );
   }
+  // 캡차가 떴는데 시간 안에 안 풀리면 throw 한다. 메시지는 반드시 'CAPTCHA:' 로 시작 —
+  // background 가 이 접두어로 '캡차 중단'을 구분해 JOB_RESULT 에 captcha:true 를 싣고
+  // 남은 배치를 멈춘다. 예전엔 {done:false} 로 조용히 돌아가 배치가 계속 굴렀는데,
+  // 캡차는 다음 건에서도 똑같이 뜨므로 헛돈다.
   async function waitForCaptchaResolved(timeout = 180000) {
     if (!captchaPresent()) return true;
     console.log(TAG, '캡차 감지 → 사용자 입력 대기');
+    diag('캡차 감지 — 사용자 입력 대기(최대 ' + Math.round(timeout / 1000) + '초)');
     const start = Date.now();
     while (Date.now() - start < timeout) {
       showOverlay('🔐 보안문자(캡차)가 나타났습니다. 직접 입력해 주세요...', 96);
@@ -386,7 +395,116 @@
       if (!captchaPresent()) { await sleep(600); return true; }
     }
     showOverlay('⚠️ 캡차 대기 시간 초과 — 직접 발행을 마쳐주세요.', 100);
-    return false;
+    throw new Error(
+      'CAPTCHA: 보안문자(캡차)가 ' + Math.round(timeout / 1000) +
+      '초 안에 풀리지 않았습니다. 네이버 탭에서 직접 캡차를 풀어 발행을 마친 뒤, 중복 발행이 되지 않도록 확인해주세요.'
+    );
+  }
+
+  // ---------- 태그 입력 (발행 레이어) ----------
+  // #tag-input 이 실측 셀렉터(SELECTORS.md). 화면이 바뀌어도 placeholder 에 '태그' 는 남기
+  // 마련이라 폴백으로 둔다. React 제어 input 이므로 native setter 로 값을 넣고 Enter 를
+  // 키보드 이벤트로 흘린다. 태그는 글의 성패를 가르지 않는다 — 어떤 실패도 throw 하지 않는다.
+  const TAG_INPUT_SEL = '#tag-input, input[placeholder*="태그"], .tag_input input';
+  const TAG_CHIP_SEL = '[class*="tag_item"], .tag_list li, [data-testid^="tag"]';
+  const TAG_MAX = 10;
+
+  function tagChipCount() {
+    return document.querySelectorAll(TAG_CHIP_SEL).length;
+  }
+
+  function pressKeyOn(el, key, code, keyCode) {
+    for (const type of ['keydown', 'keypress', 'keyup']) {
+      el.dispatchEvent(new KeyboardEvent(type, {
+        key, code, keyCode, which: keyCode, bubbles: true, cancelable: true,
+      }));
+    }
+  }
+
+  function normalizeTags(raw) {
+    const list = (Array.isArray(raw) ? raw : [])
+      .filter((t) => typeof t === 'string')
+      .map((t) => t.replace(/^#+/, '').trim())
+      .filter(Boolean);
+    return [...new Set(list)].slice(0, TAG_MAX);
+  }
+
+  async function typeTags(rawTags) {
+    const tags = normalizeTags(rawTags);
+    if (!tags.length) return { typed: 0, chips: 0 };
+    const input = document.querySelector(TAG_INPUT_SEL);
+    if (!input) {
+      diag('태그 입력란 없음 — 태그 ' + tags.length + '개 건너뜀');
+      return { typed: 0, chips: 0 };
+    }
+    showOverlay('🏷️ 태그 입력 중...', 93);
+    const before = tagChipCount();
+    let typed = 0;
+    for (const tag of tags) {
+      let ok = false;
+      for (let attempt = 1; attempt <= 2 && !ok; attempt++) {
+        const chipsBefore = tagChipCount();
+        input.focus();
+        setNativeValue(input, tag);
+        await sleep(120);
+        pressKeyOn(input, 'Enter', 'Enter', 13);
+        await sleep(250);
+        // 칩이 하나 늘었거나, 입력란이 비워졌으면(네이버가 태그로 받아들이면 비운다) 성공.
+        // 칩 셀렉터가 안 맞아도 두 번째 신호로 잡히므로 같은 태그를 두 번 넣지 않는다.
+        ok = tagChipCount() > chipsBefore || (input.value || '') === '';
+        if (!ok && attempt === 1) { setNativeValue(input, ''); await sleep(100); }
+      }
+      if (ok) typed++;
+    }
+    const chips = Math.max(0, tagChipCount() - before);
+    if (!chips) diag('태그 ' + tags.length + '개 입력했지만 렌더된 태그 칩이 없음(입력 확인 ' + typed + '개) — 비치명, 계속 진행');
+    else diag('태그 ' + chips + '/' + tags.length + '개 입력');
+    return { typed, chips };
+  }
+
+  // ---------- 발행된 글 URL 수확 (best effort) ----------
+  // 발행 확정 뒤 네이버가 글 보기 페이지로 옮겨가면 그 주소를 건진다. 이 프레임이 통째로
+  // 사라지면(프레임 이동) 응답 자체를 못 하므로, pagehide 를 보면 즉시 손을 뗀다 —
+  // URL 보다 FINALIZE 응답이 먼저다. 못 찾으면 null. 여기서는 절대 실패하지 않는다.
+  const POST_URL_RE = /blog\.naver\.com\/[A-Za-z0-9_.-]+\/\d{6,}(?:[?#/]|$)|PostView\.naver\?[^#]*logNo=\d+/;
+  let unloading = false;
+  try { window.addEventListener('pagehide', () => { unloading = true; }, { once: true }); } catch (e) { /* noop */ }
+
+  function findPostUrl() {
+    const cands = [];
+    try { cands.push(location.href); } catch (e) { /* noop */ }
+    try { cands.push(window.top.location.href); } catch (e) { /* cross-origin */ }
+    try {
+      // 최상위 문서에 있을 때: 에디터 iframe(#mainFrame)이 글 보기로 옮겨갔는지
+      const fr = document.querySelector('#mainFrame, iframe[name="mainFrame"]');
+      if (fr) {
+        try { cands.push(fr.contentWindow.location.href); } catch (e) { /* noop */ }
+        cands.push(fr.getAttribute('src') || '');
+      }
+    } catch (e) { /* noop */ }
+    for (const u of cands) if (u && POST_URL_RE.test(u)) return u;
+    // '예약이 완료되었습니다' 류 안내 레이어에 글 링크가 있으면 그것도 인정
+    try {
+      for (const a of document.querySelectorAll(
+        '[class*="layer"] a[href], [class*="popup"] a[href], [role="dialog"] a[href], [class*="toast"] a[href]'
+      )) {
+        if (POST_URL_RE.test(a.href)) return a.href;
+      }
+    } catch (e) { /* noop */ }
+    return null;
+  }
+
+  async function harvestPostUrl(timeout = 8000) {
+    const start = Date.now();
+    try {
+      while (Date.now() - start < timeout) {
+        if (unloading) return null;
+        const u = findPostUrl();
+        if (u) return u;
+        await sleep(300);
+      }
+    } catch (e) { /* URL 은 덤이다 */ }
+    return null;
   }
 
   // ---------- 예약발행 날짜: jQuery UI datepicker 선택 (당일 아닌 예약 지원) ----------
@@ -450,7 +568,7 @@
       await sleep(1500);
       // 저장 확인 팝업이 뜨면 확인 클릭
       await clickConfirmIfAny();
-      return { done: true, action: 'draft' };
+      return { done: true, action: 'draft', url: null };
     }
 
     // 발행 계열: 발행 버튼 클릭 → 레이어 열기
@@ -488,6 +606,13 @@
       }
     }
 
+    // 태그(최대 10개). 비치명 — 못 넣어도 발행은 계속한다.
+    try {
+      await typeTags(job.tags);
+    } catch (e) {
+      diag('태그 입력 오류(무시): ' + (e && e.message));
+    }
+
     if (action === 'schedule' && job.schedule?.datetime) {
       showOverlay('⏰ 예약 시간 설정 중...', 92);
       // 예약 라디오 켜기
@@ -519,12 +644,16 @@
     finalBtn.click();
     await sleep(2000);
 
-    // 캡차가 나타나면 사용자에게 넘기고 해결될 때까지 대기
-    const captchaOk = await waitForCaptchaResolved();
-    if (!captchaOk) return { done: false, action, error: '캡차 시간 초과' };
+    // 캡차가 나타나면 사용자에게 넘기고 해결될 때까지 대기. 시간 초과면 'CAPTCHA:' 로 throw
+    // → FINALIZE 응답 {ok:false, error:'CAPTCHA: …'} → background 가 배치를 멈춘다.
+    await waitForCaptchaResolved();
 
     await clickConfirmIfAny();
-    return { done: true, action, categories };
+
+    // 발행된 글 주소(있으면). 못 찾아도 성공이다 — 서버 큐가 링크를 원할 뿐이다.
+    showOverlay(action === 'schedule' ? '⏰ 예약 등록 확인 중...' : '🔗 발행 결과 확인 중...', 98);
+    const url = await harvestPostUrl(8000);
+    return { done: true, action, categories, url };
   }
 
   async function clickConfirmIfAny() {
@@ -647,12 +776,18 @@
     // blogId 는 프레임마다 알 수 있고 없고가 갈린다(에디터 iframe 의 src 에 들어 있다).
     // 모르는 프레임이 빈 값으로 먼저 답해버리면 그 답이 채택되므로, 찾은 프레임만 답한다.
     if (msg.action === 'READ_BLOG_ID' && !readBlogId()) return;
+    // 발행 뒤 글 주소는 최상위 문서가 가장 오래 살아남는다(에디터 iframe 은 글 보기로
+    // 옮겨가며 사라진다). 최상위 문서만 답한다.
+    if (msg.action === 'READ_POST_URL' && !isTopDoc()) return;
 
     (async () => {
       try {
         switch (msg.action) {
           case 'PING':
-            sendResponse({ ok: true, version: '15.0.1', editor: isEditorFrame() });
+            sendResponse({ ok: true, version: EXT_VERSION, editor: isEditorFrame() });
+            break;
+          case 'READ_POST_URL':
+            sendResponse({ ok: true, url: findPostUrl() });
             break;
           case 'PROGRESS':
             showOverlay(msg.text, msg.pct);

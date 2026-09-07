@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>가짜 SmartEditor ONE (테스트용)</title>
+<style>
+  body{font-family:sans-serif;margin:12px}
+  .se-text-paragraph{min-height:24px;border:1px solid #ccc;padding:4px;margin:4px 0}
+  .layer_publish{display:none;border:1px solid #000;padding:8px;margin-top:12px}
+  .layer_publish.open{display:block}
+  #ui-datepicker-div{display:none;border:1px solid #888;padding:6px;background:#fff}
+  #ui-datepicker-div.open{display:block}
+  [role="menu"]{display:none}
+  [role="menu"].open{display:block}
+  .se-component.se-image img{width:40px;height:40px;display:block}
+  .ui-state-disabled{opacity:.3;pointer-events:none}
+  .popup{border:2px solid #c00;padding:6px}
+</style>
+</head>
+<body>
+<!--
+  SELECTORS.md 에 기록된 셀렉터만 흉내 낸 최소 에디터.
+  ?breakdate=1  → 날짜 input 을 클릭해도 datepicker 가 뜨지 않음(예약 실패 경로 검증)
+  ?nocategory=1 → 카테고리 버튼 없음
+-->
+<div class="popup" id="draftpopup"><p>작성 중이던 글이 있습니다. 불러올까요?</p><button id="draftok">확인</button><button id="draftcancel">취소</button></div>
+
+<div class="header__x">
+  <button data-click-area="tpb.save">저장</button>
+  <button data-click-area="tpb.publish">발행</button>
+</div>
+
+<div class="se-toolbar se-document-toolbar">
+  <button data-name="image" data-group="documentToolbar" data-log="dot.img" id="imgbtn">사진</button>
+  <input type="file" id="imgfile" accept="image/*" multiple style="display:none">
+</div>
+
+<div class="se-content"><div class="se-components-wrap">
+  <div class="se-component se-documentTitle"><div class="se-title-text"><p class="se-text-paragraph" contenteditable="true"></p></div></div>
+  <div class="se-component se-text"><div class="se-section-text"><p class="se-text-paragraph" contenteditable="true"></p></div></div>
+</div></div>
+
+<div class="layer_publish" id="layer">
+  <button data-click-area="tpb*i.category" aria-expanded="false" id="catbtn"><span data-testid="categoryItemText_cur">기본</span></button>
+  <ul role="menu" id="catmenu">
+    <li><label role="button"><input type="radio" data-testid="categoryBtn_24" role="none" tabindex="-1"><span data-testid="categoryItemText_24">임플란트&nbsp;칼럼</span></label></li>
+    <li><label role="button"><input type="radio" data-testid="categoryBtn_7" role="none" tabindex="-1"><span data-testid="categoryItemText_7">공지</span></label></li>
+  </ul>
+  <div>
+    <input type="radio" name="open" id="open_public" data-testid="openType_2"><label for="open_public">전체</label>
+    <input type="radio" name="open" id="open_private" data-testid="openType_0" checked><label for="open_private">비공개</label>
+  </div>
+  <div><input type="checkbox" id="publish-option-search" checked><label for="publish-option-search">검색허용</label></div>
+  <div><input type="text" id="tag-input" placeholder="태그"><ul id="tags"></ul></div>
+  <div>
+    <input type="radio" name="time" id="radio_time1" data-testid="nowTimeRadioBtn" checked><label for="radio_time1">현재</label>
+    <input type="radio" name="time" id="radio_time2" data-testid="preTimeRadioBtn"><label for="radio_time2">예약</label>
+  </div>
+  <div class="time_setting__v6YRU" id="timeset" style="display:none">
+    <input class="input_date__QmA0s" readonly id="date">
+    <select class="hour_option__J_heO" id="hour"></select>
+    <select class="minute_option__Vb3xB" id="minute"></select>
+  </div>
+  <button data-testid="seOnePublishBtn" data-click-area="tpb*i.publish" id="final">발행</button>
+</div>
+
+<div id="ui-datepicker-div">
+  <div class="ui-datepicker-header">
+    <a class="ui-datepicker-prev" title="이전달">이전달</a>
+    <span class="ui-datepicker-month"></span> <span class="ui-datepicker-year"></span>
+    <a class="ui-datepicker-next" title="다음달">다음달</a>
+  </div>
+  <table><tbody id="days"></tbody></table>
+</div>
+
+<script>
+  const q = new URLSearchParams(location.search);
+  const BREAK_DATE = q.get('breakdate') === '1';
+  if (q.get('nocategory') === '1') document.getElementById('catbtn').remove();
+
+  const state = window.__state = { published: null, tags: [], category: '기본', imageDrops: 0, imageFiles: 0, draft: null };
+
+  // 드래프트 팝업
+  document.getElementById('draftcancel').onclick = () => { state.draft = 'cancel'; document.getElementById('draftpopup').remove(); };
+  document.getElementById('draftok').onclick = () => { state.draft = 'restore'; document.getElementById('draftpopup').remove(); };
+
+  // 이미지: 실제 SE ONE 처럼 컴포넌트가 붙고 그 뒤에 빈 문단이 생긴다(업로드 지연 흉내 300ms)
+  function addImage(name) {
+    const wrap = document.querySelector('.se-components-wrap');
+    const c = document.createElement('div');
+    c.className = 'se-component se-image';
+    c.innerHTML = '<img alt="' + name + '" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">';
+    wrap.appendChild(c);
+    const t = document.createElement('div');
+    t.className = 'se-component se-text';
+    t.innerHTML = '<div class="se-section-text"><p class="se-text-paragraph" contenteditable="true"></p></div>';
+    wrap.appendChild(t);
+  }
+  document.getElementById('imgbtn').onclick = () => document.getElementById('imgfile').click();
+  document.getElementById('imgfile').onchange = (e) => {
+    for (const f of e.target.files) {
+      state.imageFiles++;
+      state.lastImage = { name: f.name, type: f.type, size: f.size };
+      setTimeout(() => addImage(f.name), 300);
+    }
+    e.target.value = '';
+  };
+  const content = document.querySelector('.se-content');
+  content.addEventListener('dragover', (e) => e.preventDefault());
+  content.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const fs = e.dataTransfer && e.dataTransfer.files;
+    if (fs && fs.length) { state.imageDrops += fs.length; state.lastImage = { name: fs[0].name, type: fs[0].type, size: fs[0].size }; setTimeout(() => addImage(fs[0].name), 300); }
+  });
+
+  // 발행 레이어 토글
+  const layer = document.getElementById('layer');
+  document.querySelector('[data-click-area="tpb.publish"]').onclick = () => layer.classList.toggle('open');
+
+  // 카테고리 (버튼 aria-expanded + role=menu 목록, label 클릭으로 반영)
+  const catbtn = document.getElementById('catbtn'), menu = document.getElementById('catmenu');
+  if (catbtn) {
+    catbtn.onclick = () => {
+      const open = catbtn.getAttribute('aria-expanded') === 'true';
+      catbtn.setAttribute('aria-expanded', String(!open));
+      menu.classList.toggle('open', !open);
+    };
+    menu.querySelectorAll('label').forEach((l) => l.onclick = (e) => {
+      e.preventDefault();
+      const name = l.querySelector('[data-testid^="categoryItemText_"]').textContent;
+      state.category = name;
+      catbtn.querySelector('[data-testid^="categoryItemText_"]').textContent = name;
+      catbtn.setAttribute('aria-expanded', 'false');
+      menu.classList.remove('open');
+    });
+  }
+
+  // 태그: Enter 로 확정
+  document.getElementById('tag-input').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const v = e.target.value.trim();
+    if (v) { state.tags.push(v); const li = document.createElement('li'); li.textContent = v; document.getElementById('tags').appendChild(li); }
+    e.target.value = '';
+  });
+
+  // 예약 라디오 → 시간 설정 영역 표시
+  const t2 = document.getElementById('radio_time2'), timeset = document.getElementById('timeset');
+  document.querySelectorAll('input[name=time]').forEach((r) => r.addEventListener('change', () => { timeset.style.display = t2.checked ? 'block' : 'none'; }));
+  const hour = document.getElementById('hour'), minute = document.getElementById('minute');
+  for (let h = 0; h < 24; h++) { const o = document.createElement('option'); o.value = o.textContent = String(h).padStart(2, '0'); hour.appendChild(o); }
+  for (let m = 0; m < 60; m += 10) { const o = document.createElement('option'); o.value = o.textContent = String(m).padStart(2, '0'); minute.appendChild(o); }
+  // React 제어 select 흉내: 프로그램적 value 대입만 하고 change 이벤트가 없으면 되돌린다
+  let hourState = '00', minuteState = '00';
+  hour.addEventListener('change', () => { hourState = hour.value; });
+  minute.addEventListener('change', () => { minuteState = minute.value; });
+  setInterval(() => { if (hour.value !== hourState) hour.value = hourState; if (minute.value !== minuteState) minute.value = minuteState; }, 50);
+
+  // jQuery UI datepicker 흉내. 오늘 = 2026-09-03 고정, 지난 날짜는 td.ui-state-disabled
+  const TODAY = { y: 2026, m: 9, d: 3 };
+  let shown = { y: TODAY.y, m: TODAY.m };
+  const dp = document.getElementById('ui-datepicker-div'), dateInput = document.getElementById('date');
+  const fmt = (y, m, d) => `${y}. ${String(m).padStart(2, '0')}. ${String(d).padStart(2, '0')}`;
+  function render() {
+    dp.querySelector('.ui-datepicker-year').textContent = String(shown.y);
+    dp.querySelector('.ui-datepicker-month').textContent = shown.m + '월';
+    dp.querySelector('.ui-datepicker-prev').classList.toggle('ui-state-disabled', shown.y === TODAY.y && shown.m === TODAY.m);
+    const days = new Date(shown.y, shown.m, 0).getDate();
+    const tb = document.getElementById('days'); tb.innerHTML = '';
+    let tr = document.createElement('tr');
+    for (let d = 1; d <= days; d++) {
+      const td = document.createElement('td');
+      const past = shown.y < TODAY.y || (shown.y === TODAY.y && shown.m < TODAY.m) || (shown.y === TODAY.y && shown.m === TODAY.m && d < TODAY.d);
+      if (past) td.className = 'ui-state-disabled';
+      const b = document.createElement('button'); b.className = 'ui-state-default'; b.textContent = String(d);
+      b.onclick = () => { dateInput.value = fmt(shown.y, shown.m, d); dp.classList.remove('open'); };
+      td.appendChild(b); tr.appendChild(td);
+      if (d % 7 === 0) { tb.appendChild(tr); tr = document.createElement('tr'); }
+    }
+    tb.appendChild(tr);
+  }
+  dateInput.onclick = () => { if (BREAK_DATE) return; shown = { y: TODAY.y, m: TODAY.m }; dp.classList.add('open'); render(); };
+  dp.querySelector('.ui-datepicker-next').onclick = () => { shown.m++; if (shown.m > 12) { shown.m = 1; shown.y++; } render(); };
+  dp.querySelector('.ui-datepicker-prev').onclick = (e) => { if (e.currentTarget.classList.contains('ui-state-disabled')) return; shown.m--; if (shown.m < 1) { shown.m = 12; shown.y--; } render(); };
+  dateInput.value = fmt(TODAY.y, TODAY.m, TODAY.d);
+
+  // 최종 발행: 그 시점의 설정을 기록하고 레이어를 닫는다
+  document.getElementById('final').onclick = () => {
+    state.published = {
+      openType: document.querySelector('input[name=open]:checked').id,
+      search: document.getElementById('publish-option-search').checked,
+      category: state.category,
+      tags: state.tags.slice(),
+      reserve: t2.checked,
+      date: dateInput.value, hour: hourState, minute: minuteState,
+      title: document.querySelector('.se-documentTitle .se-text-paragraph').innerText,
+      bodyHtml: [...document.querySelectorAll('.se-component.se-text .se-text-paragraph')].map((p) => p.innerHTML).join('<!--PARA-->'),
+      bodyText: [...document.querySelectorAll('.se-component.se-text .se-text-paragraph')].map((p) => p.innerText).join('\n'),
+      images: document.querySelectorAll('.se-component.se-image').length,
+    };
+    layer.classList.remove('open');
+  };
+</script>
+</body>
+</html>

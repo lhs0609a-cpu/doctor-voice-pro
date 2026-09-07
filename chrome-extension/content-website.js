@@ -133,8 +133,12 @@
     try {
       chrome.runtime.onMessage.addListener((msg) => {
         if (msg && msg.action === 'JOB_RESULT') {
+          // captcha/needLogin = 왜 멈췄는지(그 뒤 건은 같은 사유로 '중단됨'), url = 발행된 글 주소(없으면 null)
           window.dispatchEvent(new CustomEvent('doctorvoice-job-result', {
-            detail: { id: msg.id, ok: msg.ok, message: msg.message, uncertain: !!msg.uncertain },
+            detail: {
+              id: msg.id, ok: msg.ok, message: msg.message, uncertain: !!msg.uncertain,
+              captcha: !!msg.captcha, needLogin: !!msg.needLogin, url: msg.url || null,
+            },
           }));
         }
       });

@@ -13,6 +13,7 @@ primary_region = 'nrt'
   ALLOWED_ORIGINS = '*'
   DATABASE_URL = 'sqlite+aiosqlite:////data/doctorvoice.db'
   DATABASE_URL_SYNC = 'sqlite:////data/doctorvoice.db'
+  MEDIA_DIR = '/data/media'
 
 [[mounts]]
   source = 'doctorvoice_data'
@@ -47,5 +48,5 @@ primary_region = 'nrt'
 
 [[vm]]
   cpu_kind = 'shared'
-  cpus = 1
+  cpus = 2          # 블로그 지수 판정(HTML 파싱)이 CPU 를 먹어 1코어에서는 요청이 굶었다(2026-09 실측)
   memory_mb = 1024

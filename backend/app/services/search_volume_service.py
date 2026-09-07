@@ -97,28 +97,38 @@ def _row_to_dict(row: KeywordVolumeCache) -> Dict:
     }
 
 
-async def fetch_keyword_volumes(keywords: List[str]) -> Dict[str, Dict]:
-    """
-    검색광고 API 직접 호출(캐시 미경유). 정규화 키 → 지표 dict.
-    hintKeywords는 최대 5개씩 나눠 호출한다.
-    """
+def _item_to_metrics(item: Dict) -> Dict:
+    rel = item.get("relKeyword", "")
+    pc = _to_int(item.get("monthlyPcQcCnt"))
+    mobile = _to_int(item.get("monthlyMobileQcCnt"))
+    comp_raw = item.get("compIdx") or ""
+    return {
+        "keyword": rel,
+        "monthly_pc": pc,
+        "monthly_mobile": mobile,
+        "total_volume": pc + mobile,
+        "competition": _COMP_MAP.get(comp_raw, "mid"),
+        "comp_idx_raw": comp_raw,
+        "est_cpc": _to_int(item.get("plAvgDepth"))
+        or _to_int(item.get("monthlyAvePcClkCnt")),
+        "raw": item,
+    }
+
+
+async def _call_keywordstool(keywords: List[str]) -> List[Dict]:
+    """검색광고 keywordstool 을 5개씩 나눠 호출해 응답 항목(연관어 포함)을 전부 돌려준다."""
     if not is_configured():
         logger.warning("[검색량] 검색광고 API 자격증명 미설정 — 빈 결과 반환")
-        return {}
+        return []
 
     path = "/keywordstool"
     url = f"{settings.NAVER_AD_BASE_URL}{path}"
-    result: Dict[str, Dict] = {}
-
-    # 요청 대상 정규화 집합(응답엔 연관어까지 섞여 오므로 이걸로 필터)
-    wanted = {_normalize(k) for k in keywords if k and k.strip()}
-
     unique = list({k.strip() for k in keywords if k and k.strip()})
     chunks = [
         unique[i : i + MAX_HINTS_PER_CALL]
         for i in range(0, len(unique), MAX_HINTS_PER_CALL)
     ]
-
+    items: List[Dict] = []
     async with httpx.AsyncClient(timeout=15.0) as client:
         for chunk in chunks:
             params = {
@@ -136,29 +146,48 @@ async def fetch_keyword_volumes(keywords: List[str]) -> Dict[str, Dict]:
                     )
                     continue
                 data = resp.json()
-                for item in data.get("keywordList", []):
-                    rel = item.get("relKeyword", "")
-                    norm = _normalize(rel)
-                    if norm not in wanted:
-                        continue  # 연관어(요청 안 한 키워드)는 버림
-                    pc = _to_int(item.get("monthlyPcQcCnt"))
-                    mobile = _to_int(item.get("monthlyMobileQcCnt"))
-                    comp_raw = item.get("compIdx") or ""
-                    result[norm] = {
-                        "keyword": rel,
-                        "monthly_pc": pc,
-                        "monthly_mobile": mobile,
-                        "total_volume": pc + mobile,
-                        "competition": _COMP_MAP.get(comp_raw, "mid"),
-                        "comp_idx_raw": comp_raw,
-                        "est_cpc": _to_int(item.get("plAvgDepth"))
-                        or _to_int(item.get("monthlyAvePcClkCnt")),
-                        "raw": item,
-                    }
+                items.extend(data.get("keywordList", []) or [])
             except Exception as e:  # noqa: BLE001
                 logger.error("[검색량] 요청 실패 (%s): %s", chunk, e)
+    return items
 
+
+async def fetch_keyword_volumes(keywords: List[str]) -> Dict[str, Dict]:
+    """
+    검색광고 API 직접 호출(캐시 미경유). 정규화 키 → 지표 dict.
+    요청한 키워드만 돌려준다(연관어는 fetch_with_related 로).
+    """
+    wanted = {_normalize(k) for k in keywords if k and k.strip()}
+    result: Dict[str, Dict] = {}
+    for item in await _call_keywordstool(keywords):
+        norm = _normalize(item.get("relKeyword", ""))
+        if norm not in wanted:
+            continue  # 연관어(요청 안 한 키워드)는 버림
+        result[norm] = _item_to_metrics(item)
     return result
+
+
+async def fetch_with_related(keywords: List[str]) -> tuple[Dict[str, Dict], Dict[str, Dict]]:
+    """
+    요청 키워드 지표 + 검색광고가 함께 돌려주는 '연관키워드' 지표를 둘 다 돌려준다.
+
+    연관키워드는 예전엔 버렸는데, 마케터가 손으로 찾던 '인근 지역 + 질환' 키워드가
+    바로 여기 들어 있다(예: 강남아토피 → 역삼아토피, 강남아토피한의원 …).
+    반환: (wanted: norm→metrics, related: norm→metrics)  둘 다 캐시 미경유.
+    """
+    wanted_set = {_normalize(k) for k in keywords if k and k.strip()}
+    wanted: Dict[str, Dict] = {}
+    related: Dict[str, Dict] = {}
+    for item in await _call_keywordstool(keywords):
+        norm = _normalize(item.get("relKeyword", ""))
+        if not norm:
+            continue
+        m = _item_to_metrics(item)
+        if norm in wanted_set:
+            wanted[norm] = m
+        elif norm not in related:
+            related[norm] = m
+    return wanted, related
 
 
 async def get_keyword_metrics(

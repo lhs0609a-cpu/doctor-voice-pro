@@ -13,3 +13,10 @@ temp_api.json
 
 # 확장 서명키(비공개 - 절대 커밋 금지)
 chrome-extension/keys/
+
+# 캠페인 모듈 산출물
+backend/media/
+backend/*.db-wal
+backend/*.db-shm
+logs/
+publish-agent/profiles/

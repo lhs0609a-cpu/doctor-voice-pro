@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>가짜 GoBlogWrite (테스트용)</title>
+<style>body{margin:0} #mainFrame{width:1200px;height:850px;border:1px solid #999}</style>
+</head>
+<body>
+<!-- 실제 네이버처럼 에디터는 #mainFrame iframe 안에 있고, src 에 blogId 가 붙는다. 테스트 파라미터는 그대로 전달. -->
+<script>
+  var extra = location.search ? '&' + location.search.slice(1) : '';
+  document.write('<iframe id="mainFrame" name="mainFrame" src="editor.html?blogId=testblog' + extra + '"></iframe>');
+</script>
+</body>
+</html>

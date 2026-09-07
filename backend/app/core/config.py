@@ -67,6 +67,26 @@ class Settings(BaseSettings):
     TOSS_CLIENT_KEY: str = ""  # 프론트엔드용
     TOSS_SECRET_KEY: str = ""  # 서버용
 
+    # Google Sheets (마케팅팀 '사용 키워드' 시트 연동)
+    # 읽기만 할 때는 시트를 '링크가 있는 모든 사용자'에게 공개하면 자격증명이 필요 없다.
+    # 행 추가(쓰기)나 비공개 시트 읽기에는 서비스 계정 키(JSON)가 필요하다.
+    # 둘 중 하나만 설정하면 되고, 둘 다 있으면 JSON 문자열을 우선한다.
+    # 서비스 계정 이메일(client_email)을 시트에 '편집자'로 공유해야 한다.
+    GOOGLE_SERVICE_ACCOUNT_JSON: str = ""  # 서비스 계정 키 JSON 원문
+    GOOGLE_SERVICE_ACCOUNT_FILE: str = ""  # 서비스 계정 키 JSON 파일 경로
+
+    # 캠페인(대량 발행) 모듈 — 원고 생성/변형/사진 태깅에 쓰는 Claude 모델
+    CAMPAIGN_MODEL: str = "claude-opus-5"
+    CAMPAIGN_VISION_MODEL: str = ""          # 비우면 CAMPAIGN_MODEL 사용
+    # 워커를 앱 프로세스 안에서 같이 돌릴지(개발/단일 서버). 별도 프로세스면 false 로 두고 `python -m app.worker`
+    RUN_WORKER_IN_APP: bool = True
+    # 캠페인 발행 에이전트/확장이 잡을 잠그는 시간(분). 지나면 다시 대기로 돌아간다.
+    PUBLISH_LOCK_MINUTES: int = 20
+    # 블로그 계정 비밀번호 암호화 키(Fernet). 비우면 SECRET_KEY 에서 파생한다.
+    CAMPAIGN_ENCRYPTION_KEY: str = ""
+    # 유니크화된 사진 변형 등 파일 보관 디렉터리(DB BLOB 대신). 상대경로는 backend 기준.
+    MEDIA_DIR: str = "./media"
+
     @property
     def allowed_origins_list(self) -> List[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",")]

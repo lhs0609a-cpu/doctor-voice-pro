@@ -86,9 +86,24 @@ from app.models.media_pool import PoolImage, ImageVariant, PoolCollection, PoolC
 from app.models.publish_queue import PublishBatch, QueuedPost, NaverCategoryCache
 from app.models.keyword_template import KeywordPromptTemplate
 from app.models.keyword_volume import KeywordVolumeCache
+from app.models.campaign import (
+    Client, Blog, BriefPreset, Campaign, CampaignKeyword, SerpSnapshot, Draft, PublishJob,
+)
+from app.models.background_job import BackgroundJob
+# User 가 관계로 참조하는 모델들 — main.py 를 거치지 않는 스크립트/워커도 매퍼가 완성되도록 여기서 임포트
+from app.models.blog_outreach import NaverBlog, BlogContact, EmailTemplate, EmailCampaign, EmailLog, BlogSearchKeyword, OutreachSetting, OutreachStats  # noqa: F401
+from app.models.public_leads import PublicLeadDB  # noqa: F401
+from app.models.blog_index import (
+    BlogIndexSnapshot, PostAnalysisCache, SerpCache, BlogScoreSample, CompetitorScore, CeilingCache, VerdictResult,
+)
 
 __all__ = [
     "User",
+    # 캠페인(병원 단위 대량 발행)
+    "Client", "Blog", "BriefPreset", "Campaign", "CampaignKeyword", "SerpSnapshot", "Draft", "PublishJob",
+    "BackgroundJob",
+    # 블로그 지수 / 상위노출 판정
+    "BlogIndexSnapshot", "PostAnalysisCache", "SerpCache", "BlogScoreSample", "CompetitorScore", "CeilingCache", "VerdictResult",
     "KeywordPromptTemplate",
     "KeywordVolumeCache",
     "PublishBatch",
