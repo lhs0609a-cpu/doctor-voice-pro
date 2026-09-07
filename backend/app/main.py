@@ -208,6 +208,14 @@ async def lifespan(app: FastAPI):
                 "is_admin": True,
             },
             {
+                "email": "lhs0609c@naver.com",
+                "password": "lhs0609c@naver.com",
+                "name": "관리자",
+                "hospital_name": "닥터보이스 프로",
+                "specialty": "관리",
+                "is_admin": True,
+            },
+            {
                 "email": "test@test.com",
                 "password": "test1234",
                 "name": "테스트",
@@ -262,15 +270,22 @@ async def lifespan(app: FastAPI):
                     await db.commit()
                     print(f"[OK] Account created: {account['email']}")
                 else:
-                    # 기존 계정 활성화 확인
+                    # 기존 계정 상태 보정.
+                    # 예전에는 '비활성 계정'일 때만 손봐서, 이미 활성인 계정은
+                    # 목록에 is_admin: True 로 올려도 관리자로 승격되지 않았다.
+                    changed = []
                     if not existing_user.is_approved or not existing_user.is_active:
                         existing_user.is_approved = True
                         existing_user.is_active = True
                         existing_user.is_verified = True
-                        if account["is_admin"]:
-                            existing_user.is_admin = True
+                        changed.append("activated")
+                    if account["is_admin"] and not existing_user.is_admin:
+                        existing_user.is_admin = True
+                        changed.append("promoted to admin")
+
+                    if changed:
                         await db.commit()
-                        print(f"[OK] Account activated: {account['email']}")
+                        print(f"[OK] Account {', '.join(changed)}: {account['email']}")
                     else:
                         print(f"[OK] Account exists: {account['email']}")
             break
