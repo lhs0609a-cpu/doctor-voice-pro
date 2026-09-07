@@ -24,6 +24,26 @@ except ImportError:
     genai = None
     genai_types = None
 
+# 구버전 SDK(google-genai 1.2.0 등)의 ThinkingConfig 에는 thinking_budget 필드가 없다.
+# 그대로 넘기면 pydantic 이 "Extra inputs are not permitted" 로 막아 모든 호출이 실패한다.
+# 배포 환경과 로컬의 SDK 버전이 어긋나도 죽지 않도록 여기서 한 번 확인해 둔다.
+def _CONFIG_SUPPORTS(field: str) -> bool:
+    """설치된 SDK 의 GenerateContentConfig 가 이 옵션을 아는가."""
+    if not GEMINI_AVAILABLE:
+        return False
+    return field in getattr(genai_types.GenerateContentConfig, "model_fields", {})
+
+
+_THINKING_BUDGET_SUPPORTED = bool(
+    GEMINI_AVAILABLE and "thinking_budget" in getattr(genai_types.ThinkingConfig, "model_fields", {})
+)
+if GEMINI_AVAILABLE and not _THINKING_BUDGET_SUPPORTED:
+    print(
+        "[WARNING] 설치된 google-genai 가 thinking_budget 을 지원하지 않습니다. "
+        "사고 토큰을 제어하지 못해 비용이 늘고 긴 원고가 잘릴 수 있습니다. "
+        "requirements.txt 의 google-genai 버전을 올리세요."
+    )
+
 
 # 원고 생성 기본 모델
 DEFAULT_MODEL = "gemini-2.5-flash"
@@ -142,14 +162,20 @@ class AIRewriteEngine:
                     "HARM_CATEGORY_DANGEROUS_CONTENT",
                 )
             ],
-            # 도구를 안 쓰므로 자동 함수 호출 경고를 끈다
-            "automatic_function_calling": genai_types.AutomaticFunctionCallingConfig(disable=True),
         }
         # Flash Lite 계열은 thinking 설정을 아예 거부한다(400). 애초에 사고를 안 하므로 생략한다.
-        if "lite" not in model:
+        if "lite" not in model and _THINKING_BUDGET_SUPPORTED:
             config_kwargs["thinking_config"] = genai_types.ThinkingConfig(thinking_budget=thinking_budget)
         if system_prompt:
             config_kwargs["system_instruction"] = system_prompt
+        # 도구를 안 쓰므로 자동 함수 호출 경고를 끈다 (구버전 SDK 에는 이 필드가 없다)
+        if _CONFIG_SUPPORTS("automatic_function_calling"):
+            config_kwargs["automatic_function_calling"] = genai_types.AutomaticFunctionCallingConfig(
+                disable=True
+            )
+
+        # 설치된 SDK 가 모르는 옵션은 버린다. 버전이 어긋나도 호출 자체는 살아 있어야 한다.
+        config_kwargs = {k: v for k, v in config_kwargs.items() if _CONFIG_SUPPORTS(k)}
 
         try:
             response = client.models.generate_content(
