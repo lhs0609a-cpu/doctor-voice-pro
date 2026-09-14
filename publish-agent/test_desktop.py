@@ -77,9 +77,26 @@ class DesktopGuideTests(unittest.TestCase):
                 self.assertEqual(manual.winfo_manager(), 'pack')
                 app.start()
                 self.assertIsNone(app.worker)
-                self.assertIn('먼저 1번', app.status.get())
+                self.assertIn('아직 홈페이지에 연결되지 않았습니다', app.status.get())
                 toggle.invoke()
                 self.assertEqual(manual.winfo_manager(), '')
+            finally:
+                root.destroy()
+
+    def test_unpaired_launcher_asks_the_browser_to_connect_by_itself(self):
+        """켜기만 하면 연결돼야 한다 — 사용자가 이메일·비밀번호를 칠 일이 없다."""
+        with tempfile.TemporaryDirectory() as folder, patch.dict('os.environ', {'LOCALAPPDATA': folder}),                 patch('desktop.LocalBridge.start'), patch('desktop.threading.Thread.start'),                 patch('desktop.updater.installed_build', return_value=False),                 patch('desktop.ServerClient') as server, patch('desktop.webbrowser.open') as opened:
+            server.return_value.pair_request.return_value = {'request_id': 'REQ', 'expires_in': 600}
+            server.return_value.pair_poll.return_value = {'status': 'waiting'}
+            root = tk.Tk()
+            root.withdraw()
+            try:
+                app = Desktop(root)
+                self.assertFalse(app.device_secret)     # 처음 켠 PC
+                app.closing = True                      # 기다리지 않고 한 바퀴만 돈다
+                app.auto_connect()
+                server.return_value.pair_request.assert_called_once()
+                self.assertTrue(opened.call_args[0][0].endswith('?r=REQ'), opened.call_args)
             finally:
                 root.destroy()
 

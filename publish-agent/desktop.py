@@ -29,8 +29,12 @@ from server_client import ServerClient, ServerError
 from version import APP_MUTEX, VERSION
 
 SERVER = 'https://doctor-voice-pro-backend.fly.dev'
-WEBSITE = 'https://doctor-voice-pro-ghwi.vercel.app/dashboard/one-stop'
+SITE = 'https://doctor-voice-pro-ghwi.vercel.app'
+WEBSITE = SITE + '/dashboard/one-stop'
+CONNECT_PAGE = SITE + '/launcher/connect'   # 실행기가 열면 로그인된 홈페이지가 이 PC를 승인한다
 BEAT_SECONDS = 60          # 서버가 150초 침묵을 '꺼짐'으로 본다 → 그보다 짧게
+CONNECT_POLL_SECONDS = 2   # 승인됐는지 묻는 간격
+CONNECT_WAIT_SECONDS = 600 # 요청이 살아 있는 동안만 기다린다(서버와 같은 값)
 
 
 def hold_single_instance():
@@ -107,6 +111,8 @@ class Desktop:
         self.client = None                      # 하트비트·현황용 서버 연결
         self.client_lock = threading.Lock()
         self.beat_wake = threading.Event()      # 종료할 때 하트비트 대기를 깨운다
+        self.connect_thread = None              # 브라우저 승인을 기다리는 자동 연결
+        self.connect_wake = threading.Event()   # 먼저 연결되면 그 기다림을 깨운다
         self.folder = Path(os.environ.get('LOCALAPPDATA') or Path.home()) / 'DoctorVoicePro'
         self.folder.mkdir(parents=True, exist_ok=True)
         self.settings_file = self.folder / 'desktop.json'
@@ -136,10 +142,13 @@ class Desktop:
         ttk.Label(frame, text='이 창은 네이버에 글을 등록하는 PC 실행기입니다. 아래 순서대로 준비하세요.').pack(anchor='w', pady=10)
         guide = ttk.LabelFrame(frame, text='처음이라면 이렇게 하세요', padding=12)
         guide.pack(fill='x', pady=(0, 12))
-        ttk.Label(guide, text='1. [홈페이지 열어 연결하기] → 홈페이지에 로그인하세요.\n   브라우저에서 로컬 네트워크 접근을 물으면 허용하세요.\n2. 아래에 [연결됨]이 표시되면 [자동 발행 시작]을 누르세요.\n3. 네이버 로그인 창이 열리면 로그인하고, 홈페이지에서 글을 준비하세요.',
+        ttk.Label(guide, text='이 창을 켜면 브라우저가 열리면서 홈페이지 계정에 저절로 연결됩니다. 따로 로그인하지 않아도 됩니다.\n1. 브라우저가 열리면 그대로 두세요(홈페이지에 로그인돼 있으면 바로 [연결됨]으로 바뀝니다).\n2. 연결되면 자동 발행이 시작됩니다. 네이버 로그인 창이 뜨면 로그인만 해 주세요.\n한 번 연결하면 다음부터는 이 창을 켜기만 하면 됩니다.',
                   justify='left').pack(anchor='w')
-        ttk.Button(guide, text='1. 홈페이지 열어 연결하기', command=lambda: webbrowser.open(WEBSITE)).pack(anchor='w', pady=(10, 0))
-        ttk.Label(guide, text='웹에 연결 필요로 나오나요? 창을 여는 것과 계정 연결은 별개입니다.\n자동 연결이 안 되면 아래 [직접 로그인]을 사용하세요.', foreground='#526174').pack(anchor='w', pady=(8, 0))
+        row = ttk.Frame(guide)
+        row.pack(anchor='w', pady=(10, 0))
+        ttk.Button(row, text='지금 연결하기', command=self.auto_connect_async).pack(side='left')
+        ttk.Button(row, text='홈페이지 열기', command=lambda: webbrowser.open(WEBSITE)).pack(side='left', padx=8)
+        ttk.Label(guide, text='브라우저에서 홈페이지에 로그인돼 있지 않으면 로그인 화면이 한 번 뜹니다. 로그인하면 그대로 연결됩니다.', foreground='#526174').pack(anchor='w', pady=(8, 0))
 
         self.server = tk.StringVar(value=saved.get('server', SERVER))
         self.email = tk.StringVar(value=saved.get('email', ''))
@@ -183,10 +192,10 @@ class Desktop:
         ttk.Button(buttons, text='기록 복사', command=self.copy_logs).pack(side='right')
 
         # 웹 신호등이 왜 꺼져 있는지 여기서 바로 알 수 있어야 한다.
-        self.link = tk.StringVar(value='홈페이지 연결: 끊김 — 로그인하면 홈페이지 신호등이 켜집니다')
+        self.link = tk.StringVar(value='홈페이지 연결: 확인 중 — 브라우저를 열어 이 PC를 연결합니다')
         self.link_label = ttk.Label(frame, textvariable=self.link, wraplength=680, foreground='#b42318')
         self.link_label.pack(anchor='w', pady=(2, 0))
-        self.status = tk.StringVar(value='지금 할 일: [홈페이지 열어 연결하기]를 누르세요. Chrome이 필요합니다.')
+        self.status = tk.StringVar(value='홈페이지에 연결하는 중입니다. 브라우저가 열리면 그대로 두세요. Chrome이 필요합니다.')
         ttk.Label(frame, textvariable=self.status, wraplength=680).pack(anchor='w', pady=6)
         self.summary = tk.StringVar(value='연결하면 대기 건수와 다음 예약을 보여줍니다')
         ttk.Label(frame, textvariable=self.summary, wraplength=680, foreground='#3b6cb7').pack(anchor='w')
@@ -216,8 +225,10 @@ class Desktop:
             if self.auto_start.get():
                 self.root.after(1500, self.start)
         else:
-            self.set_link(False, '1번 버튼으로 홈페이지에 로그인하세요. 자동 연결을 기다립니다')
+            # 처음 켠 PC다. 사용자가 아무것도 누르지 않아도 브라우저를 열어 스스로 연결한다.
+            self.set_link(False, '홈페이지를 열어 이 PC를 연결하는 중…')
             self.restore_login()
+            self.root.after(400, self.auto_connect_async)
 
     # ------------------------------------------------------------ 설정·자격
     def save_settings(self):
@@ -269,7 +280,7 @@ class Desktop:
             self.link.set('홈페이지 연결: 연결됨' + who + (f' · {detail}' if detail else ''))
             self.link_label.configure(foreground='#067647')
         else:
-            self.link.set('홈페이지 연결: 확인 필요' + (f' — {detail}' if detail else ' — 홈페이지를 열어 연결하세요'))
+            self.link.set('홈페이지 연결: 확인 필요' + (f' — {detail}' if detail else ' — [지금 연결하기]를 누르세요'))
             self.link_label.configure(foreground='#946200')
 
     def connect_now(self):
@@ -331,9 +342,11 @@ class Desktop:
         except ServerError as error:
             client.close()
             if error.status == 401:
+                # 홈페이지에서 이 PC의 연결을 끊었다. 버려진 키를 지우고 스스로 다시 연결을 청한다.
                 self.device_secret = None
                 credential_store.clear(self.folder, credential_store.DEVICE_FILE)
-                self.ui.put(('link', (False, '연결이 해제되었습니다 — 홈페이지를 열면 다시 연결됩니다')))
+                self.ui.put(('link', (False, '연결이 해제되었습니다 — 브라우저를 열어 다시 연결합니다')))
+                self.ui.put(('reconnect', None))
             else:
                 self.ui.put(('link', (False, f'서버에 닿지 못했습니다({error.detail})')))
             return False
@@ -368,19 +381,91 @@ class Desktop:
             detail = getattr(error, 'detail', None) or str(error)
             return False, f'연결하지 못했습니다: {detail}', {}
         email = data.get('email') or claim.get('email') or ''
-        if (self.worker and self.worker.is_alive()) and self.paired_email and email and email != self.paired_email:
+        if not self.may_switch_to(email):
             # 발행 도중 계정이 바뀌면 엉뚱한 계정의 글을 올릴 수 있다. 중단한 뒤 다시 연결하게 한다.
             client.close()
             return False, '발행 중에는 다른 계정으로 바꿀 수 없습니다. 실행기에서 중단한 뒤 새로고침하세요', {}
-        self.device_secret = claim['device_secret']
-        credential_store.save(self.folder, self.device_secret, credential_store.DEVICE_FILE)
+        self.adopt_pairing(claim['device_secret'], email, client)
+        return True, '연결됨', {'email': email}
+
+    def may_switch_to(self, email):
+        """발행 중에 다른 계정으로 갈아타지 않는다 — 엉뚱한 계정의 블로그에 글이 올라간다."""
+        running = bool(self.worker and self.worker.is_alive())
+        return not (running and self.paired_email and email and email != self.paired_email)
+
+    def adopt_pairing(self, device_secret, email, client):
+        """연결 성공 뒤 공통 처리 — 창구로 받았든 실행기가 직접 물어서 받았든 같다."""
+        self.device_secret = device_secret
+        credential_store.save(self.folder, device_secret, credential_store.DEVICE_FILE)
+        self.connect_wake.set()          # 기다리고 있던 자동 연결이 있으면 멈춘다
         self.ui.put(('paired', email))
         self.adopt_client(client)
         # 연결만 되고 발행이 멈춰 있으면 웹은 '켜짐'인데 아무것도 올라가지 않는다(초보자가 가장 많이 막히는 곳).
         # 홈페이지에서 연결한 것 자체가 '이 계정으로 발행하겠다'는 뜻이므로 바로 시작하고, 다음부터도 켜지면 시작한다.
         self.ui.put(('autostart', None))
         logging.getLogger().info('홈페이지 계정(%s)으로 자동 연결했습니다', email or '?')
-        return True, '연결됨', {'email': email}
+
+    # ------------------------------------------------------------ 실행기가 먼저 손을 드는 연결
+    # 창구(127.0.0.1)는 브라우저가 로컬 접근을 막으면 닿지 않는다. 그 때도 연결되게 반대 방향을 둔다.
+    # 실행기가 서버에 연결 요청을 만들고 기본 브라우저로 승인 페이지를 연다 → 로그인돼 있으면 사용자는 아무것도 하지 않는다.
+    def auto_connect_async(self):
+        if self.connect_thread and self.connect_thread.is_alive():
+            self.status.set('이미 브라우저에서 연결을 기다리는 중입니다. 열린 홈페이지 창을 확인하세요')
+            return
+        self.connect_wake.clear()
+        self.connect_thread = threading.Thread(target=self.auto_connect, daemon=True)
+        self.connect_thread.start()
+
+    def auto_connect(self):
+        if self.device_secret and self.client:
+            return
+        server = self.server_url if valid_server(self.server_url) else SERVER
+        client = ServerClient(server.rstrip('/'), timeout=20.0)
+        try:
+            request = client.pair_request(self.device_id, socket.gethostname()[:120])
+        except Exception as error:  # noqa: BLE001
+            client.close()
+            detail = getattr(error, 'detail', None) or error
+            self.ui.put(('link', (False, f'서버에 닿지 못했습니다({detail}). 인터넷을 확인한 뒤 [지금 연결하기]를 누르세요')))
+            return
+        try:
+            webbrowser.open(f"{CONNECT_PAGE}?r={request['request_id']}")
+        except Exception:  # noqa: BLE001  브라우저가 안 열려도 아래 안내로 이어 간다
+            pass
+        self.ui.put(('status', '브라우저가 열렸습니다. 홈페이지에 로그인돼 있으면 곧바로 연결됩니다(입력할 것 없음).'))
+        self.ui.put(('link', (False, '홈페이지에서 이 PC를 연결하는 중…')))
+
+        waited = 0
+        while waited < min(CONNECT_WAIT_SECONDS, int(request.get('expires_in') or CONNECT_WAIT_SECONDS)):
+            if self.closing or self.connect_wake.wait(CONNECT_POLL_SECONDS):
+                client.close()          # 창구로 먼저 연결됐거나 창을 닫았다
+                return
+            waited += CONNECT_POLL_SECONDS
+            try:
+                answer = client.pair_poll(request['request_id'], self.device_id)
+            except ServerError as error:
+                if error.status == 404:     # 요청이 만료·사용됨 — 다시 누르게 안내한다
+                    break
+                continue
+            except Exception:  # noqa: BLE001  인터넷이 잠시 끊긴 경우 — 계속 기다린다
+                continue
+            if answer.get('status') != 'ok':
+                continue
+            email = answer.get('email') or ''
+            if not self.may_switch_to(email):
+                client.close()
+                self.ui.put(('link', (False, '발행 중에는 다른 계정으로 바꿀 수 없습니다. [실행 중단] 후 다시 연결하세요')))
+                return
+            try:
+                client.device_login(self.device_id, answer['device_secret'])
+            except Exception as error:  # noqa: BLE001
+                client.close()
+                self.ui.put(('link', (False, f'연결은 승인됐지만 로그인하지 못했습니다({error})')))
+                return
+            self.adopt_pairing(answer['device_secret'], email, client)
+            return
+        client.close()
+        self.ui.put(('link', (False, '연결을 기다리다 시간이 지났습니다. [지금 연결하기]를 다시 눌러 주세요')))
 
     def beat_once(self):
         with self.client_lock:
@@ -458,7 +543,8 @@ class Desktop:
             return
         use_device = bool(self.device_secret) and not self.password.get()
         if not use_device and (not self.email.get().strip() or not self.password.get()):
-            self.status.set('먼저 1번 [홈페이지 열어 연결하기]를 누르세요. 연결되지 않으면 [직접 로그인]을 펼쳐 홈페이지 계정으로 로그인하세요.')
+            self.status.set('아직 홈페이지에 연결되지 않았습니다. 브라우저를 열어 연결합니다 — 로그인돼 있으면 바로 시작됩니다.')
+            self.auto_connect_async()
             return
         self.stop_event.clear()
         try:
@@ -514,6 +600,7 @@ class Desktop:
     def close(self):
         self.closing = True
         self.beat_wake.set()
+        self.connect_wake.set()
         try:
             self.bridge.stop()
         except Exception:  # noqa: BLE001
@@ -561,6 +648,9 @@ class Desktop:
                 self.summary.set(value)
             elif kind == 'update':
                 self.offer_update(*value)
+            elif kind == 'reconnect':
+                if not self.closing:
+                    self.auto_connect_async()
             elif kind == 'autostart':
                 if not (self.worker and self.worker.is_alive()):
                     self.auto_start.set(True)

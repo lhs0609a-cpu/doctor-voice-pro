@@ -28,7 +28,7 @@ from app.core.config import settings
 from app.models import User
 from app.models.background_job import BackgroundJob
 from app.models.campaign import (
-    JOB_ACTIVE, AgentDevice, AgentPairCode, AgentSession, AutopilotPolicy, AutomationRun, Blog, BriefPreset, Campaign, CampaignKeyword, Client, Draft, PublishJob, PublishAttempt, SerpSnapshot,
+    JOB_ACTIVE, AgentDevice, AgentPairCode, AgentPairRequest, AgentSession, AutopilotPolicy, AutomationRun, Blog, BriefPreset, Campaign, CampaignKeyword, Client, Draft, PublishJob, PublishAttempt, SerpSnapshot,
 )
 from app.models.media_pool import ImageVariant, PoolCollection, PoolCollectionMember, PoolImage
 from app.models.publish_queue import ScheduleMark
@@ -1830,10 +1830,31 @@ async def agent_pair_code(current_user: User = Depends(get_current_user), db: As
     return PairCodeOut(code=code, expires_in=PAIR_CODE_SECONDS)
 
 
+async def _issue_device_secret(db: AsyncSession, user_id: str, device_id: str, label: Optional[str]) -> str:
+    """이 PC를 그 계정에 묶고 기기 전용 키를 새로 발급한다(커밋은 부르는 쪽에서)."""
+    import secrets
+    now = datetime.utcnow()
+    secret = secrets.token_urlsafe(32)
+    device = await db.get(AgentDevice, device_id)
+    if device and device.user_id != user_id:
+        # PC가 다른 계정으로 옮겨 간다 — 예전 계정의 신호등 기록은 지운다.
+        session = await db.get(AgentSession, device_id)
+        if session:
+            await db.delete(session)
+    if not device:
+        device = AgentDevice(device_id=device_id, user_id=user_id, created_at=now)
+        db.add(device)
+    device.user_id = user_id
+    device.secret_hash = _secret_hash(secret)
+    device.label = (label or "")[:120] or None
+    device.revoked_at = None
+    device.last_used_at = now
+    return secret
+
+
 @router.post("/agent/pair/claim", response_model=PairClaimOut)
 async def agent_pair_claim(body: PairClaimIn, db: AsyncSession = Depends(get_db)):
     """실행기가 부른다(로그인 없음). 코드는 한 번만 통하고, 성공하면 이 기기 전용 키를 준다."""
-    import secrets
     now = datetime.utcnow()
     code = (body.code or "").strip().upper().replace("-", "")
     device_id = (body.device_id or "").strip()[:64]
@@ -1843,24 +1864,110 @@ async def agent_pair_claim(body: PairClaimIn, db: AsyncSession = Depends(get_db)
     if not row or row.used_at or row.expires_at <= now:
         raise HTTPException(status_code=400, detail="연결 코드가 만료되었거나 이미 사용되었습니다. 홈페이지를 새로고침하세요")
     row.used_at = now
-
-    secret = secrets.token_urlsafe(32)
-    device = await db.get(AgentDevice, device_id)
-    if device and device.user_id != row.user_id:
-        # PC가 다른 계정으로 옮겨 간다 — 예전 계정의 신호등 기록은 지운다.
-        session = await db.get(AgentSession, device_id)
-        if session:
-            await db.delete(session)
-    if not device:
-        device = AgentDevice(device_id=device_id, user_id=row.user_id, created_at=now)
-        db.add(device)
-    device.user_id = row.user_id
-    device.secret_hash = _secret_hash(secret)
-    device.label = (body.label or "")[:120] or None
-    device.revoked_at = None
-    device.last_used_at = now
+    secret = await _issue_device_secret(db, row.user_id, device_id, body.label)
     await db.commit()
     return PairClaimOut(device_secret=secret, email=await _user_email(db, row.user_id))
+
+
+# --------------------------------------------- 실행기가 먼저 손을 드는 연결(켜면 브라우저가 열린다)
+# 위의 코드 방식은 홈페이지가 이 PC의 127.0.0.1 창구에 닿아야 한다. 브라우저가 로컬 접근을 막으면 그 길이 끊긴다.
+# 그래서 반대 방향도 둔다: 실행기가 요청을 만들고 브라우저를 열면, 로그인돼 있는 홈페이지가 승인한다.
+
+PAIR_REQUEST_SECONDS = 600
+
+
+class PairRequestIn(BaseModel):
+    device_id: str
+    label: Optional[str] = None
+
+
+class PairRequestOut(BaseModel):
+    request_id: str
+    expires_in: int
+
+
+class PairRequestInfoOut(BaseModel):
+    device_id: str
+    label: Optional[str] = None
+    approved: bool
+    mine: bool           # 이미 내 계정이 승인한 요청인가
+
+
+class PairApproveIn(BaseModel):
+    request_id: str
+
+
+class PairPollIn(BaseModel):
+    request_id: str
+    device_id: str
+
+
+class PairPollOut(BaseModel):
+    status: str                         # waiting | ok
+    device_secret: Optional[str] = None
+    email: Optional[str] = None
+
+
+async def _live_request(db: AsyncSession, request_id: str) -> AgentPairRequest:
+    row = await db.get(AgentPairRequest, (request_id or "").strip()[:64]) if request_id else None
+    if not row or row.picked_at or row.expires_at <= datetime.utcnow():
+        raise HTTPException(status_code=404, detail="연결 요청을 찾을 수 없습니다. 실행기에서 [지금 연결하기]를 다시 누르세요")
+    return row
+
+
+@router.post("/agent/pair/request", response_model=PairRequestOut)
+async def agent_pair_request(body: PairRequestIn, db: AsyncSession = Depends(get_db)):
+    """실행기가 부른다(로그인 없음). 10분짜리 연결 요청을 만들고 그 열쇠(request_id)를 돌려준다."""
+    import secrets
+    now = datetime.utcnow()
+    device_id = (body.device_id or "").strip()[:64]
+    if not device_id:
+        raise HTTPException(status_code=400, detail="device_id 가 필요합니다")
+    # 같은 PC가 다시 켜지면 예전 요청은 의미가 없다. 만료된 것들과 함께 지운다.
+    for old in (await db.execute(select(AgentPairRequest).where(
+            (AgentPairRequest.device_id == device_id) | (AgentPairRequest.expires_at <= now)))).scalars().all():
+        await db.delete(old)
+    request_id = secrets.token_urlsafe(32)[:64]
+    db.add(AgentPairRequest(request_id=request_id, device_id=device_id, label=(body.label or "")[:120] or None,
+                            created_at=now, expires_at=now + timedelta(seconds=PAIR_REQUEST_SECONDS)))
+    await db.commit()
+    return PairRequestOut(request_id=request_id, expires_in=PAIR_REQUEST_SECONDS)
+
+
+@router.get("/agent/pair/request/{request_id}", response_model=PairRequestInfoOut)
+async def agent_pair_request_info(request_id: str, current_user: User = Depends(get_current_user),
+                                  db: AsyncSession = Depends(get_db)):
+    """홈페이지가 승인 화면에 '어느 PC인지' 보여주려고 읽는다."""
+    row = await _live_request(db, request_id)
+    return PairRequestInfoOut(device_id=row.device_id, label=row.label, approved=bool(row.approved_at),
+                              mine=row.user_id == _uid(current_user))
+
+
+@router.post("/agent/pair/approve")
+async def agent_pair_approve(body: PairApproveIn, current_user: User = Depends(get_current_user),
+                             db: AsyncSession = Depends(get_db)):
+    """로그인된 홈페이지가 이 PC를 내 계정에 연결하겠다고 승인한다."""
+    row = await _live_request(db, body.request_id)
+    row.user_id = _uid(current_user)
+    row.approved_at = datetime.utcnow()
+    await db.commit()
+    return {"success": True, "device_id": row.device_id}
+
+
+@router.post("/agent/pair/poll", response_model=PairPollOut)
+async def agent_pair_poll(body: PairPollIn, db: AsyncSession = Depends(get_db)):
+    """실행기가 부른다(로그인 없음). 승인되면 기기 키를 한 번만 내준다."""
+    row = await _live_request(db, body.request_id)
+    device_id = (body.device_id or "").strip()[:64]
+    if not device_id or device_id != row.device_id:
+        # 요청을 만든 PC만 가져갈 수 있다.
+        raise HTTPException(status_code=404, detail="연결 요청을 찾을 수 없습니다")
+    if not row.approved_at or not row.user_id:
+        return PairPollOut(status="waiting")
+    row.picked_at = datetime.utcnow()
+    secret = await _issue_device_secret(db, row.user_id, device_id, row.label)
+    await db.commit()
+    return PairPollOut(status="ok", device_secret=secret, email=await _user_email(db, row.user_id))
 
 
 @router.post("/agent/device-token", response_model=DeviceTokenOut)

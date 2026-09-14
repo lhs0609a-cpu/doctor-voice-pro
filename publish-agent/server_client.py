@@ -84,6 +84,26 @@ class ServerClient:
             raise ServerError(r.status_code, self._detail(r))
         return r.json()
 
+    def pair_request(self, device_id: str, label: str = "") -> Dict[str, Any]:
+        """실행기가 먼저 손을 든다. → {request_id, expires_in}
+
+        브라우저가 로컬 창구(127.0.0.1)에 닿지 못해도 연결되게 하는 반대 방향 길이다."""
+        r = self._http.post(self.api + "/campaign/agent/pair/request",
+                            json={"device_id": device_id, "label": label or None},
+                            headers={"Accept": "application/json"})
+        if r.status_code >= 400:
+            raise ServerError(r.status_code, self._detail(r))
+        return r.json()
+
+    def pair_poll(self, request_id: str, device_id: str) -> Dict[str, Any]:
+        """홈페이지가 승인했는지 묻는다. → {status: 'waiting'|'ok', device_secret?, email?}"""
+        r = self._http.post(self.api + "/campaign/agent/pair/poll",
+                            json={"request_id": request_id, "device_id": device_id},
+                            headers={"Accept": "application/json"})
+        if r.status_code >= 400:
+            raise ServerError(r.status_code, self._detail(r))
+        return r.json()
+
     def device_login(self, device_id: str, device_secret: str) -> Dict[str, Any]:
         """기기 키로 로그인 토큰을 받는다. 토큰이 만료되면 같은 키로 다시 받는다."""
         r = self._http.post(self.api + "/campaign/agent/device-token",

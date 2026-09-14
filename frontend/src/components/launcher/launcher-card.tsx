@@ -106,11 +106,11 @@ export function LauncherCard({ className, compact = false, inline = false }: { c
         <div className="rounded-xl border p-4 text-sm">
           <h3 className="font-semibold">이미 실행기 창을 열었다면</h3>
           <ol className="mt-2 list-decimal space-y-2 pl-5 leading-6">
-            <li>이 페이지를 열어 두고, 브라우저에서 로컬 네트워크 접근을 물으면 <b>허용</b>하세요.</li>
-            <li>자동 연결이 안 되면 실행기에 <b>이 사이트의 이메일{email ? ` (${email})` : ''}과 비밀번호</b>를 입력하세요. 네이버 비밀번호가 아닙니다. 서버 주소는 기본값 그대로 두세요.</li>
-            <li>실행기에서 <b>자동 발행 시작</b>을 누른 뒤 여기서 <b>다시 확인</b>을 누르세요. 연결 확인에는 약 15초가 걸릴 수 있습니다.</li>
+            <li>실행기 창에서 <b>지금 연결하기</b>를 누르세요. 브라우저가 열리면서 <b>{email || '이 계정'}</b> 에 저절로 연결됩니다 — 입력할 것은 없습니다.</li>
+            <li>브라우저에 로그인 화면이 뜨면 한 번만 로그인하세요. 그대로 연결이 이어집니다.</li>
+            <li>연결되면 실행기가 자동 발행을 시작합니다. 여기서 <b>다시 확인</b>을 누르면 신호등이 켜집니다(최대 15초).</li>
           </ol>
-          <p className="mt-3 text-xs leading-5 text-muted-foreground">실행기 제목 옆에 버전이나 [업데이트 확인] 버튼이 없다면 아래 최신 실행기를 설치하세요. 기존 창을 종료한 뒤 새 실행기를 열어 주세요.</p>
+          <p className="mt-3 text-xs leading-5 text-muted-foreground">실행기 창에 [지금 연결하기] 버튼이 없다면 옛 버전입니다. 아래에서 최신 실행기를 설치하고, 기존 창은 종료한 뒤 새로 열어 주세요.</p>
         </div>
       )}
 
@@ -127,8 +127,9 @@ export function LauncherCard({ className, compact = false, inline = false }: { c
             이 창을 닫아도 계속됩니다. 크롬 확장 프로그램은 필요하지 않습니다.
           </p>
           <p>
-            <b>최신 실행기는 이 페이지에서 자동 연결을 시도합니다.</b> 연결되지 않으면 위 안내대로 로그인하세요.
-            브라우저가 &lsquo;로컬 네트워크 기기 접근&rsquo;을 물으면 <b>허용</b>을 눌러 주세요.
+            <b>최신 실행기는 켜는 순간 스스로 이 계정에 연결됩니다.</b> 실행기가 브라우저를 열어 연결을 마치므로
+            이메일·비밀번호를 따로 칠 일이 없습니다. 브라우저가 &lsquo;로컬 네트워크 기기 접근&rsquo;을 물으면
+            <b>허용</b>을 눌러 주면 더 빨리 연결됩니다.
           </p>
           {status.latest && <p>최신 버전 v<span className="tabular-nums">{status.latest}</span></p>}
         </div>

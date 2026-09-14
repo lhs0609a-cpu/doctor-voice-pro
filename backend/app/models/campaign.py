@@ -338,5 +338,22 @@ class AgentDevice(Base):
     revoked_at = Column(DateTime, nullable=True)
 
 
+class AgentPairRequest(Base):
+    """실행기가 먼저 손을 드는 연결 요청(10분).
+
+    실행기를 켜면 request_id 를 만들어 이 표에 남기고, 기본 브라우저로 홈페이지의 연결 페이지를 연다.
+    로그인돼 있는 홈페이지가 승인하면 user_id 가 찍히고, 실행기는 request_id 로 물어 기기 키를 받는다.
+    request_id 는 실행기만 아는 값이라 그 자체가 열쇠다 — 한 번 받아 가면 picked_at 이 찍혀 다시 통하지 않는다."""
+    __tablename__ = "agent_pair_requests"
+    request_id = Column(String(64), primary_key=True)
+    device_id = Column(String(64), nullable=False, index=True)
+    label = Column(String(120), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    user_id = Column(String(36), nullable=True, index=True)
+    approved_at = Column(DateTime, nullable=True)
+    picked_at = Column(DateTime, nullable=True)
+
+
 JOB_TERMINAL = {"published", "cancelled", "dry_run"}
 JOB_ACTIVE = {"queued", "assigned", "publishing", "submitted", "failed", "uncertain"}

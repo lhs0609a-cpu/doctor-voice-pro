@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -11,8 +11,12 @@ import { Logo } from '@/components/app-shell/logo'
 import { useAuthStore } from '@/store/auth'
 import { Mail, Lock, Loader2 } from 'lucide-react'
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter()
+  // 실행기 연결 화면처럼 '로그인만 하면 하던 일로 돌아가야 하는' 곳이 next 를 넘긴다.
+  // 우리 사이트 안의 경로만 받는다 — 외부 주소로 튕겨 보내는 데 쓰이지 않게.
+  const nextParam = useSearchParams().get('next') || ''
+  const next = nextParam.startsWith('/') && !nextParam.startsWith('//') ? nextParam : ''
   const { login, isLoading, error } = useAuthStore()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -21,6 +25,10 @@ export default function LoginPage() {
     e.preventDefault()
     try {
       await login({ email, password })
+      if (next) {
+        router.push(next)
+        return
+      }
       // 로그인 후 관리자인지 확인하여 적절한 페이지로 이동
       const userStr = localStorage.getItem('user')
       if (userStr) {
@@ -138,5 +146,14 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  // useSearchParams 는 Suspense 안에서만 쓸 수 있다(정적 렌더링).
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   )
 }

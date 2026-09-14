@@ -319,6 +319,14 @@ export interface AgentDevice {
   seconds_ago: number
 }
 
+/** 실행기가 만든 연결 요청. 승인 화면이 '어느 PC인지' 보여주는 데 쓴다. */
+export interface AgentPairRequestInfo {
+  device_id: string
+  label?: string | null
+  approved: boolean
+  mine: boolean
+}
+
 export interface AgentStatus {
   online: boolean
   running: boolean
@@ -436,6 +444,11 @@ export const campaignAPI = {
   agentStatus: async (): Promise<AgentStatus> => (await api.get(`${C}/agent/status`)).data,
   // 홈페이지 자동 연결: 로그인된 이 페이지가 받는 1회용 코드(10분). 같은 PC의 실행기에 건넨다.
   agentPair: async (): Promise<{ code: string; expires_in: number }> => (await api.post(`${C}/agent/pair`)).data,
+  // 반대 방향: 실행기가 먼저 만든 연결 요청을 로그인된 이 페이지가 승인한다(브라우저가 127.0.0.1 을 막아도 연결된다).
+  agentPairRequestInfo: async (requestId: string): Promise<AgentPairRequestInfo> =>
+    (await api.get(`${C}/agent/pair/request/${encodeURIComponent(requestId)}`)).data,
+  agentPairApprove: async (requestId: string): Promise<{ success: boolean; device_id: string }> =>
+    (await api.post(`${C}/agent/pair/approve`, { request_id: requestId })).data,
   revokeAgentDevice: async (deviceId: string): Promise<{ success: boolean }> =>
     (await api.delete(`${C}/agent/devices/${encodeURIComponent(deviceId)}`)).data,
 }
