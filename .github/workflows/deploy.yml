@@ -6,7 +6,10 @@ on:
       - master
 
 jobs:
+  automation-checks:
+    uses: ./.github/workflows/automation-tests.yml
   deploy-frontend:
+    needs: [automation-checks, deploy-backend]
     name: Deploy Frontend to Vercel
     runs-on: ubuntu-latest
     steps:
@@ -35,6 +38,7 @@ jobs:
         working-directory: ./frontend
 
   deploy-backend:
+    needs: automation-checks
     name: Deploy Backend to Fly.io
     runs-on: ubuntu-latest
     steps:
@@ -43,7 +47,10 @@ jobs:
       - name: Setup Flyctl
         uses: superfly/flyctl-actions/setup-flyctl@master
 
+      # Dockerfile 이 backend/ 를 빌드 컨텍스트로 가정한다(COPY requirements.txt).
+      # 레포 루트에서 --config 로 부르면 컨텍스트가 루트가 되어 빌드가 깨진다.
       - name: Deploy to Fly.io
-        run: flyctl deploy --remote-only --config ./backend/fly.toml
+        run: flyctl deploy --remote-only
+        working-directory: ./backend
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

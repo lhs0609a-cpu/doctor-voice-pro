@@ -1,0 +1,44 @@
+name: Blog automation checks
+on:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: pip install -r backend/requirements.txt -r publish-agent/requirements.txt
+      - run: python -m unittest test_publish_protocol test_publish_api test_automation_pipeline test_publication_verifier test_autopilot test_editorial_quality test_landing_links test_naver_search_credentials test_publish_queue_api test_agent_status test_agent_pairing
+        working-directory: backend
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///./test-unused.db
+          DATABASE_URL_SYNC: sqlite:///./test-unused.db
+      - run: python -m unittest test_dryrun_offline test_journal test_desktop test_updater test_local_bridge
+        working-directory: publish-agent
+      - run: playwright install --with-deps chromium
+      - run: python test_editor_fake_page.py
+        working-directory: publish-agent
+      - run: node --test chrome-extension/test-server-runner.cjs
+      - run: python chrome-extension/build_release.py
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit --incremental false
