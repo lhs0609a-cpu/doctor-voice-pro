@@ -38,6 +38,17 @@ KST = timezone(timedelta(hours=9), "KST")  # 서머타임 없음 → tzdata 불�
 RETRYABLE_BLOG_STATUS = ("active", "login_required", "captcha")
 
 
+def stopping(args):
+    event = getattr(args, 'stop_event', None)
+    return bool(event and event.is_set())
+
+
+async def interruptible_pause(seconds, args):
+    deadline = time.monotonic() + seconds
+    while not stopping(args) and time.monotonic() < deadline:
+        await asyncio.sleep(min(1, max(0, deadline - time.monotonic())))
+
+
 # ---------------------------------------------------------------- 결과
 @dataclass
 class JobResult:
@@ -47,6 +58,7 @@ class JobResult:
     url: Optional[str] = None
     need_login: bool = False
     captcha: bool = False
+    receipt_id: Optional[str] = None
 
     def as_report(self) -> Dict[str, Any]:
         return asdict(self)
@@ -85,7 +97,7 @@ def select_blogs(summary: List[Dict[str, Any]], want: Optional[str]) -> List[Dic
 
 
 # ---------------------------------------------------------------- 잡 1건
-async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optional[datetime] = None) -> JobResult:
+async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optional[datetime] = None, before_publish=None) -> JobResult:
     """에디터(NaverEditor 또는 같은 인터페이스의 대역)로 잡 1건을 처리한다.
     예외 → JobResult 로 변환. 발행 클릭 이후의 예외만 uncertain 으로 올린다."""
     from naver_editor import BlogMismatch, CaptchaDetected, EditorError, LoginRequired, ScheduleError
@@ -94,20 +106,24 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
     clicked_publish = False
     try:
         # 1) 예약 시각부터 검증 — 화면을 건드리기 전에 걸러낸다
-        sched = (job.get("schedule") or {}).get("datetime")
-        if (job.get("finalAction") or "schedule") != "schedule":
-            return JobResult(ok=False, message=f"지원하지 않는 finalAction '{job.get('finalAction')}' (에이전트는 예약발행만 수행)")
-        dt = parse_schedule(sched)
-        safe, why = schedule_is_safe(dt, now or now_kst_naive())
-        if not safe:
-            return JobResult(ok=False, message=why)
+        action = job.get("finalAction") or "schedule"
+        if action not in ("schedule", "publish", "draft"):
+            return JobResult(ok=False, message=f"지원하지 않는 finalAction '{action}'")
+        dt = None
+        if action == "schedule":
+            dt = parse_schedule((job.get("schedule") or {}).get("datetime"))
+            safe, why = schedule_is_safe(dt, now or now_kst_naive())
+            if not safe:
+                return JobResult(ok=False, message=why)
 
         # 2) 글쓰기 페이지 + 계정 확인
         await editor.open_write_page()
         await editor.dismiss_draft_popup()
         expected = (job.get("expectedBlogId") or "").strip().lower()
         current = (await editor.read_blog_id() or "").strip().lower()
-        if expected and current and expected != current:
+        if not expected or not current:
+            raise BlogMismatch("발행 대상 또는 로그인된 블로그 ID를 확인하지 못했습니다. 계정을 확인한 뒤 다시 시도하세요.")
+        if expected != current:
             raise BlogMismatch(f"로그인된 블로그가 다릅니다(예상 '{expected}', 현재 '{current}'). 엉뚱한 블로그에 발행되지 않도록 중단했습니다.")
 
         # 3) 제목/본문
@@ -115,8 +131,21 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
         blocks = job.get("blocks") or [{"type": "text", "content": job.get("content") or ""}]
         await editor.insert_body_blocks(blocks, pick_emphasize(job.get("emphasize") or []))
 
-        # 4) 발행 레이어: 공개/검색/카테고리/태그
+        # 4) 임시저장은 발행 레이어를 열지 않는다 — 글만 저장하고 끝낸다.
         opts = job.get("options") or {}
+        if opts.get('requiredLinks'):
+            await editor.verify_links(opts['requiredLinks'])
+        if action == "draft":
+            if dry_run:
+                log.info("[dry-run] '%s' — 임시저장 클릭 생략", title[:40])
+                return JobResult(ok=False, uncertain=False, message="dry-run")
+            clicked_publish = True
+            out = await editor.save_draft()
+            if out is None or not out.ok:
+                return JobResult(ok=False, uncertain=True, message=(out.message if out else "임시저장 결과 없음"))
+            return JobResult(ok=True, message=out.message)
+
+        # 5) 발행 레이어: 공개/검색/카테고리/태그
         await editor.open_publish_layer()
         await editor.set_open_type(opts.get("openType") or "public")
         if opts.get("search") is False:
@@ -124,28 +153,45 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
         await editor.set_category(opts.get("category"))
         await editor.set_tags(job.get("tags") or [])
 
-        # 5) 예약 시각 — 실패하면 ScheduleError 로 여기서 끝난다(발행 클릭 금지)
-        await editor.set_schedule(dt)
+        # 6) 시각 — 예약은 실패하면 ScheduleError 로 여기서 끝난다(발행 클릭 금지).
+        #    즉시 발행도 '현재' 라디오를 확실히 켜 둔다. 남아 있던 예약값으로 나가면 안 된다.
+        if action == "schedule":
+            await editor.set_schedule(dt)
+        else:
+            await editor.set_publish_now()
 
         if dry_run:
             log.info("[dry-run] '%s' — 발행 클릭 생략", title[:40])
             return JobResult(ok=False, uncertain=False, message="dry-run")
 
-        # 6) 발행
+        # 7) 발행
+        if action == "schedule":
+            safe, why = schedule_is_safe(dt, now or now_kst_naive())
+            if not safe:
+                raise ScheduleError(why)
+        if (await editor.read_blog_id() or "").strip().lower() != expected:
+            raise BlogMismatch("발행 직전 계정 확인에 실패했습니다")
+        if before_publish:
+            await before_publish()
         clicked_publish = True
         out = await editor.publish()
         if out is None:
-            return JobResult(ok=False, message="발행 결과 없음")
-        if out.ok:
-            return JobResult(ok=True, url=out.url, message=out.message)
+            return JobResult(ok=False, uncertain=True, message="발행 결과 없음 — 네이버 예약 목록 확인 필요")
+        if out.ok and not out.uncertain:
+            from urllib.parse import urlparse
+            parsed = urlparse(out.url or '')
+            import re
+            match = re.fullmatch(rf"/{re.escape(expected)}/([0-9]+)/?", parsed.path)
+            receipt_id = match.group(1) if parsed.scheme == 'https' and parsed.hostname == 'blog.naver.com' and match else None
+            return JobResult(ok=True, url=out.url, message=out.message, receipt_id=receipt_id)
         return JobResult(ok=False, uncertain=bool(out.uncertain), message=out.message)
 
     except ScheduleError as e:
-        return JobResult(ok=False, message=f"[예약설정 실패] {e}")
+        return JobResult(ok=False, uncertain=clicked_publish, message=f"[예약설정 실패] {e}")
     except BlogMismatch as e:
-        return JobResult(ok=False, message=str(e))
+        return JobResult(ok=False, uncertain=clicked_publish, message=str(e))
     except LoginRequired as e:
-        return JobResult(ok=False, need_login=True, message=f"로그인이 풀렸습니다: {e}")
+        return JobResult(ok=False, uncertain=clicked_publish, need_login=True, message=f"로그인이 풀렸습니다: {e}")
     except CaptchaDetected as e:
         if clicked_publish:
             return JobResult(ok=False, uncertain=True, captcha=True, message=f"발행 클릭 후 캡차: {e}. 네이버 예약 목록에서 확인하세요")
@@ -224,6 +270,17 @@ async def ensure_login(editor: Any, client: ServerClient, blog: Dict[str, Any]) 
     from naver_editor import CaptchaDetected, EditorError, LoginRequired
 
     ref = blog["blog_ref_id"]
+    # 사람이 이 창에서 로그인하는 중이면(네이버 로그인 페이지 + 아직 로그인 쿠키 없음) 페이지를 다시 열지 않는다.
+    # 주기마다 글쓰기 페이지로 다시 이동하면 네이버가 로그인 페이지를 새로 띄워, 입력 중인 아이디·보안문자·
+    # 기기 인증이 1분마다 지워져 로그인을 끝낼 수 없다(2026-09-11 실제 네이버 실측).
+    page = getattr(editor, "page", None)
+    if page is not None and "nid.naver.com" in (getattr(page, "url", "") or ""):
+        try:
+            cookies = await page.context.cookies("https://nid.naver.com")
+        except Exception:  # noqa: BLE001
+            cookies = []
+        if not any(c.get("name") == "NID_AUT" for c in cookies):
+            return False, "브라우저 창에서 네이버 로그인을 기다리는 중(창을 다시 열지 않음)"
     try:
         await editor.open_write_page()
         return True, ""
@@ -258,7 +315,74 @@ async def ensure_login(editor: Any, client: ServerClient, blog: Dict[str, Any]) 
         return False, str(e)
 
 
-async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, Any], args: argparse.Namespace) -> None:
+async def sync_categories(client: ServerClient, editor: Any) -> int:
+    """앱의 카테고리 드롭다운을 채운다(확장 SYNC_CATEGORIES 대체).
+
+    카테고리는 네이버 에디터 안에만 있어서 서버가 스스로 알 수 없다. 캐시가 비어 있을 때만
+    발행 레이어를 열어 목록만 읽고 글쓰기 화면으로 되돌린다. 실패해도 발행은 계속한다."""
+    try:
+        cached = await asyncio.to_thread(client.categories)
+        if (cached or {}).get("categories"):
+            return 0
+        await editor.open_publish_layer()
+        items = await editor.read_categories()
+        if items:
+            await asyncio.to_thread(client.put_categories, items)
+            log.info("카테고리 %d개를 서버에 저장했습니다", len(items))
+        return len(items)
+    except Exception as e:  # noqa: BLE001
+        log.info("카테고리 동기화 건너뜀: %s", e)
+        return 0
+    finally:
+        try:
+            await editor.open_write_page()  # 레이어를 연 채로 두지 않는다
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def process_queue_jobs(client: ServerClient, editor: Any, blog: Dict[str, Any],
+                             args: argparse.Namespace, *, claim_unassigned: bool) -> int:
+    """대량 발행 큐(붙여넣기 대량·저장글)를 처리한다.
+
+    캠페인 잡과 달리 서버 잠금이 없다. 서버는 건네준 즉시 registered 로 표시하므로
+    한 건씩 가져와 곧바로 결과를 보고한다. dry-run 은 결과를 왜곡하므로 아예 가져오지 않는다."""
+    if args.dry_run:
+        return 0
+    done = 0
+    while done < args.max_per_blog and not stopping(args):
+        try:
+            jobs = await asyncio.to_thread(client.queue_jobs, limit=1, blog_ref_id=blog["blog_ref_id"],
+                                           claim_unassigned=claim_unassigned)
+        except ServerError as e:
+            log.warning("발행 큐를 읽지 못했습니다: %s", e.detail)
+            return done
+        if not jobs:
+            return done
+        job = jobs[0]
+        job["expectedBlogId"] = blog["naver_blog_id"]
+        if done:
+            await interruptible_pause(random.uniform(args.min_gap, args.max_gap), args)
+            if stopping(args):
+                return done
+        log.info("--- 큐 글 %s '%s' (%s) ---", job.get("id"), (job.get("title") or "")[:40], job.get("finalAction"))
+        result = await run_job(editor, job, dry_run=False)
+        message = result.message
+        if result.uncertain:
+            message = f"[확인 필요] {message}"
+        try:
+            await asyncio.to_thread(client.queue_result, job["id"], ok=bool(result.ok and not result.uncertain),
+                                    message=message)
+        except ServerError as e:
+            log.error("큐 결과 보고 실패(글 %s): %s", job.get("id"), e.detail)
+        done += 1
+        if result.need_login or result.captcha:
+            log.warning("로그인/캡차 문제 → 이 블로그의 남은 큐는 다음 주기로 미룹니다")
+            return done
+    return done
+
+
+async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, Any], args: argparse.Namespace,
+                       *, claim_unassigned: bool = False) -> None:
     from naver_editor import WRITE_URL, NaverEditor
 
     label, ref, naver_id = blog.get("label") or blog.get("naver_blog_id"), blog["blog_ref_id"], blog["naver_blog_id"]
@@ -274,7 +398,7 @@ async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, 
         return
 
     current = (await editor.read_blog_id() or "").lower()
-    if current and naver_id and current != naver_id.lower():
+    if not current or not naver_id or current != naver_id.lower():
         reason = f"로그인된 블로그가 다릅니다(예상 '{naver_id}', 현재 '{current}'). 에이전트 브라우저 창에서 '{naver_id}' 계정으로 다시 로그인하세요."
         client.set_blog_status(ref, "login_required", reason)
         log.warning(reason)
@@ -283,29 +407,72 @@ async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, 
         log.info("로그인 확인됨 → 블로그 상태를 active 로 복구")
         client.set_blog_status(ref, "active", "에이전트가 로그인을 확인했습니다")
 
-    jobs = client.claim(ref, limit=args.max_per_blog, include_images=not args.no_images)
-    log.info("클레임 %d건", len(jobs))
-    for i, job in enumerate(jobs):
+    await sync_categories(client, editor)
+
+    from journal import flush
+    journal = args.journal
+    for i in range(args.max_per_blog):
+        if stopping(args):
+            break
+        await flush(journal, client)
         if i > 0:
             pause = random.uniform(args.min_gap, args.max_gap)
             log.info("다음 글까지 %.0f초 대기", pause)
-            await asyncio.sleep(pause)
+            await interruptible_pause(pause, args)
+            if stopping(args):
+                break
+        jobs = await asyncio.to_thread(client.claim, ref, limit=1, include_images=not args.no_images,
+                                       mode="dry_run" if args.dry_run else "live")
+        if not jobs:
+            break
+        job = jobs[0]
+        journal.start(job)
+        token = job["lock_token"]
+        lost_lease = asyncio.Event()
+
+        async def keep_lease():
+            while True:
+                await asyncio.sleep(30)
+                try:
+                    await asyncio.to_thread(client.checkpoint, job["id"], token)
+                except Exception:
+                    lost_lease.set()
+                    return
+
+        async def before_publish():
+            if stopping(args):
+                raise RuntimeError('사용자가 실행 중단을 요청했습니다')
+            if lost_lease.is_set():
+                raise RuntimeError("서버 연결이 끊겨 발행을 중단했습니다")
+            journal.finalizing(token)
+            await asyncio.to_thread(client.checkpoint, job["id"], token, "finalizing")
+
         log.info("--- 잡 %s '%s' 예약 %s ---", job.get("id"), (job.get("title") or "")[:40], (job.get("schedule") or {}).get("datetime"))
-        result = await run_job(editor, job, dry_run=args.dry_run)
-        log.info("결과: ok=%s uncertain=%s need_login=%s captcha=%s — %s", result.ok, result.uncertain, result.need_login, result.captcha, result.message[:200])
+        await asyncio.to_thread(client.checkpoint, job["id"], token, "editing")
+        heartbeat = asyncio.create_task(keep_lease())
         try:
-            r = client.report_result(job["id"], job.get("lock_token"), **result.as_report())
-            log.info("서버 보고 → 상태 %s", (r or {}).get("status"))
-        except ServerError as e:
-            log.error("결과 보고 실패(%s). 잠금은 20분 뒤 풀립니다", e)
+            result = await run_job(editor, job, dry_run=args.dry_run, before_publish=before_publish)
+            journal.save_result(token, result.as_report())
+        finally:
+            heartbeat.cancel()
+            await asyncio.gather(heartbeat, return_exceptions=True)
+        log.info("결과: ok=%s uncertain=%s need_login=%s captcha=%s — %s", result.ok, result.uncertain, result.need_login, result.captcha, result.message[:200])
+        await flush(journal, client)
         if result.need_login or result.captcha:
             log.warning("로그인/캡차 문제 → 이 블로그의 나머지 잡은 다음 주기로 미룹니다")
-            break
+            return
+
+    if not stopping(args):
+        queued = await process_queue_jobs(client, editor, blog, args, claim_unassigned=claim_unassigned)
+        if queued:
+            log.info("발행 큐 %d건 처리", queued)
 
 
 # ---------------------------------------------------------------- 메인 루프
 async def run_once(client: ServerClient, pool: BrowserPool, args: argparse.Namespace) -> int:
-    summary = client.summary()
+    from journal import flush
+    await flush(args.journal, client)
+    summary = await asyncio.to_thread(client.summary)
     blogs = select_blogs(summary, args.blog)
     if args.blog and not blogs:
         log.error("--blog '%s' 에 해당하는 블로그가 없습니다. 등록된 블로그: %s", args.blog, ", ".join(f"{b.get('label')}({b.get('naver_blog_id')})" for b in summary) or "없음")
@@ -314,11 +481,11 @@ async def run_once(client: ServerClient, pool: BrowserPool, args: argparse.Names
         log.info("처리할 블로그 없음(대기 잡 0건)")
         return 0
     for b in blogs:
-        if args.blog and (b.get("pending") or 0) == 0:
-            log.info("블로그 '%s' 대기 잡 0건", b.get("label"))
-            continue
+        if stopping(args):
+            break
         try:
-            await process_blog(client, pool, b, args)
+            # 블로그가 하나뿐이면 대상 지정 없는 예전 큐도 이 블로그 몫으로 본다.
+            await process_blog(client, pool, b, args, claim_unassigned=len(summary) <= 1)
         except Exception as e:  # noqa: BLE001
             log.error("블로그 '%s' 처리 중 오류: %s\n%s", b.get("label"), e, traceback.format_exc())
             await pool.close(b["naver_blog_id"])
@@ -327,12 +494,23 @@ async def run_once(client: ServerClient, pool: BrowserPool, args: argparse.Names
 
 async def main_async(args: argparse.Namespace) -> int:
     from playwright.async_api import async_playwright
+    from journal import Journal
+    import hashlib
+
+    namespace = hashlib.sha256(f"{args.server}|{args.email}".encode()).hexdigest()[:20]
+    args.journal = Journal(Path(args.profiles_dir) / f"journal-{namespace}.sqlite3")
 
     client = ServerClient(args.server)
     try:
-        client.login(args.email, args.password)
+        # 홈페이지와 자동 연결된 PC는 기기 키로, 아니면 이메일·비밀번호로 로그인한다.
+        if getattr(args, 'device_secret', None):
+            client.device_login(args.device_id, args.device_secret)
+        else:
+            client.login(args.email, args.password)
     except Exception as e:  # noqa: BLE001
         log.error("서버 로그인 실패: %s", e)
+        client.close()
+        args.journal.close()
         return 2
     log.info("서버 로그인 OK: %s", args.server)
 
@@ -340,7 +518,7 @@ async def main_async(args: argparse.Namespace) -> int:
     async with async_playwright() as pw:
         pool = BrowserPool(pw, profiles_dir, headless=args.headless, window_pos=args.window_pos)
         try:
-            while True:
+            while not stopping(args):
                 started = time.monotonic()
                 try:
                     await run_once(client, pool, args)
@@ -352,10 +530,11 @@ async def main_async(args: argparse.Namespace) -> int:
                     break
                 wait = max(5.0, args.interval - (time.monotonic() - started))
                 log.info("다음 확인까지 %.0f초 대기 (Ctrl+C 로 종료)", wait)
-                await asyncio.sleep(wait)
+                await interruptible_pause(wait, args)
         finally:
             await pool.close()
             client.close()
+            args.journal.close()
     return 0
 
 

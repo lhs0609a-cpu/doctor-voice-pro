@@ -8,13 +8,14 @@
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import base64
 import json
 import sys
 import threading
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -54,6 +55,8 @@ class TestSchedule(unittest.TestCase):
         self.assertEqual(parse_schedule("2026-09-10T14:37"), datetime(2026, 9, 10, 14, 30))
         self.assertEqual(parse_schedule("2026-09-10T14:37:15"), datetime(2026, 9, 10, 14, 30))
         self.assertEqual(parse_schedule("2026-09-10T14:37+09:00"), datetime(2026, 9, 10, 14, 30))
+        self.assertEqual(parse_schedule("2026-09-10T05:37Z"), datetime(2026, 9, 10, 14, 30))
+        self.assertEqual(parse_schedule("2026-09-09T23:37-06:00"), datetime(2026, 9, 10, 14, 30))
         with self.assertRaises(ValueError):
             parse_schedule("")
         with self.assertRaises(ValueError):
@@ -156,6 +159,9 @@ class FakeState:
         self.expire_once = False
         self.blog_id = "platonmarketing"          # 요약/잡의 네이버 블로그 ID
         self.schedule = "2026-09-10T14:30"        # 클레임 잡의 예약 시각
+        self.queue_jobs = []                      # 발행 큐(확장 대체 경로)
+        self.categories = []
+        self.beats = []                           # 실행기 하트비트(웹 신호등)
 
 
 class FakeHandler(BaseHTTPRequestHandler):
@@ -209,8 +215,22 @@ class FakeHandler(BaseHTTPRequestHandler):
             if body.get("lock_token") == "OTHER":
                 return self._send(409, {"detail": "다른 실행기가 잡은 건입니다(잠금 불일치)"})
             return self._send(200, {"success": True, "status": "published" if body.get("ok") else ("uncertain" if body.get("uncertain") else "failed")})
+        if p == "/api/v1/campaign/agent/jobs/j1/checkpoint" and method == "POST":
+            return self._send(200, {"success": True, "lease_seconds": 120})
         if p == "/api/v1/campaign/blogs/b1/status" and method == "POST":
             return self._send(200, {"success": True, "status": body.get("status")})
+        if p == "/api/v1/campaign/agent/heartbeat" and method == "POST":
+            st.beats.append(body)
+            return self._send(200, {"online": True, "running": body.get("running"), "version": body.get("version"), "devices": []})
+        if p.startswith("/api/v1/publish/queue/jobs") and method == "GET":
+            return self._send(200, st.queue_jobs)
+        if p.startswith("/api/v1/publish/queue/") and p.endswith("/result") and method == "POST":
+            return self._send(200, {"success": True})
+        if p == "/api/v1/publish/categories":
+            if method == "POST":
+                st.categories = body.get("categories") or []
+                return self._send(200, {"categories": st.categories})
+            return self._send(200, {"categories": st.categories})
         return self._send(404, {"detail": f"no route {method} {p}"})
 
     def do_GET(self):
@@ -270,7 +290,7 @@ class TestServerClient(unittest.TestCase):
     def test_claim_body(self):
         self.c.login("a@b.c", "pw")
         jobs = self.c.claim("b1", limit=3, include_images=False)
-        self.assertEqual(self.state.requests[-1]["body"], {"blog_ref_id": "b1", "limit": 3, "include_images": False})
+        self.assertEqual(self.state.requests[-1]["body"], {"blog_ref_id": "b1", "limit": 3, "include_images": False, "mode": "live", "protocol_version": 2, "capabilities": ["landing_links_v1"]})
         self.assertEqual(jobs[0]["lock_token"], "L1")
         self.assertEqual(jobs[0]["blocks"][1]["type"], "image")
 
@@ -281,6 +301,7 @@ class TestServerClient(unittest.TestCase):
         self.assertEqual(self.state.requests[-1]["body"], {
             "lock_token": "L1", "ok": True, "uncertain": False, "message": None,
             "url": "https://blog.naver.com/platonmarketing/1", "need_login": False, "captcha": False,
+            "release": False, "receipt_id": None,
         })
         self.c.report_result("j1", "L1", ok=False, uncertain=False, message="dry-run")
         b = self.state.requests[-1]["body"]
@@ -300,6 +321,41 @@ class TestServerClient(unittest.TestCase):
         req = self.state.requests[-1]
         self.assertEqual(req["path"], "/api/v1/campaign/blogs/b1/status")
         self.assertEqual(req["body"], {"status": "captcha", "reason": "이유"})
+
+    def test_queue_fetch_targets_one_blog(self):
+        self.c.login("a@b.c", "pw")
+        self.state.queue_jobs = [{"id": "q1", "title": "제목", "blocks": [], "tags": [], "emphasize": [],
+                                  "finalAction": "schedule", "schedule": {"datetime": "2026-09-10T14:30"}, "options": {}}]
+        jobs = self.c.queue_jobs(limit=2, blog_ref_id="b1")
+        self.assertEqual(jobs[0]["id"], "q1")
+        path = self.state.requests[-1]["path"]
+        self.assertIn("limit=2", path)
+        self.assertIn("blog_ref_id=b1", path)
+        self.assertIn("claim_unassigned=false", path)
+        self.c.queue_jobs(blog_ref_id="b1", claim_unassigned=True)
+        self.assertIn("claim_unassigned=true", self.state.requests[-1]["path"])
+
+    def test_heartbeat_reports_version_and_running_state(self):
+        self.c.login("a@b.c", "pw")
+        out = self.c.heartbeat(device_id="pc-1", version="9.9.9", running=True, label="원장님 PC", note="대기 3건")
+        self.assertTrue(out["online"])
+        self.assertEqual(self.state.beats[-1], {
+            "device_id": "pc-1", "version": "9.9.9", "running": True, "label": "원장님 PC", "note": "대기 3건",
+        })
+        self.c.heartbeat(device_id="pc-1", version="9.9.9", running=False)
+        self.assertEqual(self.state.beats[-1]["label"], None)
+        self.assertFalse(self.state.beats[-1]["running"])
+
+    def test_queue_result_and_categories_bodies(self):
+        self.c.login("a@b.c", "pw")
+        self.c.queue_result("q1", ok=False, message="x" * 900)
+        req = self.state.requests[-1]
+        self.assertEqual(req["path"], "/api/v1/publish/queue/q1/result")
+        self.assertFalse(req["body"]["ok"])
+        self.assertEqual(len(req["body"]["message"]), 500)
+        self.c.put_categories([{"id": "24", "name": "칼럼"}])
+        self.assertEqual(self.state.requests[-1]["body"], {"categories": [{"id": "24", "name": "칼럼"}]})
+        self.assertEqual(self.c.categories()["categories"], [{"id": "24", "name": "칼럼"}])
 
     def test_relogin_on_401(self):
         self.c.login("a@b.c", "pw")
@@ -338,6 +394,15 @@ class FakeEditor:
     async def set_category(self, c): self._rec("set_category")
     async def set_tags(self, t): self._rec("set_tags"); return len(t)
     async def set_schedule(self, dt): self._rec("set_schedule"); self.dt = dt
+    async def set_publish_now(self): self._rec("set_publish_now")
+    async def verify_links(self, urls): self._rec('verify_links')
+    async def read_categories(self): self._rec("read_categories"); return [{"id": "24", "name": "칼럼"}]
+
+    async def save_draft(self, dry_run=False):
+        from naver_editor import PublishOutcome
+
+        self._rec("save_draft")
+        return PublishOutcome(ok=True, message="임시저장")
 
     async def publish(self, dry_run=False):
         from naver_editor import PublishOutcome
@@ -384,6 +449,18 @@ class TestRunJob(unittest.TestCase):
         self.assertIn("예약설정 실패", r.message)
         self.assertNotIn("publish", ed.calls)
 
+    def test_missing_landing_link_never_publishes(self):
+        editor = FakeEditor(fail_at='verify_links')
+        result = self.run_job(editor, _job(options={'requiredLinks': ['https://example.com']}))
+        self.assertFalse(result.ok)
+        self.assertNotIn('publish', editor.calls)
+
+    def test_valid_landing_link_is_verified_before_publish(self):
+        editor = FakeEditor()
+        result = self.run_job(editor, _job(options={'requiredLinks': ['https://example.com']}))
+        self.assertTrue(result.ok)
+        self.assertLess(editor.calls.index('verify_links'), editor.calls.index('publish'))
+
     def test_dry_run_never_publishes(self):
         ed = FakeEditor()
         r = self.run_job(ed, _job(), dry_run=True)
@@ -409,6 +486,52 @@ class TestRunJob(unittest.TestCase):
         self.assertTrue(r.need_login)
         self.assertFalse(r.ok)
 
+    def test_unknown_blog_stops_before_typing(self):
+        for actual, expected in [("", "platonmarketing"), ("platonmarketing", "")]:
+            with self.subTest(actual=actual, expected=expected):
+                ed = FakeEditor(blog_id=actual)
+                r = self.run_job(ed, _job(expectedBlogId=expected))
+                self.assertFalse(r.ok)
+                self.assertNotIn("set_title", ed.calls)
+                self.assertNotIn("publish", ed.calls)
+
+    def test_missing_publish_response_is_uncertain(self):
+        class NoResponseEditor(FakeEditor):
+            async def publish(self):
+                self._rec("publish")
+                return None
+
+        ed = NoResponseEditor()
+        r = self.run_job(ed, _job())
+        self.assertIn("publish", ed.calls)
+        self.assertFalse(r.ok)
+        self.assertTrue(r.uncertain)
+
+    def test_uncertainty_overrides_success_flag(self):
+        from naver_editor import PublishOutcome
+
+        class AmbiguousEditor(FakeEditor):
+            async def publish(self):
+                return PublishOutcome(ok=True, uncertain=True, message="결과 대조 필요")
+
+        r = self.run_job(AmbiguousEditor(), _job())
+        self.assertFalse(r.ok)
+        self.assertTrue(r.uncertain)
+
+    def test_typed_errors_after_publish_remain_uncertain(self):
+        from naver_editor import BlogMismatch, LoginRequired, ScheduleError
+
+        for error_type in (BlogMismatch, LoginRequired, ScheduleError):
+            with self.subTest(error=error_type.__name__):
+                class InterruptedEditor(FakeEditor):
+                    async def publish(self):
+                        self._rec("publish")
+                        raise error_type("발행 중 연결 중단")
+
+                r = self.run_job(InterruptedEditor(), _job())
+                self.assertFalse(r.ok)
+                self.assertTrue(r.uncertain)
+
     def test_captcha_after_publish_click_is_uncertain(self):
         r = self.run_job(FakeEditor(fail_at="publish"), _job())
         self.assertTrue(r.uncertain)
@@ -424,6 +547,177 @@ class TestRunJob(unittest.TestCase):
         r = self.run_job(ed, _job(finalAction="publishNow"))
         self.assertFalse(r.ok)
         self.assertEqual(ed.calls, [])
+
+
+class TestFinalActions(unittest.TestCase):
+    """확장이 하던 즉시발행·임시저장을 실행기가 대신한다."""
+
+    def run_job(self, editor, job, dry_run=False):
+        import agent
+
+        return asyncio.run(agent.run_job(editor, job, dry_run=dry_run, now=NOW))
+
+    def test_immediate_publish_turns_the_now_radio_on_and_never_schedules(self):
+        editor = FakeEditor()
+        result = self.run_job(editor, _job(finalAction="publish", schedule=None))
+        self.assertTrue(result.ok)
+        self.assertIn("set_publish_now", editor.calls)
+        self.assertNotIn("set_schedule", editor.calls)
+        self.assertLess(editor.calls.index("set_publish_now"), editor.calls.index("publish"))
+
+    def test_draft_saves_without_opening_the_publish_layer(self):
+        editor = FakeEditor()
+        result = self.run_job(editor, _job(finalAction="draft", schedule=None))
+        self.assertTrue(result.ok)
+        self.assertIn("save_draft", editor.calls)
+        for step in ("open_publish_layer", "set_schedule", "publish"):
+            self.assertNotIn(step, editor.calls)
+
+    def test_draft_still_checks_the_logged_in_blog(self):
+        editor = FakeEditor(blog_id="someoneelse")
+        result = self.run_job(editor, _job(finalAction="draft", schedule=None))
+        self.assertFalse(result.ok)
+        self.assertNotIn("save_draft", editor.calls)
+
+    def test_dry_run_clicks_neither_publish_nor_save(self):
+        for action in ("publish", "draft"):
+            editor = FakeEditor()
+            result = self.run_job(editor, _job(finalAction=action, schedule=None), dry_run=True)
+            self.assertEqual(result.message, "dry-run")
+            self.assertNotIn("publish", editor.calls)
+            self.assertNotIn("save_draft", editor.calls)
+
+
+class FakeQueueClient:
+    """process_queue_jobs 가 쓰는 서버 호출만 흉내낸다."""
+
+    def __init__(self, jobs, *, categories=None):
+        self.pending = list(jobs)
+        self.results = []
+        self.fetches = []
+        self.saved_categories = categories if categories is not None else []
+        self.put_calls = 0
+
+    def queue_jobs(self, *, limit=1, blog_ref_id=None, claim_unassigned=False):
+        self.fetches.append({"limit": limit, "blog_ref_id": blog_ref_id, "claim_unassigned": claim_unassigned})
+        return [self.pending.pop(0)] if self.pending else []
+
+    def queue_result(self, post_id, *, ok, message=None):
+        self.results.append({"id": post_id, "ok": ok, "message": message})
+        return {"success": True}
+
+    def categories(self):
+        return {"categories": self.saved_categories}
+
+    def put_categories(self, categories):
+        self.put_calls += 1
+        self.saved_categories = categories
+        return {"categories": categories}
+
+
+def _queue_args(**over):
+    values = dict(dry_run=False, max_per_blog=5, min_gap=0, max_gap=0, stop_event=None)
+    values.update(over)
+    return argparse.Namespace(**values)
+
+
+BLOG = {"blog_ref_id": "b1", "naver_blog_id": "platonmarketing", "label": "메인"}
+
+
+class TestQueueJobs(unittest.TestCase):
+    """대량 발행 큐를 실행기가 가져와 등록한다(확장 SUBMIT_BATCH 대체)."""
+
+    def run_queue(self, client, editor, args=None, claim_unassigned=False):
+        import agent
+
+        return asyncio.run(agent.process_queue_jobs(client, editor, BLOG, args or _queue_args(),
+                                                    claim_unassigned=claim_unassigned))
+
+    def test_publishes_each_job_against_the_expected_blog_and_reports_back(self):
+        client = FakeQueueClient([_queue_job("q1"), _queue_job("q2")])
+        editor = FakeEditor()
+        done = self.run_queue(client, editor)
+        self.assertEqual(done, 2)
+        self.assertEqual([r["id"] for r in client.results], ["q1", "q2"])
+        self.assertTrue(all(r["ok"] for r in client.results))
+        self.assertEqual(client.fetches[0]["blog_ref_id"], "b1")
+
+    def test_uncertain_result_is_reported_as_not_ok_and_flagged(self):
+        from naver_editor import PublishOutcome
+
+        class AmbiguousEditor(FakeEditor):
+            async def publish(self, dry_run=False):
+                self._rec("publish")
+                return PublishOutcome(ok=True, uncertain=True, message="결과 대조 필요")
+
+        client = FakeQueueClient([_queue_job("q1")])
+        self.run_queue(client, AmbiguousEditor())
+        self.assertFalse(client.results[0]["ok"])
+        self.assertIn("확인 필요", client.results[0]["message"])
+
+    def test_captcha_stops_the_blog_after_reporting_the_current_job(self):
+        client = FakeQueueClient([_queue_job("q1"), _queue_job("q2")])
+        done = self.run_queue(client, FakeEditor(fail_at="publish"))
+        self.assertEqual(done, 1)
+        self.assertEqual(len(client.results), 1)
+        self.assertEqual(len(client.pending), 1)
+
+    def test_dry_run_never_touches_the_queue(self):
+        client = FakeQueueClient([_queue_job("q1")])
+        done = self.run_queue(client, FakeEditor(), _queue_args(dry_run=True))
+        self.assertEqual((done, client.fetches, client.results), (0, [], []))
+
+    def test_unassigned_jobs_are_only_claimed_when_told_to(self):
+        client = FakeQueueClient([])
+        self.run_queue(client, FakeEditor(), claim_unassigned=True)
+        self.assertTrue(client.fetches[0]["claim_unassigned"])
+        client = FakeQueueClient([])
+        self.run_queue(client, FakeEditor())
+        self.assertFalse(client.fetches[0]["claim_unassigned"])
+
+    def test_stops_at_the_per_blog_limit(self):
+        client = FakeQueueClient([_queue_job(f"q{i}") for i in range(5)])
+        done = self.run_queue(client, FakeEditor(), _queue_args(max_per_blog=2))
+        self.assertEqual(done, 2)
+        self.assertEqual(len(client.pending), 3)
+
+
+class TestCategorySync(unittest.TestCase):
+    """앱 카테고리 드롭다운 채우기(확장 SYNC_CATEGORIES 대체)."""
+
+    def sync(self, client, editor):
+        import agent
+
+        return asyncio.run(agent.sync_categories(client, editor))
+
+    def test_reads_and_stores_categories_when_the_cache_is_empty(self):
+        client = FakeQueueClient([])
+        editor = FakeEditor()
+        self.assertEqual(self.sync(client, editor), 1)
+        self.assertEqual(client.saved_categories, [{"id": "24", "name": "칼럼"}])
+        self.assertEqual(editor.calls[-1], "open_write_page")  # 레이어를 연 채로 두지 않는다
+
+    def test_skips_when_the_server_already_has_them(self):
+        client = FakeQueueClient([], categories=[{"id": "24", "name": "칼럼"}])
+        editor = FakeEditor()
+        self.assertEqual(self.sync(client, editor), 0)
+        self.assertNotIn("read_categories", editor.calls)
+
+    def test_editor_failure_never_blocks_publishing(self):
+        client = FakeQueueClient([])
+        self.assertEqual(self.sync(client, FakeEditor(fail_at="open_publish_layer")), 0)
+
+
+def _queue_job(job_id, **over):
+    # 큐 경로는 실제 시계로 예약 안전성을 본다 → 고정 날짜를 쓰면 그 시각이 지나는 순간 깨진다.
+    import agent
+
+    ahead = (agent.now_kst_naive() + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M")
+    job = _job(id=job_id, schedule={"datetime": ahead})
+    job.pop("lock_token", None)
+    job.pop("expectedBlogId", None)
+    job.update(over)
+    return job
 
 
 class TestSelectBlogs(unittest.TestCase):

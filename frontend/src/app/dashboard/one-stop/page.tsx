@@ -1,5 +1,5 @@
-import { OneStopWizard } from '@/components/one-stop/one-stop-wizard'
+import { AutomationHome } from '@/components/one-stop/automation-home'
 
 export default function OneStopPage() {
-  return <OneStopWizard />
+  return <AutomationHome />
 }

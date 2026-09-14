@@ -11,7 +11,7 @@ from __future__ import annotations
 import base64
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 # background.js 와 같은 상수 (backend/app/services/post_formatter.py 규칙과 동일)
@@ -123,7 +123,11 @@ def plan_text(content: str, emphasize: Sequence[str]) -> List[Op]:
         if not line:
             bolded = set()
         else:
-            if rx:
+            if re.fullmatch(r'https://\S+', line):
+                ops.append(Op('text', line))
+                if i == len(lines) - 1:
+                    ops.append(Op('enter'))
+            elif rx:
                 for part in rx.split(line):
                     if not part:
                         continue
@@ -186,7 +190,7 @@ def parse_schedule(value: str) -> datetime:
         raise ValueError("schedule.datetime 이 비어 있습니다")
     dt = datetime.fromisoformat(value.strip())
     if dt.tzinfo is not None:
-        dt = dt.replace(tzinfo=None)
+        dt = dt.astimezone(timezone(timedelta(hours=9))).replace(tzinfo=None)
     return floor_minute(dt)
 
 
@@ -219,3 +223,75 @@ def decode_data_url(data_url: str) -> Tuple[str, bytes]:
 
 def ext_for_mime(mime: str) -> str:
     return {"image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp"}.get(mime.lower(), "jpg")
+
+
+def exif_make_and_time(data: bytes):
+    """JPEG 의 EXIF 에서 (기종, 촬영시각)만 읽는다. 실행기에는 Pillow 가 없어 표준 라이브러리로 직접 푼다.
+    못 읽으면 (None, None)."""
+    from datetime import datetime
+
+    try:
+        if data[:2] != b"\xff\xd8":
+            return None, None
+        i = 2
+        while i + 4 <= len(data) and data[i] == 0xFF:
+            marker, seg = data[i + 1], int.from_bytes(data[i + 2:i + 4], "big")
+            if marker == 0xE1 and data[i + 4:i + 10] == b"Exif\x00\x00":
+                t = data[i + 10:i + 2 + seg]
+                bo = "little" if t[:2] == b"II" else "big"
+                u16 = lambda o: int.from_bytes(t[o:o + 2], bo)  # noqa: E731
+                u32 = lambda o: int.from_bytes(t[o:o + 4], bo)  # noqa: E731
+
+                def entries(off):
+                    out = {}
+                    for k in range(u16(off)):
+                        e = off + 2 + 12 * k
+                        tag, typ, cnt = u16(e), u16(e + 2), u32(e + 4)
+                        if typ == 2:      # ASCII
+                            vo = e + 8 if cnt <= 4 else u32(e + 8)
+                            out[tag] = t[vo:vo + cnt].split(b"\x00")[0].decode("ascii", "ignore")
+                        elif typ in (4, 13):  # LONG / IFD 포인터
+                            out[tag] = u32(e + 8)
+                    return out
+
+                ifd0 = entries(u32(4))
+                shot = ifd0.get(0x0132)
+                if 0x8769 in ifd0:
+                    shot = entries(ifd0[0x8769]).get(0x9003) or shot
+                when = datetime.strptime(shot, "%Y:%m:%d %H:%M:%S") if shot else None
+                return ifd0.get(0x010F), when
+            if marker == 0xDA:   # 본문 시작 — 그 뒤엔 EXIF 가 없다
+                break
+            i += 2 + seg
+    except Exception:  # noqa: BLE001 — 깨진 EXIF 는 이름만 기본값으로
+        pass
+    return None, None
+
+
+def camera_filename(data: bytes, ext: str = "jpg") -> str:
+    """사진 EXIF 의 기종·촬영시각에 어울리는 파일 이름.
+
+    매번 같은 틀(image_타임스탬프_번호)로 올리면 그 이름 자체가 흔적이 된다. 서버가 넣은 메타값과
+    이름이 맞아야 자연스럽다: 아이폰·캐논 IMG_1234.JPG, 소니 DSC01234.JPG, 삼성·LG 20260812_143512.jpg,
+    샤오미 IMG_20260812_143512.jpg. 같은 사진은 다시 올려도 같은 이름이다(내용으로 난수를 고정)."""
+    import hashlib
+    import random
+    from datetime import datetime, timedelta
+
+    rnd = random.Random(hashlib.sha1(data).digest())
+    make, shot = exif_make_and_time(data) if ext == "jpg" else (None, None)
+    if shot is None:
+        shot = datetime.now() - timedelta(days=rnd.randint(2, 90), seconds=rnd.randint(0, 86399))
+    ts = shot.strftime("%Y%m%d_%H%M%S")
+    m = (make or "").lower()
+    if ext != "jpg":
+        return f"{ts}.{ext}"
+    if "apple" in m or "canon" in m:
+        return f"IMG_{rnd.randint(1000, 9999)}.JPG"
+    if "sony" in m:
+        return f"DSC{rnd.randint(1000, 99999):05d}.JPG"
+    if "xiaomi" in m:
+        return f"IMG_{ts}.jpg"
+    if "samsung" in m or "lg" in m:
+        return f"{ts}.jpg"
+    return rnd.choice((f"{ts}.jpg", f"IMG_{ts}.jpg", f"KakaoTalk_{ts[:8]}_{rnd.randint(100000000, 999999999)}.jpg"))

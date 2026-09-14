@@ -13,7 +13,7 @@ import { Pill, StepFooter, TABLE_CLS, errMsg, fmt, fmtDateTime, type StepProps, 
 import { PublishRunner } from './publish-runner'
 
 const JOB_TONE: Record<string, Tone> = {
-  queued: 'muted', assigned: 'info', publishing: 'info', published: 'ok', failed: 'crit', uncertain: 'warn', cancelled: 'muted',
+  queued: 'muted', assigned: 'info', publishing: 'info', submitted: 'info', published: 'ok', failed: 'crit', uncertain: 'warn', cancelled: 'muted', dry_run: 'muted',
 }
 const ACTIVE = new Set(['queued', 'assigned', 'publishing'])
 
@@ -42,10 +42,11 @@ export function Step6Status({ campaign, setCampaign, goStep }: StepProps) {
   }, [anyActive, load])
 
   const counts = useMemo(() => {
-    const c = { queued: 0, published: 0, failed: 0, uncertain: 0 }
+    const c = { queued: 0, submitted: 0, published: 0, failed: 0, uncertain: 0 }
     for (const j of jobs) {
       if (ACTIVE.has(j.status)) c.queued += 1
       else if (j.status === 'published') c.published += 1
+      else if (j.status === 'submitted') c.submitted += 1
       else if (j.status === 'failed') c.failed += 1
       else if (j.status === 'uncertain') c.uncertain += 1
     }
@@ -64,9 +65,19 @@ export function Step6Status({ campaign, setCampaign, goStep }: StepProps) {
   }
 
   const markPublished = (j: PublishJobItem) => {
-    const url = window.prompt('발행된 글 주소(URL)를 넣어주세요. 모르면 비워도 됩니다.', j.result_url || '')
+    const url = window.prompt('직접 확인한 해당 블로그의 공개 게시물 URL을 입력하세요.', j.result_url || '')
     if (url === null) return
+    if (!url.trim()) { toast.error('공개 게시물 URL이 필요합니다'); return }
     act(j.id, () => campaignAPI.markPublished(j.id, url.trim() || undefined), '발행됨으로 표시했어요')
+  }
+
+  const reconcile = (j: PublishJobItem, outcome: 'registered' | 'not_registered') => {
+    const evidence = window.prompt(outcome === 'registered'
+      ? '네이버 예약 목록에서 확인한 제목과 예약 시각을 입력하세요.'
+      : '실행기를 종료하고 예약 목록에 이 글이 없는 것을 확인한 내역을 입력하세요. 잘못 확인하면 중복 등록될 수 있습니다.')
+    if (evidence === null) return
+    if (evidence.trim().length < 5) { toast.error('확인 내역을 5자 이상 입력하세요'); return }
+    act(j.id, () => campaignAPI.reconcileJob(j.id, outcome, evidence.trim()), '대조 결과를 저장했습니다')
   }
 
   const sorted = useMemo(() => [...jobs].sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at)), [jobs])
@@ -74,9 +85,10 @@ export function Step6Status({ campaign, setCampaign, goStep }: StepProps) {
   return (
     <div className="space-y-6">
       {/* 요약 타일 */}
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
         <StatTile label="대기" value={fmt(counts.queued)} />
-        <StatTile label="발행됨" value={fmt(counts.published)} tone="ok" />
+        <StatTile label="네이버 예약 등록" value={fmt(counts.submitted)} />
+        <StatTile label="공개 확인" value={fmt(counts.published)} tone="ok" />
         <StatTile label="실패" value={fmt(counts.failed)} tone={counts.failed > 0 ? 'danger' : undefined} />
         <StatTile label="확인 필요" value={fmt(counts.uncertain)} tone={counts.uncertain > 0 ? 'warn' : undefined} />
       </div>
@@ -119,8 +131,8 @@ export function Step6Status({ campaign, setCampaign, goStep }: StepProps) {
               </TableHeader>
               <TableBody>
                 {sorted.map((j) => {
-                  const canRetry = ['failed', 'uncertain', 'cancelled'].includes(j.status)
-                  const canCancel = ACTIVE.has(j.status)
+                  const canRetry = ['failed', 'cancelled', 'dry_run'].includes(j.status)
+                  const canCancel = ['queued', 'failed', 'dry_run'].includes(j.status)
                   return (
                     <TableRow key={j.id}>
                       <TableCell className="whitespace-nowrap text-xs tabular-nums">{fmtDateTime(j.scheduled_at)}</TableCell>
@@ -150,11 +162,15 @@ export function Step6Status({ campaign, setCampaign, goStep }: StepProps) {
                               <RotateCcw /> 다시 시도
                             </Button>
                           )}
-                          {j.status === 'uncertain' && (
+                          {['uncertain', 'submitted'].includes(j.status) && (
                             <Button variant="outline" size="sm" disabled={busy === j.id} onClick={() => markPublished(j)}>
-                              <Check /> 발행됨으로 표시
+                              <Check /> 공개 URL 확인
                             </Button>
                           )}
+                          {j.status === 'uncertain' && <>
+                            <Button variant="outline" size="sm" disabled={busy === j.id} onClick={() => reconcile(j, 'registered')}>예약 등록 확인</Button>
+                            <Button variant="outline" size="sm" disabled={busy === j.id} onClick={() => reconcile(j, 'not_registered')}>미등록 확인</Button>
+                          </>}
                           {canCancel && (
                             <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-danger" disabled={busy === j.id} onClick={() => act(j.id, () => campaignAPI.cancelJob(j.id), '취소했어요')}>
                               <XCircle /> 취소

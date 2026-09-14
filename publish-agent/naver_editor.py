@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from playwright.async_api import Frame, Page, TimeoutError as PWTimeout
 
-from plan import Op, decode_data_url, ext_for_mime, merge_text_ops, plan_blocks
+from plan import Op, camera_filename, decode_data_url, ext_for_mime, merge_text_ops, plan_blocks
 
 log = logging.getLogger("editor")
 
@@ -60,11 +60,14 @@ S = {
     "open_type": {"public": "#open_public", "neighbor": "#open_neighbor", "both": "#open_both_neighbor", "private": "#open_private"},
     "search_allow": "#publish-option-search",
     "tag_input": "#tag-input",
+    "save_draft": '[data-click-area="tpb.save"], .save_btn__bzc5B',
     "time_now": '#radio_time1, [data-testid="nowTimeRadioBtn"]',
     "time_reserve": '#radio_time2, [data-testid="preTimeRadioBtn"]',
-    "date_input": 'input.input_date__QmA0s, .date__Lkn7S input, input[readonly][class*="input_date"]',
-    "hour_select": "select.hour_option__J_heO, .hour__ckNMb select",
-    "minute_select": "select.minute_option__Vb3xB, .minute__KXXvZ select",
+    # 네이버는 클래스 뒤의 해시 꼬리(__J_heO 등)를 배포 때마다 바꾼다(2026-09-11 실측: hour_option__J_heO → __Vk2eR).
+    # 이름 앞부분으로 찾아야 꼬리가 바뀌어도 예약 시각을 넣을 수 있다. 예전 이름도 그대로 인정한다.
+    "date_input": 'input.input_date__QmA0s, .date__Lkn7S input, input[class*="input_date__"], input[readonly][class*="input_date"]',
+    "hour_select": 'select.hour_option__J_heO, .hour__ckNMb select, select[class*="hour_option__"], [class*="hour__"] select',
+    "minute_select": 'select.minute_option__Vb3xB, .minute__KXXvZ select, select[class*="minute_option__"], [class*="minute__"] select',
     "captcha": (
         'iframe[id^="ncaptcha-iframe"], iframe[src*="ncaptcha"], iframe[src*="captcha"], '
         '#ncaptcha, .captcha_wrap, [class*="captcha"] input[type="text"], #captcha, img#captchaimg'
@@ -226,6 +229,37 @@ async (category) => {
 }
 """
 
+JS_READ_CATEGORIES = r"""
+async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const waitFor = async (selector, timeout) => {
+    const start = Date.now();
+    while (Date.now() - start < timeout) { const el = document.querySelector(selector); if (el) return el; await sleep(150); }
+    return null;
+  };
+  const CATEGORY_BTN = '[data-click-area="tpb*i.category"], button[aria-label="카테고리 목록 버튼"]';
+  const CATEGORY_ITEM = '[role="menu"] input[data-testid^="categoryBtn_"]';
+  const normText = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const btn = document.querySelector(CATEGORY_BTN);
+  if (!btn) return { ok: false, categories: [], error: '카테고리 버튼을 찾지 못했습니다' };
+  const wasOpen = btn.getAttribute('aria-expanded') === 'true';
+  if (!wasOpen) {
+    btn.click();
+    if (!(await waitFor(CATEGORY_ITEM, 5000))) return { ok: false, categories: [], error: '카테고리 목록을 열지 못했습니다' };
+    await sleep(150);
+  }
+  const categories = [...document.querySelectorAll(CATEGORY_ITEM)].map((inp) => {
+    const id = (inp.dataset.testid || '').replace('categoryBtn_', '');
+    const li = inp.closest('li') || inp.parentElement;
+    const nameEl = li && li.querySelector('[data-testid^="categoryItemText_"]');
+    return { id, name: normText(nameEl && nameEl.textContent) };
+  }).filter((c) => c.id && c.name);
+  // 우리가 연 경우에만 닫는다 — 사용자가 열어둔 목록은 건드리지 않는다.
+  if (!wasOpen && btn.getAttribute('aria-expanded') === 'true') { btn.click(); await sleep(150); }
+  return { ok: categories.length > 0, categories, error: categories.length ? undefined : '카테고리를 읽지 못했습니다' };
+}
+"""
+
 # jQuery UI datepicker 로 연·월 이동 후 일 클릭 (naver-poster selectScheduleDate)
 JS_SELECT_DATE = r"""
 async ({ y: targetY, m: targetM, d: targetD }) => {
@@ -286,9 +320,72 @@ JS_CLICK_CONFIRM = r"""
 }
 """
 
+# 발행 뒤 글 주소 찾기 — 크롬 확장 naver-poster 의 findPostUrl 이식.
+# 현재 주소·모든 프레임 주소·완료 안내창(레이어/팝업/토스트)의 링크를 본다. 못 찾으면 null.
+JS_FIND_POST_URL = r"""
+() => {
+  const RE = /blog\.naver\.com\/[A-Za-z0-9_.-]+\/\d{6,}(?:[?#/]|$)|PostView\.naver\?[^#]*logNo=\d+/;
+  const cands = [];
+  try { cands.push(location.href); } catch (e) {}
+  try { cands.push(window.top.location.href); } catch (e) {}
+  for (const fr of document.querySelectorAll('iframe')) {
+    try { cands.push(fr.contentWindow.location.href); } catch (e) {}
+    cands.push(fr.getAttribute('src') || '');
+  }
+  for (const u of cands) if (u && RE.test(u)) return u;
+  for (const a of document.querySelectorAll('[class*="layer"] a[href], [class*="popup"] a[href], [role="dialog"] a[href], [class*="toast"] a[href]')) {
+    if (RE.test(a.href)) return a.href;
+  }
+  return null;
+}
+"""
+
+
+def normalize_post_url(raw: Optional[str]) -> Optional[str]:
+    """blog.naver.com/{id}/{번호} 또는 PostView.naver?blogId=..&logNo=.. → https://blog.naver.com/{id}/{번호}"""
+    if not raw:
+        return None
+    from urllib.parse import parse_qs, urlparse
+
+    m = re.search(r"blog\.naver\.com/([A-Za-z0-9_-]+)/(\d{6,})(?:[?#/]|$)", raw)
+    if m and m.group(1) != "PostView.naver":
+        return f"https://blog.naver.com/{m.group(1)}/{m.group(2)}"
+    q = parse_qs(urlparse(raw).query)
+    blog, log_no = (q.get("blogId") or [""])[0], (q.get("logNo") or [""])[0]
+    if re.fullmatch(r"[A-Za-z0-9_-]+", blog) and re.fullmatch(r"\d+", log_no):
+        return f"https://blog.naver.com/{blog}/{log_no}"
+    return None
+
+
 JS_READ_TEXT = r"""
 (sel) => { const el = document.querySelector(sel); return el ? (el.textContent || '') : null; }
 """
+
+
+def left_editor(before: str, now: str) -> bool:
+    """최종 발행 뒤 글쓰기 화면을 벗어났는가(성공 신호).
+
+    네이버 글쓰기 화면의 바깥 주소는 이미 blog.naver.com/{id}?Redirect=Write 라서, 예전처럼
+    'blog.naver.com 이고 PostWriteForm/GoBlogWrite 가 아니면 이동'으로 보면 발행 버튼을 누르자마자 항상 참이
+    됐다(2026-09-11 실제 네이버 실측) — 발행이 거부돼도 성공으로 보고할 수 있었다."""
+    if not now or now == before or "blog.naver.com" not in now:
+        return False
+    return not any(k in now for k in ("PostWriteForm", "GoBlogWrite", "Redirect=Write", "redirect=Write"))
+
+
+async def _visible_match(scope: Any, selector: str) -> bool:
+    """선택자에 걸리는 요소 중 화면에 실제로 보이는 것이 있는가.
+
+    네이버 글쓰기 화면에는 보이지 않는 캡차 프레임(ncaptcha-iframe-*, 0x0)이 항상 들어 있다.
+    '있기만 하면 캡차'로 보면 로그인돼 있어도 매번 캡차로 오판해 발행하지 못한다(2026-09-11 실측)."""
+    loc = scope.locator(selector)
+    for i in range(min(await loc.count(), 10)):
+        try:
+            if await loc.nth(i).is_visible():
+                return True
+        except Exception:  # noqa: BLE001 — 프레임 이동 중
+            continue
+    return False
 
 
 @dataclass
@@ -377,7 +474,7 @@ class NaverEditor:
 
     async def login_challenge_present(self) -> bool:
         try:
-            return await self.page.locator(S["login_challenge"]).count() > 0
+            return await _visible_match(self.page, S["login_challenge"])
         except Exception:  # noqa: BLE001
             return False
 
@@ -515,15 +612,25 @@ class NaverEditor:
 
     # ------------------------------------------------------------ 제목 / 본문
     async def set_title(self, title: str) -> None:
-        log.info("제목 입력: %s", title[:60])
-        await self._click_paragraph(S["title_para"])
-        await self._ctrl_a()
-        await self._insert(title)
-        await asyncio.sleep(0.4)
-        f = await self.frame()
-        got = (await f.evaluate(JS_READ_TEXT, S["title_para"]) or "").strip()
-        if title.strip() and title.strip()[:10] not in got:
-            log.warning("제목 확인 실패(입력 '%s' / 현재 '%s')", title[:30], got[:30])
+        """제목을 넣고 다시 읽어 확인한다. 늦게 뜬 '작성 중인 글' 팝업이 입력을 가로채면 닫고 한 번 더 넣는다.
+        그래도 안 들어가면 EditorError — 제목 없는 글이 발행되면 안 된다
+        (2026-09-11 실제 네이버: 입력칸이 '제목' 그대로인 채 경고만 남기고 발행까지 진행됐다)."""
+        want = title.strip()
+        for attempt in (1, 2):
+            log.info("제목 입력: %s", title[:60])
+            await self._click_paragraph(S["title_para"])
+            await self._ctrl_a()
+            await self._insert(title)
+            await asyncio.sleep(0.4)
+            f = await self.frame()
+            got = (await f.evaluate(JS_READ_TEXT, S["title_para"]) or "").strip()
+            if not want or want[:10] in got:
+                return
+            log.warning("제목 확인 실패(입력 '%s' / 현재 '%s')%s", title[:30], got[:30],
+                        " → 팝업을 닫고 다시 입력" if attempt == 1 else "")
+            if attempt == 1:
+                await self.dismiss_draft_popup()
+        raise EditorError("제목이 입력되지 않았습니다. 제목 없는 글이 올라가지 않도록 발행하지 않고 중단합니다")
 
     async def insert_body_blocks(self, blocks: Sequence[Dict[str, Any]], emphasize: Sequence[str], *, reformat: bool = True) -> int:
         """블록(글/이미지) 순서대로 본문에 넣는다. 반환: 삽입된 이미지 수.
@@ -562,6 +669,20 @@ class NaverEditor:
             await asyncio.sleep(0.15)
         except Exception as e:  # noqa: BLE001
             log.warning("본문 끝 포커스 복귀 실패(계속 진행): %s", e)
+
+    async def verify_links(self, urls):
+        """Require actual clickable anchors, not merely the visible URL text."""
+        f = await self.frame()
+        for _ in range(10):
+            ok = await f.evaluate('''(urls) => {
+                const normalize = value => { try { return new URL(value).href; } catch { return ''; } };
+                const links = [...document.querySelectorAll('.se-component a[href]')].map(a => normalize(a.href));
+                return urls.every(url => links.includes(normalize(url)));
+            }''', urls)
+            if ok:
+                return
+            await asyncio.sleep(.5)
+        raise EditorError('랜딩 URL이 클릭 가능한 링크로 확인되지 않았습니다. 발행을 보류합니다')
 
     async def image_count(self) -> int:
         f = await self.frame()
@@ -610,10 +731,12 @@ class NaverEditor:
         return await self._wait_image_increase(before)
 
     async def _insert_image_verified(self, data_url: str, *, index: int) -> None:
-        mime, _ = decode_data_url(data_url)
+        mime, raw = decode_data_url(data_url)
+        # 매번 같은 틀(image_타임스탬프)의 이름은 그 자체가 흔적이 된다 → 사진 EXIF 기종·촬영시각에 맞춘 카메라식 이름.
+        # 재시도해도 같은 사진은 같은 이름이다(실제 파일을 다시 고른 것처럼).
+        name = camera_filename(raw, ext_for_mime(mime))
         last_err = ""
         for attempt in range(1, 4):
-            name = f"image_{int(time.time() * 1000)}_{index}_{attempt}.{ext_for_mime(mime)}"
             try:
                 if await self._insert_image_once(data_url, name):
                     return
@@ -672,6 +795,45 @@ class NaverEditor:
             avail = ", ".join(f"{c['name']}({c['id']})" for c in (r or {}).get("categories", []))
             raise EditorError(f"{(r or {}).get('error', '카테고리 설정 실패')}. 사용 가능한 카테고리: {avail or '목록을 읽지 못했습니다'}")
         log.info("카테고리: %s", r.get("current"))
+
+    async def read_categories(self) -> List[Dict[str, str]]:
+        """발행 레이어에서 카테고리 목록만 읽어 온다(선택은 하지 않는다).
+
+        확장의 SYNC_CATEGORIES 를 대신한다 — 앱 드롭다운은 이 목록으로 채워진다.
+        레이어는 호출자가 열어 둔다."""
+        f = await self.frame()
+        r = await f.evaluate(JS_READ_CATEGORIES)
+        if not r or not r.get("ok"):
+            log.warning("카테고리 목록 읽기 실패: %s", (r or {}).get("error", "?"))
+            return []
+        items = [{"id": str(c["id"]), "name": str(c["name"])} for c in r.get("categories", [])]
+        log.info("카테고리 %d개 확인", len(items))
+        return items
+
+    async def set_publish_now(self) -> None:
+        """즉시 발행: '현재' 라디오를 확실히 켠다. 예약이 남아 있으면 엉뚱한 시각에 나간다."""
+        f = await self.frame()
+        r = await f.evaluate(JS_CLICK_IF_UNCHECKED, S["time_now"])
+        if r is not True:
+            raise EditorError("즉시 발행 라디오를 켜지 못했습니다")
+        log.info("즉시 발행 라디오 ON")
+
+    async def save_draft(self, *, dry_run: bool = False) -> Optional[PublishOutcome]:
+        """임시저장 버튼 클릭. 발행 레이어를 열지 않는다."""
+        f = await self.frame()
+        btn = f.locator(S["save_draft"]).first
+        if not await btn.count():
+            btn = f.get_by_role("button", name="저장", exact=True).first
+        if not await btn.count():
+            raise EditorError("임시저장 버튼을 찾지 못했습니다")
+        if dry_run:
+            log.info("[dry-run] 임시저장 버튼은 클릭하지 않습니다")
+            return None
+        self.dialogs.clear()
+        await btn.click()
+        await asyncio.sleep(2.0)
+        log.info("임시저장 클릭")
+        return PublishOutcome(ok=True, message="임시저장", dialogs=list(self.dialogs))
 
     async def set_tags(self, tags: Sequence[str]) -> int:
         """#tag-input 에 태그를 하나씩 입력+Enter. 입력란이 없으면 경고만(발행은 계속)."""
@@ -742,6 +904,7 @@ class NaverEditor:
             return None
 
         self.dialogs.clear()
+        before_url = self.page.url or ""
         log.info("최종 발행 클릭")
         await final.click()
         await asyncio.sleep(2.0)
@@ -762,31 +925,50 @@ class NaverEditor:
         while time.monotonic() < deadline:
             await asyncio.sleep(0.5)
             url = self.page.url or ""
-            if "PostWriteForm" not in url and "GoBlogWrite" not in url and "blog.naver.com" in url:
-                post_url = url if re.search(r"blog\.naver\.com/[A-Za-z0-9_-]+/\d+", url) else None
+            if left_editor(before_url, url):
                 log.info("발행 후 페이지 이동: %s", url[:100])
+                post_url = normalize_post_url(url) or await self.harvest_post_url()
                 return PublishOutcome(ok=True, url=post_url, message="예약 등록 후 페이지 이동", dialogs=list(self.dialogs))
             try:
                 fin = f.locator(S["publish_final"]).first
                 if f.is_detached() or await fin.count() == 0 or not await fin.is_visible():
                     log.info("발행 레이어 닫힘 → 예약 등록으로 판단")
-                    return PublishOutcome(ok=True, message="발행 레이어 닫힘", dialogs=list(self.dialogs))
+                    return PublishOutcome(ok=True, url=await self.harvest_post_url(), message="발행 레이어 닫힘", dialogs=list(self.dialogs))
             except Exception:  # noqa: BLE001
-                return PublishOutcome(ok=True, message="에디터 프레임 교체됨", dialogs=list(self.dialogs))
+                return PublishOutcome(ok=True, url=await self.harvest_post_url(), message="에디터 프레임 교체됨", dialogs=list(self.dialogs))
         msg = "발행 클릭 후 화면 변화가 확인되지 않았습니다. 네이버 예약 목록에서 확인이 필요합니다"
         if self.dialogs:
             msg += " / 다이얼로그: " + " | ".join(d[:80] for d in self.dialogs)
         log.warning(msg)
         return PublishOutcome(ok=False, uncertain=True, message=msg, dialogs=list(self.dialogs))
 
+    async def harvest_post_url(self, timeout_sec: float = 6.0) -> Optional[str]:
+        """발행 직후 글 주소(글 번호)를 찾는다. 번호가 있으면 서버가 그 주소로 공개를 확인하고,
+        없어도 발행은 성공으로 보고된다(서버가 예약 시각 뒤 RSS 로 확인). 여기서는 실패하지 않는다."""
+        deadline = time.monotonic() + timeout_sec
+        while time.monotonic() < deadline:
+            for fr in [self.page.main_frame, *self.page.frames]:
+                try:
+                    if fr.is_detached():
+                        continue
+                    found = normalize_post_url(await fr.evaluate(JS_FIND_POST_URL))
+                except Exception:  # noqa: BLE001 — 프레임 이동 중
+                    continue
+                if found:
+                    log.info("발행된 글 주소: %s", found)
+                    return found
+            await asyncio.sleep(0.4)
+        log.info("발행된 글 주소를 찾지 못했습니다 — 서버가 예약 시각 뒤 공개 여부를 확인합니다")
+        return None
+
     # ------------------------------------------------------------ 캡차
     async def detect_captcha(self) -> bool:
-        """최상위 문서 + 모든 프레임에서 캡차 iframe/요소 존재 여부."""
+        """최상위 문서 + 모든 프레임에서 '보이는' 캡차 iframe/요소가 있는가(숨은 ncaptcha 프레임은 제외)."""
         for fr in self.page.frames:
             try:
                 if fr.is_detached():
                     continue
-                if await fr.locator(S["captcha"]).count() > 0:
+                if await _visible_match(fr, S["captcha"]):
                     return True
             except Exception:  # noqa: BLE001
                 continue

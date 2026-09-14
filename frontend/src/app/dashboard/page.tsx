@@ -247,8 +247,8 @@ export default function DashboardHome() {
                 <Pill tone={system?.ai ? 'ok' : 'muted'}>{system?.ai ? '연결됨' : '키 필요'}</Pill>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">크롬 확장</span>
-                <span className="text-xs text-muted-foreground">상단 표시등 참고</span>
+                <span className="text-muted-foreground">PC 실행기</span>
+                <span className="text-xs text-muted-foreground">발행할 때 켜 두세요</span>
               </div>
             </CardContent>
           </Card>

@@ -132,7 +132,8 @@ async def _reclaim_stale(db: AsyncSession) -> None:
     cutoff = datetime.utcnow() - STALE_AFTER
     await db.execute(
         update(BackgroundJob)
-        .where(BackgroundJob.status == "running", BackgroundJob.locked_at < cutoff)
+        .where(BackgroundJob.status == "running", BackgroundJob.locked_at < cutoff,
+               BackgroundJob.updated_at < cutoff)
         .values(status="pending", locked_at=None, message="워커가 멈춰 다시 시도합니다")
     )
     await db.commit()
@@ -162,6 +163,27 @@ async def _claim_one(db: AsyncSession) -> Optional[BackgroundJob]:
     return job
 
 
+async def _run_with_heartbeat(ctx, handler, interval=30):
+    job_id, attempt = ctx.job.id, ctx.job.attempts
+    async def heartbeat():
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                async with AsyncSessionLocal() as db:
+                    await db.execute(update(BackgroundJob).where(BackgroundJob.id == job_id,
+                        BackgroundJob.status == 'running', BackgroundJob.attempts == attempt
+                    ).values(updated_at=datetime.utcnow()))
+                    await db.commit()
+            except Exception:
+                logger.exception('작업 생존 확인 실패')
+    pulse = asyncio.create_task(heartbeat())
+    try:
+        return await handler(ctx)
+    finally:
+        pulse.cancel()
+        await asyncio.gather(pulse, return_exceptions=True)
+
+
 async def _process(job_id: str) -> None:
     async with AsyncSessionLocal() as db:
         job = (await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))).scalar_one()
@@ -175,10 +197,12 @@ async def _process(job_id: str) -> None:
             await db.commit()
             return
         try:
-            result = await handler(ctx)
+            result = await _run_with_heartbeat(ctx, handler)
             # 핸들러가 취소를 감지해 중단했을 수 있다
             await db.refresh(job)
             if job.status == "cancelled":
+                job.locked_at = None
+                await db.commit()
                 return
             job.status = "done"
             job.result = result if result is not None else job.result
@@ -192,6 +216,10 @@ async def _process(job_id: str) -> None:
             logger.error("[worker] %s 실패: %s\n%s", job_type, e, tb)
             db.expunge_all()  # 롤백으로 만료된 인스턴스를 버리고 새로 읽는다
             job = (await db.execute(select(BackgroundJob).where(BackgroundJob.id == job_id))).scalar_one()
+            if job.status == "cancelled":
+                job.locked_at = None
+                await db.commit()
+                return
             job.error = f"{e}"[:2000]
             if job.attempts < job.max_attempts:
                 job.status = "pending"
@@ -204,20 +232,17 @@ async def _process(job_id: str) -> None:
             await db.commit()
 
 
-async def run_forever(poll_interval: float = POLL_INTERVAL) -> None:
+async def _run_jobs(poll_interval: float = POLL_INTERVAL) -> None:
     """워커 루프. 앱 lifespan 에서 create_task 로 띄운다."""
     # 핸들러 모듈을 여기서 임포트해 등록(순환 임포트 방지)
     from app.services import campaign_jobs  # noqa: F401
     from app.services import blog_index_jobs  # noqa: F401
+    from app.services import automation_pipeline  # noqa: F401
 
     logger.info("[worker] 시작. 핸들러 %d개", len(HANDLERS))
-    last_stale_check = datetime.min
     while True:
         try:
             async with AsyncSessionLocal() as db:
-                if datetime.utcnow() - last_stale_check > timedelta(minutes=1):
-                    await _reclaim_stale(db)
-                    last_stale_check = datetime.utcnow()
                 job = await _claim_one(db)
             if job:
                 await _process(job.id)
@@ -231,6 +256,31 @@ async def run_forever(poll_interval: float = POLL_INTERVAL) -> None:
             await asyncio.wait_for(_wake.wait(), timeout=poll_interval)
         except asyncio.TimeoutError:
             pass
+
+
+async def _maintenance():
+    from app.services.autopilot import tick
+    from app.services.publication_verifier import verify_due
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                await _reclaim_stale(db)
+                await tick(db)
+                await verify_due(db)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception('자동 운영 유지보수 실패; 다음 주기에 재시도합니다')
+        await asyncio.sleep(60)
+
+
+async def run_forever(poll_interval: float = POLL_INTERVAL) -> None:
+    maintenance = asyncio.create_task(_maintenance())
+    try:
+        await _run_jobs(poll_interval)
+    finally:
+        maintenance.cancel()
+        await asyncio.gather(maintenance, return_exceptions=True)
 
 
 def start_in_app() -> None:

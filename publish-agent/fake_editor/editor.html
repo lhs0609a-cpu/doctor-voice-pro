@@ -57,9 +57,11 @@
     <input type="radio" name="time" id="radio_time2" data-testid="preTimeRadioBtn"><label for="radio_time2">예약</label>
   </div>
   <div class="time_setting__v6YRU" id="timeset" style="display:none">
-    <input class="input_date__QmA0s" readonly id="date">
-    <select class="hour_option__J_heO" id="hour"></select>
-    <select class="minute_option__Vb3xB" id="minute"></select>
+    <!-- 2026-09-11 실제 네이버의 클래스 이름(해시 꼬리가 바뀐 뒤). 예전 이름(__QmA0s/__J_heO/__Vb3xB)은 일부러 쓰지 않는다 —
+         실행기가 이름 앞부분으로 찾는지 이 페이지로 확인한다. -->
+    <input class="input_date__UwKAB" readonly id="date">
+    <select class="hour_option__Vk2eR" id="hour"></select>
+    <select class="minute_option__ETsdF" id="minute"></select>
   </div>
   <button data-testid="seOnePublishBtn" data-click-area="tpb*i.publish" id="final">발행</button>
 </div>
@@ -73,16 +75,44 @@
   <table><tbody id="days"></tbody></table>
 </div>
 
+<!-- 실제 네이버 글쓰기 화면처럼 보이지 않는 캡차 프레임이 항상 들어 있다(2026-09-11 실측: ncaptcha-iframe-*, 0x0).
+     이걸 캡차로 오판하면 로그인돼 있어도 발행하지 못한다. ?captcha=1 이면 보이는 캡차를 띄운다. -->
+<iframe id="ncaptcha-iframe-fake" src="about:blank" style="width:0;height:0;border:0;position:absolute"></iframe>
 <script>
   const q = new URLSearchParams(location.search);
+  if (q.get('captcha') === '1') {   // 진짜로 보이는 캡차
+    const cap = document.createElement('iframe');
+    cap.id = 'ncaptcha-iframe-visible'; cap.src = 'about:blank';
+    cap.style.cssText = 'width:300px;height:200px;border:1px solid #ccc';
+    document.body.appendChild(cap);
+  }
   const BREAK_DATE = q.get('breakdate') === '1';
   if (q.get('nocategory') === '1') document.getElementById('catbtn').remove();
 
-  const state = window.__state = { published: null, tags: [], category: '기본', imageDrops: 0, imageFiles: 0, draft: null };
+  const state = window.__state = { published: null, tags: [], category: '기본', imageDrops: 0, imageFiles: 0, draft: null, saved: 0 };
+
+  // 임시저장 버튼 — 발행과 달리 레이어 없이 바로 저장된다
+  document.querySelector('[data-click-area="tpb.save"]').onclick = () => { state.saved += 1; };
 
   // 드래프트 팝업
   document.getElementById('draftcancel').onclick = () => { state.draft = 'cancel'; document.getElementById('draftpopup').remove(); };
   document.getElementById('draftok').onclick = () => { state.draft = 'restore'; document.getElementById('draftpopup').remove(); };
+  // ?latedraft=1 — '작성 중인 글' 팝업이 늦게(제목칸을 누르는 순간) 떠서 키보드 입력을 가로채는 경우.
+  // 2026-09-11 실제 네이버에서 '팝업 없음' 판정 직후 제목이 비어 있던 상황을 매번 똑같이 재현한다.
+  if (q.get('latedraft') === '1') {
+    document.getElementById('draftpopup').remove();
+    const titleEl = document.querySelector('.se-documentTitle .se-text-paragraph');
+    titleEl.addEventListener('focus', function once() {
+      titleEl.removeEventListener('focus', once);
+      const pop = document.createElement('div');
+      pop.className = 'popup'; pop.id = 'draftpopup';
+      pop.innerHTML = '<p>작성 중인 글이 있습니다.</p><button id="draftok">확인</button><button id="draftcancel">취소</button>';
+      document.body.appendChild(pop);
+      pop.querySelector('#draftcancel').onclick = () => { state.draft = 'cancel'; pop.remove(); };
+      pop.querySelector('#draftok').onclick = () => { state.draft = 'restore'; pop.remove(); };
+      setTimeout(() => pop.querySelector('#draftcancel').focus(), 0);
+    });
+  }
 
   // 이미지: 실제 SE ONE 처럼 컴포넌트가 붙고 그 뒤에 빈 문단이 생긴다(업로드 지연 흉내 300ms)
   function addImage(name) {
@@ -199,6 +229,13 @@
       images: document.querySelectorAll('.se-component.se-image').length,
     };
     layer.classList.remove('open');
+    // ?postlink=1 — 발행 뒤 '예약 발행되었습니다' 안내 토스트에 글 링크가 뜨는 경우를 흉내 낸다
+    if (q.get('postlink') === '1') {
+      const toast = document.createElement('div');
+      toast.className = 'se-publish-toast';
+      toast.innerHTML = '예약 발행되었습니다 <a href="https://blog.naver.com/testblog/223456789012">글 보기</a>';
+      document.body.appendChild(toast);
+    }
   };
 </script>
 </body>

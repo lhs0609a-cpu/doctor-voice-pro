@@ -95,6 +95,7 @@ async def write_from_keyword(
     heading_count: Optional[int] = None,
     keyword_count: Optional[int] = None,
     extra_instructions: str = "",
+    landing: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """키워드 1개로 완성 원고를 만든다. 반환 {title, body, headings, tags, summary, char_count}"""
     summary = (serp or {}).get("summary") or {}
@@ -120,6 +121,13 @@ async def write_from_keyword(
 {extra_instructions}
 
 JSON 으로만 답한다. body 는 위 규칙대로 줄바꿈이 들어간 완성 본문 전체다."""
+    if landing:
+        import json
+        user += ('\n랜딩페이지 안내 데이터: ' + json.dumps(landing, ensure_ascii=False)
+                 + '\n본문에는 URL이나 방문 유도 문구를 넣지 않는다. 대신 JSON에 cta 필드를 추가한다. '
+                 'cta는 본문에서 다룬 독자의 질문과 위 페이지의 목적을 자연스럽게 잇는 1~2문장(15~250자)이다. '
+                 '목적에 없는 혜택/시설/치료효과를 약속하지 않는다. 필요할 때 안내를 확인할 수 있다는 선택형 표현을 쓴다. '
+                 '명령형 광고, 긴급성, 반복 클릭 유도, URL은 cta에도 쓰지 않는다.')
     data = await cc.complete_json(WRITER_SYSTEM, user, max_tokens=16000)
     if not isinstance(data, dict):
         raise ValueError("원고 응답 형식 오류")
@@ -135,6 +143,7 @@ JSON 으로만 답한다. body 는 위 규칙대로 줄바꿈이 들어간 완�
         "tags": tags,
         "summary": data.get("summary") or "",
         "char_count": count_chars(body),
+        "cta": data.get('cta') or '',
     }
 
 

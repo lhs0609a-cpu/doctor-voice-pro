@@ -79,7 +79,7 @@ async def _bump_stats(ctx: JobContext, campaign_id: str) -> None:
     by = {s: n for s, n in jobs}
     camp.stats = {
         "keywords": kw, "keywords_selected": kw_sel, "drafts": dr, "drafts_ready": dr_ready,
-        "jobs": sum(by.values()), "published": by.get("published", 0), "failed": by.get("failed", 0),
+        "jobs": sum(by.values()), "published": by.get("published", 0), "submitted": by.get("submitted", 0), "failed": by.get("failed", 0),
         "queued": by.get("queued", 0) + by.get("assigned", 0), "uncertain": by.get("uncertain", 0),
     }
     camp.updated_at = datetime.utcnow()
@@ -278,6 +278,11 @@ async def draft_generate(ctx: JobContext) -> dict:
 
     # 화면에 바로 보이도록 '생성 중' 행을 먼저 만든다
     drafts: List[Draft] = []
+    if not p.get("force"):
+        drafts = list((await ctx.db.execute(select(Draft).where(
+            Draft.campaign_id == campaign_id, Draft.keyword_id.in_([k.id for k in kws]),
+            Draft.status.in_(["generating", "failed"]),
+        ))).scalars().all())
     for k in targets:
         d = Draft(
             user_id=ctx.user_id, client_id=camp.client_id, campaign_id=campaign_id,
@@ -295,28 +300,64 @@ async def draft_generate(ctx: JobContext) -> dict:
     for i, d in enumerate(drafts):
         if await ctx.cancelled():
             break
-        k = next((x for x in targets if x.id == d.keyword_id), None)
+        k = next((x for x in kws if x.id == d.keyword_id), None)
         serp = {"summary": k.serp_summary} if k and k.serp_summary else None
         await ctx.progress(i, total, f"원고 작성 {i + 1}/{total}: {d.keyword}")
         try:
-            res = await writer.write_from_keyword(
-                keyword=d.keyword, client=cdict, brief=bdict, serp=serp,
-                target_chars=p.get("target_chars"), heading_count=p.get("heading_count"),
-                keyword_count=p.get("keyword_count"), extra_instructions=p.get("instructions") or "",
-            )
+            editorial = None
+            from app.services.landing_links import for_draft, append_cta
+            landing_config = p if 'landing_url' in p else (camp.settings or {}).get('landing', {})
+            landing = for_draft(landing_config, campaign_id, d.id)
+            if p.get('strict_quality'):
+                from app.services import content_evidence, editorial_quality
+                from app.services.autopilot import still_enabled
+                subject = next((s for s in (client.diseases or []) + (client.treatments or [])
+                                if s.replace(' ', '') in (d.keyword or '').replace(' ', '')), d.keyword)
+                evidence = await content_evidence.collect(subject, db=ctx.db, user_id=ctx.user_id)
+                previous = list((await ctx.db.execute(select(Draft.body).where(
+                    Draft.user_id == ctx.user_id, Draft.client_id == client.id, Draft.id != d.id,
+                    Draft.body != '').order_by(Draft.created_at.desc()).limit(300))).scalars())
+
+                async def cancelled():
+                    return not await still_enabled(ctx)
+
+                async def save_revision(history):
+                    d.checks = {**(d.checks or {}), 'editorial_revisions': list(history)}
+                    await ctx.progress(i, total, f'근거 검수·수정 {len(history)}/3: {d.keyword}')
+
+                res, editorial = await editorial_quality.write_reviewed(
+                    keyword=d.keyword, client=cdict, brief=bdict, evidence=evidence, previous=previous,
+                    target_chars=p.get('target_chars', 2000), min_score=p.get('min_score', 85),
+                    max_rewrites=p.get('max_rewrites', 2), cancelled=cancelled, on_revision=save_revision, landing=landing)
+            else:
+                res = await writer.write_from_keyword(
+                    keyword=d.keyword, client=cdict, brief=bdict, serp=serp,
+                    target_chars=p.get("target_chars"), heading_count=p.get("heading_count"),
+                    keyword_count=p.get("keyword_count"), extra_instructions=p.get("instructions") or "",
+                    landing=landing,
+                )
+                res['body'] = append_cta(res['body'], res.get('cta', ''), landing)
+                res['char_count'] = writer.count_chars(res['body'])
             d.title, d.body, d.char_count = res["title"], res["body"], res["char_count"]
             d.tags = res["tags"]
             d.emphasize = [d.keyword] if d.keyword else []
             checks = writer.run_static_checks(d.title, d.body, cdict.get("forbidden_words"))
+            if landing:
+                checks['landing'] = landing
+                checks['ok'] = checks['ok'] and d.body.count(landing['url']) == 1
+            if editorial is not None:
+                checks['editorial'] = editorial
+                checks['ok'] = checks['ok'] and editorial['approved']
             if bdict and bdict.get("flow"):
                 try:
                     checks["flow"] = await writer.check_flow(d.body, bdict["flow"])
                 except Exception as e:  # noqa: BLE001
-                    checks["flow"] = {"ok": True, "notes": f"흐름 검사 생략: {e}"[:200]}
+                    checks["flow"] = {"ok": False, "notes": f"흐름 검사 실패: {e}"[:200]}
             flow_ok = checks.get("flow", {}).get("ok", True)
             d.checks = checks
             d.status = "ready" if (checks["ok"] and flow_ok) else "needs_review"
-            d.image_count_target = int((serp or {}).get("summary", {}).get("recommended_image_count") or p.get("image_count") or 0) or 0
+            d.error = None
+            d.image_count_target = int(p['image_count']) if 'image_count' in p else int((serp or {}).get('summary', {}).get('recommended_image_count') or 0)
             ok += 1
         except Exception as e:  # noqa: BLE001
             logger.error("[원고] %s 실패: %s", d.keyword, e)
@@ -510,7 +551,7 @@ async def prepare_job_images(db, job: PublishJob, draft: Draft) -> List[Dict[str
     if not plan:
         return out
     ids = list({s["pool_image_id"] for s in plan if s.get("pool_image_id")})
-    imgs = {p.id: p for p in (await db.execute(select(PoolImage).where(PoolImage.id.in_(ids)))).scalars().all()} if ids else {}
+    imgs = {p.id: p for p in (await db.execute(select(PoolImage).where(PoolImage.id.in_(ids), PoolImage.user_id == job.user_id))).scalars().all()} if ids else {}
     folder = media_dir("variants", job.id)
     for s in plan:
         pimg = imgs.get(s.get("pool_image_id"))
@@ -546,6 +587,7 @@ async def prepare_images(ctx: JobContext) -> dict:
     jobs = (await ctx.db.execute(q.order_by(PublishJob.scheduled_at.asc()))).scalars().all()
     total = len(jobs)
     done = 0
+    failed = 0
     for j in jobs:
         if await ctx.cancelled():
             break
@@ -555,13 +597,17 @@ async def prepare_images(ctx: JobContext) -> dict:
         await ctx.progress(done, total, f"사진 준비 {done + 1}/{total}: {draft.title[:20]}")
         try:
             j.image_variants = await prepare_job_images(ctx.db, j, draft)
+            if len(j.image_variants) != len(draft.image_plan or []):
+                raise ValueError('필수 이미지가 누락되었습니다')
             j.images_ready = True
+            done += 1
         except Exception as e:  # noqa: BLE001
             logger.error("[사진준비] %s 실패: %s", j.id, e)
             j.error = f"사진 준비 실패: {e}"[:500]
-        done += 1
+            j.images_ready = False
+            failed += 1
         await ctx.db.commit()
-    return {"prepared": done}
+    return {"prepared": done, "failed": failed}
 
 
 # ─────────────────────────────── sheet_append ───────────────────────────────

@@ -14,7 +14,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
-from sqlalchemy import select, func, delete as sa_delete
+from sqlalchemy import select, func, or_, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -22,6 +22,7 @@ from app.models import User
 from app.models.publish_queue import PublishBatch, QueuedPost, NaverCategoryCache, ScheduleMark
 from app.models.media_pool import PoolImage, ImageVariant
 from app.services import post_formatter as fmt
+from app.services.schedule_engine import kst_now
 from app.services import image_uniquifier as uniq
 
 router = APIRouter()
@@ -66,6 +67,8 @@ class BulkRequest(BaseModel):
     category: Optional[str] = None
     assign_images: bool = True         # 사진 풀에서 자동 배정
     name: Optional[str] = None
+    # 어느 블로그로 발행할지(campaign_blogs.id). 실행기가 블로그별로 가져간다.
+    blog_ref_id: Optional[str] = None
 
 
 class QueuedItem(BaseModel):
@@ -76,6 +79,7 @@ class QueuedItem(BaseModel):
     scheduled_at: datetime
     status: str
     order_index: int
+    blog_ref_id: Optional[str] = None
 
 
 class BulkResponse(BaseModel):
@@ -166,13 +170,13 @@ async def bulk_create(
             keywords=p.keywords, hashtags=p.hashtags,
             image_pool_ids=assigned, image_slots=p.image_slots,
             scheduled_at=sched, open_type=req.open_type, search=True,
-            category=req.category,
+            category=req.category, blog_ref_id=req.blog_ref_id,
             status="queued", order_index=i,
         )
         db.add(row)
         items.append(QueuedItem(
             id=row.id, title=p.title, keywords=p.keywords, image_slots=p.image_slots,
-            scheduled_at=sched, status="queued", order_index=i,
+            scheduled_at=sched, status="queued", order_index=i, blog_ref_id=req.blog_ref_id,
         ))
 
     await db.commit()
@@ -200,6 +204,7 @@ async def list_queue(
         QueuedItem(
             id=r.id, title=r.title, keywords=r.keywords or [], image_slots=r.image_slots or 0,
             scheduled_at=r.scheduled_at, status=r.status, order_index=r.order_index or 0,
+            blog_ref_id=r.blog_ref_id,
         ) for r in rows
     ]
 
@@ -371,19 +376,114 @@ class ExtJob(BaseModel):
     options: dict
 
 
-@router.get("/queue/jobs", response_model=List[ExtJob])
-async def fetch_jobs(
-    limit: int = 20,
+# ==================== 글 1건을 큐에 담기(저장글·원클릭 발행) ====================
+# 예전에는 브라우저가 확장에게 바로 넘겼다. 확장을 걷어내면서 서버 큐를 거치게 한다 —
+# 브라우저를 닫아도 PC 실행기가 이어서 등록하고, 결과가 서버에 남는다.
+MAX_JOB_BLOCKS = 60
+MAX_IMAGE_CHARS = 8 * 1024 * 1024      # data URL 1장 상한
+MAX_JOB_CHARS = 24 * 1024 * 1024       # 글 1건 전체 상한
+
+
+class SingleJobRequest(BaseModel):
+    title: str
+    blocks: List[JobBlock]
+    tags: List[str] = []
+    emphasize: List[str] = []
+    scheduled_at: Optional[datetime] = None   # final_action=schedule 이면 필수
+    final_action: str = "schedule"            # schedule | publish | draft
+    open_type: str = "public"
+    search: bool = True
+    category: Optional[str] = None
+    blog_ref_id: Optional[str] = None
+
+
+@router.post("/queue/job", response_model=QueuedItem)
+async def enqueue_job(
+    req: SingleJobRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """확장이 대기 글을 가져감. 배정된 풀 이미지를 즉석 유니크화해 base64로 포함.
-    반환된 글은 registered 로 표시(중복 등록 방지)."""
-    res = await db.execute(
-        select(QueuedPost).where(
+    if req.final_action not in ("schedule", "publish", "draft"):
+        raise HTTPException(status_code=400, detail="final_action 은 schedule/publish/draft 중 하나여야 합니다")
+    if req.final_action == "schedule":
+        if not req.scheduled_at:
+            raise HTTPException(status_code=400, detail="예약 시각이 필요합니다")
+        # 큐의 예약 시각은 네이버 화면에 그대로 넣는 값이라 KST naive 다. 서버가 어느 지역에서
+        # 돌든 KST 로 비교해야 한다(UTC 로 비교하면 9시간 지난 예약도 통과한다).
+        if req.scheduled_at.replace(tzinfo=None) <= kst_now() + timedelta(minutes=5):
+            # 네이버 예약은 현재 이후만 받는다. 실행기가 에디터를 열 시간도 필요하다.
+            raise HTTPException(status_code=400, detail="예약 시각은 지금부터 5분 뒤 이후여야 합니다")
+    if not req.blocks:
+        raise HTTPException(status_code=400, detail="본문이 비어 있습니다")
+    if len(req.blocks) > MAX_JOB_BLOCKS:
+        raise HTTPException(status_code=400, detail=f"본문 블록이 너무 많습니다(최대 {MAX_JOB_BLOCKS}개)")
+
+    total = 0
+    blocks: List[dict] = []
+    images = 0
+    for b in req.blocks:
+        if b.type == "image":
+            if not b.image or not b.image.startswith("data:image/"):
+                raise HTTPException(status_code=400, detail="이미지 블록은 data:image/ 형식이어야 합니다")
+            if len(b.image) > MAX_IMAGE_CHARS:
+                raise HTTPException(status_code=400, detail="이미지 1장이 너무 큽니다")
+            total += len(b.image)
+            images += 1
+            blocks.append({"type": "image", "image": b.image})
+        else:
+            content = b.content or ""
+            total += len(content)
+            blocks.append({"type": "text", "content": content})
+    if total > MAX_JOB_CHARS:
+        raise HTTPException(status_code=400, detail="글이 너무 큽니다. 사진 수를 줄여 주세요")
+
+    cnt_res = await db.execute(
+        select(func.count()).select_from(QueuedPost).where(
             QueuedPost.user_id == str(current_user.id), QueuedPost.status == "queued"
-        ).order_by(QueuedPost.scheduled_at.asc()).limit(limit)
+        )
     )
+    if (cnt_res.scalar() or 0) >= MAX_QUEUE:
+        raise HTTPException(status_code=400, detail=f"큐 상한({MAX_QUEUE})을 초과합니다")
+
+    row = QueuedPost(
+        user_id=str(current_user.id), title=req.title or "(제목 없음)",
+        blocks=blocks, keywords=req.emphasize or [], hashtags=req.tags or [],
+        image_pool_ids=[], image_slots=images,
+        # 즉시발행·임시저장에는 예약 시각이 없지만 정렬 기준이 필요하다 → 지금(KST)으로 둔다.
+        scheduled_at=(req.scheduled_at.replace(tzinfo=None) if req.scheduled_at else kst_now()),
+        open_type=req.open_type, search=req.search, category=req.category,
+        blog_ref_id=req.blog_ref_id, final_action=req.final_action,
+        status="queued", order_index=0,
+    )
+    db.add(row)
+    await db.commit()
+    return QueuedItem(
+        id=row.id, title=row.title, keywords=row.keywords or [], image_slots=images,
+        scheduled_at=row.scheduled_at, status=row.status, order_index=0, blog_ref_id=row.blog_ref_id,
+    )
+
+
+@router.get("/queue/jobs", response_model=List[ExtJob])
+async def fetch_jobs(
+    limit: int = 20,
+    blog_ref_id: Optional[str] = None,
+    claim_unassigned: bool = False,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """PC 실행기가 대기 글을 가져감. 배정된 풀 이미지를 즉석 유니크화해 base64로 포함.
+    반환된 글은 registered 로 표시(중복 등록 방지).
+
+    blog_ref_id 를 주면 그 블로그로 지정된 글만 가져간다. 블로그가 하나뿐이라
+    구분이 필요 없을 때만 claim_unassigned 로 지정 없는 글까지 가져간다 —
+    블로그가 여럿인데 지정 없는 글을 아무나 집어 가면 엉뚱한 블로그에 발행된다."""
+    q = select(QueuedPost).where(
+        QueuedPost.user_id == str(current_user.id), QueuedPost.status == "queued"
+    )
+    if blog_ref_id:
+        q = q.where(QueuedPost.blog_ref_id == blog_ref_id if not claim_unassigned
+                    else or_(QueuedPost.blog_ref_id == blog_ref_id, QueuedPost.blog_ref_id.is_(None)))
+    res = await db.execute(q.order_by(QueuedPost.scheduled_at.asc()).limit(limit))
     rows = res.scalars().all()
 
     jobs: List[ExtJob] = []
@@ -402,6 +502,9 @@ async def fetch_jobs(
         for b in (r.blocks or []):
             if b.get("type") == "text":
                 blocks_out.append(JobBlock(type="text", content=b.get("content") or ""))
+            elif b.get("image"):
+                # 이미 이미지를 품고 저장된 글(저장글에서 담은 경우) — 풀 배정 없이 그대로 보낸다.
+                blocks_out.append(JobBlock(type="image", image=b["image"]))
             else:
                 data_url = None
                 if img_ptr < len(pool_ids):
@@ -449,7 +552,7 @@ async def fetch_jobs(
             # 포맷터가 뽑은 반복 키워드 = 글의 주제어. 이걸 굵게 해야 스캔이 된다.
             # (해시태그는 '#' 가 붙어 본문 매칭이 안 되므로 keywords 를 쓴다)
             emphasize=r.keywords or [],
-            finalAction="schedule",
+            finalAction=r.final_action or "schedule",
             schedule={"datetime": r.scheduled_at.isoformat()},
             options={
                 "openType": r.open_type or "public",

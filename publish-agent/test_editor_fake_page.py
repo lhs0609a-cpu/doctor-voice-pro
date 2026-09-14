@@ -89,6 +89,63 @@ class TestEditorOnFakePage(unittest.TestCase):
         f = await ed.frame()
         return await f.evaluate("() => window.__state")
 
+    # ------------------------------------------------------------ 발행 뒤 글 주소
+    def test_publish_harvests_post_url_from_completion_toast(self):
+        # 완료 안내창에 글 링크가 뜨면 그 번호를 가져온다 → 서버가 '주소로 확인된 예약'으로 처리
+        async def body(ed: NaverEditor, page):
+            await ed.open_write_page()
+            await ed.dismiss_draft_popup()
+            await ed.set_title("주소 수확")
+            await ed.open_publish_layer()
+            await ed.set_schedule(datetime(2026, 11, 5, 14, 37))
+            return await ed.publish()
+
+        out = self._run(self._with_editor("?postlink=1", body))
+        self.assertTrue(out.ok, out.message)
+        self.assertEqual(out.url, "https://blog.naver.com/testblog/223456789012")
+
+    def test_normalize_post_url(self):
+        from naver_editor import normalize_post_url
+        self.assertEqual(normalize_post_url("https://blog.naver.com/abc_1/223456789012?x=1"), "https://blog.naver.com/abc_1/223456789012")
+        self.assertEqual(normalize_post_url("https://blog.naver.com/PostView.naver?blogId=abc&logNo=223456789012"), "https://blog.naver.com/abc/223456789012")
+        self.assertIsNone(normalize_post_url("https://blog.naver.com/abc"))
+        self.assertIsNone(normalize_post_url(None))
+
+    # ------------------------------------------------------------ 제목
+    def test_title_retried_when_late_popup_steals_focus(self):
+        # 늦게 뜬 '작성 중인 글' 팝업이 입력을 가로채도 팝업을 닫고 제목을 다시 넣는다
+        from naver_editor import JS_READ_TEXT, S
+
+        async def body(ed: NaverEditor, page):
+            await ed.open_write_page()
+            await ed.dismiss_draft_popup()          # 이때는 아직 팝업이 없다
+            await ed.set_title("늦은 팝업 제목")
+            f = await ed.frame()
+            return await self._state(ed), await f.evaluate(JS_READ_TEXT, S["title_para"])
+
+        st, title = self._run(self._with_editor("?latedraft=1", body))
+        self.assertEqual(st["draft"], "cancel")
+        self.assertIn("늦은 팝업 제목", title)
+
+    # ------------------------------------------------------------ 캡차 판별
+    def test_hidden_captcha_frame_is_not_a_captcha(self):
+        # 실제 네이버처럼 0x0 ncaptcha 프레임이 늘 있어도 글쓰기는 열려야 한다(2026-09-11 실측 오판)
+        async def body(ed: NaverEditor, page):
+            await ed.open_write_page()
+            return await ed.detect_captcha()
+
+        self.assertFalse(self._run(self._with_editor("", body)))
+
+    def test_visible_captcha_still_stops(self):
+        from naver_editor import CaptchaDetected
+
+        async def body(ed: NaverEditor, page):
+            with self.assertRaises(CaptchaDetected):
+                await ed.open_write_page()
+            return True
+
+        self.assertTrue(self._run(self._with_editor("?captcha=1", body)))
+
     # ------------------------------------------------------------ 전체 흐름
     def test_full_flow_schedules_correctly(self):
         async def body(ed: NaverEditor, page):
@@ -185,6 +242,37 @@ class TestEditorOnFakePage(unittest.TestCase):
         st = self._run(self._with_editor("", body))
         self.assertIsNone(st["published"])
 
+    def test_reads_category_list_and_leaves_the_layer_as_it_found_it(self):
+        """앱 드롭다운 채우기 — 목록만 읽고 카테고리를 바꾸지 않는다."""
+        async def body(ed: NaverEditor, page):
+            await ed.open_write_page()
+            await ed.dismiss_draft_popup()
+            await ed.open_publish_layer()
+            items = await ed.read_categories()
+            self.assertEqual(items, [{"id": "24", "name": "임플란트 칼럼"}, {"id": "7", "name": "공지"}])
+            frame = await ed.frame()
+            expanded = await frame.evaluate(
+                "() => document.querySelector('[data-click-area=\"tpb*i.category\"]').getAttribute('aria-expanded')")
+            self.assertEqual(expanded, "false")  # 우리가 열었으면 다시 닫는다
+            return await self._state(ed)
+
+        st = self._run(self._with_editor("", body))
+        self.assertEqual(st["category"], "기본")   # 목록만 읽었으므로 선택은 그대로
+        self.assertIsNone(st["published"])
+
+    def test_saves_a_draft_without_publishing(self):
+        async def body(ed: NaverEditor, page):
+            await ed.open_write_page()
+            await ed.dismiss_draft_popup()
+            await ed.set_title("임시저장 글")
+            out = await ed.save_draft()
+            self.assertTrue(out.ok)
+            return await self._state(ed)
+
+        st = self._run(self._with_editor("", body))
+        self.assertIsNone(st["published"])
+        self.assertEqual(st["saved"], 1)
+
     def test_dry_run_does_not_click_publish(self):
         async def body(ed: NaverEditor, page):
             await ed.open_write_page()
@@ -210,6 +298,22 @@ class TestEditorOnFakePage(unittest.TestCase):
         st = self._run(self._with_editor("", body))
         self.assertEqual(st["imageDrops"], 1, "툴바 버튼이 없으면 합성 드롭으로 폴백")
         self.assertEqual(st["imageFiles"], 0)
+
+    def test_landing_check_requires_matching_clickable_anchor(self):
+        from naver_editor import EditorError
+        async def body(ed, page):
+            await ed.open_write_page()
+            f = await ed.frame()
+            await f.evaluate('''() => {
+                const a = document.createElement('a');
+                a.href = 'https://example.com/info?utm_content=one';
+                a.textContent = '안내';
+                document.querySelector('.se-component.se-text').appendChild(a);
+            }''')
+            await ed.verify_links(['https://example.com/info?utm_content=one'])
+            with self.assertRaises(EditorError):
+                await ed.verify_links(['https://example.com/info?utm_content=other'])
+        self._run(self._with_editor('', body))
 
 
 # ================================================================ agent.run_once 엔드투엔드 (가짜 서버 + 가짜 에디터)
@@ -251,7 +355,7 @@ class TestAgentEndToEnd(unittest.TestCase):
         import agent
 
         argv = ["--server", f"http://127.0.0.1:{self.api.server_address[1]}", "--email", "a@b.c", "--password", "pw",
-                "--once", "--headless", "true", "--profiles-dir", self.tmp, "--log-dir", self.tmp, "--min-gap", "0", "--max-gap", "0"]
+                "--once", "--max-per-blog", "1", "--headless", "true", "--profiles-dir", self.tmp, "--log-dir", self.tmp, "--min-gap", "0", "--max-gap", "0"]
         for k, v in over.items():
             argv.append("--" + k.replace("_", "-"))
             if v is not True:
@@ -264,6 +368,8 @@ class TestAgentEndToEnd(unittest.TestCase):
         from server_client import ServerClient
 
         async def go():
+            from journal import Journal
+            args.journal = Journal(Path(self.tmp) / 'test-journal.sqlite3')
             client = ServerClient(args.server)
             client.login(args.email, args.password)
             async with async_playwright() as pw:
@@ -273,6 +379,7 @@ class TestAgentEndToEnd(unittest.TestCase):
                 finally:
                     await pool.close()
                     client.close()
+                    args.journal.close()
 
         self.state.requests.clear()
         asyncio.run(go())

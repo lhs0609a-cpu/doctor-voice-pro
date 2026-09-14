@@ -28,14 +28,14 @@ export const NAV_GROUPS: NavGroup[] = [
     label: '시작',
     items: [
       { href: '/dashboard', label: '홈', icon: LayoutDashboard, exact: true },
-      { href: '/dashboard/campaign', label: '캠페인', icon: Rocket, badge: '대량 발행' },
+      { href: '/dashboard/one-stop', label: '원스톱 자동화', icon: Sparkles, badge: '자동' },
+      { href: '/dashboard/campaign', label: '운영 목록', icon: Rocket },
       { href: '/dashboard/clients', label: '병원 관리', icon: Building2 },
     ],
   },
   {
     label: '콘텐츠',
     items: [
-      { href: '/dashboard/one-stop', label: '원스톱 자동화', icon: Sparkles },
       { href: '/dashboard/create', label: '글 작성', icon: PenTool },
       { href: '/dashboard/keywords', label: '키워드 대량 생성', icon: FileSpreadsheet },
       { href: '/dashboard/saved', label: '저장된 글', icon: Save },

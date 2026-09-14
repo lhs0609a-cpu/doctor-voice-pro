@@ -18,6 +18,7 @@ import { Step3Drafts } from '@/components/campaign/step3-drafts'
 import { Step4Photos } from '@/components/campaign/step4-photos'
 import { Step5Schedule } from '@/components/campaign/step5-schedule'
 import { Step6Status } from '@/components/campaign/step6-status'
+import { AutomationPanel } from '@/components/campaign/automation-panel'
 
 export default function CampaignWizardPage() {
   const params = useParams<{ id: string }>()
@@ -27,6 +28,7 @@ export default function CampaignWizardPage() {
   const [client, setClient] = useState<Client | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [step, setStep] = useState(1)
+  const [manualOpen, setManualOpen] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -34,7 +36,9 @@ export default function CampaignWizardPage() {
       const cl = await campaignAPI.getClient(c.client_id)
       setCampaign(c)
       setClient(cl)
-      setStep(Math.min(6, Math.max(1, c.step || 1)))
+      const requested = Number(new URLSearchParams(window.location.search).get('step'))
+      setStep(requested >= 1 && requested <= 6 ? requested : Math.min(6, Math.max(1, c.step || 1)))
+      if (requested >= 1 && requested <= 6) setManualOpen(true)
     } catch (err: any) {
       setError(errMsg(err))
     }
@@ -92,6 +96,14 @@ export default function CampaignWizardPage() {
         }
       />
 
+      <AutomationPanel campaignId={id} onComplete={load} />
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Button asChild variant="outline"><Link href="/dashboard/one-stop">자동 운영 현황으로</Link></Button>
+        <Button variant="ghost" aria-expanded={manualOpen} onClick={() => setManualOpen(open => !open)}>{manualOpen ? '세부 관리 접기' : '키워드·원고·예약 세부 관리'}</Button>
+      </div>
+      {manualOpen && <div className="space-y-6">
+
       {/* 스텝 바 */}
       <ol className="flex items-center gap-2">
         {STEP_LABELS.map((s, i) => {
@@ -131,6 +143,7 @@ export default function CampaignWizardPage() {
       {step === 4 && <Step4Photos {...stepProps} />}
       {step === 5 && <Step5Schedule {...stepProps} />}
       {step === 6 && <Step6Status {...stepProps} />}
+      </div>}
     </div>
   )
 }

@@ -1,0 +1,97 @@
+"""실행기 하트비트 계약 — 웹 신호등이 읽는 값."""
+from datetime import datetime, timedelta
+from pathlib import Path
+import tempfile
+import unittest
+
+import httpx
+from fastapi import FastAPI
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app.api import campaign as api
+from app.models.campaign import AgentSession
+from app.models.user import User
+
+
+class AgentStatusTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.engine = create_async_engine('sqlite+aiosqlite:///' + str(Path(self.tmp.name) / 'agent.db'))
+        async with self.engine.begin() as conn:
+            await conn.run_sync(lambda sync: AgentSession.__table__.create(sync))
+        self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
+        app = FastAPI()
+        app.include_router(api.router)
+
+        async def db_override():
+            async with self.sessions() as db:
+                yield db
+        app.dependency_overrides[api.get_db] = db_override
+        app.dependency_overrides[api.get_current_user] = lambda: User(id='u')
+        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test')
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+        await self.engine.dispose()
+        self.tmp.cleanup()
+
+    def beat(self, **overrides):
+        body = {'device_id': 'pc-1', 'version': '1.2.0', 'running': True, 'label': '원장님 PC', 'note': '대기 3건'}
+        body.update(overrides)
+        return body
+
+    async def test_light_turns_on_with_the_first_heartbeat(self):
+        before = await self.client.get('/agent/status')
+        self.assertEqual(before.json()['online'], False)
+        beat = await self.client.post('/agent/heartbeat', json=self.beat())
+        self.assertEqual(beat.status_code, 200, beat.text)
+        status = (await self.client.get('/agent/status')).json()
+        self.assertTrue(status['online'])
+        self.assertTrue(status['running'])
+        self.assertEqual(status['version'], '1.2.0')
+        self.assertEqual(status['devices'][0]['label'], '원장님 PC')
+        self.assertEqual(status['devices'][0]['note'], '대기 3건')
+
+    async def test_same_device_updates_one_row(self):
+        await self.client.post('/agent/heartbeat', json=self.beat())
+        await self.client.post('/agent/heartbeat', json=self.beat(running=False, note='중단됨'))
+        status = (await self.client.get('/agent/status')).json()
+        self.assertEqual(len(status['devices']), 1)
+        self.assertFalse(status['running'])
+        self.assertTrue(status['online'])  # 켜져 있지만 발행은 멈춘 상태
+        self.assertEqual(status['devices'][0]['note'], '중단됨')
+
+    async def test_silence_turns_the_light_off(self):
+        await self.client.post('/agent/heartbeat', json=self.beat())
+        async with self.sessions() as db:
+            row = await db.get(AgentSession, 'pc-1')
+            row.last_seen_at = datetime.utcnow() - timedelta(seconds=api.ONLINE_SECONDS + 30)
+            await db.commit()
+        status = (await self.client.get('/agent/status')).json()
+        self.assertFalse(status['online'])
+        self.assertFalse(status['running'])
+        self.assertIsNone(status['version'])
+        self.assertGreater(status['devices'][0]['seconds_ago'], api.ONLINE_SECONDS)
+
+    async def test_two_computers_are_listed_and_either_one_keeps_it_online(self):
+        await self.client.post('/agent/heartbeat', json=self.beat(device_id='pc-1', running=False))
+        await self.client.post('/agent/heartbeat', json=self.beat(device_id='pc-2', running=True))
+        status = (await self.client.get('/agent/status')).json()
+        self.assertEqual(len(status['devices']), 2)
+        self.assertTrue(status['online'])
+        self.assertTrue(status['running'])
+
+    async def test_another_users_device_is_refused(self):
+        async with self.sessions() as db:
+            db.add(AgentSession(device_id='pc-1', user_id='someone-else', last_seen_at=datetime.utcnow()))
+            await db.commit()
+        response = await self.client.post('/agent/heartbeat', json=self.beat())
+        self.assertEqual(response.status_code, 403, response.text)
+
+    async def test_device_id_is_required(self):
+        response = await self.client.post('/agent/heartbeat', json=self.beat(device_id='  '))
+        self.assertEqual(response.status_code, 400, response.text)
+
+
+if __name__ == '__main__':
+    unittest.main()

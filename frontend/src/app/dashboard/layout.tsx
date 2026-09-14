@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { DevBanner } from '@/components/app-shell/dev-banner'
 import { Sidebar } from '@/components/app-shell/sidebar'
 import { Topbar } from '@/components/app-shell/topbar'
@@ -12,6 +12,8 @@ import { GenerationSaver } from '@/components/generation-saver'
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
+  const pathname = usePathname()
+  const inlineOnboarding = pathname === '/dashboard/one-stop' || pathname === '/dashboard/launcher'
   const { user, hydrated, hydrate } = useAuthStore()
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [showTutorial, setShowTutorial] = useState(false)
@@ -27,11 +29,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       router.push('/login')
       return
     }
+    if (inlineOnboarding) return
     const onboardingCompleted = localStorage.getItem('onboarding_completed')
     const tutorialCompleted = localStorage.getItem('tutorial_completed')
     if (!onboardingCompleted) setShowOnboarding(true)
     else if (!tutorialCompleted) setShowTutorial(true)
-  }, [user, hydrated, router])
+  }, [user, hydrated, router, inlineOnboarding])
 
   const handleOnboardingComplete = () => {
     setShowOnboarding(false)
@@ -60,7 +63,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </main>
       </div>
 
-      {showOnboarding && (
+      {showOnboarding && !inlineOnboarding && (
         <OnboardingModal
           userName={user?.name ?? undefined}
           onComplete={handleOnboardingComplete}
@@ -70,7 +73,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           }}
         />
       )}
-      {showTutorial && <TutorialGuide onComplete={() => setShowTutorial(false)} onClose={() => setShowTutorial(false)} />}
+      {showTutorial && !inlineOnboarding && <TutorialGuide onComplete={() => setShowTutorial(false)} onClose={() => setShowTutorial(false)} />}
     </div>
   )
 }

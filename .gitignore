@@ -20,3 +20,6 @@ backend/*.db-wal
 backend/*.db-shm
 logs/
 publish-agent/profiles/
+publish-agent/debug.log
+publish-agent/build/
+publish-agent/dist/

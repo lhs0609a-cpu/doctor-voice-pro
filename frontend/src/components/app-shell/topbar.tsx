@@ -8,13 +8,13 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ThemeToggle } from '@/components/theme-toggle'
-import { ExtensionStatusBadge } from '@/components/extension-status'
+import { LauncherStatusBadge } from '@/components/launcher/launcher-card'
 import { useAuthStore } from '@/store/auth'
 import { Sidebar } from './sidebar'
 import { LogoMark } from './logo'
 import { currentTitle } from './nav-config'
 
-/** 상단 바: 모바일 메뉴, 현재 화면 이름, 확장 상태, 테마, 계정. */
+/** 상단 바: 모바일 메뉴, 현재 화면 이름, 실행기 신호등, 테마, 계정. */
 export function Topbar() {
   const pathname = usePathname() || ''
   const router = useRouter()
@@ -47,7 +47,7 @@ export function Topbar() {
           <span className="text-foreground">{currentTitle(pathname)}</span>
         </div>
         <div className="ml-auto flex items-center gap-1.5">
-          <ExtensionStatusBadge />
+          <LauncherStatusBadge />
           <ThemeToggle />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

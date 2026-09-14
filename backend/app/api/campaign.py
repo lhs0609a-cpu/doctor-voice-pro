@@ -16,10 +16,11 @@ from pathlib import Path
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select, update
+from sqlalchemy import func, inspect, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -27,7 +28,7 @@ from app.core.config import settings
 from app.models import User
 from app.models.background_job import BackgroundJob
 from app.models.campaign import (
-    JOB_ACTIVE, Blog, BriefPreset, Campaign, CampaignKeyword, Client, Draft, PublishJob, SerpSnapshot,
+    JOB_ACTIVE, AgentDevice, AgentPairCode, AgentSession, AutopilotPolicy, AutomationRun, Blog, BriefPreset, Campaign, CampaignKeyword, Client, Draft, PublishJob, PublishAttempt, SerpSnapshot,
 )
 from app.models.media_pool import ImageVariant, PoolCollection, PoolCollectionMember, PoolImage
 from app.models.publish_queue import ScheduleMark
@@ -37,12 +38,82 @@ from app.services import campaign_writer as writer
 from app.services import image_uniquifier as uniq
 from app.services import job_worker
 from app.services import schedule_engine as se
+from app.services import publish_protocol as protocol
+from app.services.autopilot import PolicyConfig
 
 router = APIRouter()
 
 
+class AutopilotIn(PolicyConfig):
+    enabled: bool = True
+
+
+@router.get('/campaigns/{campaign_id}/autopilot')
+async def get_autopilot(campaign_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from app.models.campaign import AutopilotPolicy
+    campaign = await _owned(db, Campaign, campaign_id, current_user, '캠페인')
+    policy = await db.get(AutopilotPolicy, campaign_id)
+    task = await db.get(BackgroundJob, policy.last_job_id) if policy and policy.last_job_id else None
+    return {'enabled': bool(policy and policy.enabled),
+            'config': PolicyConfig.model_validate(policy.config if policy else (campaign.settings or {}).get('landing', {})).model_dump(),
+            'message': policy.message if policy else '운영 기준을 저장하면 키워드 발굴부터 시작합니다',
+            'next_run_at': policy.next_run_at.isoformat() + 'Z' if policy else None,
+            'reserved_today': policy.reserved_today if policy and policy.quota_day == se.kst_now().date().isoformat() else 0,
+            'task': _task_out(task) if task else None}
+
+
+@router.put('/campaigns/{campaign_id}/autopilot')
+async def configure_autopilot(campaign_id: str, body: AutopilotIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from app.models.campaign import AutopilotPolicy
+    from app.services.autopilot import preflight, tick
+    campaign = await _owned(db, Campaign, campaign_id, current_user, '캠페인')
+    uid = _uid(current_user)
+    config = PolicyConfig.model_validate(body.model_dump())
+    if body.enabled:
+        issues = await preflight(db, campaign, config)
+        if issues:
+            raise HTTPException(status_code=400, detail={'message': '자동 운영 준비가 필요합니다', 'issues': issues})
+    await db.execute(update(AutopilotPolicy).where(AutopilotPolicy.campaign_id == campaign_id).values(updated_at=datetime.utcnow()))
+    await db.execute(update(Campaign).where(Campaign.id == campaign_id).values(updated_at=datetime.utcnow()))
+    policy = await db.get(AutopilotPolicy, campaign_id, populate_existing=True)
+    if not policy:
+        policy = AutopilotPolicy(campaign_id=campaign_id, user_id=uid, reserved_today=0)
+        db.add(policy)
+    policy.config, policy.enabled = config.model_dump(), body.enabled
+    campaign.settings = {**(campaign.settings or {}), 'landing': {
+        key: value for key, value in config.model_dump().items() if key.startswith('landing_')}}
+    policy.next_run_at = datetime.utcnow()
+    policy.message = '자동 운영 시작' if body.enabled else '일시정지 — 이미 네이버에 등록된 예약은 유지됩니다'
+    if not body.enabled:
+        active = await db.get(AutomationRun, campaign_id)
+        if active:
+            await db.execute(update(BackgroundJob).where(BackgroundJob.id == active.job_id,
+                BackgroundJob.status.in_(['pending', 'running'])).values(status='cancelled', finished_at=datetime.utcnow()))
+    await db.commit()
+    if body.enabled:
+        await tick(db, campaign_id)
+    return await get_autopilot(campaign_id, current_user, db)
+
+
+@router.put('/campaigns/{campaign_id}/landing')
+async def configure_landing(campaign_id: str, body: PolicyConfig, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from app.models.campaign import AutopilotPolicy
+    campaign = await _owned(db, Campaign, campaign_id, current_user, '캠페인')
+    await db.execute(update(AutopilotPolicy).where(AutopilotPolicy.campaign_id == campaign_id).values(updated_at=datetime.utcnow()))
+    await db.execute(update(Campaign).where(Campaign.id == campaign_id).values(updated_at=datetime.utcnow()))
+    await db.refresh(campaign)
+    landing = {key: value for key, value in body.model_dump().items() if key.startswith('landing_')}
+    campaign.settings = {**(campaign.settings or {}), 'landing': landing}
+    policy = await db.get(AutopilotPolicy, campaign_id, populate_existing=True)
+    if policy:
+        policy.config = {**policy.config, **landing}
+    await db.commit()
+    return landing
+
+
 def _uid(user: User) -> str:
-    return str(user.id)
+    identity = inspect(user).identity
+    return str(identity[0]) if identity else str(user.id)
 
 
 async def _owned(db: AsyncSession, model, obj_id: str, user: User, what: str = "항목"):
@@ -237,11 +308,22 @@ class BlogIn(BaseModel):
     open_type: str = "public"
 
 
+def _clean_blog_id(raw: str) -> str:
+    """주소를 통째로 붙여 넣어도 아이디만 남긴다(https://blog.naver.com/abc123 → abc123).
+    그대로 저장하면 실행기가 없는 블로그 주소로 가서 발행이 실패하므로, 모양이 틀린 값은 여기서 막는다."""
+    import re
+    from app.blogindex import normalize_blog_id
+    bid = normalize_blog_id(raw)
+    if not re.fullmatch(r"[A-Za-z0-9_-]{2,50}", bid):
+        raise HTTPException(status_code=400, detail="네이버 블로그 아이디는 blog.naver.com/ 뒤의 영어·숫자 부분입니다 (예: abc123)")
+    return bid
+
+
 @router.post("/clients/{client_id}/blogs", response_model=BlogOut)
 async def add_blog(client_id: str, body: BlogIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     await _owned(db, Client, client_id, current_user, "병원")
     b = Blog(
-        user_id=_uid(current_user), client_id=client_id, blog_id=body.blog_id.strip(), label=body.label,
+        user_id=_uid(current_user), client_id=client_id, blog_id=_clean_blog_id(body.blog_id), label=body.label,
         login_id=body.login_id, login_pw_enc=crypto.encrypt(body.login_pw), daily_limit=body.daily_limit,
         window_start=body.window_start, window_end=body.window_end, min_gap_minutes=body.min_gap_minutes,
         default_category=body.default_category, open_type=body.open_type,
@@ -254,7 +336,7 @@ async def add_blog(client_id: str, body: BlogIn, current_user: User = Depends(ge
 @router.put("/blogs/{blog_ref_id}", response_model=BlogOut)
 async def update_blog(blog_ref_id: str, body: BlogIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     b = await _owned(db, Blog, blog_ref_id, current_user, "블로그")
-    b.blog_id = body.blog_id.strip()
+    b.blog_id = _clean_blog_id(body.blog_id)
     b.label, b.login_id = body.label, body.login_id
     if body.login_pw:
         b.login_pw_enc = crypto.encrypt(body.login_pw)
@@ -881,6 +963,11 @@ class DraftPatch(BaseModel):
 @router.put("/drafts/{draft_id}", response_model=DraftOut)
 async def update_draft(draft_id: str, body: DraftPatch, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     d = await _owned(db, Draft, draft_id, current_user, "원고")
+    if d.status == "generating":
+        raise HTTPException(status_code=409, detail="생성이 끝난 뒤 원고를 수정하세요")
+    locked = (await db.execute(select(PublishJob.id).where(PublishJob.draft_id == d.id, PublishJob.status.in_(["assigned", "publishing", "submitted", "uncertain"])).limit(1))).scalar_one_or_none()
+    if locked:
+        raise HTTPException(status_code=409, detail="실행 중이거나 등록된 원고는 수정할 수 없습니다")
     if body.title is not None:
         d.title = body.title[:200]
     if body.body is not None:
@@ -898,6 +985,22 @@ async def update_draft(draft_id: str, body: DraftPatch, current_user: User = Dep
         d.tags = body.tags
     if body.status in ("ready", "needs_review"):
         d.status = body.status
+    if body.title is not None or body.body is not None or body.status == "ready":
+        client = await db.get(Client, d.client_id) if d.client_id else None
+        checks = writer.run_static_checks(d.title, d.body, client.forbidden_words if client else [])
+        previous_checks = d.checks or {}
+        if previous_checks.get('landing'):
+            checks['landing'] = previous_checks['landing']
+            checks['ok'] = checks['ok'] and d.body.count(checks['landing']['url']) == 1
+        if previous_checks.get('editorial'):
+            from app.services.editorial_quality import fingerprint
+            editorial = dict(previous_checks['editorial'])
+            editorial['approved'] = editorial.get('approved') is True and editorial.get('content_hash') == fingerprint(d.title, d.body)
+            checks['editorial'] = editorial
+            checks['ok'] = checks['ok'] and editorial['approved']
+        d.checks = checks
+        d.status = "ready" if checks["ok"] and body.status != "needs_review" else "needs_review"
+        await db.execute(update(PublishJob).where(PublishJob.draft_id == d.id, PublishJob.status == "queued").values(images_ready=False))
     await db.commit()
     return _draft_out(d)
 
@@ -992,6 +1095,13 @@ class ImagePlanIn(BaseModel):
 @router.put("/drafts/{draft_id}/image-plan", response_model=DraftOut)
 async def set_image_plan(draft_id: str, body: ImagePlanIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     d = await _owned(db, Draft, draft_id, current_user, "원고")
+    locked = (await db.execute(select(PublishJob.id).where(PublishJob.draft_id == d.id, PublishJob.status.in_(["assigned", "publishing", "submitted", "uncertain"])).limit(1))).scalar_one_or_none()
+    if locked:
+        raise HTTPException(status_code=409, detail="실행 중이거나 등록된 원고의 사진은 수정할 수 없습니다")
+    ids = {s['pool_image_id'] for s in body.slots if s.get('pool_image_id')}
+    owned_ids = set((await db.execute(select(PoolImage.id).where(PoolImage.id.in_(ids), PoolImage.user_id == _uid(current_user)))).scalars().all())
+    if ids != owned_ids:
+        raise HTTPException(status_code=400, detail="사용할 수 없는 사진이 포함되어 있습니다")
     current = {s.get("slot"): dict(s) for s in (d.image_plan or [])}
     for s in body.slots:
         idx = s.get("slot")
@@ -1098,6 +1208,7 @@ async def schedule_preview(campaign_id: str, body: ScheduleIn, current_user: Use
 @router.post("/campaigns/{campaign_id}/schedule/commit", response_model=SchedulePreview)
 async def schedule_commit(campaign_id: str, body: ScheduleIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
+    await db.execute(update(Campaign).where(Campaign.id == c.id).values(updated_at=datetime.utcnow()))
     blogs, drafts, plans, warnings = await _schedule_inputs(db, c, body, current_user)
     seed = body.seed if body.seed is not None else int(c.created_at.timestamp()) if c.created_at else 0
     assigned, remaining = se.allocate(len(drafts), plans, body.start_date, body.days, seed=seed)
@@ -1130,10 +1241,12 @@ async def schedule_commit(campaign_id: str, body: ScheduleIn, current_user: User
 async def schedule_cancel(campaign_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """아직 발행되지 않은 예약을 전부 취소한다(발행중인 건은 남긴다)."""
     c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
-    jobs = (await db.execute(select(PublishJob).where(PublishJob.campaign_id == c.id, PublishJob.status.in_(["queued", "assigned", "failed", "uncertain"])))).scalars().all()
+    jobs = (await db.execute(select(PublishJob).where(PublishJob.campaign_id == c.id, PublishJob.status.in_(["queued", "failed", "dry_run"])))).scalars().all()
     n = 0
     for j in jobs:
-        j.status = "cancelled"
+        changed = await db.execute(update(PublishJob).where(PublishJob.id == j.id, PublishJob.status.in_(["queued", "failed", "dry_run"])).values(status="cancelled"))
+        if changed.rowcount != 1:
+            continue
         b = await db.get(Blog, j.blog_ref_id)
         if b:
             mark = (await db.execute(select(ScheduleMark).where(ScheduleMark.user_id == _uid(current_user), ScheduleMark.blog_id == b.blog_id, ScheduleMark.scheduled_at == j.scheduled_at))).scalar_one_or_none()
@@ -1186,6 +1299,7 @@ async def _jobs_out(db: AsyncSession, jobs: List[PublishJob]) -> List[JobOut]:
 
 @router.get("/campaigns/{campaign_id}/jobs", response_model=List[JobOut])
 async def list_jobs(campaign_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    await protocol.recover_expired(db, _uid(current_user))
     c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
     jobs = (await db.execute(select(PublishJob).where(PublishJob.campaign_id == c.id).order_by(PublishJob.scheduled_at.asc()))).scalars().all()
     return await _jobs_out(db, jobs)
@@ -1194,9 +1308,13 @@ async def list_jobs(campaign_id: str, current_user: User = Depends(get_current_u
 @router.post("/jobs/{job_id}/retry", response_model=JobOut)
 async def retry_job(job_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     j = await _owned(db, PublishJob, job_id, current_user, "발행건")
-    if j.status not in ("failed", "uncertain", "cancelled"):
-        raise HTTPException(status_code=400, detail="실패·확인필요·취소 상태만 다시 시도할 수 있습니다")
-    j.status, j.error, j.lock_token, j.lock_expires_at = "queued", None, None, None
+    if j.status not in ("failed", "cancelled", "dry_run"):
+        raise HTTPException(status_code=400, detail="확인 필요 건은 네이버 예약 목록을 대조한 뒤 처리하세요")
+    changed = await db.execute(update(PublishJob).where(PublishJob.id == j.id, PublishJob.status == j.status).values(
+        status="queued", error=None, lock_token=None, lock_expires_at=None, next_retry_at=None))
+    if changed.rowcount != 1:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="작업 상태가 변경되었습니다. 새로고침하세요")
     await db.commit()
     return (await _jobs_out(db, [j]))[0]
 
@@ -1204,24 +1322,111 @@ async def retry_job(job_id: str, current_user: User = Depends(get_current_user),
 @router.post("/jobs/{job_id}/cancel", response_model=JobOut)
 async def cancel_job(job_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     j = await _owned(db, PublishJob, job_id, current_user, "발행건")
-    if j.status in ("published", "publishing"):
+    if j.status not in ("queued", "failed", "dry_run"):
         raise HTTPException(status_code=400, detail="발행됐거나 발행 중인 건은 취소할 수 없습니다")
-    j.status = "cancelled"
+    changed = await db.execute(update(PublishJob).where(PublishJob.id == j.id, PublishJob.status == j.status).values(status="cancelled"))
+    if changed.rowcount != 1:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="실행이 시작되어 취소할 수 없습니다")
     await db.commit()
     return (await _jobs_out(db, [j]))[0]
 
 
 class MarkPublishedIn(BaseModel):
-    result_url: Optional[str] = None
+    result_url: str = Field(min_length=10, max_length=500)
 
 
 @router.post("/jobs/{job_id}/mark-published", response_model=JobOut)
 async def mark_published(job_id: str, body: MarkPublishedIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """'확인 필요' 건을 사람이 네이버에서 확인한 뒤 발행됨으로 표시."""
     j = await _owned(db, PublishJob, job_id, current_user, "발행건")
-    j.status, j.result_url, j.published_at = "published", body.result_url, datetime.utcnow()
+    from urllib.parse import urlparse
+    url = urlparse(body.result_url)
+    if url.scheme != "https" or url.hostname != "blog.naver.com" or not re.fullmatch(rf"/{re.escape(j.naver_blog_id or '')}/[0-9]+/?", url.path):
+        raise HTTPException(status_code=400, detail="해당 블로그의 공개 게시물 URL을 입력하세요")
+    if j.status not in ("uncertain", "submitted"):
+        raise HTTPException(status_code=409, detail="확인 필요 또는 예약 등록 상태만 확인할 수 있습니다")
+    if j.lock_expires_at and j.lock_expires_at > datetime.utcnow():
+        raise HTTPException(status_code=409, detail="실행기가 아직 작업 중입니다")
+    changed = await db.execute(update(PublishJob).where(PublishJob.id == j.id, PublishJob.status == j.status).values(
+        status="published", result_url=body.result_url, published_at=datetime.utcnow()))
+    if changed.rowcount != 1:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="작업 상태가 변경되었습니다")
+    await db.execute(update(PublishAttempt).where(PublishAttempt.job_id == j.id).values(active_blog_id=None))
     await db.commit()
     return (await _jobs_out(db, [j]))[0]
+
+
+class AutomationIn(BaseModel):
+    max_keywords: int = Field(default=10, ge=1, le=50)
+    image_count: int = Field(default=5, ge=0, le=20)
+    auto_schedule: bool = False
+    start_date: date
+    days: int = Field(default=14, ge=1, le=90)
+    discover_keywords: bool = False
+    quality: PolicyConfig = Field(default_factory=PolicyConfig)
+
+
+@router.post("/campaigns/{campaign_id}/automation", response_model=TaskOut)
+async def start_automation(campaign_id: str, body: AutomationIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    campaign = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
+    uid = _uid(current_user)
+    if body.discover_keywords:
+        # Use the same lock order as recurring replenishment.
+        await db.execute(update(AutopilotPolicy).where(AutopilotPolicy.campaign_id == campaign_id).values(updated_at=datetime.utcnow()))
+        policy = await db.get(AutopilotPolicy, campaign_id, populate_existing=True)
+        if policy and policy.enabled:
+            raise HTTPException(status_code=409, detail="매일 자동 운영을 일시정지한 뒤 대량 작업을 시작하세요")
+    await db.execute(update(Campaign).where(Campaign.id == campaign_id).values(updated_at=datetime.utcnow()))
+    active = await db.get(AutomationRun, campaign_id)
+    previous = active.job_id if active else None
+    if previous:
+        old = await db.get(BackgroundJob, previous)
+        if old and old.status in ("pending", "running"):
+            return _task_out(old)
+        if old and old.status == "cancelled" and old.locked_at and old.updated_at and datetime.utcnow() - old.updated_at < timedelta(minutes=30):
+            raise HTTPException(status_code=409, detail="이전 자동화가 취소 처리 중입니다. 잠시 후 다시 시작하세요")
+    keyword_ids = [] if body.discover_keywords else list((await db.execute(select(CampaignKeyword.id).where(
+        CampaignKeyword.campaign_id == campaign_id, CampaignKeyword.selected == True,
+    ).order_by(CampaignKeyword.created_at).limit(body.max_keywords))).scalars().all())
+    if not keyword_ids and not body.discover_keywords:
+        raise HTTPException(status_code=400, detail="2단계에서 자동화할 키워드를 선택하세요")
+    payload = {**body.model_dump(mode="json"), "campaign_id": campaign_id, "keyword_ids": keyword_ids}
+    if body.discover_keywords:
+        from app.services.autopilot import preflight
+        issues = await preflight(db, campaign, body.quality)
+        if issues:
+            raise HTTPException(status_code=400, detail={"issues": issues})
+        client = await db.get(Client, campaign.client_id)
+        payload.update({**body.quality.model_dump(), "keyword_ids": [], "strict_quality": True,
+                        "auto_schedule": True, "collection_id": campaign.collection_id or client.default_collection_id})
+        campaign.settings = {**(campaign.settings or {}), "landing": body.quality.model_dump()}
+        if policy:
+            policy.config = body.quality.model_dump()
+    job = BackgroundJob(user_id=uid, type="automation_pipeline", status="pending",
+                        payload=payload,
+                        result={"requested": body.max_keywords} if body.discover_keywords else None,
+                        max_attempts=2, total=4, run_after=datetime.utcnow())
+    db.add(job)
+    await db.flush()
+    if active:
+        changed = await db.execute(update(AutomationRun).where(AutomationRun.campaign_id == campaign_id, AutomationRun.job_id == previous).values(job_id=job.id))
+        if changed.rowcount != 1:
+            await db.rollback()
+            active = await db.get(AutomationRun, campaign_id)
+            return _task_out(await db.get(BackgroundJob, active.job_id))
+    else:
+        db.add(AutomationRun(campaign_id=campaign_id, user_id=uid, job_id=job.id))
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        active = await db.get(AutomationRun, campaign_id)
+        if not active:
+            raise
+        return _task_out(await db.get(BackgroundJob, active.job_id))
+    return _task_out(job)
 
 
 # ======================================================================
@@ -1230,8 +1435,11 @@ async def mark_published(job_id: str, body: MarkPublishedIn, current_user: User 
 class ClaimIn(BaseModel):
     blog_ref_id: Optional[str] = None      # 특정 블로그 것만
     naver_blog_id: Optional[str] = None    # 확장이 현재 로그인된 블로그로 필터할 때
-    limit: int = 10
+    limit: int = Field(default=1, ge=1, le=20)
     include_images: bool = True
+    mode: str = Field(default="live", pattern="^(live|dry_run)$")
+    protocol_version: int = 1
+    capabilities: List[str] = Field(default_factory=list, max_length=20)
 
 
 class JobBlock(BaseModel):
@@ -1254,6 +1462,8 @@ class ClaimedJob(BaseModel):
     expectedBlogId: Optional[str] = None
     blog_ref_id: str
     draft_id: str
+    protocol_version: int = 2
+    lease_seconds: int = protocol.LEASE_SECONDS
 
 
 def _assemble_blocks(draft: Draft, variants: List[Dict[str, Any]], include_images: bool) -> List[JobBlock]:
@@ -1281,67 +1491,80 @@ def _assemble_blocks(draft: Draft, variants: List[Dict[str, Any]], include_image
 
 @router.post("/agent/claim", response_model=List[ClaimedJob])
 async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """발행 실행기가 대기 잡을 가져간다. queued/assigned(잠금 만료) → assigned + lock.
-    사진이 아직 준비 안 된 건은 즉석에서 유니크화한다(느리지만 안전)."""
-    now = datetime.utcnow()
-    q = select(PublishJob).where(
-        PublishJob.user_id == _uid(current_user),
-        PublishJob.status.in_(["queued", "assigned", "failed"]),
-    )
+    if body.protocol_version != 2:
+        raise HTTPException(status_code=426, detail="실행기와 확장프로그램을 새 버전으로 업데이트하세요")
+    await protocol.recover_expired(db, _uid(current_user))
+    q = select(PublishJob).where(PublishJob.user_id == _uid(current_user), protocol.eligible(datetime.utcnow()))
     if body.blog_ref_id:
         q = q.where(PublishJob.blog_ref_id == body.blog_ref_id)
     if body.naver_blog_id:
         q = q.where(PublishJob.naver_blog_id == body.naver_blog_id)
-    rows = (await db.execute(q.order_by(PublishJob.scheduled_at.asc()).limit(body.limit * 3))).scalars().all()
-
-    blogs = {b.id: b for b in (await db.execute(select(Blog).where(Blog.user_id == _uid(current_user)))).scalars().all()}
-    claimed: List[ClaimedJob] = []
-    kst_now = se.kst_now()
-    for j in rows:
-        if len(claimed) >= body.limit:
-            break
-        if j.status == "assigned" and j.lock_expires_at and j.lock_expires_at > now:
-            continue  # 다른 실행기가 잡고 있음
-        if j.status == "failed" and (j.next_retry_at is None or j.next_retry_at > now):
+    rows = (await db.execute(q.order_by(PublishJob.scheduled_at).limit(60))).scalars().all()
+    candidates = [(j.id, j.blog_ref_id) for j in rows]
+    for job_id, blog_id in candidates:
+        from app.models.campaign import AutopilotPolicy
+        candidate = await db.get(PublishJob, job_id)
+        candidate_draft = await db.get(Draft, candidate.draft_id)
+        if candidate_draft and (candidate_draft.checks or {}).get('landing') and 'landing_links_v1' not in body.capabilities:
+            raise HTTPException(status_code=426, detail='랜딩 링크 검증을 지원하는 최신 실행기로 업데이트하세요')
+        policy = await db.get(AutopilotPolicy, candidate.campaign_id)
+        bulk_publication = (candidate_draft.checks or {}).get('bulk_publication') if candidate_draft else None
+        if policy and not policy.enabled and not bulk_publication:
             continue
-        b = blogs.get(j.blog_ref_id)
-        if not b or b.status != "active":
+        blog = await db.get(Blog, blog_id)
+        if not blog or blog.user_id != _uid(current_user) or blog.status != "active":
             continue
-        if j.scheduled_at <= kst_now + timedelta(minutes=15):
-            # 예약 시각이 임박/경과 → 네이버가 '지금'으로 처리할 위험. 실패 처리하고 사람이 재배정하게 한다.
-            j.status, j.error = "failed", "예약 시각이 지나 발행하지 못했습니다. 다시 시도하면 새 시각으로 배정하세요."
-            j.next_retry_at = None
+        token = await protocol.claim(db, job_id, _uid(current_user), blog_id, body.mode)
+        if not token:
             continue
-        draft = await db.get(Draft, j.draft_id)
-        if not draft:
-            j.status, j.error = "failed", "원고가 삭제되었습니다"
-            continue
-        # 변형 파일이 사라졌으면(재배포·볼륨 교체) 다시 만든다 — 사진 없이 나가는 사고 방지
-        if j.images_ready and any(not Path(v.get("path", "")).exists() for v in (j.image_variants or [])):
-            j.images_ready = False
-        if body.include_images and not j.images_ready and (draft.image_plan or []):
-            try:
+        try:
+            j = await db.get(PublishJob, job_id, populate_existing=True)
+            if j.scheduled_at <= se.kst_now() + timedelta(minutes=15):
+                raise ValueError("예약 시각이 임박했습니다. 새 시각으로 예약하세요")
+            draft = await db.get(Draft, j.draft_id)
+            if not draft or draft.user_id != _uid(current_user):
+                raise ValueError("원고를 찾을 수 없습니다")
+            if draft.status != "ready":
+                raise ValueError("검수가 끝난 원고만 발행할 수 있습니다")
+            from app.services.editorial_quality import approved
+            policy = await db.get(AutopilotPolicy, j.campaign_id)
+            bulk_publication = (draft.checks or {}).get('bulk_publication')
+            if policy or bulk_publication:
+                if policy and not policy.enabled and not bulk_publication:
+                    raise ValueError('자동 운영이 일시정지되어 발행을 보류합니다')
+                if not approved(draft):
+                    raise ValueError('근거·품질 검수 승인과 현재 원고가 일치하지 않습니다')
+                required_images = bulk_publication['image_count'] if bulk_publication else policy.config.get('image_count', 0)
+                if required_images and (not body.include_images or
+                        len(draft.image_plan or []) < required_images):
+                    raise ValueError('자동 운영에 필요한 이미지가 누락되었습니다')
+            if j.images_ready and any(not Path(v.get("path", "")).is_file() for v in (j.image_variants or [])):
+                j.images_ready = False
+            if body.include_images and not j.images_ready and draft.image_plan:
                 j.image_variants = await campaign_jobs.prepare_job_images(db, j, draft)
                 j.images_ready = True
-            except Exception as e:  # noqa: BLE001
-                j.error = f"사진 준비 실패: {e}"[:500]
-                j.status = "failed"
-                j.next_retry_at = now + timedelta(minutes=10)
-                continue
-        token = secrets.token_hex(16)
-        j.status, j.lock_token = "assigned", token
-        j.lock_expires_at = now + timedelta(minutes=settings.PUBLISH_LOCK_MINUTES)
-        blocks = _assemble_blocks(draft, j.image_variants or [], body.include_images)
-        content = "\n\n".join(bk.content for bk in blocks if bk.type == "text" and bk.content)
-        claimed.append(ClaimedJob(
-            id=j.id, lock_token=token, title=draft.title, content=content, blocks=blocks,
-            tags=(draft.tags or [])[:10], emphasize=draft.emphasize or ([draft.keyword] if draft.keyword else []),
-            finalAction="schedule", schedule={"datetime": j.scheduled_at.isoformat(timespec="minutes")},
-            options={"openType": j.open_type or "public", "search": True, "category": j.category or None},
-            expectedBlogId=j.naver_blog_id, blog_ref_id=j.blog_ref_id, draft_id=j.draft_id,
-        ))
-    await db.commit()
-    return claimed
+            blocks = _assemble_blocks(draft, j.image_variants or [], body.include_images)
+            if body.include_images and draft.image_plan and sum(b.type == "image" for b in blocks) != len(draft.image_plan):
+                raise ValueError("필수 이미지가 누락되었습니다")
+            payload = ClaimedJob(
+                id=j.id, lock_token=token, title=draft.title,
+                content="\n\n".join(b.content for b in blocks if b.type == "text" and b.content),
+                blocks=blocks, tags=(draft.tags or [])[:10], emphasize=draft.emphasize or [],
+                schedule={"datetime": j.scheduled_at.isoformat(timespec="minutes") + "+09:00"},
+                options={"openType": j.open_type or "public", "search": True, "category": j.category,
+                         "requiredLinks": [draft.checks['landing']['url']] if (draft.checks or {}).get('landing') else []},
+                expectedBlogId=j.naver_blog_id, blog_ref_id=j.blog_ref_id, draft_id=j.draft_id,
+            )
+            attempt = await db.get(PublishAttempt, token)
+            attempt.payload = payload.model_dump()
+            j.lock_expires_at = datetime.utcnow() + timedelta(seconds=protocol.LEASE_SECONDS)
+            await db.commit()
+            return [payload]
+        except Exception as exc:
+            await db.rollback()
+            await protocol.result(db, job_id, _uid(current_user), token,
+                                  {"ok": False, "message": str(exc)[:500]})
+    return []
 
 
 class ResultIn(BaseModel):
@@ -1352,44 +1575,98 @@ class ResultIn(BaseModel):
     url: Optional[str] = None
     need_login: bool = False
     captcha: bool = False
+    receipt_id: Optional[str] = None
     release: bool = False       # 실행기가 시작도 못 했을 때(확장 미연결 등): 시도 횟수 없이 대기로 되돌림
 
 
 @router.post("/agent/jobs/{job_id}/result")
 async def agent_result(job_id: str, body: ResultIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    j = await _owned(db, PublishJob, job_id, current_user, "발행건")
-    if j.lock_token and body.lock_token and j.lock_token != body.lock_token:
-        raise HTTPException(status_code=409, detail="다른 실행기가 잡은 건입니다(잠금 불일치)")
-    now = datetime.utcnow()
-    j.lock_token, j.lock_expires_at = None, None
-    b = await db.get(Blog, j.blog_ref_id)
-    if body.release and not body.ok:
-        j.status, j.next_retry_at = "queued", None
-        j.error = body.message or None
-        await db.commit()
-        return {"success": True, "status": j.status}
-    j.attempts = (j.attempts or 0) + 1
-    if body.ok and not body.uncertain:
-        j.status, j.result_url, j.published_at, j.error = "published", body.url, now, None
+    try:
+        ack = await protocol.result(db, job_id, _uid(current_user), body.lock_token, body.model_dump(exclude={"lock_token"}))
+    except protocol.Conflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if body.need_login or body.captcha:
+        j = await _owned(db, PublishJob, job_id, current_user, "발행건")
+        b = await db.get(Blog, j.blog_ref_id)
         if b:
-            b.last_published_at = now
-    elif body.uncertain:
-        j.status, j.error = "uncertain", body.message or "시간 초과: 네이버 예약 목록에서 확인이 필요합니다"
-    else:
-        j.error = body.message or "발행 실패"
-        if body.captcha or body.need_login:
-            j.status, j.next_retry_at = "queued", None
-            if b:
-                b.status = "captcha" if body.captcha else "login_required"
-                b.status_reason = body.message or ("네이버가 캡차를 요구했습니다. 크롬에서 한 번 풀어주면 이어서 합니다." if body.captcha else "로그인이 풀렸습니다. 크롬에서 다시 로그인하세요.")
-                b.status_changed_at = now
-        elif j.attempts < (j.max_attempts or 3):
-            j.status, j.next_retry_at = "failed", now + timedelta(minutes=10 * j.attempts)
-        else:
-            j.status, j.next_retry_at = "failed", None
+            b.status = "captcha" if body.captcha else "login_required"
+            b.status_reason = body.message
+            await db.commit()
+    return ack
+
+
+class CheckpointIn(BaseModel):
+    lock_token: str = Field(min_length=1, max_length=64)
+    stage: str = Field(default="heartbeat", pattern="^(heartbeat|editing|finalizing)$")
+
+
+async def execution_grant(job_id: str, authorization: str, db: AsyncSession):
+    token = authorization.removeprefix("Bearer ") if authorization.startswith("Bearer ") else ""
+    attempt = await db.get(PublishAttempt, token) if token else None
+    if not attempt or attempt.job_id != job_id:
+        raise HTTPException(status_code=401, detail="유효하지 않은 작업 권한입니다")
+    return attempt
+
+
+@router.get("/execution/{job_id}/payload")
+async def execution_payload(job_id: str, authorization: str = Header(default=""), db: AsyncSession = Depends(get_db)):
+    attempt = await execution_grant(job_id, authorization, db)
+    j = await db.get(PublishJob, job_id)
+    if attempt.result or not j or j.lock_token != attempt.token or j.status != "assigned" or not j.lock_expires_at or j.lock_expires_at <= datetime.utcnow():
+        raise HTTPException(status_code=409, detail="만료되었거나 종료된 작업입니다")
+    return attempt.payload
+
+
+@router.post("/execution/{job_id}/checkpoint")
+async def execution_checkpoint(job_id: str, body: CheckpointIn, authorization: str = Header(default=""), db: AsyncSession = Depends(get_db)):
+    attempt = await execution_grant(job_id, authorization, db)
+    if body.lock_token != attempt.token:
+        raise HTTPException(status_code=409, detail="작업 권한이 일치하지 않습니다")
+    try:
+        return await protocol.checkpoint(db, job_id, attempt.user_id, attempt.token, body.stage)
+    except protocol.Conflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/execution/{job_id}/result")
+async def execution_result(job_id: str, body: ResultIn, authorization: str = Header(default=""), db: AsyncSession = Depends(get_db)):
+    attempt = await execution_grant(job_id, authorization, db)
+    if body.lock_token != attempt.token:
+        raise HTTPException(status_code=409, detail="작업 권한이 일치하지 않습니다")
+    try:
+        return await protocol.result(db, job_id, attempt.user_id, attempt.token, body.model_dump(exclude={"lock_token"}))
+    except protocol.Conflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/agent/jobs/{job_id}/checkpoint")
+async def agent_checkpoint(job_id: str, body: CheckpointIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    try:
+        return await protocol.checkpoint(db, job_id, _uid(current_user), body.lock_token, body.stage)
+    except protocol.Conflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+class ReconcileIn(BaseModel):
+    outcome: str = Field(pattern="^(registered|not_registered)$")
+    evidence: str = Field(min_length=5, max_length=1000)
+
+
+@router.post("/jobs/{job_id}/reconcile", response_model=JobOut)
+async def reconcile_job(job_id: str, body: ReconcileIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    j = await _owned(db, PublishJob, job_id, current_user, "발행건")
+    if j.status != "uncertain":
+        raise HTTPException(status_code=409, detail="확인 필요 상태만 대조할 수 있습니다")
+    if j.lock_expires_at and j.lock_expires_at > datetime.utcnow():
+        raise HTTPException(status_code=409, detail="실행기가 아직 작업 중입니다. 종료 후 확인하세요")
+    changed = await db.execute(update(PublishJob).where(PublishJob.id == j.id, PublishJob.status == "uncertain").values(
+        status="submitted" if body.outcome == "registered" else "cancelled", error="사용자 대조: " + body.evidence))
+    if changed.rowcount != 1:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="작업 상태가 변경되었습니다")
+    await db.execute(update(PublishAttempt).where(PublishAttempt.job_id == j.id).values(active_blog_id=None))
     await db.commit()
-    await campaign_jobs._bump_stats(job_worker.JobContext(db=db, job=BackgroundJob()), j.campaign_id)
-    return {"success": True, "status": j.status}
+    return (await _jobs_out(db, [j]))[0]
 
 
 class AgentBlogSummary(BaseModel):
@@ -1412,6 +1689,207 @@ async def agent_summary(current_user: User = Depends(get_current_user), db: Asyn
         out.append(AgentBlogSummary(blog_ref_id=b.id, naver_blog_id=b.blog_id, label=b.label or b.blog_id, status=b.status or "active", status_reason=b.status_reason,
                                     pending=len(rows), next_at=rows[0][0].isoformat(timespec="minutes") if rows else None, login_id=b.login_id))
     return out
+
+
+# ─────────────────────── 실행기 하트비트(웹 신호등) ───────────────────────
+# 실행기는 브라우저 밖에 있어 웹이 직접 물어볼 수 없다. 실행기가 주기적으로 자기 상태를
+# 남기고, 웹은 그걸 읽어 신호등을 켠다. ONLINE_SECONDS 안에 소식이 없으면 꺼진 것으로 본다.
+ONLINE_SECONDS = 150
+
+
+class AgentHeartbeatIn(BaseModel):
+    device_id: str
+    version: Optional[str] = None
+    running: bool = False
+    label: Optional[str] = None
+    note: Optional[str] = None
+
+
+class AgentDeviceOut(BaseModel):
+    device_id: str
+    version: Optional[str] = None
+    running: bool = False
+    label: Optional[str] = None
+    note: Optional[str] = None
+    last_seen_at: str
+    seconds_ago: int
+
+
+class AgentStatusOut(BaseModel):
+    online: bool = False
+    running: bool = False
+    version: Optional[str] = None          # 살아 있는 기기 중 가장 최근 것
+    devices: List[AgentDeviceOut] = []
+
+
+@router.post("/agent/heartbeat", response_model=AgentStatusOut)
+async def agent_heartbeat(body: AgentHeartbeatIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """실행기가 살아 있음을 알린다. 같은 기기는 한 줄을 계속 갱신한다."""
+    device_id = (body.device_id or "").strip()[:64]
+    if not device_id:
+        raise HTTPException(status_code=400, detail="device_id 가 필요합니다")
+    row = await db.get(AgentSession, device_id)
+    if row and row.user_id != _uid(current_user):
+        raise HTTPException(status_code=403, detail="다른 계정의 기기입니다")
+    if not row:
+        row = AgentSession(device_id=device_id, user_id=_uid(current_user))
+        db.add(row)
+    row.version = (body.version or "")[:20] or None
+    row.running = bool(body.running)
+    row.label = (body.label or "")[:120] or None
+    row.note = (body.note or "")[:300] or None
+    row.last_seen_at = datetime.utcnow()
+    await db.commit()
+    return await _agent_status(db, _uid(current_user))
+
+
+@router.get("/agent/status", response_model=AgentStatusOut)
+async def agent_status(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """웹 신호등용. 실행기가 켜져 있는지, 어떤 버전인지, 지금 발행 중인지."""
+    return await _agent_status(db, _uid(current_user))
+
+
+async def _agent_status(db: AsyncSession, user_id: str) -> AgentStatusOut:
+    rows = (await db.execute(select(AgentSession).where(AgentSession.user_id == user_id)
+                             .order_by(AgentSession.last_seen_at.desc()))).scalars().all()
+    now = datetime.utcnow()
+    devices = []
+    for r in rows:
+        seconds = max(0, int((now - (r.last_seen_at or now)).total_seconds()))
+        devices.append(AgentDeviceOut(device_id=r.device_id, version=r.version, running=bool(r.running),
+                                      label=r.label, note=r.note,
+                                      last_seen_at=(r.last_seen_at or now).isoformat(timespec="seconds"),
+                                      seconds_ago=seconds))
+    live = [d for d in devices if d.seconds_ago <= ONLINE_SECONDS]
+    return AgentStatusOut(online=bool(live), running=any(d.running for d in live),
+                          version=live[0].version if live else None, devices=devices[:5])
+
+
+# ─────────────────────── 홈페이지 ↔ 실행기 자동 연결 ───────────────────────
+# 로그인된 홈페이지가 1회용 코드를 받아 같은 PC의 실행기(127.0.0.1)에 건넨다. 실행기는 그 코드로
+# 이 기기 전용 키를 받고, 키로 필요할 때마다 로그인 토큰을 새로 받는다. 비밀번호는 오가지 않는다.
+PAIR_CODE_SECONDS = 600
+PAIR_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # 헷갈리는 0/O, 1/I 제외
+
+
+def _secret_hash(secret: str) -> str:
+    import hashlib
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+
+class PairCodeOut(BaseModel):
+    code: str
+    expires_in: int
+
+
+class PairClaimIn(BaseModel):
+    code: str
+    device_id: str
+    label: Optional[str] = None
+
+
+class PairClaimOut(BaseModel):
+    device_secret: str
+    email: Optional[str] = None
+
+
+class DeviceTokenIn(BaseModel):
+    device_id: str
+    device_secret: str
+
+
+class DeviceTokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    email: Optional[str] = None
+
+
+async def _user_email(db: AsyncSession, user_id: str) -> Optional[str]:
+    """실행기 화면에 '어느 계정에 연결됐는지' 보여주기 위한 값. 못 찾으면 None — 연결은 계속된다."""
+    from uuid import UUID
+    try:
+        user = await db.get(User, UUID(str(user_id)))
+    except Exception:  # noqa: BLE001  잘못된 id·조회 실패 모두 표시만 생략한다
+        return None
+    return getattr(user, "email", None) if user else None
+
+
+@router.post("/agent/pair", response_model=PairCodeOut)
+async def agent_pair_code(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """로그인된 홈페이지가 부른다. 10분 동안 한 번 쓸 수 있는 연결 코드."""
+    import secrets
+    now = datetime.utcnow()
+    uid = _uid(current_user)
+    # 지난 코드는 정리한다 — 쌓아 둘 이유가 없다.
+    for old in (await db.execute(select(AgentPairCode).where(AgentPairCode.user_id == uid))).scalars().all():
+        if old.used_at or old.expires_at <= now:
+            await db.delete(old)
+    code = "".join(secrets.choice(PAIR_ALPHABET) for _ in range(8))
+    db.add(AgentPairCode(code=code, user_id=uid, created_at=now, expires_at=now + timedelta(seconds=PAIR_CODE_SECONDS)))
+    await db.commit()
+    return PairCodeOut(code=code, expires_in=PAIR_CODE_SECONDS)
+
+
+@router.post("/agent/pair/claim", response_model=PairClaimOut)
+async def agent_pair_claim(body: PairClaimIn, db: AsyncSession = Depends(get_db)):
+    """실행기가 부른다(로그인 없음). 코드는 한 번만 통하고, 성공하면 이 기기 전용 키를 준다."""
+    import secrets
+    now = datetime.utcnow()
+    code = (body.code or "").strip().upper().replace("-", "")
+    device_id = (body.device_id or "").strip()[:64]
+    if not device_id:
+        raise HTTPException(status_code=400, detail="device_id 가 필요합니다")
+    row = await db.get(AgentPairCode, code) if code else None
+    if not row or row.used_at or row.expires_at <= now:
+        raise HTTPException(status_code=400, detail="연결 코드가 만료되었거나 이미 사용되었습니다. 홈페이지를 새로고침하세요")
+    row.used_at = now
+
+    secret = secrets.token_urlsafe(32)
+    device = await db.get(AgentDevice, device_id)
+    if device and device.user_id != row.user_id:
+        # PC가 다른 계정으로 옮겨 간다 — 예전 계정의 신호등 기록은 지운다.
+        session = await db.get(AgentSession, device_id)
+        if session:
+            await db.delete(session)
+    if not device:
+        device = AgentDevice(device_id=device_id, user_id=row.user_id, created_at=now)
+        db.add(device)
+    device.user_id = row.user_id
+    device.secret_hash = _secret_hash(secret)
+    device.label = (body.label or "")[:120] or None
+    device.revoked_at = None
+    device.last_used_at = now
+    await db.commit()
+    return PairClaimOut(device_secret=secret, email=await _user_email(db, row.user_id))
+
+
+@router.post("/agent/device-token", response_model=DeviceTokenOut)
+async def agent_device_token(body: DeviceTokenIn, db: AsyncSession = Depends(get_db)):
+    """실행기가 부른다(로그인 없음). 기기 키로 새 로그인 토큰을 받는다."""
+    import hmac
+    from app.core.security import create_access_token
+    device = await db.get(AgentDevice, (body.device_id or "").strip()[:64])
+    if (not device or device.revoked_at
+            or not hmac.compare_digest(device.secret_hash, _secret_hash(body.device_secret or ""))):
+        raise HTTPException(status_code=401, detail="이 PC의 연결이 해제되었습니다. 홈페이지를 열면 다시 연결됩니다")
+    device.last_used_at = datetime.utcnow()
+    await db.commit()
+    return DeviceTokenOut(access_token=create_access_token(subject=device.user_id),
+                          email=await _user_email(db, device.user_id))
+
+
+@router.delete("/agent/devices/{device_id}")
+async def agent_device_revoke(device_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """홈페이지에서 이 PC의 연결을 끊는다. 실행기는 다음 토큰 요청부터 거절된다."""
+    device = await db.get(AgentDevice, device_id)
+    if not device or device.user_id != _uid(current_user):
+        raise HTTPException(status_code=404, detail="연결된 기기를 찾을 수 없습니다")
+    device.revoked_at = datetime.utcnow()
+    session = await db.get(AgentSession, device_id)
+    if session:
+        await db.delete(session)
+    await db.commit()
+    return {"success": True}
 
 
 @router.get("/agent/blogs/{blog_ref_id}/credential")

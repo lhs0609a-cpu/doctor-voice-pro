@@ -256,5 +256,87 @@ class PublishJob(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
-JOB_TERMINAL = {"published", "cancelled"}
-JOB_ACTIVE = {"queued", "assigned", "publishing", "failed", "uncertain"}
+class PublishAttempt(Base):
+    """Durable execution receipt. A blog can have only one unresolved writer."""
+    __tablename__ = "campaign_publish_attempts"
+
+    token = Column(String(64), primary_key=True)
+    job_id = Column(String(36), nullable=False, index=True)
+    user_id = Column(String(36), nullable=False, index=True)
+    active_blog_id = Column(String(36), nullable=True, unique=True)
+    mode = Column(String(20), nullable=False, default="live")
+    stage = Column(String(20), nullable=False, default="claimed")
+    payload = Column(JSON, nullable=True)
+    result = Column(JSON, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class AutomationRun(Base):
+    """One active pipeline per campaign, arbitrated by a database primary key."""
+    __tablename__ = "campaign_automation_runs"
+    campaign_id = Column(String(36), primary_key=True)
+    user_id = Column(String(36), nullable=False)
+    job_id = Column(String(36), nullable=False)
+
+
+class AutopilotPolicy(Base):
+    """Durable recurring automation; limits count reserved work, including failures."""
+    __tablename__ = "campaign_autopilot_policies"
+    campaign_id = Column(String(36), primary_key=True)
+    user_id = Column(String(36), nullable=False, index=True)
+    enabled = Column(Boolean, nullable=False, default=False)
+    config = Column(JSON, nullable=False, default=dict)
+    next_run_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    quota_day = Column(String(10), nullable=True)
+    reserved_today = Column(Integer, nullable=False, default=0)
+    last_job_id = Column(String(36), nullable=True)
+    message = Column(Text, nullable=True)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AgentSession(Base):
+    """PC 실행기가 살아 있는지 알려주는 하트비트. 기기(설치본)마다 한 줄.
+
+    확장 시절에는 브라우저가 확장에 직접 PING 을 보내 신호등을 켰다. 실행기는 브라우저 밖에
+    있으므로 서버를 거친다 — 실행기가 주기적으로 자기 상태를 남기고, 웹은 그걸 읽는다."""
+    __tablename__ = "agent_sessions"
+    device_id = Column(String(64), primary_key=True)
+    user_id = Column(String(36), nullable=False, index=True)
+    version = Column(String(20), nullable=True)          # 실행기 버전 → 웹에서 최신인지 대조
+    running = Column(Boolean, nullable=False, default=False)   # 자동 발행이 돌고 있는가
+    label = Column(String(120), nullable=True)           # 사람이 알아볼 이름(컴퓨터 이름)
+    note = Column(String(300), nullable=True)            # 지금 무엇을 하는지 한 줄
+    last_seen_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+class AgentPairCode(Base):
+    """홈페이지가 발급하는 1회용 연결 코드(10분). 실행기가 이 코드로 기기 키를 받는다.
+
+    로그인된 홈페이지만 발급할 수 있으므로, 코드를 받은 실행기는 그 계정으로 연결된다.
+    비밀번호는 오가지 않는다."""
+    __tablename__ = "agent_pair_codes"
+    code = Column(String(16), primary_key=True)
+    user_id = Column(String(36), nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+
+
+class AgentDevice(Base):
+    """홈페이지와 연결된 실행기(설치본). 기기 키는 해시로만 보관한다.
+
+    로그인 토큰은 30분이면 만료되므로, 실행기는 이 키로 필요할 때마다 새 토큰을 받는다.
+    홈페이지에서 연결을 해제하면 revoked_at 이 찍히고 더 이상 토큰을 받지 못한다."""
+    __tablename__ = "agent_devices"
+    device_id = Column(String(64), primary_key=True)
+    user_id = Column(String(36), nullable=False, index=True)
+    secret_hash = Column(String(64), nullable=False)
+    label = Column(String(120), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    last_used_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+
+
+JOB_TERMINAL = {"published", "cancelled", "dry_run"}
+JOB_ACTIVE = {"queued", "assigned", "publishing", "submitted", "failed", "uncertain"}

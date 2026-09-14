@@ -1,12 +1,18 @@
 """
 Keyword Batch API
-키워드 대량 생성 - 프롬프트 템플릿 서버 동기화(계정별).
+키워드 대량 생성 - 프롬프트 템플릿 서버 동기화(계정별) + 원고 생성.
 
 프론트는 템플릿 목록 전체를 통째로 저장한다(추가/수정/삭제 후 배열 저장).
 그 방식에 맞춰 GET(목록)·PUT(전체 교체) 두 개만 둔다.
+
+/generate 는 예전에 크롬 확장이 제미나이 웹 화면을 대신 조작해 받아오던 원고를
+서버에서 API 로 직접 만든다. 확장·브라우저 탭 없이 같은 결과를 얻는다.
 """
 
-from fastapi import APIRouter, Depends
+import logging
+import re
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from typing import List
@@ -18,8 +24,14 @@ from app.models import User
 from app.models.keyword_template import KeywordPromptTemplate
 from app.api.deps import get_current_user
 from app.services import search_volume_service
+from app.services.ai_service import AIService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# 원고 1건 상한(문자). 프롬프트가 폭주해도 토큰을 무한히 태우지 않는다.
+MAX_PROMPT_CHARS = 20000
 
 
 class TemplateItem(BaseModel):
@@ -169,3 +181,50 @@ async def replace_templates(
         )
     await db.commit()
     return items
+
+
+# ==================== 원고 생성(확장 제미나이 자동화 대체) ====================
+class GenerateRequest(BaseModel):
+    keyword: str
+    prompt: str                      # 템플릿을 키워드로 치환한 최종 지시문
+    provider: str = "gemini"         # gemini | claude | gpt
+    max_tokens: int = 8000
+
+
+class GenerateResponse(BaseModel):
+    keyword: str
+    text: str
+    chars: int
+
+
+@router.post("/generate", response_model=GenerateResponse)
+async def generate_draft(
+    req: GenerateRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """키워드 1개의 원고를 만든다. 확장이 제미나이 웹을 조작하던 자리를 대신한다."""
+    keyword = (req.keyword or "").strip()
+    prompt = (req.prompt or "").strip()
+    if not keyword or not prompt:
+        raise HTTPException(status_code=400, detail="키워드와 지시문이 필요합니다")
+    if len(prompt) > MAX_PROMPT_CHARS:
+        raise HTTPException(status_code=400, detail=f"지시문이 너무 깁니다(최대 {MAX_PROMPT_CHARS}자)")
+    if req.provider not in ("gemini", "claude", "gpt"):
+        raise HTTPException(status_code=400, detail="지원하지 않는 제공자입니다")
+
+    try:
+        text = await AIService(provider=req.provider).generate_text(
+            prompt=prompt, max_tokens=max(1000, min(req.max_tokens, 16000)), temperature=0.7,
+        )
+    except ValueError as e:
+        # 키가 없을 때 등 — 사용자가 고칠 수 있는 안내로 돌려준다.
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[keyword-batch] 생성 실패 %s: %s", keyword, e)
+        raise HTTPException(status_code=502, detail=f"원고 생성에 실패했습니다: {e}")
+
+    text = (text or "").strip()
+    if not text:
+        raise HTTPException(status_code=502, detail="빈 원고가 돌아왔습니다. 다시 시도하세요")
+    chars = len(re.sub(r"\s+", "", text))
+    return GenerateResponse(keyword=keyword, text=text, chars=chars)

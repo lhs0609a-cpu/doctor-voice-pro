@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
         # 대량 자동발행 큐 모델
         from app.models.publish_queue import PublishBatch, QueuedPost, NaverCategoryCache, ScheduleMark
         # 캠페인(병원 단위 대량 발행) + 작업 큐
-        from app.models.campaign import Client, Blog, BriefPreset, Campaign, CampaignKeyword, SerpSnapshot, Draft, PublishJob
+        from app.models.campaign import Client, Blog, BriefPreset, Campaign, CampaignKeyword, SerpSnapshot, Draft, PublishJob, AgentSession, AgentPairCode, AgentDevice
         from app.models.background_job import BackgroundJob
         from app.models.blog_index import BlogIndexSnapshot, PostAnalysisCache, SerpCache, BlogScoreSample, CompetitorScore, CeilingCache, VerdictResult
 

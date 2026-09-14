@@ -1,7 +1,6 @@
 'use client'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-declare const chrome: any
 
 import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
@@ -13,13 +12,11 @@ import { PageHeader } from '@/components/app-shell/page-header'
 import { Pill, EmptyState } from '@/components/app-shell/ui-kit'
 import {
   Eye, CalendarClock, Loader2, Trash2, ImageIcon,
-  Hash, AlertTriangle, Rocket,
+  Hash, AlertTriangle,
 } from 'lucide-react'
-import { ExtensionStatusCard, EXTENSION_DOWNLOAD_URL } from '@/components/extension-status'
-import { useExtensionStatus } from '@/lib/use-extension-status'
+import { LauncherCard, TargetBlogSelect, useTargetBlog } from '@/components/launcher/launcher-card'
 import { publishQueueAPI, type FormattedPost, type QueuedItem } from '@/lib/api'
 import { toast } from 'sonner'
-import { toastExtensionMissing } from '@/lib/extension-toast'
 
 // 기본 시작시각 = 내일 오전 9시 (로컬)
 function defaultStart(): { date: string; time: string } {
@@ -41,7 +38,7 @@ const STATUS_LABEL: Record<string, { label: string; tone: Tone }> = {
 const LABEL = 'text-[13px] font-medium text-muted-foreground'
 
 export default function BulkPublishPage() {
-  const ext = useExtensionStatus()
+  const target = useTargetBlog()
   const [text, setText] = useState('')
   const [delimiter, setDelimiter] = useState('')
   const [preview, setPreview] = useState<FormattedPost[]>([])
@@ -56,7 +53,6 @@ export default function BulkPublishPage() {
   const [creating, setCreating] = useState(false)
 
   const [queue, setQueue] = useState<QueuedItem[]>([])
-  const [publishing, setPublishing] = useState(false)
 
   const loadQueue = useCallback(async () => {
     try { setQueue(await publishQueueAPI.list()) } catch { /* noop */ }
@@ -89,10 +85,11 @@ export default function BulkPublishPage() {
         interval_minutes: intervalMin,
         open_type: openType,
         assign_images: assignImages,
+        blog_ref_id: target.blogRefId || null,
       })
       toast.success(`${res.created}개 예약 큐에 등록`, {
         id: t,
-        description: `${fmtDT(res.first_at)} ~ ${fmtDT(res.last_at)}`,
+        description: `${fmtDT(res.first_at)} ~ ${fmtDT(res.last_at)} · PC 실행기가 순서대로 네이버에 등록합니다`,
       })
       res.warnings?.forEach(w => toast.warning(w))
       setText(''); setPreview([])
@@ -107,42 +104,6 @@ export default function BulkPublishPage() {
     catch { toast.error('삭제 실패') }
   }
 
-  // 확장으로 배치 전송 → 네이버 예약발행 일괄 등록
-  const startPublishing = async () => {
-    if (!ext.connected || !ext.extensionId) {
-      toastExtensionMissing(); return
-    }
-    setPublishing(true)
-    const t = toast.loading('예약 등록 준비 중... (사진 유니크화 포함)')
-    try {
-      const jobs = await publishQueueAPI.fetchJobs(50)
-      if (jobs.length === 0) { toast.error('대기 중인 글이 없습니다', { id: t }); setPublishing(false); return }
-      toast.loading(`${jobs.length}개를 확장으로 전송 중...`, { id: t })
-
-      // 결과 수신 리스너 (content-website 가 CustomEvent 로 전달)
-      const onResult = (e: any) => {
-        const { id, ok, message } = e.detail || {}
-        if (id) publishQueueAPI.reportResult(id, !!ok, message).catch(() => {})
-      }
-      window.addEventListener('doctorvoice-job-result', onResult)
-
-      chrome.runtime.sendMessage(ext.extensionId, { action: 'SUBMIT_BATCH', jobs }, (res: any) => {
-        if (chrome.runtime?.lastError || !res?.success) {
-          toast.error('확장 전송 실패', { id: t, description: chrome.runtime?.lastError?.message })
-        } else {
-          toast.success(`${jobs.length}개 예약 등록을 시작했어요`, {
-            id: t, description: '새 탭에서 순차적으로 네이버 예약발행이 등록됩니다. 완료까지 창을 열어두세요.',
-          })
-        }
-        setTimeout(loadQueue, 3000)
-        setPublishing(false)
-      })
-    } catch (e: any) {
-      toast.error('시작 실패', { id: t, description: e?.message })
-      setPublishing(false)
-    }
-  }
-
   const queuedCount = queue.filter(q => q.status === 'queued').length
 
   return (
@@ -151,14 +112,27 @@ export default function BulkPublishPage() {
         title="대량 자동 발행"
         description="글을 붙여넣으면 자동으로 포맷(글·사진·키워드)해 간격 예약발행 큐에 한 번에 등록합니다."
         actions={
-          <Button onClick={startPublishing} disabled={publishing || queuedCount === 0 || !ext.connected}>
-            {publishing ? <Loader2 className="animate-spin" /> : <Rocket />}
-            예약 등록 시작 <span className="tabular-nums">({queuedCount})</span>
-          </Button>
+          <Pill tone={queuedCount ? 'accent' : 'muted'} className="tabular-nums">
+            대기 {queuedCount}건
+          </Pill>
         }
       />
 
-      <ExtensionStatusCard />
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="surface space-y-2 p-4">
+          <div className="text-sm font-semibold">발행할 블로그</div>
+          <TargetBlogSelect
+            blogs={target.blogs} value={target.blogRefId} onChange={target.choose}
+            loading={target.loading} onRefresh={target.refresh}
+          />
+          <p className="text-xs text-muted-foreground">
+            {target.blogs.length === 0
+              ? '먼저 원스톱 자동화의 연결 설정에서 네이버 블로그를 등록하세요.'
+              : '여기서 담은 글은 이 블로그로 등록됩니다. 실행기가 그 블로그에 로그인돼 있어야 합니다.'}
+          </p>
+        </div>
+        <LauncherCard compact />
+      </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* 좌: 입력 + 설정 */}
@@ -269,17 +243,14 @@ export default function BulkPublishPage() {
       <Card>
         <CardHeader>
           <CardTitle>예약 큐 <span className="tabular-nums text-muted-foreground">({queue.length})</span></CardTitle>
-          <CardDescription>대기 <span className="tabular-nums">{queuedCount}</span>개 · 상단 ‘예약 등록 시작’을 누르면 확장이 네이버 예약발행에 일괄 등록합니다.</CardDescription>
+          <CardDescription>대기 <span className="tabular-nums">{queuedCount}</span>개 · 켜져 있는 PC 실행기가 예약 시각 순서대로 네이버에 등록합니다.</CardDescription>
         </CardHeader>
         <CardContent>
-          {!ext.connected && queuedCount > 0 && (
-            <p className="mb-3 text-xs text-danger">확장 프로그램 연결 필요 — <a href={EXTENSION_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer" className="underline">설치하기</a></p>
-          )}
           {queue.length === 0 ? (
             <EmptyState
               icon={<CalendarClock className="h-8 w-8" />}
               title="등록된 예약이 없습니다"
-              description="글을 붙여넣고 ‘예약 큐에 등록’을 누르면 여기에 쌓입니다."
+              description="글을 붙여넣고 ‘예약 큐에 등록’을 누르면 여기에 쌓이고, PC 실행기가 가져갑니다."
               className="py-8"
             />
           ) : (

@@ -620,7 +620,12 @@
       if (pre && !pre.checked) pre.click();
       await sleep(400);
 
-      const dt = new Date(job.schedule.datetime);
+      const rawTime = job.schedule.datetime;
+      const instant = new Date(/(?:Z|[+-]\d{2}:\d{2})$/.test(rawTime) ? rawTime : rawTime + '+09:00');
+      if (!Number.isFinite(instant.getTime()) || instant.getTime() <= Date.now() + 15 * 60000) {
+        throw new Error('예약 시각이 임박했거나 잘못되었습니다');
+      }
+      const dt = new Date(instant.toLocaleString('en-US', { timeZone: 'Asia/Seoul' }));
 
       // 날짜: jQuery UI datepicker 로 정확히 선택 (당일이 아니어도 지원)
       // 실패하면 여기서 멈춘다 — 예전엔 경고만 찍고 계속 진행해 네이버 기본값(오늘/지금)으로
@@ -637,6 +642,9 @@
       setNativeValue(hourSel, hh);
       setNativeValue(minSel, mm);
       await sleep(300);
+      if (!pre || !pre.checked || hourSel.value !== hh || minSel.value !== mm) {
+        throw new Error('예약 설정을 확인하지 못해 발행을 중단했습니다');
+      }
     }
 
     // 최종 발행 클릭
@@ -770,7 +778,7 @@
     if (!msg || !msg.action) return;
 
     // 에디터 프레임만 처리하는 명령들
-    const editorOnly = ['GET_POSITIONS', 'DISMISS_POPUP', 'INSERT_IMAGES', 'FINALIZE', 'PROGRESS', 'READ_CATEGORIES', 'SET_ALIGN'];
+    const editorOnly = ['GET_POSITIONS', 'DISMISS_POPUP', 'INSERT_IMAGES', 'FINALIZE', 'PROGRESS', 'READ_CATEGORIES', 'SET_ALIGN', 'VERIFY_LINKS'];
     if (editorOnly.includes(msg.action) && !isEditorFrame()) return; // 다른 프레임은 무시
 
     // blogId 는 프레임마다 알 수 있고 없고가 갈린다(에디터 iframe 의 src 에 들어 있다).
@@ -786,6 +794,12 @@
           case 'PING':
             sendResponse({ ok: true, version: EXT_VERSION, editor: isEditorFrame() });
             break;
+          case 'VERIFY_LINKS': {
+            const normalize = value => { try { return new URL(value).href; } catch { return ''; } };
+            const links = [...document.querySelectorAll('.se-component a[href]')].map(a => normalize(a.href));
+            sendResponse({ ok: Array.isArray(msg.urls) && msg.urls.length > 0 && msg.urls.every(url => normalize(url) && links.includes(normalize(url))) });
+            break;
+          }
           case 'READ_POST_URL':
             sendResponse({ ok: true, url: findPostUrl() });
             break;

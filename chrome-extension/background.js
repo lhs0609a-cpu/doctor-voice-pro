@@ -4,6 +4,7 @@
 // ============================================================
 // manifest 에서 읽는다 — 상수로 박아두면 릴리스 때 manifest 만 올리고 여기를 빠뜨려
 // "설치했는데도 계속 업데이트 필요" 로 보이는 사고가 난다(v16.0.5).
+importScripts('server-runner.js');
 const VERSION = chrome.runtime.getManifest().version;
 const UPDATE_URL = 'https://doctor-voice-pro-ghwi.vercel.app/extension/version.json';
 const WRITE_URL = 'https://blog.naver.com/GoBlogWrite.naver';
@@ -16,6 +17,17 @@ let batchRunning = false;
 let genRunning = false;       // Gemini 글 생성 배치 진행 중
 let genCancel = false;        // 사용자가 중단을 눌렀는가
 let geminiTabId = null;       // 생성에 쓰는 Gemini 탭
+let automationRunning = false;
+let ownedTabId = null;
+let ownedFrameId = null;
+const trustedOrigins = new Set(['https://doctor-voice-pro-ghwi.vercel.app']);
+function trustedWebsite(sender) {
+  try {
+    const url = new URL(sender.url || sender.origin);
+    return trustedOrigins.has(url.origin) || (url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname));
+  } catch (_) { return false; }
+}
+ServerRunner.recover().catch(() => {});
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -109,9 +121,23 @@ function stopKeepAlive() {
 // 외부 메시지 (닥터보이스 웹사이트에서)
 // ============================================================
 chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
+  if (!trustedWebsite(sender)) {
+    sendResponse({ success: false, error: '허용되지 않은 웹사이트입니다' });
+    return false;
+  }
   (async () => {
     try {
       switch (msg.action) {
+        case 'SUBMIT_SERVER_JOB': {
+          if (batchRunning || currentJob || ServerRunner.active()) throw new Error('이미 작업이 진행 중입니다');
+          ServerRunner.validateGrant(msg.grant);
+          batchRunning = true;
+          sendResponse({ success: true, accepted: 1 });
+          ServerRunner.start(msg.grant, payload => runOne({ ...normalizeJob(payload), finalAction: 'schedule', serverManaged: true }))
+            .catch(e => log('서버 작업 중단', e.message))
+            .finally(() => { batchRunning = false; });
+          break;
+        }
         case 'PING': {
           // 캐시된 업데이트 정보를 함께 반환 (웹사이트 신호등이 1회 왕복으로 버전/업데이트 파악)
           const cached = (await chrome.storage.local.get('updateInfo')).updateInfo || {};
@@ -140,6 +166,7 @@ chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
         }
         case 'SUBMIT_JOB':
         case 'ONE_CLICK_PUBLISH': // 구버전 호환
+          if (batchRunning || currentJob || ServerRunner.active()) throw new Error('이미 작업이 진행 중입니다');
           await startJob(normalizeJob(msg.job || msg.postData));
           sendResponse({ success: true });
           break;
@@ -245,14 +272,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       if (msg.action === 'EDITOR_READY') {
+        if (!sender.url || !/^https:\/\/([a-zA-Z0-9-]+\.)?blog\.naver\.com\//.test(sender.url)) {
+          sendResponse({ hasJob: false }); return;
+        }
+        const durable = await chrome.storage.local.get('serverExecutionV2');
+        if (durable.serverExecutionV2 && !ServerRunner.running()) {
+          sendResponse({ hasJob: false }); return;
+        }
+        if (automationRunning || !sender.tab || (ownedTabId !== null && sender.tab.id !== ownedTabId)) {
+          sendResponse({ hasJob: false }); return;
+        }
         if (!currentJob) {
           const stored = await chrome.storage.local.get('pendingJob');
           currentJob = stored.pendingJob || null;
         }
         if (currentJob && sender.tab) {
+          automationRunning = true;
+          ownedFrameId = sender.frameId;
           log('EDITOR_READY 수신 — 자동화 시작', currentJob.title || '(제목 없음)');
           sendResponse({ hasJob: true });
-          runAutomation(sender.tab.id, currentJob).catch((e) => log('자동화 실패', e));
+          runAutomation(sender.tab.id, currentJob).catch((e) => log('자동화 실패', e))
+            .finally(() => { automationRunning = false; });
         } else {
           // 여기가 찍히는데 글이 안 써진다면 job 이 사라진 것(워커 재시작 등)이다.
           log('EDITOR_READY 수신 — 대기 중인 job 없음');
@@ -295,6 +335,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
       }
       if (msg.action === 'GET_CRED') {
+        if (!sender.url || (!sender.url.startsWith('https://nid.naver.com/') && sender.url !== chrome.runtime.getURL('popup.html'))) {
+          sendResponse({ ok: false }); return;
+        }
         const cred = await getNaverCred();
         sendResponse({ ok: true, cred });
         return;
@@ -486,6 +529,7 @@ function normalizeJob(raw) {
       search: raw.options?.search !== false,
       // 카테고리 번호("24") 또는 이름. 미지정이면 네이버 기본 카테고리로 발행된다.
       category: raw.options?.category || null,
+      requiredLinks: Array.isArray(raw.options?.requiredLinks) ? raw.options.requiredLinks : [],
     },
     finalAction: raw.finalAction || 'draft', // 'draft' | 'publishNow' | 'schedule'
     schedule: raw.schedule || null, // { datetime: ISOString }
@@ -504,11 +548,13 @@ async function startJob(job) {
   const existing = tabs.find((t) => t.url && t.url.includes('blog.naver.com') &&
     (t.url.includes('Write') || t.url.includes('editor') || t.url.includes('PostWriteForm')));
   if (existing) {
+    ownedTabId = existing.id;
     await chrome.tabs.update(existing.id, { active: true });
     await chrome.tabs.reload(existing.id);
     return existing.id;
   }
   const created = await chrome.tabs.create({ url: WRITE_URL, active: true });
+  ownedTabId = created.id;
   return created.id;
 }
 
@@ -1240,6 +1286,11 @@ async function runAutomation(tabId, job) {
     // 최종 동작 (임시저장 / 발행 / 예약)
     await progress(tabId, '마무리 중...', 88);
     finalizeStarted = true;
+    if (job.options?.requiredLinks?.length) {
+      const links = await sendToTab(tabId, { action: 'VERIFY_LINKS', urls: job.options.requiredLinks });
+      if (!links?.ok) throw new Error('랜딩 URL이 클릭 가능한 링크로 확인되지 않았습니다');
+    }
+    if (job.serverManaged) await ServerRunner.beforeFinalize();
     const fin = await sendToTab(tabId, { action: 'FINALIZE', job });
     log('최종 동작 결과:', fin);
     if (!fin) {
@@ -1277,7 +1328,7 @@ async function runAutomation(tabId, job) {
     await chrome.storage.local.set({ lastResult: { ok: false, error: e.message, captcha, at: Date.now() } });
     // 캡차 중단은 최종 발행 버튼을 누른 뒤의 일이라, 사용자가 캡차를 풀면 그대로 나간다
     // → 발행됐을 수 있으므로 uncertain 도 함께 표시한다.
-    finishJob({ ok: false, error: e.message, captcha, uncertain: !!(e.uncertain || captcha) });
+    finishJob({ ok: false, error: e.message, captcha, uncertain: !!(finalizeStarted || e.uncertain || captcha) });
   }
 }
 
@@ -1316,7 +1367,10 @@ async function typeBody(tabId, content, emphasize) {
     const line = lines[i];
     if (!line.length) boldedInPara = new Set();   // 빈 줄 = 문단 경계
     if (line.length) {
-      if (re) {
+      if (/^https:\/\/\S+$/.test(line)) {
+        await insertText(tabId, line);
+        if (i === lines.length - 1) await pressEnter(tabId);
+      } else if (re) {
         for (const part of line.split(re)) {
           if (!part) continue;
           if (wordSet.has(part) && !boldedInPara.has(part)) {
@@ -1439,7 +1493,10 @@ async function ctrlB(tabId) {
 // tab 메시지 (editor 프레임 응답 사용)
 function sendToTab(tabId, message) {
   return new Promise((resolve) => {
-    chrome.tabs.sendMessage(tabId, message, (res) => {
+    const editorActions = ['GET_POSITIONS', 'DISMISS_POPUP', 'INSERT_IMAGES', 'FINALIZE', 'SET_ALIGN', 'VERIFY_LINKS'];
+    const options = automationRunning && tabId === ownedTabId && ownedFrameId != null && editorActions.includes(message.action)
+      ? { frameId: ownedFrameId } : {};
+    chrome.tabs.sendMessage(tabId, message, options, (res) => {
       if (chrome.runtime.lastError) resolve(null); else resolve(res);
     });
   });

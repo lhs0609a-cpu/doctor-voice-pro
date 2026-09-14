@@ -50,6 +50,9 @@ class QueuedPost(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     batch_id = Column(String(36), ForeignKey("publish_batches.id"), nullable=True, index=True)
+    # 어느 블로그로 발행할지(campaign_blogs.id). None = 지정 안 함 — 블로그가 하나뿐인
+    # 사용자의 예전 큐가 여기 해당한다. 실행기는 블로그가 하나일 때만 이런 글을 가져간다.
+    blog_ref_id = Column(String(36), nullable=True, index=True)
 
     title = Column(String(500))
     blocks = Column(JSON)               # [{type:'text', content, keyword} | {type:'image'}]
@@ -64,7 +67,10 @@ class QueuedPost(Base):
     # 네이버 카테고리 번호(예: "24"). None = 네이버 기본 카테고리로 발행
     category = Column(String(100), nullable=True)
 
-    # queued: 대기 / registered: 확장이 네이버 예약등록 완료 / failed / published
+    # schedule: 예약발행 / publish: 즉시발행 / draft: 임시저장
+    final_action = Column(String(20), default="schedule")
+
+    # queued: 대기 / registered: 실행기가 네이버 등록 완료 / failed / published
     status = Column(String(20), default="queued", index=True)
     naver_result = Column(Text, nullable=True)
     order_index = Column(Integer, default=0)

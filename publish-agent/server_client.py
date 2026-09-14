@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import httpx
 
@@ -26,6 +27,7 @@ class ServerClient:
         self.token: Optional[str] = None
         self._email: Optional[str] = None
         self._password: Optional[str] = None
+        self._reauth = None          # 401 이면 부를 재인증(비밀번호 또는 기기 키)
         self._http = httpx.Client(timeout=timeout)
 
     # ------------------------------------------------------------ 내부
@@ -48,9 +50,9 @@ class ServerClient:
     def _request(self, method: str, path: str, *, json: Any = None, _retry: bool = True) -> Any:
         url = self.api + path
         r = self._http.request(method, url, json=json, headers=self._headers())
-        if r.status_code == 401 and _retry and self._email and self._password:
+        if r.status_code == 401 and _retry and self._reauth:
             log.warning("토큰 만료/무효(401) → 재로그인")
-            self.login(self._email, self._password)
+            self._reauth()
             return self._request(method, path, json=json, _retry=False)
         if r.status_code >= 400:
             raise ServerError(r.status_code, self._detail(r))
@@ -69,7 +71,32 @@ class ServerClient:
             raise ServerError(r.status_code, "응답에 access_token 이 없습니다")
         self.token = token
         self._email, self._password = email, password
+        self._reauth = lambda: self.login(email, password)
         return token
+
+    # ------------------------------------------------------- 홈페이지 자동 연결
+    def pair_claim(self, code: str, device_id: str, label: str = "") -> Dict[str, Any]:
+        """홈페이지가 건넨 1회용 코드로 이 기기 전용 키를 받는다. → {device_secret, email}"""
+        r = self._http.post(self.api + "/campaign/agent/pair/claim",
+                            json={"code": code, "device_id": device_id, "label": label or None},
+                            headers={"Accept": "application/json"})
+        if r.status_code >= 400:
+            raise ServerError(r.status_code, self._detail(r))
+        return r.json()
+
+    def device_login(self, device_id: str, device_secret: str) -> Dict[str, Any]:
+        """기기 키로 로그인 토큰을 받는다. 토큰이 만료되면 같은 키로 다시 받는다."""
+        r = self._http.post(self.api + "/campaign/agent/device-token",
+                            json={"device_id": device_id, "device_secret": device_secret},
+                            headers={"Accept": "application/json"})
+        if r.status_code >= 400:
+            raise ServerError(r.status_code, self._detail(r))
+        data = r.json()
+        if not data.get("access_token"):
+            raise ServerError(r.status_code, "응답에 access_token 이 없습니다")
+        self.token = data["access_token"]
+        self._reauth = lambda: self.device_login(device_id, device_secret)
+        return data
 
     def summary(self) -> List[Dict[str, Any]]:
         """[{blog_ref_id, naver_blog_id, label, status, status_reason, pending, next_at, login_id}]"""
@@ -79,10 +106,15 @@ class ServerClient:
         """{login_id, login_pw, naver_blog_id}"""
         return self._request("GET", f"/campaign/agent/blogs/{blog_ref_id}/credential") or {}
 
-    def claim(self, blog_ref_id: str, limit: int = 5, include_images: bool = True) -> List[Dict[str, Any]]:
+    def claim(self, blog_ref_id: str, limit: int = 1, include_images: bool = True, mode: str = "live") -> List[Dict[str, Any]]:
         """→ [ClaimedJob]. 서버가 20분 잠금을 건다(만료 후 재클레임 가능)."""
-        body = {"blog_ref_id": blog_ref_id, "limit": limit, "include_images": include_images}
+        body = {"blog_ref_id": blog_ref_id, "limit": limit, "include_images": include_images, "mode": mode, "protocol_version": 2,
+                "capabilities": ["landing_links_v1"]}
         return self._request("POST", "/campaign/agent/claim", json=body) or []
+
+    def checkpoint(self, job_id: str, lock_token: str, stage: str = "heartbeat"):
+        return self._request("POST", f"/campaign/agent/jobs/{job_id}/checkpoint",
+                             json={"lock_token": lock_token, "stage": stage})
 
     def report_result(
         self,
@@ -95,6 +127,8 @@ class ServerClient:
         url: Optional[str] = None,
         need_login: bool = False,
         captcha: bool = False,
+        release: bool = False,
+        receipt_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         body = {
             "lock_token": lock_token,
@@ -104,8 +138,39 @@ class ServerClient:
             "url": url or None,
             "need_login": bool(need_login),
             "captcha": bool(captcha),
+            "release": bool(release),
+            "receipt_id": receipt_id,
         }
         return self._request("POST", f"/campaign/agent/jobs/{job_id}/result", json=body) or {}
+
+    # ------------------------------------------------------- 신호등
+    def heartbeat(self, *, device_id: str, version: str, running: bool,
+                  label: str = "", note: str = "") -> Dict[str, Any]:
+        """실행기가 살아 있음을 알린다. 웹의 연결 신호등이 이 값을 읽는다."""
+        body = {"device_id": device_id, "version": version, "running": bool(running),
+                "label": label or None, "note": note or None}
+        return self._request("POST", "/campaign/agent/heartbeat", json=body) or {}
+
+    # ------------------------------------------------------- 발행 큐(확장 대체)
+    def queue_jobs(self, *, limit: int = 1, blog_ref_id: Optional[str] = None,
+                   claim_unassigned: bool = False) -> List[Dict[str, Any]]:
+        """대량 발행 큐에서 이 블로그 몫을 가져온다. 서버가 가져간 글을 registered 로 표시하므로
+        받은 글은 반드시 queue_result 로 결과를 남겨야 한다(안 남기면 다시 나오지 않는다)."""
+        path = f"/publish/queue/jobs?limit={int(limit)}"
+        if blog_ref_id:
+            path += f"&blog_ref_id={quote(str(blog_ref_id), safe='')}"
+            path += f"&claim_unassigned={'true' if claim_unassigned else 'false'}"
+        return self._request("GET", path) or []
+
+    def queue_result(self, post_id: str, *, ok: bool, message: Optional[str] = None) -> Dict[str, Any]:
+        body = {"ok": bool(ok), "message": (message or None) and str(message)[:500]}
+        return self._request("POST", f"/publish/queue/{quote(str(post_id), safe='')}/result", json=body) or {}
+
+    def categories(self) -> Dict[str, Any]:
+        return self._request("GET", "/publish/categories") or {}
+
+    def put_categories(self, categories: List[Dict[str, str]]) -> Dict[str, Any]:
+        return self._request("POST", "/publish/categories", json={"categories": categories}) or {}
 
     def set_blog_status(self, blog_ref_id: str, status: str, reason: Optional[str] = None) -> Dict[str, Any]:
         """status: active | login_required | captcha | paused ..."""

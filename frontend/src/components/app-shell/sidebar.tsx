@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { Logo } from './logo'
@@ -14,13 +15,17 @@ interface Props {
 /** 왼쪽 사이드바. 데스크톱은 고정, 모바일은 Topbar 의 드로어 안에서 같은 컴포넌트를 쓴다. */
 export function Sidebar({ onNavigate, className }: Props) {
   const pathname = usePathname() || ''
+  const [showAll, setShowAll] = useState(false)
+  const focused = pathname === '/dashboard/one-stop'
+  const essentials = new Set(['/dashboard', '/dashboard/one-stop', '/dashboard/campaign', '/dashboard/clients', '/dashboard/media'])
+  const groups = focused && !showAll ? NAV_GROUPS.map(group => ({ ...group, items: group.items.filter(item => essentials.has(item.href)) })).filter(group => group.items.length) : NAV_GROUPS
   return (
     <aside className={cn('flex h-full w-[236px] flex-col border-r bg-sidebar', className)}>
       <div className="flex h-14 items-center px-5">
         <Logo />
       </div>
       <nav className="flex-1 overflow-y-auto px-3 pb-10" aria-label="주 메뉴">
-        {NAV_GROUPS.map((group) => (
+        {groups.map((group) => (
           <div key={group.label} className="mt-4 first:mt-1">
             <div className="eyebrow px-2 pb-1.5">{group.label}</div>
             <ul className="space-y-0.5">
@@ -59,6 +64,7 @@ export function Sidebar({ onNavigate, className }: Props) {
             </ul>
           </div>
         ))}
+        {focused && <button type="button" className="mt-5 w-full rounded-lg px-3 py-2 text-left text-xs text-muted-foreground hover:bg-muted" aria-expanded={showAll} onClick={() => setShowAll(value => !value)}>{showAll ? '자동 운영 메뉴만 보기' : '전체 도구 보기'}</button>}
       </nav>
       <div className="border-t px-5 py-3 text-[11px] leading-4 text-muted-foreground">
         생성된 콘텐츠의 법적 책임은 이용자에게 있습니다.

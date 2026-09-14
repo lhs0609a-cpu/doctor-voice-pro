@@ -111,8 +111,8 @@ export default function CampaignListPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="캠페인"
-        description="병원 하나를 골라 키워드 → 원고 → 사진 → 예약 → 발행까지 6단계로 진행합니다. 진행 상황은 자동 저장됩니다."
+        title="블로그 운영 목록"
+        description="병원별 운영 공간을 관리합니다. 원스톱 자동 운영에서 처음 설정하고 발행 현황을 한눈에 확인하세요."
         actions={
           <Button onClick={() => setNewOpen(true)} disabled={clients.length === 0}>
             <Plus /> 새 캠페인

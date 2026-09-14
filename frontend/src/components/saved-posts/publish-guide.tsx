@@ -24,8 +24,8 @@ import {
 interface PublishGuideProps {
   isOpen: boolean
   onClose: () => void
-  onDownloadExtension: () => void
-  hasExtension: boolean
+  onDownloadLauncher: () => void
+  hasLauncherBlog: boolean
   hasSelectedPost: boolean
   hasImages: boolean
   onStartPublish: () => void
@@ -45,8 +45,8 @@ interface Step {
 export function PublishGuide({
   isOpen,
   onClose,
-  onDownloadExtension,
-  hasExtension,
+  onDownloadLauncher,
+  hasLauncherBlog,
   hasSelectedPost,
   hasImages,
   onStartPublish,
@@ -59,9 +59,9 @@ export function PublishGuide({
   const steps: Step[] = [
     {
       id: 1,
-      title: '확장 프로그램 다운로드',
-      description: 'ZIP 파일을 다운로드하세요',
-      action: '다운로드',
+      title: 'PC 실행기 설치',
+      description: '설치 파일을 받아 두 번 클릭하세요 (압축 풀기 없음)',
+      action: '설치 파일 받기',
       actionType: 'button',
       icon: <Download className="h-5 w-5" />,
       completed: completedSteps.has(1),
@@ -69,82 +69,75 @@ export function PublishGuide({
     },
     {
       id: 2,
-      title: '크롬에서 확장프로그램 페이지 열기',
-      description: 'chrome://extensions 입력',
-      action: '복사하기',
+      title: '실행기에 로그인하고 시작',
+      description: '이 사이트와 같은 계정으로 로그인한 뒤 ‘자동 발행 시작’을 누르세요',
+      action: '완료',
       actionType: 'button',
-      icon: <Globe className="h-5 w-5" />,
+      icon: <Play className="h-5 w-5" />,
       completed: completedSteps.has(2),
       current: currentStep === 2,
     },
     {
       id: 3,
-      title: '개발자 모드 켜기',
-      description: '오른쪽 상단 토글 스위치를 켜세요',
-      action: '완료',
-      actionType: 'button',
-      icon: <Settings className="h-5 w-5" />,
-      completed: completedSteps.has(3),
+      title: '발행할 블로그 고르기',
+      description: '위쪽 ‘발행할 블로그’에서 등록된 네이버 블로그를 고르세요',
+      action: hasLauncherBlog ? '완료됨' : '블로그 선택 필요',
+      actionType: 'auto',
+      icon: <Globe className="h-5 w-5" />,
+      completed: completedSteps.has(3) || hasLauncherBlog,
       current: currentStep === 3,
     },
     {
       id: 4,
-      title: '압축해제된 확장 프로그램 로드',
-      description: '다운로드한 ZIP 압축 해제 후 폴더 선택',
-      action: '완료',
-      actionType: 'button',
-      icon: <Upload className="h-5 w-5" />,
-      completed: completedSteps.has(4),
-      current: currentStep === 4,
-    },
-    {
-      id: 5,
       title: '발행할 글 선택',
       description: '왼쪽 목록에서 글을 클릭하세요',
       action: hasSelectedPost ? '완료됨' : '글 선택 필요',
       actionType: 'auto',
       icon: <MousePointer className="h-5 w-5" />,
-      completed: completedSteps.has(5) || hasSelectedPost,
-      current: currentStep === 5,
+      completed: completedSteps.has(4) || hasSelectedPost,
+      current: currentStep === 4,
     },
     {
-      id: 6,
+      id: 5,
       title: '이미지 업로드 (선택)',
       description: '이미지 탭에서 사진을 업로드하세요',
       action: hasImages ? '완료됨' : '건너뛰기',
       actionType: 'button',
       icon: <Upload className="h-5 w-5" />,
-      completed: completedSteps.has(6) || hasImages,
-      current: currentStep === 6,
+      completed: completedSteps.has(5) || hasImages,
+      current: currentStep === 5,
     },
     {
-      id: 7,
-      title: '네이버 블로그에 발행하기',
-      description: '버튼을 클릭하면 자동으로 진행됩니다',
+      id: 6,
+      title: '발행 맡기기',
+      description: '누르면 서버에 담기고, 실행기가 네이버에 등록합니다',
       action: '발행 시작',
       actionType: 'button',
       icon: <Sparkles className="h-5 w-5" />,
-      completed: completedSteps.has(7),
-      current: currentStep === 7,
+      completed: completedSteps.has(6),
+      current: currentStep === 6,
     },
   ]
 
   // 자동 완료 체크
   useEffect(() => {
-    if (hasSelectedPost && currentStep === 5) {
+    if (hasLauncherBlog && currentStep === 3) {
+      completeStep(3)
+    }
+    if (hasSelectedPost && currentStep === 4) {
+      completeStep(4)
+    }
+    if (hasImages && currentStep === 5) {
       completeStep(5)
     }
-    if (hasImages && currentStep === 6) {
-      completeStep(6)
-    }
-  }, [hasSelectedPost, hasImages, currentStep])
+  }, [hasLauncherBlog, hasSelectedPost, hasImages, currentStep])
 
   const completeStep = (stepId: number) => {
     setIsAnimating(true)
     setCompletedSteps(prev => new Set([...prev, stepId]))
 
     setTimeout(() => {
-      if (stepId < 7) {
+      if (stepId < 6) {
         setCurrentStep(stepId + 1)
       }
       setIsAnimating(false)
@@ -154,26 +147,24 @@ export function PublishGuide({
   const handleStepAction = (step: Step) => {
     switch (step.id) {
       case 1:
-        onDownloadExtension()
+        onDownloadLauncher()
         completeStep(1)
         break
       case 2:
-        navigator.clipboard.writeText('chrome://extensions')
         completeStep(2)
         break
       case 3:
+        if (hasLauncherBlog) completeStep(3)
+        break
       case 4:
-        completeStep(step.id)
+        if (hasSelectedPost) completeStep(4)
         break
       case 5:
-        if (hasSelectedPost) completeStep(5)
+        completeStep(5)
         break
       case 6:
-        completeStep(6)
-        break
-      case 7:
         onStartPublish()
-        completeStep(7)
+        completeStep(6)
         onClose()
         break
     }

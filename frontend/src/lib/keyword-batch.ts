@@ -1,8 +1,8 @@
 /**
  * 키워드 대량 생성 - 데이터 계층
  *
- * 엑셀 파싱 / 프롬프트 템플릿 / 확장 프로그램 통신을 담당한다.
- * UI(keyword-batch-manager.tsx)는 여기 있는 것만 쓰고 DOM/확장 세부는 모른다.
+ * 엑셀 파싱 / 프롬프트 템플릿 / 원고 생성 호출을 담당한다.
+ * UI(keyword-batch-manager.tsx)는 여기 있는 것만 쓰고 서버 호출 세부는 모른다.
  */
 
 // ============================================================
@@ -214,8 +214,10 @@ export function renderPrompt(body: string, vars: Record<string, string>): string
 }
 
 // ============================================================
-// 확장 프로그램 통신
+// 원고 생성 (서버 API)
 // ============================================================
+// 예전에는 확장이 제미나이 웹 화면을 대신 조작해 원고를 받아왔다. 지금은 서버가 API 로
+// 직접 만든다 — 확장도, 열어둔 탭도 필요 없다. 화면들은 예전과 같은 이벤트를 구독한다.
 export interface GenOptions {
   newChatEvery: number;
   reloadEvery: number;
@@ -232,51 +234,6 @@ export const DEFAULT_GEN_OPTIONS: GenOptions = {
   tempChat: true,
 };
 
-function extensionId(): string | null {
-  try {
-    return localStorage.getItem('doctorvoice-extension-id');
-  } catch {
-    return null;
-  }
-}
-
-type ChromeRuntime = {
-  runtime?: { sendMessage: (id: string, msg: unknown, cb: (r: unknown) => void) => void };
-};
-
-function sendToExtension<T = unknown>(msg: unknown): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const id = extensionId();
-    const chromeApi = (window as unknown as { chrome?: ChromeRuntime }).chrome;
-    if (!id || !chromeApi?.runtime?.sendMessage) {
-      reject(new Error('확장 프로그램이 연결되지 않았습니다'));
-      return;
-    }
-    try {
-      chromeApi.runtime.sendMessage(id, msg, (res: unknown) => {
-        if (!res) {
-          reject(new Error('확장 프로그램이 응답하지 않습니다.'));
-          return;
-        }
-        resolve(res as T);
-      });
-    } catch (e) {
-      reject(e instanceof Error ? e : new Error('확장 호출 실패'));
-    }
-  });
-}
-
-export async function startGeneration(
-  items: { id: string; keyword: string; prompt: string }[],
-  options: GenOptions,
-): Promise<{ success: boolean; accepted?: number; error?: string }> {
-  return sendToExtension({ action: 'SUBMIT_GEN_BATCH', items, options });
-}
-
-export async function cancelGeneration(): Promise<{ success: boolean }> {
-  return sendToExtension({ action: 'CANCEL_GEN_BATCH' });
-}
-
 export interface GenResultEvent {
   id: string;
   ok: boolean;
@@ -288,7 +245,79 @@ export interface GenResultEvent {
   fatal: boolean;
 }
 
-/** 확장이 보내는 건별 결과를 구독한다. 해제 함수를 돌려준다. */
+let genCancelled = false;
+let genRunning = false;
+
+function emit(detail: Partial<GenResultEvent>): void {
+  window.dispatchEvent(new CustomEvent('doctorvoice-gen-result', {
+    detail: { id: '', ok: false, keyword: '', text: '', chars: 0, error: '', done: false, fatal: false, ...detail },
+  }));
+}
+
+async function generateOne(item: { id: string; keyword: string; prompt: string }): Promise<{ text: string; chars: number }> {
+  const { keywordBatchAPI } = await import('@/lib/api');
+  const res = await keywordBatchAPI.generate(item.keyword, item.prompt);
+  return { text: res.text || '', chars: res.chars || 0 };
+}
+
+function errText(e: unknown): string {
+  const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+  if (detail) return String(detail);
+  return e instanceof Error ? e.message : '생성 실패';
+}
+
+/** 한 건씩 순서대로 만든다. 실패해도 다음 건으로 넘어가고, 건마다 결과 이벤트를 쏜다. */
+async function runGeneration(items: { id: string; keyword: string; prompt: string }[], options: GenOptions): Promise<void> {
+  try {
+    for (const item of items) {
+      if (genCancelled) {
+        emit({ fatal: true, error: '생성을 중단했습니다.' });
+        return;
+      }
+      let lastError = '';
+      for (let attempt = 0; attempt <= Math.max(0, options.retries); attempt += 1) {
+        try {
+          const { text, chars } = await generateOne(item);
+          // 너무 짧으면 실패로 본다 — 예전 확장도 minChars 로 같은 판단을 했다.
+          if (chars < options.minChars) {
+            lastError = `${chars}자밖에 나오지 않았습니다(최소 ${options.minChars}자)`;
+            continue;
+          }
+          emit({ id: item.id, ok: true, keyword: item.keyword, text, chars });
+          lastError = '';
+          break;
+        } catch (e) {
+          lastError = errText(e);
+        }
+      }
+      if (lastError) emit({ id: item.id, ok: false, keyword: item.keyword, error: lastError });
+    }
+    emit({ done: true });
+  } finally {
+    genRunning = false;
+    genCancelled = false;
+  }
+}
+
+export async function startGeneration(
+  items: { id: string; keyword: string; prompt: string }[],
+  options: GenOptions,
+): Promise<{ success: boolean; accepted?: number; error?: string }> {
+  if (genRunning) return { success: false, error: '이미 생성이 진행 중입니다.' };
+  if (items.length === 0) return { success: false, error: '생성할 키워드가 없습니다.' };
+  genRunning = true;
+  genCancelled = false;
+  // 예전 확장 호출처럼 즉시 응답하고, 진행은 이벤트로 알린다.
+  void runGeneration(items, options);
+  return { success: true, accepted: items.length };
+}
+
+export async function cancelGeneration(): Promise<{ success: boolean }> {
+  genCancelled = true;
+  return { success: true };
+}
+
+/** 건별 결과를 구독한다. 해제 함수를 돌려준다. */
 export function onGenResult(handler: (r: GenResultEvent) => void): () => void {
   const listener = (e: Event) => handler((e as CustomEvent<GenResultEvent>).detail);
   window.addEventListener('doctorvoice-gen-result', listener);

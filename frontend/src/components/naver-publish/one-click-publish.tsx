@@ -1,9 +1,8 @@
 'use client'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-declare const chrome: any
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -16,10 +15,9 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { toast } from 'sonner'
-import { toastExtensionMissing } from '@/lib/extension-toast'
 import { Send, Upload, Image as ImageIcon, X, Loader2, FileEdit, Zap, Clock } from 'lucide-react'
-import { ExtensionStatusCard } from '@/components/extension-status'
-import { useExtensionStatus } from '@/lib/use-extension-status'
+import { LauncherCard, TargetBlogSelect, useTargetBlog } from '@/components/launcher/launcher-card'
+import { buildInterleavedBlocks, extractKeywords } from '@/lib/post-blocks'
 import { publishQueueAPI, type NaverCategory } from '@/lib/api'
 import type { Post } from '@/types'
 import { cn } from '@/lib/utils'
@@ -32,20 +30,6 @@ const ACTIONS: { key: FinalAction; label: string; icon: any }[] = [
   { key: 'publishNow', label: '즉시 발행', icon: Zap },
   { key: 'schedule', label: '예약 발행', icon: Clock },
 ]
-
-function sendMessageToExtension(extId: string, message: any): Promise<any> {
-  return new Promise((resolve, reject) => {
-    if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) {
-      reject(new Error('Chrome API를 사용할 수 없습니다')); return
-    }
-    try {
-      chrome.runtime.sendMessage(extId, message, (res: any) => {
-        if (chrome.runtime.lastError) reject(chrome.runtime.lastError)
-        else resolve(res)
-      })
-    } catch (e) { reject(e) }
-  })
-}
 
 // 이미지 → EXIF 제거된 base64
 function imageToCleanBase64(file: File, maxWidth = 1280, quality = 0.9): Promise<string> {
@@ -74,7 +58,7 @@ const LABEL = 'text-[13px] font-medium text-muted-foreground'
 const SELECT = 'mt-1 h-9 w-full rounded-lg border border-input bg-card px-3 text-sm disabled:opacity-60'
 
 export function OneClickPublish({ post }: OneClickPublishProps) {
-  const ext = useExtensionStatus()
+  const target = useTargetBlog()
   const [open, setOpen] = useState(false)
   const [images, setImages] = useState<{ file: File; preview: string }[]>([])
   const [finalAction, setFinalAction] = useState<FinalAction>('publishNow')
@@ -84,53 +68,21 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
   const [publishing, setPublishing] = useState(false)
   const [categories, setCategories] = useState<NaverCategory[]>([])
   const [category, setCategory] = useState('')        // '' = 네이버 기본 카테고리
-  const [syncingCats, setSyncingCats] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // 확장이 스스로 네이버 글쓰기를 열어 카테고리를 읽어오고 서버에 저장한다.
-  // silent=true 면 자동 확보(첫 진입) — 실패해도 조용히 넘어가고 사용자가 직접 누를 수 있게 둔다.
-  const syncCategories = useCallback(async (silent = false) => {
-    if (!ext.extensionId) {
-      if (!silent) toast.error('확장 프로그램이 연결되어 있지 않습니다')
-      return
-    }
-    setSyncingCats(true)
-    try {
-      const res = await new Promise<any>((resolve) => {
-        chrome.runtime.sendMessage(ext.extensionId, { action: 'SYNC_CATEGORIES' }, resolve)
-      })
-      if (!res?.success || !res.categories?.length) {
-        if (!silent || res?.needLogin) {
-          toast.error(res?.error || '카테고리를 불러오지 못했습니다')
-        }
-        return
-      }
-      await publishQueueAPI.setCategories(res.categories)
-      setCategories(res.categories)
-      if (!silent) toast.success(`카테고리 ${res.categories.length}개를 불러왔습니다`)
-    } catch {
-      if (!silent) toast.error('카테고리 동기화 실패')
-    } finally {
-      setSyncingCats(false)
-    }
-  }, [ext.extensionId])
-
-  // 발행창을 열면: 캐시를 먼저 보여주고, 비어 있으면 확장이 네이버에 다녀와 자동으로 채운다.
+  // 카테고리 목록은 PC 실행기가 네이버 에디터에서 읽어 서버에 저장해 둔다.
+  // 아직 한 번도 돌지 않았으면 비어 있고, 그때는 네이버 기본 카테고리로 나간다.
   useEffect(() => {
     if (!open) return
     let cancelled = false
     ;(async () => {
-      let cached: NaverCategory[] = []
       try {
         const res = await publishQueueAPI.getCategories()
-        cached = res.categories || []
-      } catch { /* 캐시 없음 → 아래에서 자동 확보 */ }
-      if (cancelled) return
-      setCategories(cached)
-      if (cached.length === 0) await syncCategories(true)
+        if (!cancelled) setCategories(res.categories || [])
+      } catch { /* 캐시 없음 — 기본 카테고리로 발행 */ }
     })()
     return () => { cancelled = true }
-  }, [open, syncCategories])
+  }, [open])
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []).filter((f) => f.type.startsWith('image/'))
@@ -144,15 +96,18 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
   }
 
   const publish = async () => {
-    if (!ext.connected || !ext.extensionId) {
-      toastExtensionMissing()
+    if (!target.blogRefId) {
+      toast.error('발행할 블로그를 먼저 고르세요', { description: '원스톱 자동화의 연결 설정에서 네이버 블로그를 등록할 수 있습니다' })
       return
     }
     let scheduleISO: string | null = null
     if (finalAction === 'schedule') {
       if (!scheduleDate || !scheduleTime) { toast.error('예약 날짜와 시간을 선택하세요'); return }
       const dt = new Date(`${scheduleDate}T${scheduleTime}`)
-      if (isNaN(dt.getTime()) || dt.getTime() <= Date.now()) { toast.error('예약 시간은 현재 이후여야 합니다'); return }
+      // 실행기가 에디터를 열 시간이 필요하다. 서버도 같은 기준으로 거른다.
+      if (isNaN(dt.getTime()) || dt.getTime() <= Date.now() + 5 * 60 * 1000) {
+        toast.error('예약 시간은 지금부터 5분 뒤 이후여야 합니다'); return
+      }
       scheduleISO = `${scheduleDate}T${scheduleTime}`
     }
 
@@ -164,27 +119,31 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
         toast.loading('사진 처리 중...', { id: t })
         for (const img of images) imageList.push(await imageToCleanBase64(img.file))
       }
-      const job = {
-        title: post.title || post.suggested_titles?.[0] || '',
-        content: post.generated_content || '',
-        images: imageList,
+      const title = post.title || post.suggested_titles?.[0] || ''
+      const content = post.generated_content || ''
+      toast.loading('PC 실행기에 넘길 준비 중...', { id: t })
+      await publishQueueAPI.enqueueJob({
+        title,
+        blocks: buildInterleavedBlocks(content || title, imageList),
         tags: post.seo_keywords || post.hashtags || [],
-        options: { openType, search: true, category: category || null },
-        finalAction,
-        schedule: scheduleISO ? { datetime: scheduleISO } : null,
-      }
-      toast.loading('네이버 블로그로 전송 중...', { id: t })
-      const res = await sendMessageToExtension(ext.extensionId, { action: 'SUBMIT_JOB', job })
-      if (!res?.success) throw new Error(res?.error || '발행 전송 실패')
+        emphasize: extractKeywords(content || title),
+        scheduled_at: scheduleISO,
+        final_action: finalAction === 'publishNow' ? 'publish' : finalAction,
+        open_type: openType,
+        search: true,
+        category: category || null,
+        blog_ref_id: target.blogRefId,
+      })
 
+      const where = target.selected?.label || target.blogId
       const msg =
-        finalAction === 'draft' ? { title: '임시저장을 시작했어요', desc: '새 탭에서 초안이 저장됩니다' }
-          : finalAction === 'schedule' ? { title: '예약 발행을 등록했어요', desc: `${scheduleDate} ${scheduleTime} 예약` }
-            : { title: '발행을 시작했어요', desc: '새 탭에서 자동으로 작성·발행됩니다' }
-      toast.success(msg.title, { id: t, description: msg.desc })
+        finalAction === 'draft' ? { title: '임시저장을 맡겼어요', desc: `${where} · 실행기가 초안으로 저장합니다` }
+          : finalAction === 'schedule' ? { title: '예약 발행을 맡겼어요', desc: `${where} · ${scheduleDate} ${scheduleTime} 예약으로 등록합니다` }
+            : { title: '발행을 맡겼어요', desc: `${where} · 실행기가 바로 작성·발행합니다` }
+      toast.success(msg.title, { id: t, description: msg.desc + '. 이 창을 닫아도 됩니다.' })
       setOpen(false)
     } catch (e: any) {
-      toast.error('발행 실패', { id: t, description: e.message || '다시 시도해주세요' })
+      toast.error('발행 실패', { id: t, description: e?.response?.data?.detail || e.message || '다시 시도해주세요' })
     } finally {
       setPublishing(false)
     }
@@ -205,8 +164,15 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
           </DialogHeader>
 
           <div className="space-y-4 py-2">
-            {/* 실시간 연동 신호등 */}
-            <ExtensionStatusCard />
+            {/* 어느 블로그로 보낼지 + 실행기 안내 */}
+            <div className="space-y-2">
+              <Label className={LABEL}>발행할 블로그</Label>
+              <TargetBlogSelect
+                blogs={target.blogs} value={target.blogRefId} onChange={target.choose}
+                loading={target.loading} onRefresh={target.refresh}
+              />
+            </div>
+            <LauncherCard compact />
 
             {/* 이미지 */}
             <div className="space-y-2">
@@ -271,30 +237,19 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
                 </div>
               )}
 
-              {/* 카테고리 — 목록은 확장이 네이버 에디터에서 읽어와 서버에 캐시해 둔 것 */}
+              {/* 카테고리 — 목록은 PC 실행기가 네이버 에디터에서 읽어와 서버에 캐시해 둔 것 */}
               {finalAction !== 'draft' && (
                 <div className="pt-1">
-                  <div className="flex items-center justify-between">
-                    <Label className={LABEL}>카테고리</Label>
-                    <button type="button" onClick={() => syncCategories(false)} disabled={syncingCats}
-                      className="text-xs font-medium text-primary hover:underline disabled:opacity-50">
-                      {syncingCats ? '불러오는 중...' : '목록 새로고침'}
-                    </button>
-                  </div>
-                  <select value={category} onChange={(e) => setCategory(e.target.value)}
-                    disabled={syncingCats}
-                    className={SELECT}>
+                  <Label className={LABEL}>카테고리</Label>
+                  <select value={category} onChange={(e) => setCategory(e.target.value)} className={SELECT}>
                     <option value="">네이버 기본 카테고리</option>
                     {categories.map((c) => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
-                  {syncingCats && categories.length === 0 && (
-                    <p className="mt-1 text-[11px] text-muted-foreground">네이버에서 카테고리를 불러오는 중...</p>
-                  )}
-                  {!syncingCats && categories.length === 0 && (
+                  {categories.length === 0 && (
                     <p className="mt-1 text-[11px] text-muted-foreground">
-                      카테고리를 불러오지 못했습니다. 네이버 로그인 상태를 확인한 뒤 &lsquo;목록 새로고침&rsquo;을 눌러주세요.
+                      카테고리 목록은 PC 실행기가 처음 한 번 네이버에 다녀오면 채워집니다. 그전까지는 기본 카테고리로 발행됩니다.
                     </p>
                   )}
                 </div>
@@ -308,13 +263,13 @@ export function OneClickPublish({ post }: OneClickPublishProps) {
             </div>
 
             <p className="text-center text-[11px] text-muted-foreground">
-              브라우저에 네이버가 로그인되어 있어야 합니다(비밀번호 저장 안 함). 미로그인 시 로그인 창이 열립니다.
+              PC 실행기가 켜져 있어야 등록됩니다. 네이버 로그인은 실행기가 연 크롬 창에서 한 번만 하면 유지됩니다.
             </p>
           </div>
 
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setOpen(false)}>취소</Button>
-            <Button onClick={publish} disabled={publishing || !ext.connected}>
+            <Button onClick={publish} disabled={publishing || !target.blogRefId}>
               {publishing ? (
                 <><Loader2 className="animate-spin" />발행 중...</>
               ) : (

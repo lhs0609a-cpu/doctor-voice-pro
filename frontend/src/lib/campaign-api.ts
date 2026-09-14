@@ -9,6 +9,28 @@ import api from '@/lib/api'
 
 const C = '/api/v1/campaign'
 
+export interface AutopilotConfig {
+  daily_posts: number
+  buffer_days: number
+  image_count: number
+  target_chars: number
+  min_score: number
+  max_rewrites: number
+  daily_generation_limit: number
+  landing_url: string
+  landing_label: string
+  landing_purpose: string
+  landing_tracking: boolean
+}
+export interface AutopilotState {
+  enabled: boolean
+  config: AutopilotConfig
+  message: string | null
+  next_run_at: string | null
+  reserved_today: number
+  task: Task | null
+}
+
 // ───────────────────────── 타입 ─────────────────────────
 export interface BlogAccount {
   id: string
@@ -286,6 +308,24 @@ export interface AgentBlogSummary {
   pending: number; next_at?: string | null; login_id?: string | null
 }
 
+// PC 실행기 신호등. 실행기가 주기적으로 서버에 남긴 흔적을 읽는다.
+export interface AgentDevice {
+  device_id: string
+  version?: string | null
+  running: boolean
+  label?: string | null
+  note?: string | null
+  last_seen_at: string
+  seconds_ago: number
+}
+
+export interface AgentStatus {
+  online: boolean
+  running: boolean
+  version?: string | null
+  devices: AgentDevice[]
+}
+
 // ───────────────────────── API ─────────────────────────
 export const campaignAPI = {
   // 병원
@@ -317,6 +357,12 @@ export const campaignAPI = {
   cancelTask: async (id: string): Promise<{ success: boolean }> => (await api.post(`${C}/tasks/${id}/cancel`)).data,
 
   // 캠페인
+  getAutopilot: async (id: string): Promise<AutopilotState> => (await api.get(`${C}/campaigns/${id}/autopilot`)).data,
+  setLanding: async (id: string, body: AutopilotConfig): Promise<void> => { await api.put(`${C}/campaigns/${id}/landing`, body) },
+  setAutopilot: async (id: string, body: AutopilotConfig & { enabled: boolean }): Promise<AutopilotState> =>
+    (await api.put(`${C}/campaigns/${id}/autopilot`, body)).data,
+  startAutomation: async (id: string, body: { max_keywords: number; image_count: number; auto_schedule: boolean; start_date: string; days: number; discover_keywords?: boolean; quality?: AutopilotConfig }): Promise<Task> =>
+    (await api.post(`${C}/campaigns/${id}/automation`, body)).data,
   listCampaigns: async (clientId?: string): Promise<Campaign[]> => (await api.get(`${C}/campaigns`, { params: clientId ? { client_id: clientId } : {} })).data,
   createCampaign: async (clientId: string, name?: string): Promise<Campaign> => (await api.post(`${C}/campaigns`, { client_id: clientId, name })).data,
   getCampaign: async (id: string): Promise<Campaign> => (await api.get(`${C}/campaigns/${id}`)).data,
@@ -380,10 +426,18 @@ export const campaignAPI = {
 
   // 발행 실행기(확장) 연동
   agentClaim: async (body: { blog_ref_id?: string; naver_blog_id?: string; limit?: number; include_images?: boolean }): Promise<ClaimedJob[]> =>
-    (await api.post(`${C}/agent/claim`, body, { timeout: 600000 })).data,
+    (await api.post(`${C}/agent/claim`, { ...body, protocol_version: 2, limit: 1, capabilities: ['landing_links_v1'] }, { timeout: 600000 })).data,
+  executionServer: (): string => process.env.NEXT_PUBLIC_API_URL || (typeof window !== 'undefined' && localStorage.getItem('BACKEND_URL')) || 'http://localhost:8010',
+  reconcileJob: async (jobId: string, outcome: 'registered' | 'not_registered', evidence: string): Promise<PublishJobItem> =>
+    (await api.post(`${C}/jobs/${jobId}/reconcile`, { outcome, evidence })).data,
   agentResult: async (jobId: string, body: { lock_token?: string; ok: boolean; uncertain?: boolean; message?: string; url?: string; need_login?: boolean; captcha?: boolean; release?: boolean }): Promise<{ success: boolean; status: string }> =>
     (await api.post(`${C}/agent/jobs/${jobId}/result`, body)).data,
   agentSummary: async (): Promise<AgentBlogSummary[]> => (await api.get(`${C}/agent/summary`)).data,
+  agentStatus: async (): Promise<AgentStatus> => (await api.get(`${C}/agent/status`)).data,
+  // 홈페이지 자동 연결: 로그인된 이 페이지가 받는 1회용 코드(10분). 같은 PC의 실행기에 건넨다.
+  agentPair: async (): Promise<{ code: string; expires_in: number }> => (await api.post(`${C}/agent/pair`)).data,
+  revokeAgentDevice: async (deviceId: string): Promise<{ success: boolean }> =>
+    (await api.delete(`${C}/agent/devices/${encodeURIComponent(deviceId)}`)).data,
 }
 
 /** 작업이 끝날 때까지 폴링. onTick 으로 진행률을 넘긴다. */
@@ -406,7 +460,7 @@ export const VERDICT_LABEL: Record<string, { label: string; tone: 'ok' | 'warn' 
 }
 
 export const JOB_STATUS_LABEL: Record<string, string> = {
-  queued: '대기', assigned: '배정됨', publishing: '발행 중', published: '발행됨', failed: '실패', uncertain: '확인 필요', cancelled: '취소',
+  queued: '대기', assigned: '작성 중', publishing: '등록 처리 중', submitted: '네이버 예약 등록', published: '공개 확인', failed: '실패', uncertain: '결과 대조 필요', cancelled: '취소', dry_run: '시험 완료',
 }
 
 export const BLOG_STATUS_LABEL: Record<string, string> = {

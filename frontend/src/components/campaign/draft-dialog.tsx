@@ -20,6 +20,9 @@ function asArray(v: unknown): any[] { return Array.isArray(v) ? v : [] }
 export function summarizeChecks(checks: Record<string, unknown> | null | undefined): CheckChip[] {
   if (!checks) return []
   const chips: CheckChip[] = []
+  const editorial = checks.editorial as any
+  if (editorial) chips.push({ label: editorial.approved ? '근거·품질 통과' : '근거·품질 확인 필요', tone: editorial.approved ? 'ok' : 'warn' })
+  if (checks.landing) chips.push({ label: '랜딩 링크 포함', tone: 'info' })
   const law = asArray(checks.medical_law)
   if (law.length) chips.push({ label: `의료광고법 ${law.length}건`, tone: 'crit' })
   const forb = asArray(checks.forbidden)
@@ -72,8 +75,21 @@ export function ChecksDetail({ checks }: { checks: Record<string, unknown> | nul
   const facts = checks.facts as any
   const sim = checks.similarity_to_source
   const chips = summarizeChecks(checks)
+  const editorial = checks.editorial as any
+  const landing = checks.landing as any
   return (
     <div className="space-y-3">
+      {landing?.url && <div className="rounded-lg border p-3 text-xs">
+        <b>랜딩페이지 안내</b><p className="mt-1">{landing.label} · {landing.purpose}</p>
+        {String(landing.url).startsWith('https://') && <a className="mt-1 block break-all underline" href={landing.url} target="_blank" rel="noopener noreferrer">{landing.url}</a>}
+      </div>}
+      {editorial && <div className="space-y-2 rounded-lg border p-3 text-xs">
+        <b>{editorial.approved ? '근거·품질 검수 통과' : '근거·품질 검수 미통과'}</b>
+        <p>검색 의도 {editorial.review?.search_intent ?? '-'} · 유용성 {editorial.review?.usefulness ?? '-'} · 가독성 {editorial.review?.readability ?? '-'} · 독창성 {editorial.review?.originality ?? '-'}</p>
+        <CheckSection title="수정 필요" items={[...asArray(editorial.structural?.issues), ...asArray(editorial.review?.issues), ...asArray(editorial.review?.unsupported_claims)]} tone="warn" />
+        <p>작성·수정 {asArray(editorial.history).length}회 · 근거 자료 {asArray(editorial.sources).length}건</p>
+        {asArray(editorial.sources).filter(s => String(s.url).startsWith('https://')).map((s: any) => <a key={s.id} className="block underline" href={s.url} target="_blank" rel="noopener noreferrer">{s.title}</a>)}
+      </div>}
       {chips.length === 0 && <div className="inline-flex items-center gap-1 text-sm text-success"><CheckCircle2 className="h-4 w-4" /> 특별한 문제가 없습니다.</div>}
       <CheckSection title="의료광고법" items={asArray(checks.medical_law)} tone="crit" />
       <CheckSection title="금칙어" items={asArray(checks.forbidden)} tone="crit" />

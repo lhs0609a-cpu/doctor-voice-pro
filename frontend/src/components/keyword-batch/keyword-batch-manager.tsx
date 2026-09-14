@@ -3,8 +3,8 @@
 /**
  * 키워드 대량 생성 UI
  *
- * 흐름: 엑셀 업로드 → 프롬프트 선택 → 실행 → Gemini 가 한 건씩 생성 → 결과 수집
- * 실제 자동화는 확장 프로그램이 하고, 이 화면은 지시와 진행 상황만 담당한다.
+ * 흐름: 엑셀 업로드 → 프롬프트 선택 → 실행 → 서버가 한 건씩 생성 → 결과 수집
+ * 생성은 서버 API 가 하고, 이 화면은 지시와 진행 상황만 담당한다.
  */
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -15,24 +15,6 @@ import {
   ChevronDown, ChevronRight,
 } from 'lucide-react';
 
-import { useExtensionStatus } from '@/lib/use-extension-status';
-import {
-  ExtensionStatusCard, EXTENSION_DOWNLOAD_URL, AUTO_UPDATE_INSTALLER_URL,
-  LATEST_EXTENSION_VERSION,
-} from '@/components/extension-status';
-
-// 키워드 대량 생성이 되려면 확장이 이 버전 이상이어야 한다(SUBMIT_GEN_BATCH 도입 버전).
-const MIN_GEN_VERSION = '16.0.0';
-function versionGte(v: string | null, min: string): boolean {
-  if (!v) return false;
-  const a = v.split('.').map((n) => parseInt(n, 10) || 0);
-  const b = min.split('.').map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const x = a[i] || 0, y = b[i] || 0;
-    if (x !== y) return x > y;
-  }
-  return true;
-}
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -75,11 +57,6 @@ export function KeywordBatchManager() {
   const [showOptions, setShowOptions] = useState(false);
   const [running, setRunning] = useState(false);
   const [previewId, setPreviewId] = useState<string | null>(null);
-
-  // 확장이 연결돼야 아무것도 시작할 수 없다 → 화면에 들어오자마자 알려준다.
-  const { connected, version } = useExtensionStatus();
-  // 연결은 됐는데 버전이 낮으면 생성 기능이 없다(다른 컴퓨터에서 구버전 설치 시 흔함).
-  const extOutdated = connected && !!version && !versionGte(version, MIN_GEN_VERSION);
 
   useEffect(() => {
     const local = loadTemplates();
@@ -257,9 +234,9 @@ export function KeywordBatchManager() {
         ),
       );
       setRunning(true);
-      toast.success(`${label} ${res.accepted}건을 시작합니다. Gemini 탭에서 진행됩니다.`);
+      toast.success(`${label} ${res.accepted}건을 시작합니다. 서버가 한 건씩 만들어 이 화면에 채웁니다.`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '확장 프로그램 호출 실패');
+      toast.error(e instanceof Error ? e.message : '생성 시작 실패');
     }
   };
 
@@ -319,33 +296,6 @@ export function KeywordBatchManager() {
   // ============================================================
   return (
     <div className="space-y-6">
-      {/* 확장이 없으면 아무것도 못 한다 — 버튼을 누르기 전에 알려준다 */}
-      {!connected && <ExtensionStatusCard />}
-
-      {/* 연결은 됐지만 구버전 → 생성 기능이 없다. 명확히 알리고 업데이트를 유도한다. */}
-      {extOutdated && (
-        <div className="rounded-xl border bg-warning-soft p-4">
-          <div className="text-sm font-semibold text-warning">
-            확장 프로그램이 오래되었습니다 (현재 v{version})
-          </div>
-          <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
-            키워드 대량 생성은 확장 <b className="font-medium text-foreground">v{MIN_GEN_VERSION} 이상</b>이 필요합니다. 이 컴퓨터의 확장을
-            최신 버전(v{LATEST_EXTENSION_VERSION})으로 업데이트해 주세요. 업데이트 전에는 생성이
-            시작되지 않습니다(Gemini 도 열리지 않습니다).
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <a href={AUTO_UPDATE_INSTALLER_URL}>
-              <Button size="sm">
-                <Download className="h-4 w-4" /> 자동 업데이트로 설치 (권장)
-              </Button>
-            </a>
-            <a href={EXTENSION_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer">
-              <Button size="sm" variant="outline">최신 버전 .zip 받기</Button>
-            </a>
-          </div>
-        </div>
-      )}
-
       {/* 1. 키워드 업로드 */}
       <Card>
         <CardHeader>
@@ -633,11 +583,11 @@ export function KeywordBatchManager() {
               </Button>
             ) : (
               <>
-                <Button onClick={run} disabled={!targets.length || !connected || extOutdated}>
+                <Button onClick={run} disabled={!targets.length}>
                   <Play className="mr-1.5 h-4 w-4" /> {targets.length}건 생성 시작
                 </Button>
                 {failCount > 0 && (
-                  <Button variant="outline" onClick={retryFailed} disabled={!connected}>
+                  <Button variant="outline" onClick={retryFailed}>
                     <RotateCcw className="mr-1.5 h-4 w-4" /> 실패 {failCount}건만 재시도
                   </Button>
                 )}
@@ -664,7 +614,7 @@ export function KeywordBatchManager() {
           )}
 
           <p className="text-xs text-muted-foreground">
-            생성은 Gemini 탭에서 진행됩니다. 그 탭을 닫지 마세요. 다른 탭에서 작업하셔도 됩니다.
+            생성은 서버에서 진행됩니다. 진행 중에는 이 화면을 열어 두세요(결과를 여기서 받아 저장합니다).
           </p>
         </CardContent>
       </Card>

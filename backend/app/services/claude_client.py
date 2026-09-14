@@ -74,6 +74,8 @@ async def complete_text(
         msg = await stream.get_final_message()
     if getattr(msg, "stop_reason", None) == "refusal":
         raise RuntimeError("모델이 요청을 거부했습니다(안전 정책). 원고 내용을 확인하세요.")
+    if getattr(msg, 'stop_reason', None) == 'max_tokens':
+        raise ValueError('모델 출력이 길이 제한으로 잘렸습니다. 불완전한 원고는 사용하지 않습니다.')
     parts: List[str] = []
     for block in msg.content:
         if getattr(block, "type", "") == "text":
