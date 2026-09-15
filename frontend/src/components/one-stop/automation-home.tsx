@@ -218,10 +218,19 @@ export function AutomationHome() {
     : <Row key={n} {...step(n)} tone={done[n - 1] ? 'done' : locked(n) ? 'locked' : 'todo'}
         disabled={locked(n)} onOpen={() => setOpened(n)} />
 
+  // 연결은 됐는데 발행이 멈춰 있는 상태. 여기서 바로 시작시킨다.
+  // 실행기는 '홈페이지가 연결을 걸어 오면' 그것을 이 계정으로 발행하라는 뜻으로 보고 발행을 시작한다
+  // (실행기의 bridge_pair → autostart). 그래서 다시 연결을 거는 것이 곧 시작 버튼이 된다.
   const step1 = launcherIdle
     ? <Here>
-        <p>작업 표시줄의 <b>닥터보이스 자동 발행</b> 창에서 <b>[자동 발행 시작]</b>을 누르세요.</p>
-        <p className="mt-1 text-xs text-muted-foreground">실행기의 <b>켜지면 바로 발행 시작</b>에 체크해 두면 다음부터 안 물어봅니다.</p>
+        <p className="font-medium">연결은 됐는데 아직 발행이 멈춰 있습니다.</p>
+        <Button size="sm" className="mt-2" disabled={launcher.pairing} onClick={launcher.pairNow}>
+          {launcher.pairing ? '시작하는 중…' : '이 PC에서 발행 시작하기'}
+        </Button>
+        {launcher.pairError && <p className="mt-2 text-xs text-danger">{launcher.pairError}</p>}
+        <p className="mt-2 text-xs text-muted-foreground">
+          눌리지 않으면 실행기 창에서 <b>[자동 발행 시작]</b>을 눌러도 됩니다.
+        </p>
       </Here>
     : launcher.online
       ? <p className="text-sm text-muted-foreground">PC와 실행기를 켜 두세요. 창을 닫아도 서버는 계속 글을 준비합니다.</p>

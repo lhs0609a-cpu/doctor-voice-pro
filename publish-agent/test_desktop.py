@@ -71,7 +71,7 @@ class DesktopGuideTests(unittest.TestCase):
                         yield from descendants(child)
                 widgets = list(descendants(root))
                 toggle = next(w for w in widgets if 'text' in w.keys() and w.cget('text') == '직접 로그인 / 서버 설정 펼치기')
-                manual = app.connect_button.master
+                manual = app.manual.box          # 카드 통째로 접었다 폈다 한다
                 self.assertEqual(manual.winfo_manager(), '')
                 toggle.invoke()
                 self.assertEqual(manual.winfo_manager(), 'pack')
@@ -80,6 +80,7 @@ class DesktopGuideTests(unittest.TestCase):
                 self.assertIn('아직 홈페이지에 연결되지 않았습니다', app.status.get())
                 toggle.invoke()
                 self.assertEqual(manual.winfo_manager(), '')
+                self.assertIs(app.connect_button.master, app.manual)
             finally:
                 root.destroy()
 

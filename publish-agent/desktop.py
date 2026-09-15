@@ -38,6 +38,36 @@ CONNECT_WAIT_SECONDS = 600 # 요청이 살아 있는 동안만 기다린다(서�
 UPDATE_EVERY_BEATS = 360   # 하트비트 360번 = 6시간마다 새 버전을 다시 본다
 
 
+# ── 화면 색과 모양 ──────────────────────────────────────────────
+# tkinter 기본값은 회색 상자라 낡아 보인다. 흰 카드 + 옅은 바탕 + 파란 단추로 정리한다.
+FONT = 'Malgun Gothic'
+BG = '#F4F6FA'        # 페이지 바탕
+CARD = '#FFFFFF'      # 카드
+INK = '#0F172A'       # 본문 글자
+MUTED = '#64748B'     # 설명 글자
+BLUE = '#2563EB'      # 주 단추
+GREEN = '#059669'     # 연결됨
+AMBER = '#D97706'     # 확인 필요
+RED = '#DC2626'
+
+PRIMARY = dict(bg=BLUE, fg='white', activebackground='#1D4ED8', activeforeground='white',
+               relief='flat', bd=0, padx=18, pady=8, font=(FONT, 10, 'bold'), cursor='hand2')
+GHOST = dict(bg='#E2E8F0', fg=INK, activebackground='#CBD5E1', activeforeground=INK,
+             relief='flat', bd=0, padx=14, pady=8, font=(FONT, 10), cursor='hand2')
+
+
+def card(parent, **pack):
+    """흰 바탕에 여백을 둔 상자 하나. 화면은 이 상자들을 쌓아 만든다.
+
+    내용은 안쪽 틀에 담고, 카드 통째로 숨길 일이 있으면 돌려받은 틀의 .box 를 pack_forget 한다."""
+    box = tk.Frame(parent, bg=CARD, highlightbackground='#E2E8F0', highlightthickness=1)
+    box.pack(**pack)
+    inner = ttk.Frame(box, padding=16, style='Card.TFrame')
+    inner.pack(fill='both', expand=True)
+    inner.box = box
+    return inner
+
+
 def hold_single_instance():
     """설치 프로그램(AppMutex)이 실행 중인 실행기를 알아보게 이름 있는 뮤텍스를 잡습니다.
 
@@ -129,81 +159,117 @@ class Desktop:
         self.server_url = str(saved.get('server') or SERVER)
 
         root.title('닥터보이스 자동 발행')
-        root.geometry('820x780')
-        root.minsize(780, 740)
+        root.geometry('760x720')
+        root.minsize(720, 660)
+        root.configure(bg=BG)
         style = ttk.Style(root)
-        style.configure('.', font=('Malgun Gothic', 10))
-        style.configure('TButton', padding=(10, 6))
-        frame = ttk.Frame(root, padding=22)
-        frame.pack(fill='both', expand=True)
-        header = ttk.Frame(frame)
-        header.pack(fill='x')
-        ttk.Label(header, text=f'닥터보이스 자동 발행  v{VERSION}', font=('Malgun Gothic', 20, 'bold')).pack(side='left')
-        ttk.Button(header, text='업데이트 확인', command=lambda: self.check_update(manual=True)).pack(side='right')
-        ttk.Label(frame, text='이 창은 네이버에 글을 등록하는 PC 실행기입니다. 아래 순서대로 준비하세요.').pack(anchor='w', pady=10)
-        guide = ttk.LabelFrame(frame, text='처음이라면 이렇게 하세요', padding=12)
-        guide.pack(fill='x', pady=(0, 12))
-        ttk.Label(guide, text='이 창을 켜면 브라우저가 열리면서 홈페이지 계정에 저절로 연결됩니다. 따로 로그인하지 않아도 됩니다.\n1. 브라우저가 열리면 그대로 두세요(홈페이지에 로그인돼 있으면 바로 [연결됨]으로 바뀝니다).\n2. 연결되면 자동 발행이 시작됩니다. 네이버 로그인 창이 뜨면 로그인만 해 주세요.\n한 번 연결하면 다음부터는 이 창을 켜기만 하면 됩니다.',
-                  justify='left').pack(anchor='w')
-        row = ttk.Frame(guide)
-        row.pack(anchor='w', pady=(10, 0))
-        ttk.Button(row, text='지금 연결하기', command=self.auto_connect_async).pack(side='left')
-        ttk.Button(row, text='홈페이지 열기', command=lambda: webbrowser.open(WEBSITE)).pack(side='left', padx=8)
-        ttk.Label(guide, text='브라우저에서 홈페이지에 로그인돼 있지 않으면 로그인 화면이 한 번 뜹니다. 로그인하면 그대로 연결됩니다.', foreground='#526174').pack(anchor='w', pady=(8, 0))
+        style.configure('.', font=(FONT, 10), background=CARD, foreground=INK)
+        style.configure('Card.TFrame', background=CARD)
+        style.configure('Page.TFrame', background=BG)
+        style.configure('Card.TLabel', background=CARD, foreground=INK)
+        style.configure('Muted.TLabel', background=CARD, foreground=MUTED, font=(FONT, 9))
+        style.configure('Title.TLabel', background=CARD, foreground=INK, font=(FONT, 19, 'bold'))
+        style.configure('Head.TLabel', background=CARD, foreground=INK, font=(FONT, 11, 'bold'))
+        style.configure('Status.TLabel', background=CARD, foreground=INK, font=(FONT, 12, 'bold'))
+        style.configure('Ghost.TButton', padding=(10, 5), font=(FONT, 9))
+        style.configure('TCheckbutton', background=CARD, foreground=INK)
 
+        page = ttk.Frame(root, padding=18, style='Page.TFrame')
+        page.pack(fill='both', expand=True)
+
+        # ── 머리말 ───────────────────────────────────────────────
+        head = card(page, fill='x')
+        ttk.Label(head, text='닥터보이스 자동 발행', style='Title.TLabel').pack(side='left')
+        ttk.Label(head, text=f'v{VERSION}', style='Muted.TLabel').pack(side='left', padx=(8, 0), pady=(8, 0))
+        ttk.Button(head, text='업데이트 확인', style='Ghost.TButton',
+                   command=lambda: self.check_update(manual=True)).pack(side='right')
+
+        # ── 상태 ─────────────────────────────────────────────────
+        # 이 카드만 보면 지금 무슨 일이 일어나는지 알아야 한다. 점 하나 + 굵은 한 줄 + 설명 한 줄.
+        state = card(page, fill='x', pady=(10, 0))
+        dot_row = ttk.Frame(state, style='Card.TFrame')
+        dot_row.pack(fill='x')
+        self.dot = tk.Canvas(dot_row, width=12, height=12, bg=CARD, highlightthickness=0)
+        self.dot_id = self.dot.create_oval(2, 2, 11, 11, fill=AMBER, outline='')
+        self.dot.pack(side='left', pady=(4, 0))
+        self.link = tk.StringVar(value='연결 확인 중…')
+        self.link_label = ttk.Label(dot_row, textvariable=self.link, style='Status.TLabel')
+        self.link_label.pack(side='left', padx=8)
+        self.status = tk.StringVar(value='브라우저가 열리면 그대로 두세요. 홈페이지에 로그인돼 있으면 곧 연결됩니다.')
+        ttk.Label(state, textvariable=self.status, style='Muted.TLabel', wraplength=660,
+                  justify='left').pack(anchor='w', pady=(6, 0))
+        self.summary = tk.StringVar(value='')
+        ttk.Label(state, textvariable=self.summary, style='Muted.TLabel', wraplength=660,
+                  justify='left').pack(anchor='w')
+
+        buttons = ttk.Frame(state, style='Card.TFrame')
+        buttons.pack(fill='x', pady=(14, 0))
+        self.start_button = tk.Button(buttons, text='자동 발행 시작', command=self.start, **PRIMARY)
+        self.start_button.pack(side='left')
+        self.stop_button = tk.Button(buttons, text='실행 중단', command=self.stop, state='disabled', **GHOST)
+        self.stop_button.pack(side='left', padx=8)
+        ttk.Button(buttons, text='홈페이지 열기', style='Ghost.TButton',
+                   command=lambda: webbrowser.open(WEBSITE)).pack(side='right')
+
+        # ── 처음 연결 안내 — 연결되면 통째로 사라진다 ────────────
+        self.guide = card(page, fill='x', pady=(10, 0))
+        ttk.Label(self.guide, text='홈페이지에 연결하기', style='Head.TLabel').pack(anchor='w')
+        ttk.Label(self.guide, style='Muted.TLabel', justify='left', wraplength=660,
+                  text='이 창을 켜면 브라우저가 열리면서 홈페이지 계정에 저절로 연결됩니다. 따로 로그인하지 않아도 됩니다.\n'
+                       '로그인 화면이 뜨면 한 번만 로그인하세요. 한 번 연결하면 다음부터는 창을 켜기만 하면 됩니다.'
+                  ).pack(anchor='w', pady=(4, 10))
+        tk.Button(self.guide, text='지금 연결하기', command=self.auto_connect_async, **PRIMARY).pack(anchor='w')
+
+        # ── 기록 ─────────────────────────────────────────────────
+        logs = card(page, fill='both', expand=True, pady=(10, 0))
+        log_head = ttk.Frame(logs, style='Card.TFrame')
+        log_head.pack(fill='x')
+        ttk.Label(log_head, text='기록', style='Head.TLabel').pack(side='left')
+        ttk.Button(log_head, text='복사', style='Ghost.TButton', command=self.copy_logs).pack(side='right')
+        self.logs = tk.Text(logs, height=9, state='disabled', wrap='word', relief='flat', bd=0,
+                            bg=BG, fg=MUTED, font=('Consolas', 9), padx=10, pady=8)
+        self.logs.pack(fill='both', expand=True, pady=(8, 0))
+        ttk.Label(logs, style='Muted.TLabel', justify='left', wraplength=660,
+                  text='네이버 로그인·보안문자는 실행기가 연 Chrome 창에서 처리하세요.\n'
+                       'PC를 끄면 새 예약 등록만 멈춥니다. 이미 네이버에 걸어둔 예약은 그대로 발행됩니다.'
+                  ).pack(anchor='w', pady=(8, 0))
+
+        # ── 설정(접어 둔다) ──────────────────────────────────────
         self.server = tk.StringVar(value=saved.get('server', SERVER))
         self.email = tk.StringVar(value=saved.get('email', ''))
         self.password = tk.StringVar()
         self.auto_login = tk.BooleanVar(value=bool(saved.get('auto_login')))
         self.auto_start = tk.BooleanVar(value=bool(saved.get('auto_start')))
-        manual = ttk.LabelFrame(frame, text='자동 연결이 안 될 때만 직접 로그인', padding=10)
-        toggle = ttk.Button(frame, text='직접 로그인 / 서버 설정 펼치기')
-        toggle.pack(anchor='w', pady=(0, 8))
-        for title, var, secret in [('서버 주소 (기본값을 그대로 사용하세요)', self.server, False), ('홈페이지에 로그인한 닥터보이스 이메일', self.email, False), ('닥터보이스 비밀번호 (네이버 비밀번호가 아닙니다)', self.password, True)]:
-            ttk.Label(manual, text=title).pack(anchor='w')
+
+        toggle = ttk.Button(page, text='직접 로그인 / 서버 설정 펼치기', style='Ghost.TButton')
+        toggle.pack(anchor='w', pady=(10, 0))
+        self.manual = manual = card(page)
+        manual.box.pack_forget()   # 설정은 접어 둔 채로 시작한다
+        options = ttk.Frame(manual, style='Card.TFrame')
+        ttk.Checkbutton(options, text='이 PC에서 자동 로그인', variable=self.auto_login,
+                        command=self.on_auto_login_toggle).pack(side='left')
+        ttk.Checkbutton(options, text='켜지면 바로 발행 시작', variable=self.auto_start,
+                        command=self.save_settings).pack(side='left', padx=14)
+        options.pack(fill='x', pady=(0, 10))
+        for title, var, secret in [('서버 주소 (기본값 그대로 두세요)', self.server, False),
+                                   ('닥터보이스 이메일', self.email, False),
+                                   ('닥터보이스 비밀번호 (네이버 비밀번호가 아닙니다)', self.password, True)]:
+            ttk.Label(manual, text=title, style='Muted.TLabel').pack(anchor='w')
             entry = ttk.Entry(manual, textvariable=var, show='•' if secret else '')
             entry.pack(fill='x', pady=(2, 8))
             if secret:
                 entry.bind('<Return>', lambda _e: self.start())
+        self.connect_button = ttk.Button(manual, text='입력한 계정으로 연결', style='Ghost.TButton', command=self.connect_now)
+        self.connect_button.pack(anchor='w')
 
-        options = ttk.Frame(frame)
-        options.pack(fill='x', pady=(0, 8))
         def toggle_manual():
-            if manual.winfo_manager():
-                manual.pack_forget()
+            if manual.box.winfo_manager():
+                manual.box.pack_forget()
                 toggle.configure(text='직접 로그인 / 서버 설정 펼치기')
             else:
-                manual.pack(fill='x', before=options, pady=(0, 8))
+                manual.box.pack(fill='x', pady=(8, 0))
                 toggle.configure(text='직접 로그인 / 서버 설정 접기')
         toggle.configure(command=toggle_manual)
-        ttk.Checkbutton(options, text='이 PC에서 자동 로그인 (다음부터 켜자마자 연결)', variable=self.auto_login,
-                        command=self.on_auto_login_toggle).pack(side='left')
-        ttk.Checkbutton(options, text='켜지면 바로 발행 시작', variable=self.auto_start,
-                        command=self.save_settings).pack(side='left', padx=12)
-
-        buttons = ttk.Frame(frame)
-        buttons.pack(fill='x', pady=8)
-        self.start_button = ttk.Button(buttons, text='자동 발행 시작', command=self.start)
-        self.start_button.pack(side='left')
-        self.connect_button = ttk.Button(manual, text='입력한 계정으로 연결', command=self.connect_now)
-        self.connect_button.pack(anchor='w')
-        self.stop_button = ttk.Button(buttons, text='실행 중단', command=self.stop, state='disabled')
-        self.stop_button.pack(side='left', padx=8)
-        ttk.Button(buttons, text='운영 설정 열기', command=lambda: webbrowser.open(WEBSITE)).pack(side='left')
-        ttk.Button(buttons, text='기록 복사', command=self.copy_logs).pack(side='right')
-
-        # 웹 신호등이 왜 꺼져 있는지 여기서 바로 알 수 있어야 한다.
-        self.link = tk.StringVar(value='홈페이지 연결: 확인 중 — 브라우저를 열어 이 PC를 연결합니다')
-        self.link_label = ttk.Label(frame, textvariable=self.link, wraplength=680, foreground='#b42318')
-        self.link_label.pack(anchor='w', pady=(2, 0))
-        self.status = tk.StringVar(value='홈페이지에 연결하는 중입니다. 브라우저가 열리면 그대로 두세요. Chrome이 필요합니다.')
-        ttk.Label(frame, textvariable=self.status, wraplength=680).pack(anchor='w', pady=6)
-        self.summary = tk.StringVar(value='연결하면 대기 건수와 다음 예약을 보여줍니다')
-        ttk.Label(frame, textvariable=self.summary, wraplength=680, foreground='#3b6cb7').pack(anchor='w')
-
-        self.logs = tk.Text(frame, height=12, state='disabled', wrap='word')
-        self.logs.pack(fill='both', expand=True, pady=(8, 0))
-        ttk.Label(frame, text='네이버 로그인·캡차 요청은 열린 Chrome에서 처리하세요.\nPC를 끄면 새 예약 등록이 멈춥니다. 이미 네이버에 걸어둔 예약은 그대로 발행됩니다.').pack(anchor='w', pady=8)
 
         handler = QueueLog(self.output)
         handler.setFormatter(logging.Formatter('%(asctime)s %(message)s', '%H:%M:%S'))
@@ -275,14 +341,26 @@ class Desktop:
             self.root.after(300, lambda: self.connect_async(self.server.get().strip(), self.email.get().strip(), stored))
 
     def set_link(self, connected, detail=''):
-        """홈페이지 신호등과 같은 뜻의 한 줄. 초록이면 웹에서도 켜져 보인다."""
+        """상태 카드의 점과 굵은 한 줄. 웹 신호등과 같은 뜻이다.
+
+        연결되면 처음 연결 안내는 통째로 감춘다 — 다 끝난 안내가 남아 있으면 뭘 더 해야 하나 싶어진다."""
+        running = bool(self.worker and self.worker.is_alive())
         if connected:
-            who = f' ({self.paired_email})' if self.paired_email else ''
-            self.link.set('홈페이지 연결: 연결됨' + who + (f' · {detail}' if detail else ''))
-            self.link_label.configure(foreground='#067647')
+            who = f' · {self.paired_email}' if self.paired_email else ''
+            self.link.set(('자동 발행 중' if running else '연결됨') + who)
+            self.paint_dot(GREEN)
+            if self.guide.box.winfo_manager():
+                self.guide.box.pack_forget()
         else:
-            self.link.set('홈페이지 연결: 확인 필요' + (f' — {detail}' if detail else ' — [지금 연결하기]를 누르세요'))
-            self.link_label.configure(foreground='#946200')
+            self.link.set('연결 확인 필요')
+            self.paint_dot(AMBER)
+            if not self.guide.box.winfo_manager():
+                self.guide.box.pack(fill='x', pady=(10, 0))
+        if detail:
+            self.status.set(detail)
+
+    def paint_dot(self, color):
+        self.dot.itemconfigure(self.dot_id, fill=color)
 
     def connect_now(self):
         """발행은 시작하지 않고 로그인만 한다 — 웹 신호등을 켜 두고 현황만 보고 싶을 때."""
@@ -358,6 +436,8 @@ class Desktop:
         if data.get('email'):
             self.ui.put(('paired', data['email']))
         self.adopt_client(client)
+        # 한 번 연결한 PC는 켜기만 하면 되어야 한다. 대기 글이 없으면 크롬을 열지 않고 조용히 기다린다.
+        self.ui.put(('autostart', None))
         return True
 
     # ------------------------------------------------------------ 홈페이지 연결 창구(127.0.0.1)
