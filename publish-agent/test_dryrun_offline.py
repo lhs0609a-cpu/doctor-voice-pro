@@ -14,6 +14,7 @@ import base64
 import json
 import sys
 import threading
+import time
 import unittest
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -271,6 +272,24 @@ class TestServerClient(unittest.TestCase):
         self.assertEqual(req["body"], {"email": "a@b.c", "password": "pw"})
         self.c.summary()
         self.assertEqual(self.state.requests[-1]["auth"], "Bearer tok-1")
+
+    def test_token_is_replaced_before_it_expires(self):
+        """만료를 기다렸다 401 을 맞지 않는다 — 기록에 '토큰 만료'가 줄줄이 남던 이유였다."""
+        self.c.login('a@b.c', 'pw')
+        self.c.summary()
+        self.assertEqual(self.state.requests[-1]['auth'], 'Bearer tok-1')
+        self.c.token_until = time.monotonic() + 10      # 곧 만료된다고 보게 만든다
+        self.c.summary()
+        self.assertEqual(self.state.requests[-1]['auth'], 'Bearer tok-2')   # 미리 갈아끼웠다
+        self.assertEqual(self.state.logins, 2)
+        self.assertFalse(any(r['path'].endswith('/summary') and r['auth'] == 'Bearer tok-1'
+                             for r in self.state.requests[-2:]))
+
+    def test_fresh_token_is_not_renewed_every_call(self):
+        self.c.login('a@b.c', 'pw')
+        for _ in range(3):
+            self.c.summary()
+        self.assertEqual(self.state.logins, 1)          # 멀쩡한 토큰을 두고 다시 받지 않는다
 
     def test_login_failure(self):
         with self.assertRaises(ServerError) as cm:

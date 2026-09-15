@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
@@ -17,18 +18,45 @@ class ServerError(RuntimeError):
         self.detail = detail
 
 
+# 서버 토큰은 30분이면 만료된다. 만료되고 나서 401 을 보고 다시 받으면 그 요청 하나가 실패하고
+# 기록에도 "토큰 만료/무효" 가 계속 남는다. 남은 시간이 이만큼 밑으로 내려가면 미리 갈아끼운다.
+RENEW_BEFORE_SECONDS = 300
+DEFAULT_TOKEN_SECONDS = 1800
+
+
 class ServerClient:
     """토큰은 login() 에서 받아 Authorization: Bearer 로 보낸다.
-    401 이 오면 저장된 계정으로 한 번 재로그인 후 재시도한다."""
+
+    만료 전에 스스로 새 토큰을 받아 두고, 그래도 401 이 오면 한 번 더 재인증한 뒤 재시도한다."""
 
     def __init__(self, base_url: str, timeout: float = 60.0):
         self.base_url = base_url.rstrip("/")
         self.api = self.base_url + "/api/v1"
         self.token: Optional[str] = None
+        self.token_until: float = 0.0   # time.monotonic() 기준. 0 이면 만료 시각을 모른다.
         self._email: Optional[str] = None
         self._password: Optional[str] = None
-        self._reauth = None          # 401 이면 부를 재인증(비밀번호 또는 기기 키)
+        self._reauth = None          # 재인증(비밀번호 또는 기기 키)
         self._http = httpx.Client(timeout=timeout)
+
+    def _keep_token(self, token: str, expires_in: Any = None) -> None:
+        try:
+            seconds = float(expires_in or DEFAULT_TOKEN_SECONDS)
+        except (TypeError, ValueError):
+            seconds = DEFAULT_TOKEN_SECONDS
+        self.token = token
+        self.token_until = time.monotonic() + max(60.0, seconds)
+
+    def _renew_if_stale(self) -> None:
+        """만료가 가까우면 조용히 새 토큰을 받는다. 실패해도 그냥 보내 본다 — 401 재시도가 받아 준다."""
+        if not (self._reauth and self.token and self.token_until):
+            return
+        if time.monotonic() < self.token_until - RENEW_BEFORE_SECONDS:
+            return
+        try:
+            self._reauth()
+        except Exception as error:  # noqa: BLE001
+            log.debug("토큰 미리 갱신 실패(그대로 진행): %s", error)
 
     # ------------------------------------------------------------ 내부
     def _headers(self) -> Dict[str, str]:
@@ -49,9 +77,12 @@ class ServerClient:
 
     def _request(self, method: str, path: str, *, json: Any = None, _retry: bool = True) -> Any:
         url = self.api + path
+        if _retry:
+            self._renew_if_stale()
         r = self._http.request(method, url, json=json, headers=self._headers())
         if r.status_code == 401 and _retry and self._reauth:
-            log.warning("토큰 만료/무효(401) → 재로그인")
+            # 미리 갱신하므로 여기까지 오는 일은 드물다(서버 재시작·시계 차이 등).
+            log.debug("토큰이 거절되어 다시 로그인합니다")
             self._reauth()
             return self._request(method, path, json=json, _retry=False)
         if r.status_code >= 400:
@@ -69,7 +100,7 @@ class ServerClient:
         token = data.get("access_token") if isinstance(data, dict) else None
         if not token:
             raise ServerError(r.status_code, "응답에 access_token 이 없습니다")
-        self.token = token
+        self._keep_token(token, data.get("expires_in"))
         self._email, self._password = email, password
         self._reauth = lambda: self.login(email, password)
         return token
@@ -114,7 +145,7 @@ class ServerClient:
         data = r.json()
         if not data.get("access_token"):
             raise ServerError(r.status_code, "응답에 access_token 이 없습니다")
-        self.token = data["access_token"]
+        self._keep_token(data["access_token"], data.get("expires_in"))
         self._reauth = lambda: self.device_login(device_id, device_secret)
         return data
 

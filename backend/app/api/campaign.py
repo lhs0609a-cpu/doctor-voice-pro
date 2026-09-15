@@ -1802,6 +1802,8 @@ class DeviceTokenOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
     email: Optional[str] = None
+    # 실행기가 만료 전에 미리 새로 받도록 남은 시간을 알려 준다. 모르면 만료된 뒤 401 을 보고서야 다시 받는다.
+    expires_in: int = 0
 
 
 async def _user_email(db: AsyncSession, user_id: str) -> Optional[str]:
@@ -1981,8 +1983,11 @@ async def agent_device_token(body: DeviceTokenIn, db: AsyncSession = Depends(get
         raise HTTPException(status_code=401, detail="이 PC의 연결이 해제되었습니다. 홈페이지를 열면 다시 연결됩니다")
     device.last_used_at = datetime.utcnow()
     await db.commit()
+    # 토큰 자체는 짧게 유지한다 — 홈페이지에서 연결을 끊으면 그만큼 빨리 먹통이 되어야 한다.
+    # 대신 남은 시간을 알려 주어 실행기가 만료 전에 조용히 갈아끼운다.
     return DeviceTokenOut(access_token=create_access_token(subject=device.user_id),
-                          email=await _user_email(db, device.user_id))
+                          email=await _user_email(db, device.user_id),
+                          expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60)
 
 
 @router.delete("/agent/devices/{device_id}")
