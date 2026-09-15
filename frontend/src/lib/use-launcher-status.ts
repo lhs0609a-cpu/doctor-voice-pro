@@ -208,7 +208,7 @@ export function useLauncherStatus(pollMs: number = POLL_MS): LauncherStatus {
     void (async () => {
       const local = state.local || await probeLocal()
       if (!local) {
-        setState((s) => ({ ...s, pairError: '이 PC에서 실행기를 찾지 못했습니다. 실행기를 켠 뒤 다시 눌러 주세요' }))
+        setState((s) => ({ ...s, pairError: '이 PC에서 실행기를 찾지 못했습니다. 실행기 창의 [지금 연결하기]를 누르면 반대쪽에서 연결됩니다' }))
         return
       }
       await runPair(local)

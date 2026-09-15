@@ -35,6 +35,7 @@ CONNECT_PAGE = SITE + '/launcher/connect'   # 실행기가 열면 로그인된 �
 BEAT_SECONDS = 60          # 서버가 150초 침묵을 '꺼짐'으로 본다 → 그보다 짧게
 CONNECT_POLL_SECONDS = 2   # 승인됐는지 묻는 간격
 CONNECT_WAIT_SECONDS = 600 # 요청이 살아 있는 동안만 기다린다(서버와 같은 값)
+UPDATE_EVERY_BEATS = 360   # 하트비트 360번 = 6시간마다 새 버전을 다시 본다
 
 
 def hold_single_instance():
@@ -491,8 +492,13 @@ class Desktop:
             self.ui.put(('link', (False, f'서버에 신호를 보내지 못했습니다({error})')))
 
     def beat_loop(self):
+        beats = 0
         while not self.closing:
             self.beat_once()
+            beats += 1
+            # 켜 둔 채 며칠 쓰는 PC가 많다. 켤 때 한 번만 보면 새 버전을 영영 못 받는다.
+            if beats % UPDATE_EVERY_BEATS == 0:
+                self.check_update()
             if self.beat_wake.wait(BEAT_SECONDS):   # 종료 요청이면 바로 빠진다
                 return
 

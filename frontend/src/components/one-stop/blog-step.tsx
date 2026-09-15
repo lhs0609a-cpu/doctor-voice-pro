@@ -85,9 +85,9 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
   return <div className="space-y-5">
     {/* ① 올릴 블로그 */}
     <div className="space-y-2">
-      <p className="text-sm font-medium">① 글을 올릴 블로그에 체크하세요</p>
+      <p className="text-sm font-medium">① 올릴 블로그에 체크</p>
       {client.blogs.length === 0
-        ? <p className="text-sm text-muted-foreground">아직 등록한 블로그가 없습니다. 아래 ③에서 추가하세요.</p>
+        ? <p className="text-sm text-muted-foreground">아래 ③에서 블로그를 추가하세요.</p>
         : <ul className="space-y-1.5">{client.blogs.map(b => {
           const status = STATUS[b.status] || { label: b.status, tone: 'muted' as const }
           return <li key={b.id}>
@@ -100,19 +100,14 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
         })}</ul>}
     </div>
 
-    {troubled.length > 0 && <ol className="list-decimal space-y-1 rounded-lg bg-warning-soft p-3 pl-8 text-sm">
-      <li>작업 표시줄에서 실행기가 띄운 <b>크롬 창</b>을 엽니다.</li>
-      <li>네이버에 로그인하거나 보안문자를 입력합니다. <b>로그인 상태 유지</b>에 체크하세요.</li>
-      <li>끝나면 1분 안에 위 표시가 &lsquo;정상&rsquo;으로 바뀝니다. (아래 ②에 아이디·비밀번호를 넣어 두면 다음부터는 알아서 로그인합니다.)</li>
-    </ol>}
+    {troubled.length > 0 && <div className="flex items-start gap-2 rounded-lg bg-warning-soft p-3 text-sm">
+      <span aria-hidden className="shrink-0 font-bold text-warning motion-safe:animate-bounce">▶</span>
+      <p>실행기가 띄운 <b>크롬 창</b>에서 네이버에 로그인하세요(<b>로그인 상태 유지</b> 체크). 1분 안에 &lsquo;정상&rsquo;으로 바뀝니다.</p>
+    </div>}
 
     {/* ② 네이버 계정 */}
     {linked.length > 0 && <div className="space-y-2">
-      <p className="text-sm font-medium">② 네이버 아이디·비밀번호 넣기 <span className="font-normal text-muted-foreground">(선택)</span></p>
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        넣어 두면 실행기가 알아서 네이버에 로그인합니다. 안 넣어도 됩니다 — 그러면 처음 글을 올릴 때 실행기가 띄운
-        크롬 창에서 한 번만 직접 로그인하세요. 비밀번호는 암호화해서 저장합니다.
-      </p>
+      <p className="text-sm font-medium">② 네이버 아이디·비밀번호 <span className="font-normal text-muted-foreground">(선택 — 넣어 두면 자동 로그인)</span></p>
       {linked.map(b => {
         const value = creds[b.id] || { id: '', pw: '' }
         return <div key={b.id} className="space-y-1.5 rounded-lg border p-3">
@@ -135,8 +130,7 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
 
     {/* ③ 블로그 추가 */}
     <div className="space-y-2">
-      <p className="text-sm font-medium">③ 블로그 추가 <span className="font-normal text-muted-foreground">(더 있을 때만)</span></p>
-      <p className="text-xs text-muted-foreground">블로그 주소를 붙여 넣거나, blog.naver.com/ 뒤의 영어 아이디만 넣으세요. 예) blog.naver.com/abc123 → abc123</p>
+      <p className="text-sm font-medium">③ 블로그 추가 <span className="font-normal text-muted-foreground">(주소를 붙여 넣어도 됩니다)</span></p>
       <div className="flex gap-2">
         <Input placeholder="abc123 또는 블로그 주소" value={newBlog} disabled={!!busy} onChange={e => setNewBlog(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && newBlog.trim()) void add() }} />

@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ArrowUpCircle, Download, Laptop, RefreshCw } from 'lucide-react'
+import { ArrowUpCircle, Download, Laptop, Plug, RefreshCw } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { campaignAPI, type AgentBlogSummary } from '@/lib/campaign-api'
@@ -103,15 +103,14 @@ export function LauncherCard({ className, compact = false, inline = false }: { c
       </div>
 
       {!status.online && !status.local && status.light !== 'error' && (
-        <div className="rounded-xl border p-4 text-sm">
-          <h3 className="font-semibold">이미 실행기 창을 열었다면</h3>
-          <ol className="mt-2 list-decimal space-y-2 pl-5 leading-6">
-            <li>실행기 창에서 <b>지금 연결하기</b>를 누르세요. 브라우저가 열리면서 <b>{email || '이 계정'}</b> 에 저절로 연결됩니다 — 입력할 것은 없습니다.</li>
-            <li>브라우저에 로그인 화면이 뜨면 한 번만 로그인하세요. 그대로 연결이 이어집니다.</li>
-            <li>연결되면 실행기가 자동 발행을 시작합니다. 여기서 <b>다시 확인</b>을 누르면 신호등이 켜집니다(최대 15초).</li>
+        <details className="rounded-xl border p-3 text-sm">
+          <summary className="cursor-pointer font-medium">이미 실행기를 켰는데 연결이 안 돼요</summary>
+          <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-xs leading-6 text-muted-foreground">
+            <li>실행기 창의 <b>[지금 연결하기]</b>를 누르세요. 브라우저가 열리며 <b>{email || '이 계정'}</b>에 저절로 연결됩니다.</li>
+            <li>로그인 화면이 뜨면 한 번만 로그인하세요.</li>
+            <li>그 버튼이 없으면 옛 버전입니다 — 아래에서 다시 설치하세요.</li>
           </ol>
-          <p className="mt-3 text-xs leading-5 text-muted-foreground">실행기 창에 [지금 연결하기] 버튼이 없다면 옛 버전입니다. 아래에서 최신 실행기를 설치하고, 기존 창은 종료한 뒤 새로 열어 주세요.</p>
-        </div>
+        </details>
       )}
 
       {status.online ? (
@@ -121,40 +120,29 @@ export function LauncherCard({ className, compact = false, inline = false }: { c
           {status.devices[0]?.label && <> · {status.devices[0].label}</>}
         </p>
       ) : (
-        <div className="space-y-1 text-xs leading-relaxed text-muted-foreground">
-          <p>
-            여기서 담은 글은 서버에 쌓입니다. PC 실행기를 켜 두면 순서대로 네이버에 등록하고,
-            이 창을 닫아도 계속됩니다. 크롬 확장 프로그램은 필요하지 않습니다.
-          </p>
-          <p>
-            <b>최신 실행기는 켜는 순간 스스로 이 계정에 연결됩니다.</b> 실행기가 브라우저를 열어 연결을 마치므로
-            이메일·비밀번호를 따로 칠 일이 없습니다. 브라우저가 &lsquo;로컬 네트워크 기기 접근&rsquo;을 물으면
-            <b>허용</b>을 눌러 주면 더 빨리 연결됩니다.
-          </p>
-          {status.latest && <p>최신 버전 v<span className="tabular-nums">{status.latest}</span></p>}
-        </div>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          설치하고 켜기만 하면 이 계정에 저절로 연결됩니다. 입력할 것은 없습니다.
+          {status.latest && <> · 최신 v<span className="tabular-nums">{status.latest}</span></>}
+        </p>
       )}
 
       {!status.online && status.local && (
         <div className="rounded-lg border bg-muted/40 p-2.5 text-xs leading-relaxed">
-          {status.light === 'other' ? (
-            <>
-              이 PC의 실행기는 <b>{status.local.email}</b> 계정에 연결돼 있습니다.
-              <Button size="sm" variant="outline" className="mt-2 w-full" onClick={status.pairNow} disabled={status.pairing}>
-                지금 로그인한 계정으로 바꾸기
-              </Button>
-            </>
-          ) : status.pairError ? (
-            <>
-              <span className="text-danger">{status.pairError}</span>
-              <Button size="sm" variant="outline" className="mt-2 w-full" onClick={status.pairNow} disabled={status.pairing}>
-                다시 연결
-              </Button>
-            </>
-          ) : (
-            <>이 PC의 실행기를 찾았습니다 · {status.pairing ? '이 계정으로 연결하는 중…' : '곧 연결됩니다'}</>
-          )}
+          {status.light === 'other'
+            ? <>이 PC의 실행기는 <b>{status.local.email}</b> 계정에 연결돼 있습니다.</>
+            : status.pairError ? <span className="text-danger">{status.pairError}</span>
+              : <>이 PC의 실행기를 찾았습니다 · {status.pairing ? '이 계정으로 연결하는 중…' : '곧 연결됩니다'}</>}
         </div>
+      )}
+
+      {/* 손으로 맞추는 단추. 자동 연결이 늦거나 막혔을 때 기다리지 않고 바로 누를 수 있어야 한다. */}
+      {!status.online && (
+        <Button size="sm" className="w-full" onClick={status.pairNow} disabled={status.pairing}>
+          <Plug className={cn('h-4 w-4', status.pairing && 'animate-pulse')} />
+          {status.pairing ? '연결하는 중…'
+            : status.light === 'other' ? '지금 로그인한 계정으로 바꾸기'
+              : '지금 이 계정과 연결하기'}
+        </Button>
       )}
 
       {status.updateAvailable && (
@@ -165,12 +153,9 @@ export function LauncherCard({ className, compact = false, inline = false }: { c
       )}
 
       {!compact && !status.online && !status.local && (
-        <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-muted-foreground">
-          <li>설치 파일을 받아 두 번 클릭합니다.</li>
-          <li>&quot;Windows의 PC 보호&quot;가 뜨면 <b>추가 정보 → 실행</b>.</li>
-          <li>설치가 끝나면 실행기를 열고 이 페이지로 돌아와 연결을 확인하세요.</li>
-          <li>실행기 창의 <b>자동 발행 시작</b>을 누릅니다.</li>
-        </ol>
+        <p className="text-xs text-muted-foreground">
+          받은 파일을 두 번 클릭 → &quot;Windows의 PC 보호&quot;가 뜨면 <b>추가 정보 → 실행</b>.
+        </p>
       )}
 
       {((!status.online && !status.local) || status.updateAvailable) && (
