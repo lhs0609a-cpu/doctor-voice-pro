@@ -204,6 +204,24 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
 
 
 # ---------------------------------------------------------------- 브라우저
+def _proxy_option(raw: str) -> Dict[str, Any]:
+    """'http://id:pw@host:port' → Playwright 의 proxy 옵션.
+
+    아이디·비밀번호는 주소에서 떼어 따로 넘긴다. 주소에 박아 두면 크롬이 그것을 무시하고
+    인증 창을 띄우는데, 실행기는 그 창에 답할 사람이 없어 거기서 멈춘다."""
+    from urllib.parse import urlparse, unquote
+    parsed = urlparse(raw if "://" in raw else "http://" + raw)
+    server = f"{parsed.scheme}://{parsed.hostname}"
+    if parsed.port:
+        server += f":{parsed.port}"
+    option: Dict[str, Any] = {"server": server}
+    if parsed.username:
+        option["username"] = unquote(parsed.username)
+    if parsed.password:
+        option["password"] = unquote(parsed.password)
+    return option
+
+
 class BrowserPool:
     """블로그(네이버 ID)별 persistent context. 루프를 돌아도 창을 닫지 않아 포커스를 반복해서 뺏지 않는다."""
 
@@ -214,7 +232,7 @@ class BrowserPool:
         self.window_pos = window_pos
         self._ctx: Dict[str, Any] = {}
 
-    async def page_for(self, naver_blog_id: str):
+    async def page_for(self, naver_blog_id: str, proxy: Optional[str] = None):
         ctx = self._ctx.get(naver_blog_id)
         if ctx is not None:
             try:
@@ -224,11 +242,11 @@ class BrowserPool:
                 return await ctx.new_page()
             except Exception:  # noqa: BLE001
                 self._ctx.pop(naver_blog_id, None)
-        ctx = await self._launch(naver_blog_id)
+        ctx = await self._launch(naver_blog_id, proxy)
         self._ctx[naver_blog_id] = ctx
         return ctx.pages[0] if ctx.pages else await ctx.new_page()
 
-    async def _launch(self, naver_blog_id: str):
+    async def _launch(self, naver_blog_id: str, proxy: Optional[str] = None):
         user_data_dir = self.profiles_dir / naver_blog_id
         user_data_dir.mkdir(parents=True, exist_ok=True)
         args = ["--disable-blink-features=AutomationControlled", "--no-first-run", "--no-default-browser-check"]
@@ -243,6 +261,9 @@ class BrowserPool:
             locale="ko-KR",
             timezone_id="Asia/Seoul",
         )
+        if proxy:
+            kw["proxy"] = _proxy_option(proxy)
+            log.info("블로그 '%s' 는 고정 프록시로 나갑니다: %s", naver_blog_id, kw["proxy"]["server"])
         try:
             ctx = await self.pw.chromium.launch_persistent_context(channel="chrome", **kw)
             log.info("브라우저(chrome 채널) 시작: 프로필 %s", user_data_dir)
@@ -388,7 +409,12 @@ async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, 
     label, ref, naver_id = blog.get("label") or blog.get("naver_blog_id"), blog["blog_ref_id"], blog["naver_blog_id"]
     log.info("=== 블로그 '%s' (%s) 대기 %s건, 상태 %s ===", label, naver_id, blog.get("pending"), blog.get("status"))
 
-    page = await pool.page_for(naver_id)
+    try:
+        proxy = await asyncio.to_thread(client.proxy_for, ref)
+    except Exception as e:  # noqa: BLE001  프록시를 못 읽었다고 발행을 멈추지는 않는다
+        log.warning("블로그 '%s' 프록시 설정을 읽지 못했습니다(%s) → PC 회선으로 진행", label, e)
+        proxy = None
+    page = await pool.page_for(naver_id, proxy)
     # DV_WRITE_URL: 테스트용(가짜 에디터 페이지). 평소엔 비워 두면 네이버 글쓰기 URL.
     editor = NaverEditor(page, captcha_wait_sec=args.captcha_wait, write_url=os.environ.get("DV_WRITE_URL") or WRITE_URL)
 

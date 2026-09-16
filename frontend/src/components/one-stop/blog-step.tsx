@@ -19,7 +19,7 @@ const STATUS: Record<string, { label: string; tone: 'ok' | 'warn' | 'muted' }> =
 /** 블로그 수정은 전체 값을 보낸다. 비밀번호를 비우면 서버가 기존 값을 유지한다. */
 function blogBody(blog: BlogAccount, extra: Partial<BlogInput> = {}): BlogInput {
   return {
-    blog_id: blog.blog_id, label: blog.label ?? null, login_id: blog.login_id ?? null, login_pw: null,
+    blog_id: blog.blog_id, label: blog.label ?? null, login_id: blog.login_id ?? null, login_pw: null, proxy_url: null,
     daily_limit: blog.daily_limit, window_start: blog.window_start, window_end: blog.window_end,
     min_gap_minutes: blog.min_gap_minutes, default_category: blog.default_category ?? null, open_type: blog.open_type,
     ...extra,
@@ -45,6 +45,7 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
   const [error, setError] = useState('')
   const [newBlog, setNewBlog] = useState('')
   const [creds, setCreds] = useState<Record<string, { id: string; pw: string }>>({})
+  const [proxies, setProxies] = useState<Record<string, string>>({})
 
   const linked = client.blogs.filter(b => campaign.blog_ids.includes(b.id))
   const troubled = linked.filter(b => ['captcha', 'login_required'].includes(b.status))
@@ -68,6 +69,16 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
     setCreds(c => ({ ...c, [blog.id]: { id: '', pw: '' } }))
     onChanged()
     return '저장했습니다. 실행기가 이 계정으로 알아서 로그인합니다'
+  })
+
+  const saveProxy = (blog: BlogAccount) => run(`proxy-${blog.id}`, async () => {
+    const value = (proxies[blog.id] || '').trim()
+    if (!value) throw new Error('프록시 주소를 넣어 주세요 (지우려면 - 한 글자)')
+    await campaignAPI.updateBlog(blog.id, blogBody(blog, { proxy_url: value }))
+    setProxies(p => ({ ...p, [blog.id]: '' }))
+    onChanged()
+    return value === '-' ? '프록시를 지웠습니다. 이 블로그는 PC 회선으로 나갑니다'
+      : '저장했습니다. 실행기를 다시 켜면 이 블로그만 이 IP로 나갑니다'
   })
 
   const add = () => run('add', async () => {
@@ -128,9 +139,34 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
       })}
     </div>}
 
-    {/* ③ 블로그 추가 */}
+    {/* ③ 블로그별 고정 IP */}
+    {linked.length > 0 && <div className="space-y-2">
+      <p className="text-sm font-medium">③ 블로그별 고정 IP <span className="font-normal text-muted-foreground">(선택 — 여러 병원을 한 PC에서 운영할 때)</span></p>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        블로그마다 <b>고정된</b> 주소를 넣으세요. 계속 바꾸면 같은 계정이 여기저기서 접속하는 꼴이라
+        로그인이 자꾸 풀립니다. 예) <code>123.45.67.89:8080</code> 또는 <code>http://아이디:비밀번호@123.45.67.89:8080</code>
+      </p>
+      {linked.map(b => {
+        const value = proxies[b.id] ?? ''
+        return <div key={b.id} className="space-y-1.5 rounded-lg border p-3">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="font-medium">{b.label || b.blog_id}</span>
+            {b.proxy_label ? <Pill tone="ok">{b.proxy_label}</Pill> : <Pill tone="muted">PC 회선 그대로</Pill>}
+          </div>
+          <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+            <Input placeholder={b.proxy_label ? '바꿀 때만 입력 (지우려면 -)' : '123.45.67.89:8080'} value={value} disabled={!!busy}
+              autoComplete="off" onChange={e => setProxies(p => ({ ...p, [b.id]: e.target.value }))} />
+            <Button size="sm" className="h-9" disabled={!!busy || !value.trim()} onClick={() => saveProxy(b)}>
+              {busy === `proxy-${b.id}` ? '저장 중…' : '저장'}
+            </Button>
+          </div>
+        </div>
+      })}
+    </div>}
+
+    {/* ④ 블로그 추가 */}
     <div className="space-y-2">
-      <p className="text-sm font-medium">③ 블로그 추가 <span className="font-normal text-muted-foreground">(주소를 붙여 넣어도 됩니다)</span></p>
+      <p className="text-sm font-medium">④ 블로그 추가 <span className="font-normal text-muted-foreground">(주소를 붙여 넣어도 됩니다)</span></p>
       <div className="flex gap-2">
         <Input placeholder="abc123 또는 블로그 주소" value={newBlog} disabled={!!busy} onChange={e => setNewBlog(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && newBlog.trim()) void add() }} />

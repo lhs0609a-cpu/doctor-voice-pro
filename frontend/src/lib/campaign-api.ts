@@ -48,6 +48,7 @@ export interface BlogAccount {
   status: 'active' | 'paused' | 'captcha' | 'login_required' | 'disabled' | string
   status_reason?: string | null
   last_published_at?: string | null
+  proxy_label?: string | null      // 이 블로그 전용 고정 IP. host:port 만 온다(비밀번호는 서버에 남는다)
   // 블로그 지수(blog-index 분석 결과 캐시)
   index_score?: number | null
   index_level?: number | null
@@ -60,6 +61,7 @@ export interface BlogInput {
   label?: string | null
   login_id?: string | null
   login_pw?: string | null
+  proxy_url?: string | null        // 비우면 기존 값 유지, "-" 하나면 프록시를 지운다
   daily_limit: number
   window_start: string
   window_end: string

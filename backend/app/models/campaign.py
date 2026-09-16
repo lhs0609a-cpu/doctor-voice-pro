@@ -82,6 +82,9 @@ class Blog(Base):
     status_reason = Column(Text, nullable=True)
     status_changed_at = Column(DateTime, nullable=True)
     device_profile = Column(String(100), nullable=True)      # 에이전트 브라우저 프로필 키
+    # 이 블로그만 쓰는 고정 프록시(http://user:pw@host:port). 계정 비밀번호가 들어갈 수 있어 암호화해 둔다.
+    # 블로그마다 IP를 고정하는 것이 목적이다 — 매번 바꾸면 같은 계정이 여기저기서 접속하는 꼴이라 더 걸린다.
+    proxy_enc = Column(Text, nullable=True)
     last_published_at = Column(DateTime, nullable=True)
     # 블로그 지수(SCORING_VERSION 6) 최근 결과
     index_score = Column(Float, nullable=True)

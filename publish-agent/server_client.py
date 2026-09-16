@@ -153,6 +153,11 @@ class ServerClient:
         """[{blog_ref_id, naver_blog_id, label, status, status_reason, pending, next_at, login_id}]"""
         return self._request("GET", "/campaign/agent/summary") or []
 
+    def proxy_for(self, blog_ref_id: str) -> Optional[str]:
+        """이 블로그 전용 고정 프록시. 없으면 None — 그러면 PC 회선 그대로 나간다."""
+        data = self._request("GET", f"/campaign/agent/blogs/{quote(str(blog_ref_id), safe='')}/proxy") or {}
+        return data.get("proxy") or None
+
     def credential(self, blog_ref_id: str) -> Dict[str, Any]:
         """{login_id, login_pw, naver_blog_id}"""
         return self._request("GET", f"/campaign/agent/blogs/{blog_ref_id}/credential") or {}

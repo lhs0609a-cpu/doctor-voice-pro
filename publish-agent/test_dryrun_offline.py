@@ -757,3 +757,23 @@ class TestSelectBlogs(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class ProxyOptionTests(unittest.TestCase):
+    """블로그별 고정 프록시 주소를 Playwright 옵션으로 옮기는 규칙."""
+
+    def test_plain_host_port(self):
+        from agent import _proxy_option
+        self.assertEqual(_proxy_option('123.45.67.89:8080'),
+                         {'server': 'http://123.45.67.89:8080'})
+
+    def test_credentials_are_moved_out_of_the_address(self):
+        # 주소에 계정을 박아 두면 크롬이 인증 창을 띄우고 실행기가 거기서 멈춘다.
+        from agent import _proxy_option
+        self.assertEqual(_proxy_option('http://user:pw@10.0.0.1:3128'),
+                         {'server': 'http://10.0.0.1:3128', 'username': 'user', 'password': 'pw'})
+
+    def test_socks_and_escaped_password(self):
+        from agent import _proxy_option
+        self.assertEqual(_proxy_option('socks5://u%40a:p%3Aw@h.example:1080'),
+                         {'server': 'socks5://h.example:1080', 'username': 'u@a', 'password': 'p:w'})

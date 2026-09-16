@@ -162,6 +162,7 @@ class BlogOut(BaseModel):
     status: str = "active"
     status_reason: Optional[str] = None
     last_published_at: Optional[datetime] = None
+    proxy_label: Optional[str] = None         # 화면 표시용. 비밀번호는 지운 주소만 보낸다.
 
 
 class BriefOut(BaseModel):
@@ -188,6 +189,20 @@ class ClientOut(ClientIn):
     briefs: List[BriefOut] = []
 
 
+def _proxy_label(proxy_enc: Optional[str]) -> Optional[str]:
+    """화면에는 host:port 만 보여 준다 — 프록시 비밀번호를 브라우저로 돌려보내지 않는다."""
+    raw = crypto.decrypt(proxy_enc) if proxy_enc else None
+    if not raw:
+        return None
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(raw if "://" in raw else "http://" + raw)
+        host = parsed.hostname or ""
+        return f"{host}:{parsed.port}" if parsed.port else host
+    except ValueError:
+        return "설정됨"
+
+
 def _blog_out(b: Blog) -> BlogOut:
     return BlogOut(
         id=b.id, client_id=b.client_id, blog_id=b.blog_id, label=b.label, login_id=b.login_id,
@@ -195,7 +210,7 @@ def _blog_out(b: Blog) -> BlogOut:
         window_start=b.window_start or "09:00", window_end=b.window_end or "21:00",
         min_gap_minutes=b.min_gap_minutes or 120, default_category=b.default_category,
         open_type=b.open_type or "public", status=b.status or "active", status_reason=b.status_reason,
-        last_published_at=b.last_published_at,
+        last_published_at=b.last_published_at, proxy_label=_proxy_label(b.proxy_enc),
     )
 
 
@@ -300,12 +315,40 @@ class BlogIn(BaseModel):
     label: Optional[str] = None
     login_id: Optional[str] = None
     login_pw: Optional[str] = None            # 저장 시 암호화. 비우면 기존 값 유지
+    # 이 블로그만 쓸 고정 프록시. 비우면 기존 값 유지, "-" 하나면 지운다(= 프록시 없이 발행).
+    proxy_url: Optional[str] = None
     daily_limit: int = 3
     window_start: str = "09:00"
     window_end: str = "21:00"
     min_gap_minutes: int = 120
     default_category: Optional[str] = None
     open_type: str = "public"
+
+
+def _clean_proxy(raw: Optional[str]) -> Optional[str]:
+    """host:port 또는 scheme://user:pw@host:port 를 받아 정규화한다. 모양이 틀리면 거절한다.
+
+    틀린 주소를 저장하면 발행할 때 브라우저가 아예 뜨지 않아 원인을 찾기 어렵다."""
+    from urllib.parse import urlparse
+    value = (raw or "").strip()
+    if not value or value == "-":
+        return None
+    if "://" not in value:
+        value = "http://" + value
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="프록시 주소 형식이 올바르지 않습니다")
+    if parsed.scheme not in ("http", "https", "socks5", "socks5h"):
+        raise HTTPException(status_code=400, detail="프록시는 http, https, socks5 만 됩니다")
+    if not parsed.hostname:
+        raise HTTPException(status_code=400, detail="프록시 주소에 서버가 없습니다 (예: 123.45.67.89:8080)")
+    try:
+        if parsed.port is None:
+            raise HTTPException(status_code=400, detail="프록시 주소에 포트가 필요합니다 (예: 123.45.67.89:8080)")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="프록시 포트가 숫자가 아닙니다")
+    return value
 
 
 def _clean_blog_id(raw: str) -> str:
@@ -327,6 +370,7 @@ async def add_blog(client_id: str, body: BlogIn, current_user: User = Depends(ge
         login_id=body.login_id, login_pw_enc=crypto.encrypt(body.login_pw), daily_limit=body.daily_limit,
         window_start=body.window_start, window_end=body.window_end, min_gap_minutes=body.min_gap_minutes,
         default_category=body.default_category, open_type=body.open_type,
+        proxy_enc=crypto.encrypt(_clean_proxy(body.proxy_url)),
     )
     db.add(b)
     await db.commit()
@@ -340,6 +384,8 @@ async def update_blog(blog_ref_id: str, body: BlogIn, current_user: User = Depen
     b.label, b.login_id = body.label, body.login_id
     if body.login_pw:
         b.login_pw_enc = crypto.encrypt(body.login_pw)
+    if body.proxy_url is not None and body.proxy_url.strip():
+        b.proxy_enc = None if body.proxy_url.strip() == "-" else crypto.encrypt(_clean_proxy(body.proxy_url))
     b.daily_limit, b.window_start, b.window_end = body.daily_limit, body.window_start, body.window_end
     b.min_gap_minutes, b.default_category, b.open_type = body.min_gap_minutes, body.default_category, body.open_type
     await db.commit()
@@ -2002,6 +2048,13 @@ async def agent_device_revoke(device_id: str, current_user: User = Depends(get_c
         await db.delete(session)
     await db.commit()
     return {"success": True}
+
+
+@router.get("/agent/blogs/{blog_ref_id}/proxy")
+async def agent_proxy(blog_ref_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """실행기가 브라우저를 띄우기 직전에 묻는다. 이 블로그 전용 고정 프록시(없으면 null)."""
+    b = await _owned(db, Blog, blog_ref_id, current_user, "블로그")
+    return {"proxy": crypto.decrypt(b.proxy_enc) if b.proxy_enc else None}
 
 
 @router.get("/agent/blogs/{blog_ref_id}/credential")
