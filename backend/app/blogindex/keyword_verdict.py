@@ -146,7 +146,8 @@ def compute_verdict(*, my: Optional[Dict[str, Any]], competitors: List[Dict[str,
     # ── 측정 실패는 판정하지 않는다 ──
     if my is None or my.get("score") is None:
         return {"verdict": "unknown", "probability": None, "confidence": "low",
-                "reasons": ["내 블로그 채점에 실패했습니다(비공개·삭제·일시 오류)."],
+                "reasons": ["내 블로그를 채점하지 못했습니다. 잠시 뒤 다시 확인해 주세요. "
+                            "(서버가 바쁘거나, 블로그가 비공개·삭제된 경우입니다)"],
                 "features": {}, "cut_line": None, "median_score": None, "model_version": model["version"]}
     if len(scored) < 3:
         return {"verdict": "unknown", "probability": None, "confidence": "low",
@@ -471,9 +472,6 @@ async def stage2_verdict(db, blog_id: str, keyword: str, facts: Optional[Dict[st
         done += 1
         _emit(progress, done, total_units)
 
-    tasks = [_one(c) for c in competitors]
-    if my_result is None:
-        tasks.append(_mine())
     topical_task = asyncio.create_task(_topical_fit(blog_id, keyword))
 
     async def _bounded_gather(coros, label: str) -> None:
@@ -490,9 +488,14 @@ async def stage2_verdict(db, blog_id: str, keyword: str, facts: Optional[Dict[st
             unmeasured = [c["blog_id"] for c in competitors if not c["measured"]]
             logger.warning("[verdict] %s %s 예산(%.0fs) 초과 — 미채점 %s", keyword, label, STAGE2_BUDGET, unmeasured)
 
-    await _bounded_gather(tasks, "1차 채점")
+    # ★ 내 블로그를 맨 먼저 잰다. 이걸 못 재면 compute_verdict 가 무조건 unknown 이라
+    #   경쟁자를 아무리 많이 재도 판정이 나오지 않는다. 예전에는 경쟁자 20명 뒤에 줄을 세워서,
+    #   경쟁자 채점이 느린 키워드에서는 예산이 끊기며 내 블로그가 통째로 취소됐다(운영 실측).
     if my_result is None:
+        await _bounded_gather([_mine()], "내 블로그 채점")
         my_result = my_holder.get("res")
+
+    await _bounded_gather([_one(c) for c in competitors], "1차 채점")
 
     # 10-8 재시도: 1차에서 못 잰 경쟁자를 **병렬**로 재시도 (내 블로그도 같이)
     missing = [c for c in competitors if not c["measured"]][:RETRY_MISSING]
