@@ -85,6 +85,17 @@ WRITER_SYSTEM = """당신은 한국 병원·한의원 블로그를 10년 쓴 의
 출력은 반드시 JSON 하나만: {"title": "...", "body": "...", "headings": ["..."], "tags": ["..."], "summary": "..."}"""
 
 
+def _photo_text(hints: Optional[List[str]]) -> str:
+    """보유 사진을 글쓰기 전에 알려 준다. 사진이 없으면 아무 말도 하지 않는다."""
+    lines = [str(h).strip() for h in (hints or []) if str(h or "").strip()][:12]
+    if not lines:
+        return ""
+    body = "\n".join(f"  · {h}" for h in lines)
+    return ("\n이 병원이 가진 사진(이 중 어울리는 것이 본문에 들어간다):\n" + body +
+            "\n위 사진이 자연스럽게 들어갈 대목이 생기도록 글을 구성한다. "
+            "다만 사진에 없는 장면·장비·시설을 있다고 쓰지 않는다. 사진 이야기를 억지로 끼워 넣지도 않는다.\n")
+
+
 async def write_from_keyword(
     *,
     keyword: str,
@@ -96,8 +107,12 @@ async def write_from_keyword(
     keyword_count: Optional[int] = None,
     extra_instructions: str = "",
     landing: Optional[Dict[str, Any]] = None,
+    photo_hints: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """키워드 1개로 완성 원고를 만든다. 반환 {title, body, headings, tags, summary, char_count}"""
+    """키워드 1개로 완성 원고를 만든다. 반환 {title, body, headings, tags, summary, char_count}
+
+    photo_hints 는 이 병원이 가진 사진의 한 줄 설명이다. 글을 다 쓴 뒤에 사진을 끼워 맞추면
+    맞는 사진이 없는 대목이 생긴다. 쓰기 전에 무슨 사진이 있는지 알려 주면 글이 사진을 품고 나온다."""
     summary = (serp or {}).get("summary") or {}
     tc = target_chars or summary.get("recommended_chars") or (brief or {}).get("target_chars") or 2000
     hc = heading_count or (brief or {}).get("heading_count") or 4
@@ -114,7 +129,7 @@ async def write_from_keyword(
 병원 금칙어: {', '.join(forbidden) if forbidden else '없음'}
 
 {_brief_text(brief)}
-
+{_photo_text(photo_hints)}
 분량 목표: 공백 제외 {tc}자 안팎(±10%). 소제목 {hc}개. 키워드 '{keyword}'를 제목에 1회, 본문에 {kc}회 안팎 자연스럽게.
 제목은 28자 이내, 키워드가 앞쪽에 오게.
 {MOBILE_RULES}
@@ -201,48 +216,151 @@ JSON 으로만 답한다."""
 
 
 # ─────────────────────────────── 3) 사진 슬롯 계획 ───────────────────────────────
+# 본문 구조를 읽는 규칙은 여기 한 곳에만 둔다. reflow()·슬롯 계획·발행 블록 조립이
+# 문단을 서로 다르게 세면 사진이 통째로 한 칸씩 밀린다.
 
-SLOT_SYSTEM = """당신은 병원 블로그 편집자다. 본문을 읽고 사진이 들어갈 자리와 '어떤 사진이 어울리는지'를 정한다.
-JSON 하나만: {"slots": [{"after_paragraph": 0, "need": "한 줄 설명", "keywords": ["진료실", "상담"], "stage": "도입|진료과정|시술|장비소개|마무리|기타"}]}
-- after_paragraph 는 0부터 시작하는 문단 번호(빈 줄로 나뉜 덩어리 기준). 그 문단 '뒤'에 사진이 들어간다.
-- 첫 슬롯은 도입부(0~1번 문단 뒤), 마지막 슬롯은 마지막 문단 뒤.
-- keywords 는 사진 태그와 맞춰볼 짧은 명사 2~4개(피사체/장소/분위기)."""
+HEADING_MAX_CHARS = 30
 
 
-async def plan_image_slots(body: str, image_count: int, keyword: str = "") -> List[Dict[str, Any]]:
-    paragraphs = [p for p in re.split(r"\n\s*\n", body or "") if p.strip()]
-    n = len(paragraphs)
-    if n == 0 or image_count <= 0:
-        return []
-    numbered = "\n\n".join(f"[{i}] {p[:300]}" for i, p in enumerate(paragraphs))
-    user = f"키워드: {keyword}\n사진 {image_count}장을 넣을 자리를 정해줘. 문단 수 {n}개.\n\n{numbered}"
-    try:
-        data = await cc.complete_json(SLOT_SYSTEM, user, max_tokens=4000, effort="low")
-        slots = data.get("slots") if isinstance(data, dict) else data
-    except Exception as e:  # noqa: BLE001
-        logger.warning("[슬롯] LLM 실패, 균등 배치로 대체: %s", e)
-        slots = None
+def is_heading(paragraph: str) -> bool:
+    """reflow() 가 남기는 소제목 모양인가 — 한 줄이고, 짧고, 문장부호로 끝나지 않는다."""
+    p = (paragraph or "").strip()
+    if not p or "\n" in p:
+        return False
+    return len(p) <= HEADING_MAX_CHARS and not re.search(r"[.!?…]$", p)
+
+
+def split_paragraphs(body: str) -> List[str]:
+    """빈 줄로 나뉜 덩어리. 소제목도 하나의 덩어리로 들어 있다."""
+    return [p.strip() for p in re.split(r"\n\s*\n", body or "") if p.strip()]
+
+
+def sections(paragraphs: List[str]) -> List[Dict[str, Any]]:
+    """소제목 기준으로 묶는다. → [{"heading": str|None, "body_indices": [문단 번호]}]
+
+    사진을 고를 때 2문장짜리 문단만 보면 무슨 사진이 맞는지 알 수 없다. 섹션 단위로 봐야
+    '이 대목이 무슨 이야기인지'가 잡힌다."""
     out: List[Dict[str, Any]] = []
-    if isinstance(slots, list) and slots:
-        for i, s in enumerate(slots[:image_count]):
-            ap = int(s.get("after_paragraph", 0) or 0)
-            out.append({
-                "slot": i,
-                "after_paragraph": max(0, min(n - 1, ap)),
-                "need": str(s.get("need") or "")[:200],
-                "keywords": [str(k) for k in (s.get("keywords") or [])][:5],
-                "stage": str(s.get("stage") or "기타"),
-            })
-    # 부족하면 균등 배치로 채운다
-    while len(out) < image_count:
-        i = len(out)
-        ap = min(n - 1, round((i + 1) * n / (image_count + 1)))
-        stage = "도입" if i == 0 else ("마무리" if i == image_count - 1 else ("진료과정" if i % 2 else "시술"))
-        out.append({"slot": i, "after_paragraph": ap, "need": "", "keywords": [keyword] if keyword else [], "stage": stage})
-    out.sort(key=lambda s: (s["after_paragraph"], s["slot"]))
+    cur: Dict[str, Any] = {"heading": None, "body_indices": []}
+    for i, p in enumerate(paragraphs):
+        if is_heading(p):
+            if cur["body_indices"] or cur["heading"]:
+                out.append(cur)
+            cur = {"heading": p, "body_indices": []}
+        else:
+            cur["body_indices"].append(i)
+    if cur["body_indices"] or cur["heading"]:
+        out.append(cur)
+    return [s for s in out if s["body_indices"]]
+
+
+def image_positions(paragraphs: List[str]) -> List[int]:
+    """사진을 넣어도 되는 문단 번호(그 문단 '뒤'에 들어간다).
+
+    - 소제목 뒤는 안 된다: 소제목과 첫 문장 사이에 사진이 끼면 글이 끊긴다.
+    - 마지막 문단 뒤도 안 된다: 글 맨 밑에 사진만 남는다(푸터 이미지가 따로 있다).
+    """
+    last = len(paragraphs) - 1
+    return [i for i, p in enumerate(paragraphs) if not is_heading(p) and i != last]
+
+
+SLOT_SYSTEM = """당신은 병원 블로그 편집자다. 소제목으로 나뉜 각 대목을 읽고, 사진이 들어갈 자리와 어떤 사진이 어울리는지 정한다.
+JSON 하나만: {"slots": [{"after_paragraph": 2, "need": "한 줄 설명", "keywords": ["진료실", "상담"], "stage": "도입|진료과정|시술|장비소개|마무리|기타"}]}
+지킬 것
+- after_paragraph 는 '사진 가능 위치'로 준 번호 중에서만 고른다. 다른 번호는 무시된다.
+- 한 대목(소제목 구간)에는 사진을 최대 한 장만 넣는다. 사진이 대목 수보다 많으면 어울리는 대목에만 넣고 나머지는 비운다.
+- 억지로 개수를 채우지 않는다. 사진이 어울리지 않는 대목은 건너뛴다.
+- keywords 는 그 대목의 내용에서 뽑은 짧은 명사 3~6개(피사체/장소/장면). 사진 태그와 맞춰볼 값이다.
+- need 는 '어떤 사진이 필요한지'를 한 줄로 적는다."""
+
+
+def _slot_prompt(paragraphs: List[str], image_count: int, keyword: str) -> str:
+    """LLM 이 대목 단위로 판단하게 구조를 그대로 보여 준다."""
+    allowed = image_positions(paragraphs)
+    lines: List[str] = [f"키워드: {keyword}", f"사진 최대 {image_count}장.",
+                        f"사진 가능 위치(이 번호들 중에서만 고를 것): {allowed}", ""]
+    for sec in sections(paragraphs):
+        lines.append(f"[대목] {sec['heading'] or '(소제목 없는 도입부)'}")
+        for i in sec["body_indices"]:
+            lines.append(f"  {i}. {paragraphs[i][:400]}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _repair_slots(raw: Any, paragraphs: List[str], image_count: int, keyword: str) -> List[Dict[str, Any]]:
+    """LLM 이 준 자리를 규칙에 맞게 고친다.
+
+    모델은 소제목 뒤나 글 맨 끝을 곧잘 고르고, 한 대목에 여러 장을 몰아넣기도 한다.
+    그대로 쓰면 사진이 엉뚱한 데 박히므로 여기서 걸러 낸다."""
+    allowed = image_positions(paragraphs)
+    if not allowed:
+        return []
+    section_of: Dict[int, int] = {}
+    for si, sec in enumerate(sections(paragraphs)):
+        for i in sec["body_indices"]:
+            section_of[i] = si
+
+    out: List[Dict[str, Any]] = []
+    used_positions: set = set()
+    used_sections: set = set()
+    for s in (raw if isinstance(raw, list) else []):
+        if len(out) >= image_count:
+            break
+        if not isinstance(s, dict):
+            continue
+        try:
+            ap = int(s.get("after_paragraph"))
+        except (TypeError, ValueError):
+            continue
+        if ap not in allowed or ap in used_positions:
+            continue                      # 소제목 뒤·글 끝·중복 자리는 버린다
+        si = section_of.get(ap)
+        if si in used_sections:
+            continue                      # 한 대목에 한 장
+        used_positions.add(ap)
+        used_sections.add(si)
+        out.append({
+            "after_paragraph": ap,
+            "need": str(s.get("need") or "")[:200],
+            "keywords": [str(k).strip() for k in (s.get("keywords") or []) if str(k).strip()][:8],
+            "stage": str(s.get("stage") or "기타"),
+        })
+
+    # 모자라면 아직 사진이 없는 대목의 첫 자리에 채운다. 남는 대목이 없으면 그대로 둔다
+    # — 억지로 넣은 무관한 사진은 없느니만 못하다.
+    if len(out) < image_count:
+        for si, sec in enumerate(sections(paragraphs)):
+            if len(out) >= image_count:
+                break
+            if si in used_sections:
+                continue
+            spot = next((i for i in sec["body_indices"] if i in allowed and i not in used_positions), None)
+            if spot is None:
+                continue
+            used_positions.add(spot)
+            used_sections.add(si)
+            out.append({"after_paragraph": spot, "need": sec["heading"] or "",
+                        "keywords": [keyword] if keyword else [], "stage": "기타"})
+
+    out.sort(key=lambda x: x["after_paragraph"])
     for i, s in enumerate(out):
         s["slot"] = i
     return out
+
+
+async def plan_image_slots(body: str, image_count: int, keyword: str = "") -> List[Dict[str, Any]]:
+    """사진이 들어갈 자리를 대목(소제목 구간) 단위로 정한다. 자리가 마땅치 않으면 요청보다 적게 돌려준다."""
+    paragraphs = split_paragraphs(body)
+    if not paragraphs or image_count <= 0:
+        return []
+    try:
+        data = await cc.complete_json(SLOT_SYSTEM, _slot_prompt(paragraphs, image_count, keyword),
+                                      max_tokens=4000, effort="low")
+        raw = data.get("slots") if isinstance(data, dict) else data
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[슬롯] LLM 실패, 대목별 기본 배치로 대체: %s", e)
+        raw = None
+    return _repair_slots(raw, paragraphs, image_count, keyword)
 
 
 # ─────────────────────────────── 4) 검수 ───────────────────────────────

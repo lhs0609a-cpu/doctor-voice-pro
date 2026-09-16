@@ -31,7 +31,9 @@ W_STAGE = 2.0
 W_SCENE = 1.5
 P_TEXT = -2.0
 P_RECENT = -1.5
-P_USE_COUNT = -0.02
+P_USE_COUNT = -0.25
+# 이 점수를 넘지 못하면 그 자리는 비운다. 무관한 사진을 넣느니 없는 편이 낫다.
+MIN_SCORE = 1.0
 
 
 @dataclass
@@ -59,15 +61,30 @@ def _norm(s: str) -> str:
     return "".join(s.split()).lower()
 
 
+MIN_MATCH_CHARS = 2      # 한 글자 키워드는 아무 태그에나 걸린다("기" → 기기·대기실·장기)
+
+
 def _keyword_hits(keywords: List[str], tags: List[str]) -> List[str]:
-    """키워드와 태그의 양방향 부분 문자열 일치. 일치한 태그를 순서대로 돌려준다(중복 제거)."""
+    """키워드와 태그의 양방향 부분 문자열 일치. 일치한 태그를 순서대로 돌려준다(중복 제거).
+
+    태그는 먼저 중복을 없앤다 — 사진 한 장에 같은 태그가 여러 번 들어 있으면(로컬 비전 모델이
+    곧잘 그런다) 같은 사진이 점수를 몇 배로 받아 1등이 된다."""
     hits: List[str] = []
-    norm_tags = [(_norm(t), t) for t in tags if isinstance(t, str) and t.strip()]
+    seen_tags: Set[str] = set()
+    norm_tags: List[Tuple[str, str]] = []
+    for t in tags:
+        if not isinstance(t, str) or not t.strip():
+            continue
+        nt = _norm(t)
+        if len(nt) < MIN_MATCH_CHARS or nt in seen_tags:
+            continue
+        seen_tags.add(nt)
+        norm_tags.append((nt, t))
     for kw in keywords:
         if not isinstance(kw, str):
             continue
         nk = _norm(kw)
-        if not nk:
+        if len(nk) < MIN_MATCH_CHARS:
             continue
         for nt, original in norm_tags:
             if nk in nt or nt in nk:
@@ -117,6 +134,7 @@ def assign(
     photos: List[Photo],
     recently_used_ids: Optional[Set[str]] = None,
     allow_repeat: bool = False,
+    min_score: Optional[float] = MIN_SCORE,
 ) -> List[dict]:
     """전체 (슬롯, 사진) 쌍을 점수 내림차순으로 그리디 배정한다.
 
@@ -144,6 +162,8 @@ def assign(
     for sc, si, pid in pairs:
         if si in chosen or pid in used:
             continue
+        if min_score is not None and sc < min_score:
+            continue        # 이 사진은 이 자리에 어울리지 않는다 — 비워 둔다
         chosen[si] = pid
         used.add(pid)
         if len(chosen) == len(slots):
@@ -159,7 +179,7 @@ def assign(
                 val = scores[(si, photo.id)] - 1.0 * times.get(photo.id, 0)
                 if best_val is None or val > best_val:
                     best_pid, best_val = photo.id, val
-            if best_pid is None:
+            if best_pid is None or (min_score is not None and best_val is not None and best_val < min_score):
                 continue
             chosen[si] = best_pid
             times[best_pid] = times.get(best_pid, 0) + 1

@@ -297,6 +297,8 @@ async def draft_generate(ctx: JobContext) -> dict:
     ok = failed = 0
     cdict = _client_dict(client)
     bdict = _brief_dict(brief)
+    # 글을 쓰기 전에 이 병원이 무슨 사진을 갖고 있는지 알려 준다(다 쓴 뒤 끼워 맞추면 맞는 사진이 없는 대목이 생긴다).
+    photo_hints = await _photo_hints(ctx.db, ctx.user_id, camp.collection_id or client.default_collection_id)
     for i, d in enumerate(drafts):
         if await ctx.cancelled():
             break
@@ -328,13 +330,14 @@ async def draft_generate(ctx: JobContext) -> dict:
                 res, editorial = await editorial_quality.write_reviewed(
                     keyword=d.keyword, client=cdict, brief=bdict, evidence=evidence, previous=previous,
                     target_chars=p.get('target_chars', 2000), min_score=p.get('min_score', 85),
-                    max_rewrites=p.get('max_rewrites', 2), cancelled=cancelled, on_revision=save_revision, landing=landing)
+                    max_rewrites=p.get('max_rewrites', 2), cancelled=cancelled, on_revision=save_revision,
+                    landing=landing, photo_hints=photo_hints)
             else:
                 res = await writer.write_from_keyword(
                     keyword=d.keyword, client=cdict, brief=bdict, serp=serp,
                     target_chars=p.get("target_chars"), heading_count=p.get("heading_count"),
                     keyword_count=p.get("keyword_count"), extra_instructions=p.get("instructions") or "",
-                    landing=landing,
+                    landing=landing, photo_hints=photo_hints,
                 )
                 res['body'] = append_cta(res['body'], res.get('cta', ''), landing)
                 res['char_count'] = writer.count_chars(res['body'])
@@ -445,6 +448,26 @@ async def photo_tag(ctx: JobContext) -> dict:
     )
 
 
+async def _photo_hints(db, user_id: str, collection_id: Optional[str], limit: int = 12) -> List[str]:
+    """보유 사진의 한 줄 설명. 태깅 전이면 빈 목록 — 그러면 원고 프롬프트에 아무것도 붙지 않는다."""
+    try:
+        rows = await _collection_photos(db, user_id, collection_id)
+    except Exception:  # noqa: BLE001  사진을 못 읽었다고 글쓰기를 막지는 않는다
+        return []
+    hints: List[str] = []
+    seen: set = set()
+    for r in rows:
+        text = (r.caption or "").strip() or ", ".join(list(r.tags or [])[:4])
+        text = text.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        hints.append(text[:80])
+        if len(hints) >= limit:
+            break
+    return hints
+
+
 # ─────────────────────────────── image_plan ───────────────────────────────
 async def _collection_photos(db, user_id: str, collection_id: Optional[str]) -> List[Any]:
     """세트(또는 전체 풀)의 사진 메타만 읽는다. data(BLOB) 는 읽지 않는다."""
@@ -515,13 +538,10 @@ async def image_plan(ctx: JobContext) -> dict:
         except Exception as e:  # noqa: BLE001
             logger.warning("[사진계획] 슬롯 계획 실패, 균등 배치: %s", e)
             slots_raw = []
-        if not slots_raw:
-            para_n = max(1, len([x for x in d.body.split("\n\n") if x.strip()]))
-            slots = pm.fallback_slots(para_n, n_img)
-            for sl in slots:  # matcher 의 fallback 은 1-based("N번째 문단 뒤") → 우리 계획은 0-based
-                sl.after_paragraph = max(0, sl.after_paragraph - 1)
-        else:
-            slots = [pm.Slot(index=s["slot"], after_paragraph=s["after_paragraph"], need=s.get("need", ""), keywords=s.get("keywords", []), stage=s.get("stage", "기타")) for s in slots_raw]
+        # plan_image_slots 가 대목(소제목 구간) 단위로 자리를 정하고, 마땅치 않으면 요청보다 적게 준다.
+        # 여기서 따로 균등 배치를 덧붙이지 않는다 — 소제목을 모르는 옛 규칙이 되살아난다.
+        slots = [pm.Slot(index=s["slot"], after_paragraph=s["after_paragraph"], need=s.get("need", ""),
+                         keywords=s.get("keywords", []), stage=s.get("stage", "기타")) for s in slots_raw]
         assigned = pm.assign(slots, photos, recently_used_ids=recently, allow_repeat=len(photos) < len(slots))
         need_by_slot = {s.index: s for s in slots}
         plan = []
