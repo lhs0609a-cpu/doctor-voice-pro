@@ -57,16 +57,29 @@ class SlotRepairTests(unittest.TestCase):
     def repair(self, raw, count=5):
         return _repair_slots(raw, self.paras, count, "아토피")
 
-    def test_illegal_positions_from_the_model_are_dropped(self):
+    def test_illegal_positions_never_survive_as_is(self):
         got = self.repair([
-            {"after_paragraph": 1, "keywords": ["원인"]},    # 소제목 뒤
-            {"after_paragraph": 6, "keywords": ["인사"]},    # 글 맨 끝
+            {"after_paragraph": 1, "keywords": ["원인"]},    # 소제목 뒤 → 옮긴다
+            {"after_paragraph": 6, "keywords": ["인사"]},    # 글 맨 끝 → 옮긴다
             {"after_paragraph": 99, "keywords": []},         # 없는 번호
             {"after_paragraph": "둘", "keywords": []},        # 숫자가 아님
         ])
         self.assertNotIn(1, [s["after_paragraph"] for s in got])
         self.assertNotIn(6, [s["after_paragraph"] for s in got])
         self.assertTrue(all(s["after_paragraph"] in image_positions(self.paras) for s in got))
+
+    def test_illegal_position_is_moved_not_discarded(self):
+        """버리면 그 슬롯이 들고 있던 '어떤 사진이 필요한지'까지 날아간다.
+
+        실제로 모델이 글 맨 끝을 고르는 바람에 딱 맞는 사진이 배치되지 못하는 일이 있었다."""
+        got = self.repair([{"after_paragraph": 6, "keywords": ["보습제"], "stage": "마무리"}], count=1)
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]["keywords"], ["보습제"])        # 정보가 살아 있다
+        self.assertIn(got[0]["after_paragraph"], image_positions(self.paras))
+
+    def test_a_slot_on_a_heading_moves_into_that_section(self):
+        got = self.repair([{"after_paragraph": 4, "keywords": ["보습"], "stage": "마무리"}], count=1)
+        self.assertEqual(got[0]["after_paragraph"], 5)          # 소제목 '치료 방법' 다음 본문
 
     def test_one_photo_per_section(self):
         got = self.repair([

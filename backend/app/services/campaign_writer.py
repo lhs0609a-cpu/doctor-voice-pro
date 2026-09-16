@@ -287,6 +287,27 @@ def _slot_prompt(paragraphs: List[str], image_count: int, keyword: str) -> str:
     return "\n".join(lines)
 
 
+def _snap(ap: int, allowed: List[int], paragraphs: List[str]) -> Optional[int]:
+    """모델이 고른 자리가 규칙에 어긋나면 가장 가까운 합법 자리로 옮긴다.
+
+    그냥 버리면 그 슬롯이 들고 있던 'need·keywords'(어떤 사진이 필요한지)까지 함께 사라진다.
+    실제로 모델이 글 맨 끝을 고르는 바람에 딱 맞는 사진이 배치되지 못하는 일이 있었다.
+    같은 대목 안을 먼저 보고, 없으면 문서 전체에서 가장 가까운 자리를 고른다."""
+    if not allowed:
+        return None
+    if ap in allowed:
+        return ap
+    same_section = [i for i in allowed if _same_section(i, ap, paragraphs)]
+    pool = same_section or allowed
+    return min(pool, key=lambda i: (abs(i - ap), i))
+
+
+def _same_section(a: int, b: int, paragraphs: List[str]) -> bool:
+    """두 문단 사이에 소제목이 없으면 같은 대목이다."""
+    lo, hi = (a, b) if a <= b else (b, a)
+    return not any(is_heading(paragraphs[i]) for i in range(lo + 1, min(hi + 1, len(paragraphs))))
+
+
 def _repair_slots(raw: Any, paragraphs: List[str], image_count: int, keyword: str) -> List[Dict[str, Any]]:
     """LLM 이 준 자리를 규칙에 맞게 고친다.
 
@@ -312,8 +333,9 @@ def _repair_slots(raw: Any, paragraphs: List[str], image_count: int, keyword: st
             ap = int(s.get("after_paragraph"))
         except (TypeError, ValueError):
             continue
-        if ap not in allowed or ap in used_positions:
-            continue                      # 소제목 뒤·글 끝·중복 자리는 버린다
+        ap = _snap(ap, allowed, paragraphs)
+        if ap is None or ap in used_positions:
+            continue                      # 옮길 자리가 없거나 이미 쓴 자리
         si = section_of.get(ap)
         if si in used_sections:
             continue                      # 한 대목에 한 장
