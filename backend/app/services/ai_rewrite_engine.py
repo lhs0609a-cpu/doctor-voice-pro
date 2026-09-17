@@ -326,6 +326,7 @@ class AIRewriteEngine:
         seo_optimization: Optional[Dict] = None,
         top_post_rules: Optional[Dict] = None,
         industry_type: IndustryType = IndustryType.MEDICAL,
+        keyword: Optional[str] = None,
     ) -> str:
         """
         프로필 기반 시스템 프롬프트 생성 (업종별 최적화)
@@ -510,7 +511,12 @@ class AIRewriteEngine:
 
         compliance_text = f"\n- {compliance_warning}" if compliance_warning else ""
 
-        system_prompt = f"""<역할>
+        topic_lock = f"""<최우선 주제 잠금>
+이번 원고의 검색 키워드는 '{keyword}'이다. 모든 제목과 문단은 이 키워드와 원본 정보에만 연결한다. 키워드와 무관한 질환·증상·신체 부위·사례를 쓰지 않는다.
+</최우선 주제 잠금>
+""" if keyword else ""
+
+        system_prompt = f"""{topic_lock}<역할>
 {intro_prompt}
 지금 쓰는 글은 검색으로 들어온 사람이 끝까지 읽고 도움이 됐다고 느끼는 글이어야 한다.
 </역할>
@@ -891,6 +897,7 @@ class AIRewriteEngine:
             seo_optimization,
             top_post_rules,
             industry_type,
+            keyword,
         )
         user_prompt = self._build_user_prompt(
             original_content, framework, persuasion_level, ask_length, target_audience, top_post_rules, keyword
