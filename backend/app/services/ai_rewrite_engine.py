@@ -65,6 +65,28 @@ LENGTH_CALIBRATION = 0.78
 # 품질 심사에 쓰는 모델. 판정만 하므로 싼 모델로 충분하다.
 # gemini-2.5-flash-lite 는 신규 사용자에게 막혔다(404). 3.5 계열 lite 를 쓴다.
 JUDGE_MODEL = "gemini-3.5-flash-lite"
+
+KINES_REWRITE_RULES = """
+<키네스 지점 원고 추가 규칙>
+- 한 글에서는 부모의 걱정 하나만 다룬다. 걱정 제시 → 함께 볼 핵심 항목 → 그 이유 → 실제 관리 내용 → 근거가 있는 사례·자료 → 안내 순서로 직선적으로 전개한다.
+- 앞 문단에서 제기한 질문에 다음 문단이 답하도록 쓴다. 관련 없는 성장 정보나 새 고민을 중간에 추가하지 않는다.
+- 제공된 사례·자료에 없는 환자, 기간, 수치, 변화, 후기를 만들지 않는다. 관찰된 변화의 원인을 단정하지 않는다.
+- 키네스가 뼈나이·골연령·성장판 검사를 직접 시행한다고 읽히는 표현은 금지한다.
+- 지점명은 '키네스 송도점'처럼 쓴다. '키네스 센터 송도점'은 쓰지 않는다.
+- 어투는 합니다·했습니다·입니다체로 끝까지 통일한다. 해요체나 반말을 섞지 않는다.
+- 한 문장에는 핵심 내용 하나만 담고 60자를 넘기면 나눈다.
+</키네스 지점 원고 추가 규칙>
+"""
+
+UNIVERSAL_REWRITE_RULES = """
+<모든 원고 공통 편집 규칙>
+- 한 글에서는 독자의 핵심 질문 하나만 다룬다. 문제 제시 → 핵심 정보 → 이유 → 실제 적용·관리 → 관련 자료·사례 → 마무리 순으로 직선적으로 쓴다.
+- 각 문단은 앞 문단의 질문에 답한다. 관련 없는 주제를 중간에 추가하거나 정보를 나열하지 않는다.
+- 제공된 근거에 없는 사람·기간·수치·후기·효과를 만들지 않는다. 관찰된 변화의 원인을 단정하지 않는다.
+- 본문 전체의 어투를 합니다·했습니다·입니다체로 통일한다.
+- 한 문장에는 핵심 내용 하나만 담고 60자를 넘기면 나눈다.
+</모든 원고 공통 편집 규칙>
+"""
 # 이 점수 미만이면 채점 결과를 지적으로 넣어 한 번 고쳐 쓴다 (100점 만점).
 QUALITY_THRESHOLD = 80
 
@@ -561,6 +583,10 @@ class AIRewriteEngine:
 - 소제목 {structure['headings']}개의 순서와 각각이 맡을 역할
 </쓰기 전에 정할 것>{differentiator_text}{requirements_text}{seo_text}{top_post_rules_text}"""
 
+        system_prompt += UNIVERSAL_REWRITE_RULES
+        profile_name = str(doctor_profile.get("name") or doctor_profile.get("clinic_name") or "")
+        if "키네스" in profile_name or "키네스" in str(specialty):
+            system_prompt += KINES_REWRITE_RULES
         return system_prompt
 
     def _get_style_text(
