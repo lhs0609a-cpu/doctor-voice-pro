@@ -753,6 +753,39 @@ class Desktop:
         self.root.after(300, self.poll)
 
 
+def hand_over_to_installed() -> bool:
+    """내려받아 풀어 둔 옛 복사본으로 켜졌으면 설치본을 대신 열고 True.
+
+    설치 프로그램은 설치 폴더만 덮어쓴다. Downloads 에 풀어 둔 exe 는 그대로 남아서,
+    그 창을 계속 켜는 사람에게는 업데이트가 몇 번을 성공해도 옛 화면만 보인다.
+    그 시절 실행기에는 연결 창구도 없어 홈페이지가 영영 이 PC를 찾지 못한다.
+    묻지 않고 넘기면 뭘 눌렀는지 모르게 창이 바뀌므로, 한 번 확인하고 넘긴다."""
+    try:
+        installed = updater.stray_copy()
+    except Exception:  # noqa: BLE001  확인에 실패했다고 실행기를 못 켜게 할 이유는 없다
+        return False
+    if not installed:
+        return False
+    root = tk.Tk()
+    root.withdraw()
+    switch = messagebox.askyesno('닥터보이스 자동 발행', '\n'.join([
+        '지금 연 파일은 예전에 내려받아 풀어 둔 복사본입니다.',
+        '이 복사본은 업데이트되지 않아 홈페이지와 연결되지 않습니다.',
+        '',
+        '설치된 최신 실행기가 따로 있습니다:',
+        str(installed.parent),
+        '',
+        '설치된 쪽을 열까요? (이 창은 닫힙니다)']))
+    root.destroy()
+    if not switch:
+        return False
+    try:
+        updater.launch(installed)
+    except OSError:
+        return False    # 못 열었으면 지금 것이라도 쓰게 둔다
+    return True
+
+
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == '--self-check':
         import naver_editor, journal
@@ -762,6 +795,9 @@ def main():
         return
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    # 뮤텍스를 잡기 전에 확인한다 — 넘겨줄 참이면 이 복사본이 자리를 차지하지 않아야 한다.
+    if hand_over_to_installed():
+        return
     if not hold_single_instance():
         root = tk.Tk()
         root.withdraw()

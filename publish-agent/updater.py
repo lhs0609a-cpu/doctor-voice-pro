@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -117,3 +118,53 @@ def install(path: Path):
 def installed_build() -> bool:
     """설치본으로 실행 중일 때만 업데이트합니다(개발 중 실행은 건드리지 않음)."""
     return sys.platform == 'win32' and bool(getattr(sys, 'frozen', False))
+
+
+# ── 내려받아 압축만 푼 옛 복사본 ────────────────────────────────
+# 설치 프로그램은 {localappdata}\DoctorVoiceAutopilot 에만 덮어쓴다. 사용자가 예전에
+# Downloads 에 풀어 둔 exe 는 그대로 남고, 그 창을 계속 켜면 업데이트가 몇 번을 성공해도
+# 화면은 옛날 그대로다(설치 프로그램이 닫는 대상은 뮤텍스를 잡는 설치본뿐이다).
+# 그래서 실행기가 스스로 '나는 설치본이 아니다'를 알아보고 설치된 쪽으로 넘겨 준다.
+INSTALL_KEY = r'Software\Microsoft\Windows\CurrentVersion\Uninstall' \
+              r'\{2F5B4A6C-8D31-4E2A-9C77-0B1C6A55E401}_is1'
+APP_EXE = 'DoctorVoiceAutopilot.exe'
+
+
+def installed_exe() -> Optional[Path]:
+    """설치된 실행기의 경로. 설치 기록이 없거나 파일이 사라졌으면 None."""
+    if sys.platform != 'win32':
+        return None
+    import winreg
+    for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(root, INSTALL_KEY) as key:
+                location, _ = winreg.QueryValueEx(key, 'InstallLocation')
+        except OSError:
+            continue
+        exe = Path(str(location).strip('"')) / APP_EXE
+        if exe.is_file():
+            return exe
+    return None
+
+
+def same_file(a: Path, b: Path) -> bool:
+    """윈도우는 대소문자를 가리지 않는다 — 글자 그대로 비교하면 같은 파일을 다르다고 본다."""
+    try:
+        return a.resolve().samefile(b.resolve())
+    except OSError:
+        return os.path.normcase(str(a.resolve())) == os.path.normcase(str(b.resolve()))
+
+
+def stray_copy(running: Optional[Path] = None) -> Optional[Path]:
+    """설치본이 따로 있는데 엉뚱한 복사본으로 켜졌으면 설치본 경로를, 아니면 None."""
+    if not installed_build():
+        return None
+    installed = installed_exe()
+    if not installed:
+        return None
+    return None if same_file(Path(running or sys.executable), installed) else installed
+
+
+def launch(exe: Path):
+    """설치된 실행기를 켠다. 부른 쪽은 곧바로 종료해 창이 둘로 보이지 않게 한다."""
+    return subprocess.Popen([str(exe)], cwd=str(Path(exe).parent), close_fds=True)

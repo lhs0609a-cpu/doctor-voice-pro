@@ -2,6 +2,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import httpx
@@ -106,9 +107,50 @@ class ManifestFileTests(unittest.TestCase):
         if not published.is_file():
             self.skipTest('아직 빌드하지 않았습니다')
         payload = json.loads(published.read_text(encoding='utf-8'))
-        self.assertEqual(payload.get('version'), updater.VERSION)
+        # 배포본이 소스보다 앞설 수는 없다 — 그러면 아무도 못 받는 버전을 내보낸 것이다.
+        # 소스가 앞서는 것(아직 빌드하지 않은 다음 버전)은 정상이다.
+        self.assertFalse(updater.is_newer(payload.get('version'), updater.VERSION),
+                         f"배포된 매니페스트({payload.get('version')})가 소스({updater.VERSION})보다 높습니다")
         self.assertIsNotNone(updater.read_manifest(payload, '0.0.1'))
 
 
-if __name__ == '__main__':
+class StrayCopyTests(unittest.TestCase):
+    """내려받아 풀어 둔 옛 복사본을 알아보고 설치본으로 넘긴다."""
+
+    def setUp(self):
+        self.folder = Path(tempfile.mkdtemp())
+        self.installed = self.folder / 'Installed' / updater.APP_EXE
+        self.installed.parent.mkdir()
+        self.installed.write_bytes(b'exe')
+        self.stray = self.folder / 'Downloads' / updater.APP_EXE
+        self.stray.parent.mkdir()
+        self.stray.write_bytes(b'old exe')
+
+    def run_as(self, running, installed):
+        with mock.patch.object(updater, 'installed_build', return_value=True), \
+             mock.patch.object(updater, 'installed_exe', return_value=installed):
+            return updater.stray_copy(running)
+
+    def test_old_copy_is_sent_to_the_installed_one(self):
+        self.assertEqual(self.run_as(self.stray, self.installed), self.installed)
+
+    def test_the_installed_one_is_left_alone(self):
+        self.assertIsNone(self.run_as(self.installed, self.installed))
+
+    def test_same_path_written_differently_is_not_a_stray_copy(self):
+        # 윈도우는 대소문자를 가리지 않는다 — 글자만 비교하면 멀쩡한 설치본을 쫓아낸다.
+        disguised = Path(str(self.installed).upper())
+        self.assertIsNone(self.run_as(disguised, self.installed))
+
+    def test_without_an_install_nothing_happens(self):
+        # 설치하지 않고 압축만 풀어 쓰는 사람의 실행기를 가로채면 안 된다.
+        self.assertIsNone(self.run_as(self.stray, None))
+
+    def test_development_run_is_never_touched(self):
+        with mock.patch.object(updater, 'installed_build', return_value=False), \
+             mock.patch.object(updater, 'installed_exe', return_value=self.installed):
+            self.assertIsNone(updater.stray_copy(self.stray))
+
+
+if __name__ == "__main__":
     unittest.main()
