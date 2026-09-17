@@ -928,6 +928,17 @@ class AIRewriteEngine:
                 "내용을 조금 바꿔서 다시 시도해주세요."
             )
 
+        # 키워드가 빠진 원고는 문장이 자연스러워도 다른 주제의 글이므로 반환하지 않는다.
+        # 특히 Gemini가 시스템의 일반 의료 예시를 따라가는 경우를 발행 전에 차단한다.
+        if keyword:
+            compact_content = re.sub(r"\s+", "", content)
+            compact_keyword = re.sub(r"\s+", "", str(keyword))
+            if compact_keyword not in compact_content:
+                raise ValueError(
+                    f"생성 원고의 주제가 검색 키워드와 일치하지 않습니다: '{keyword}'. "
+                    "원본 주제를 유지하도록 다시 생성해주세요."
+                )
+
         if result["truncated"]:
             print(f"[WARNING] 출력 토큰 상한에 걸려 원고가 잘렸습니다 (모델: {model}, 상한: {max_output_tokens})")
 
