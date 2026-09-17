@@ -935,16 +935,40 @@ class AIRewriteEngine:
                 "내용을 조금 바꿔서 다시 시도해주세요."
             )
 
-        # 키워드가 빠진 원고는 문장이 자연스러워도 다른 주제의 글이므로 반환하지 않는다.
-        # 특히 Gemini가 시스템의 일반 의료 예시를 따라가는 경우를 발행 전에 차단한다.
+        # 키워드 핵심어가 빠진 원고는 문장이 자연스러워도 다른 주제의 글이다.
+        # 한 번만 강한 교정 지시로 재생성하고, 그래도 이탈하면 발행 전에 차단한다.
         if keyword:
             compact_content = re.sub(r"\s+", "", content)
-            compact_keyword = re.sub(r"\s+", "", str(keyword))
-            if compact_keyword not in compact_content:
-                raise ValueError(
-                    f"생성 원고의 주제가 검색 키워드와 일치하지 않습니다: '{keyword}'. "
-                    "원본 주제를 유지하도록 다시 생성해주세요."
+            keyword_tokens = [t for t in re.split(r"\s+", str(keyword).strip()) if len(t) >= 2]
+            anchors = [t.replace(" ", "") for t in keyword_tokens]
+            matched = sum(1 for token in anchors if token in compact_content)
+            required = max(1, (len(anchors) + 1) // 2)
+            if (re.sub(r"\s+", "", str(keyword)) not in compact_content) and matched < required:
+                retry_prompt = user_prompt + f"""
+
+<긴급 주제 교정>
+앞선 응답은 주제에서 이탈했으므로 폐기한다. 이번 원고의 제목과 본문에는 반드시 '{keyword}'의 핵심어 {', '.join(anchors)} 중 {required}개 이상이 반복해서 등장해야 한다. 원본 정보에 없는 질환이나 신체 부위를 새로 만들지 말고, 원본 정보만 확장한다. 다른 주제로 쓰지 말고 완성된 원고만 다시 출력한다.
+</긴급 주제 교정>"""
+                retry = await self._gemini_call(
+                    user_prompt=retry_prompt,
+                    system_prompt=system_prompt,
+                    max_output_tokens=max_output_tokens,
+                    temperature=0.2,
+                    thinking_budget=THINKING_BUDGET,
+                    model=model,
                 )
+                total_input += retry["input_tokens"]
+                total_output += retry["output_tokens"]
+                total_thinking += retry["thinking_tokens"]
+                content = self._remove_markdown_formatting(retry["text"])
+                actual_length = len(content)
+                compact_content = re.sub(r"\s+", "", content)
+                matched = sum(1 for token in anchors if token in compact_content)
+                if (re.sub(r"\s+", "", str(keyword)) not in compact_content) and matched < required:
+                    raise ValueError(
+                        f"생성 원고의 주제가 검색 키워드와 일치하지 않습니다: '{keyword}'. "
+                        "주제 이탈 원고는 발행하지 않습니다."
+                    )
 
         if result["truncated"]:
             print(f"[WARNING] 출력 토큰 상한에 걸려 원고가 잘렸습니다 (모델: {model}, 상한: {max_output_tokens})")
