@@ -729,6 +729,7 @@ class AIRewriteEngine:
         target_length: int,
         target_audience: Optional[Dict] = None,
         top_post_rules: Optional[Dict] = None,
+        keyword: Optional[str] = None,
     ) -> str:
         """
         각색 요구사항 프롬프트 생성
@@ -788,9 +789,11 @@ class AIRewriteEngine:
 
         structure = self._plan_structure(target_length, top_post_rules)
 
+        keyword_text = f"\n<검색 키워드>\n{keyword}\n</검색 키워드>" if keyword else ""
         return f"""<원본 정보>
 {original_content}
 </원본 정보>
+{keyword_text}
 
 <전개 방식>
 {framework_instructions.get(framework, framework_instructions['정보전달형'])}
@@ -866,7 +869,7 @@ class AIRewriteEngine:
             industry_type,
         )
         user_prompt = self._build_user_prompt(
-            original_content, framework, persuasion_level, ask_length, target_audience, top_post_rules
+            original_content, framework, persuasion_level, ask_length, target_audience, top_post_rules, keyword
         )
 
         total_input = 0
