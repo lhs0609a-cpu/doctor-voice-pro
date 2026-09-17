@@ -1,7 +1,9 @@
 """홈페이지 자동 연결 창구 — 우리 홈페이지만, 이 PC 안에서만, 코드만 받는다."""
 import http.client
 import json
+import os
 import unittest
+from unittest import mock
 
 import local_bridge
 
@@ -61,10 +63,33 @@ class BridgeTests(unittest.TestCase):
         self.assertFalse(body['ok'])
 
     def test_other_sites_are_refused(self):
-        for origin in ('https://evil.example.com', None, 'https://doctor-voice-pro-ghwi.vercel.app.evil.com'):
+        for origin in ('https://evil.example.com', None,
+                       'https://doctor-voice-pro-ghwi.vercel.app.evil.com',
+                       'https://evil-doctor-voice-pro.vercel.app',   # 앞에 뭘 붙여도 우리 주소가 아니다
+                       'https://doctor-voice-pro-ghwi.vercel.app.kr',
+                       'http://doctor-voice-pro-ghwi-git-main.vercel.app'):  # 미리보기는 https 만
             res, _ = self.call('POST', '/pair', {'code': 'GOODCODE'}, origin=origin)
             self.assertEqual(res.status, 403, origin)
         self.assertEqual(self.pairs, [])
+
+    def test_vercel_preview_deployments_are_allowed(self):
+        # 배포마다 주소가 바뀌어도 연결이 끊기면 안 된다.
+        for origin in ('https://doctor-voice-pro-ghwi-git-feature-one-stop-wizard-team.vercel.app',
+                       'https://doctor-voice-pro-ghwi-a1b2c3d4.vercel.app'):
+            res, body = self.call('GET', '/status', origin=origin)
+            self.assertEqual(res.status, 200, origin)
+            # 크롬은 보낸 Origin 과 글자까지 같아야 응답을 읽는다.
+            self.assertEqual(res.getheader('Access-Control-Allow-Origin'), origin)
+            self.assertEqual(body['app'], 'doctorvoice-launcher')
+
+    def test_custom_domain_can_be_opened_without_rebuilding(self):
+        origin = 'https://app.doctorvoice.kr'
+        res, _ = self.call('GET', '/status', origin=origin)
+        self.assertEqual(res.status, 403)
+        with mock.patch.dict(os.environ, {local_bridge.EXTRA_ORIGINS_ENV: f'{origin}, https://other.example'}):
+            res, _ = self.call('GET', '/status', origin=origin)
+            self.assertEqual(res.status, 200)
+            self.assertEqual(res.getheader('Access-Control-Allow-Origin'), origin)
 
     def test_dns_rebinding_host_is_refused(self):
         res, _ = self.call('GET', '/status', host='attacker.example.com')

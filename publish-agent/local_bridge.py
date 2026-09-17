@@ -5,7 +5,7 @@
 
 지키는 것
 - 127.0.0.1 에만 붙는다 — 다른 PC에서는 보이지 않는다.
-- 우리 홈페이지(ALLOWED_ORIGINS)가 보낸 요청만 받는다. 다른 사이트가 이 PC에서 열려도 코드를 넣지 못한다.
+- 우리 홈페이지가 보낸 요청만 받는다(allowed_origin). 다른 사이트가 이 PC에서 열려도 코드를 넣지 못한다.
 - Host 헤더가 127.0.0.1/localhost 가 아니면 거절한다(DNS 리바인딩 방어).
 - 받는 것은 서버가 발급한 1회용 코드뿐이다. 코드가 진짜인지는 실행기가 서버에 물어 확인한다.
 """
@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Dict, Optional, Tuple
@@ -25,8 +27,35 @@ ALLOWED_ORIGINS = (
     'http://localhost:3000',
     'http://127.0.0.1:3000',
 )
+# Vercel 은 배포마다 주소를 새로 만든다: doctor-voice-pro-ghwi-git-<브랜치>-<팀>.vercel.app.
+# 주소 하나만 적어 두면 미리보기 배포에서 창구가 문을 닫아 '실행기를 찾지 못했습니다'가 된다.
+# 끝까지 맞춰 보는 정규식이라 doctor-voice-pro-ghwi.vercel.app.evil.com 같은 흉내는 걸리지 않는다.
+PREVIEW_HOST = re.compile(r'doctor-voice-pro[a-z0-9-]*\.vercel\.app')
+# 나중에 우리 도메인을 붙이면 실행기를 새로 빌드하지 않고 여기에 적어 연다(쉼표로 여러 개).
+EXTRA_ORIGINS_ENV = 'DOCTORVOICE_SITE_ORIGINS'
 LOCAL_HOSTS = ('127.0.0.1', 'localhost')
 MAX_BODY = 4096
+
+
+def extra_origins() -> Tuple[str, ...]:
+    raw = os.environ.get(EXTRA_ORIGINS_ENV) or ''
+    return tuple(part.strip().rstrip('/').lower() for part in raw.split(',') if part.strip())
+
+
+def allowed_origin(origin: Optional[str]) -> Optional[str]:
+    """우리 홈페이지가 보낸 요청이면 그 Origin 을 그대로, 아니면 None.
+
+    돌려주는 값은 받은 문자열 그대로다 — 크롬은 Access-Control-Allow-Origin 이 보낸 값과
+    글자까지 같아야 응답을 읽게 해 준다."""
+    if not origin:
+        return None
+    seen = origin.strip().rstrip('/').lower()
+    if seen in ALLOWED_ORIGINS or seen in extra_origins():
+        return origin
+    scheme, _, host = seen.partition('://')
+    if scheme == 'https' and PREVIEW_HOST.fullmatch(host):
+        return origin
+    return None
 
 
 class LocalBridge:
@@ -68,8 +97,7 @@ def _handler_for(bridge: LocalBridge):
 
         # -------------------------------------------------------- 검사
         def _origin(self) -> Optional[str]:
-            origin = self.headers.get('Origin')
-            return origin if origin in ALLOWED_ORIGINS else None
+            return allowed_origin(self.headers.get('Origin'))
 
         def _local_host(self) -> bool:
             host = (self.headers.get('Host') or '').rsplit(':', 1)[0].strip('[]').lower()
