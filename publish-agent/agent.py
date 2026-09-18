@@ -233,10 +233,21 @@ async def capture_keyword_evidence(editor: Any, client: ServerClient, job: Dict[
     try:
         await editor.page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
         await editor.page.wait_for_timeout(1500)
-        shot = await editor.page.screenshot(type="png")
+        post_id = result.url.rstrip("/").split("/")[-1]
+        target = editor.page.locator(f'a[href*="{post_id}"]').first
+        found = await target.count()
         rank = None
-        if await editor.page.locator(f'a[href*="{result.url.split("/")[-1]}"]').count():
+        if found:
+            # 검색 결과 카드까지 올라가 빨간 테두리를 적용해 결과 부분만 캡처합니다.
+            # Highlight and capture the whole result card so the red outline is visible.
+            card = target.locator("xpath=ancestor::*[self::li or contains(@class,'total_wrap') or contains(@class,'api_subject_bx') or contains(@class,'bx')][1]")
+            if await card.count() == 0:
+                card = target
+            await card.evaluate("el => { el.style.outline = '5px solid #ef4444'; el.style.outlineOffset = '3px'; }")
             rank = 1
+            shot = await card.screenshot(type="png")
+        else:
+            shot = await editor.page.screenshot(type="png")
         data_url = "data:image/png;base64," + base64.b64encode(shot).decode("ascii")
         await asyncio.to_thread(client.save_verification, job["id"], rank=rank, search_url=search_url, screenshot_data_url=data_url)
     except Exception as exc:
