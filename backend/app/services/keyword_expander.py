@@ -29,6 +29,7 @@ except Exception:  # noqa: BLE001  (모듈이 아직 없을 때도 앱은 떠야
 
 
 DEFAULT_SUFFIXES = ["", "한의원", "병원", "치료", "잘하는곳"]
+MODIFIER_SUFFIXES = DEFAULT_SUFFIXES + ["원인", "증상", "방법", "후기", "비용"]
 
 
 def _norm(k: str) -> str:
