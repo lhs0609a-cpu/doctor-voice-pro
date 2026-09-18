@@ -1405,7 +1405,7 @@ async def mark_published(job_id: str, body: MarkPublishedIn, current_user: User 
 
 
 class AutomationIn(BaseModel):
-    max_keywords: int = Field(default=10, ge=1, le=50)
+    max_keywords: int = Field(default=10, ge=1, le=300)
     image_count: int = Field(default=5, ge=0, le=20)
     auto_schedule: bool = False
     start_date: date
