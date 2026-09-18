@@ -278,6 +278,7 @@ export interface DoctorProfile {
   sample_posts: string[]
   target_audience: TargetAudience | null
   preferred_structure: string
+  client_rules?: string[]
   learned_at: string | null
   profile_version: number
   created_at: string
