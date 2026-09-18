@@ -286,21 +286,19 @@ async def get_gemini_api_status():
         # Gemini 클라이언트 설정 및 간단한 API 호출 테스트
         genai.configure(api_key=api_key)
 
-        # 안정적인 gemini-2.0-flash 모델로 테스트
-        model = genai.GenerativeModel('gemini-2.0-flash')
+        # 안정적인 gemini-2.5-flash 모델로 테스트
+        model = genai.GenerativeModel('gemini-2.5-flash')
         response = model.generate_content("test", generation_config=genai.GenerationConfig(max_output_tokens=10))
 
         return {
             "connected": True,
             "api_key_set": True,
             "api_key_prefix": api_key[:10] + "..." if len(api_key) > 10 else "***",
-            "model": "gemini-2.0-flash",
+            "model": "gemini-2.5-flash",
             "test_successful": True,
             "sdk_available": True,
             "available_models": [
-                "gemini-2.0-flash",
-                "gemini-1.5-pro",
-                "gemini-2.0-flash-exp"
+                "gemini-2.5-flash"
             ]
         }
     except Exception as e:

@@ -36,6 +36,9 @@ class DoctorProfile(Base):
     # Signature phrases
     signature_phrases = Column(JSON, nullable=True)
 
+    # Client/brand-specific writing rules (prohibited terms, structure, sources, media rules)
+    client_rules = Column(JSON, nullable=True)
+
     # Sample posts for learning
     sample_posts = Column(JSON, nullable=True)
 

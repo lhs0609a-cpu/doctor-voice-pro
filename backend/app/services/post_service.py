@@ -38,7 +38,7 @@ class PostService:
         target_length: int = 1500,
         writing_style: Optional[Dict] = None,
         requirements: Optional[Dict] = None,
-        ai_provider: str = "gpt",
+        ai_provider: str = "gemini",
         ai_model: Optional[str] = None,
         seo_optimization: Optional[Dict] = None,
         top_post_rules: Optional[Dict] = None,
@@ -318,6 +318,9 @@ class PostService:
             except Exception as e:
                 print(f"WebSocket error: {e}")
 
+        # Expose this generation's measured cost to the create screen without
+        # persisting it on the Post table (the detailed usage row is persisted).
+        post.usage_info = usage_info
         return post
 
     async def rewrite_post(
@@ -520,6 +523,7 @@ class PostService:
                 "specialty": user.specialty if user else default_specialty,
                 "writing_style": profile.get("writing_style", {}),
                 "signature_phrases": profile.get("signature_phrases", []),
+                "client_rules": profile.get("client_rules", []),
                 "target_audience": profile.get("target_audience", {}),
             }
 
@@ -544,6 +548,7 @@ class PostService:
             "specialty": user.specialty if user else default_specialty,
             "writing_style": profile.writing_style or {},
             "signature_phrases": profile.signature_phrases or [],
+            "client_rules": profile.client_rules or [],
             "target_audience": profile.target_audience or {},
         }
 

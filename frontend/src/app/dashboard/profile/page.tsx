@@ -50,6 +50,7 @@ interface Profile {
   user_id: string
   writing_style: WritingStyle | null
   signature_phrases: string[]
+  client_rules: string[]
   sample_posts: string[]
   target_audience: TargetAudience | null
   preferred_structure: string
@@ -82,6 +83,8 @@ export default function ProfilePage() {
   // Signature Phrases State
   const [signaturePhrases, setSignaturePhrases] = useState<string[]>([])
   const [newPhrase, setNewPhrase] = useState('')
+  const [clientRules, setClientRules] = useState<string[]>([])
+  const [newClientRule, setNewClientRule] = useState('')
 
   // Sample Posts State
   const [samplePosts, setSamplePosts] = useState<string[]>([])
@@ -167,6 +170,7 @@ export default function ProfilePage() {
 
       // Load other fields
       setSignaturePhrases(data.signature_phrases || [])
+      setClientRules(data.client_rules || [])
       setSamplePosts(data.sample_posts || [])
       setPreferredStructure(data.preferred_structure || 'story_problem_solution')
 
@@ -200,6 +204,7 @@ export default function ProfilePage() {
           sentence_length: 5,
         },
         signature_phrases: signaturePhrases,
+        client_rules: clientRules,
         sample_posts: samplePosts,
         target_audience: {
           age_range: ageRange || undefined,
@@ -747,6 +752,26 @@ export default function ProfilePage() {
                 </div>
               </div>
             )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Client-specific writing rules */}
+      <Card>
+        <CardHeader>
+          <CardTitle>고객사 전용 작성 규칙</CardTitle>
+          <CardDescription>금지 표현, 필수 표현, 사례 출처, 지점명, 사진 기준을 고객사별로 한 줄씩 입력하세요.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {clientRules.map((rule, index) => (
+            <div key={`${rule}-${index}`} className="flex items-center gap-2">
+              <span className="flex-1 text-sm">{rule}</span>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setClientRules(clientRules.filter((_, i) => i !== index))}>삭제</Button>
+            </div>
+          ))}
+          <div className="flex gap-2">
+            <Input value={newClientRule} onChange={(e) => setNewClientRule(e.target.value)} placeholder="예: 사례는 카페 사례게시판에서만 참고" />
+            <Button type="button" onClick={() => { if (newClientRule.trim()) { setClientRules([...clientRules, newClientRule.trim()]); setNewClientRule('') } }}>추가</Button>
           </div>
         </CardContent>
       </Card>

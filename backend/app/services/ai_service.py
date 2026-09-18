@@ -164,7 +164,7 @@ class AIService:
     ) -> str:
         """Gemini를 사용하여 텍스트 생성"""
         try:
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            model = genai.GenerativeModel('gemini-2.5-flash')
 
             full_prompt = prompt
             if system_prompt:

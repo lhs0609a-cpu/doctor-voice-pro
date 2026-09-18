@@ -127,6 +127,7 @@ export interface Post {
   content_analysis: ContentAnalysis | null
   forbidden_words_check: ForbiddenWordsCheck | null
   dia_crank_analysis: DIACRANKAnalysis | null
+  usage_info?: { total_cost_usd?: number; total_cost_krw?: number; ai_model?: string; input_tokens?: number; output_tokens?: number } | null
 }
 
 // 로컬 저장 글 타입 (localStorage에 저장되는 글)
@@ -259,6 +260,7 @@ export interface DoctorProfile {
   user_id: string
   writing_style: WritingStyle | null
   signature_phrases: string[]
+  client_rules: string[]
   sample_posts: string[]
   target_audience: TargetAudience | null
   preferred_structure: string

@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { postsAPI, authAPI, crawlAPI, industryAPI, type CrawlImage, type OneClickResponse } from '@/lib/api'
+import { postsAPI, authAPI, profileAPI, crawlAPI, industryAPI, type CrawlImage, type OneClickResponse } from '@/lib/api'
 import type { Post, WritingStyle, RequestRequirements, User, WritingTemplate } from '@/types'
 import { useAutoSave } from '@/hooks/useAutoSave'
 import { toast } from 'sonner'
@@ -217,8 +217,8 @@ export default function CreatePostPage() {
     target_length: 1800,
     writing_perspective: '1인칭',
     count: 1, // 생성할 원고 개수
-    ai_provider: 'gpt', // AI 제공자: 'claude' or 'gpt'
-    ai_model: 'gpt-4o-mini', // AI 모델 (기본: GPT-4o Mini - 빠름/저렴)
+    ai_provider: 'gemini',
+    ai_model: 'gemini-2.5-flash',
   })
   const [seoOptimization, setSeoOptimization] = useState({
     enabled: false,
@@ -309,6 +309,7 @@ export default function CreatePostPage() {
 
   const [topPostRules, setTopPostRules] = useState<any>(null)
   const [currentUser, setCurrentUser] = useState<User | null>(null)
+  const [clientRules, setClientRules] = useState<string[]>([])
   const [selectedPostIndex, setSelectedPostIndex] = useState(0)
   const [blogUrl, setBlogUrl] = useState('')
   const [crawling, setCrawling] = useState(false)
@@ -343,6 +344,7 @@ export default function CreatePostPage() {
       const savedConfig = localStorage.getItem('doctorvoice-last-config')
       if (savedConfig) {
         const parsed = JSON.parse(savedConfig)
+        if (parsed.ai_model?.startsWith('gemini-2.0')) parsed.ai_model = 'gemini-2.5-flash'
         setConfig(prev => ({ ...prev, ...parsed }))
         setHasLoadedConfig(true)
       }
@@ -397,6 +399,12 @@ export default function CreatePostPage() {
       try {
         const user = await authAPI.getMe()
         setCurrentUser(user)
+        try {
+          const profile = await profileAPI.get()
+          setClientRules(profile.client_rules || [])
+        } catch {
+          setClientRules([])
+        }
 
         // 업종별 템플릿 로드
         if (user.industry_type) {
@@ -639,6 +647,10 @@ export default function CreatePostPage() {
       setGeneratedPosts(successfulPosts)
       setGeneratedPost(successfulPosts[0])
       setSelectedPostIndex(0)
+      try {
+        const usageResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/system/ai-usage-stats`)
+        if (usageResponse.ok) setAiUsageStats(await usageResponse.json())
+      } catch { /* usage display is informational */ }
 
       // Clear auto-saved draft after successful generation
       clearSaved()
@@ -975,8 +987,8 @@ export default function CreatePostPage() {
 
       const result = await crawlAPI.oneClick({
         url: blogUrl,
-        ai_provider: 'gpt',
-        ai_model: 'gpt-4o-mini',
+        ai_provider: 'gemini',
+        ai_model: 'gemini-2.5-flash',
         target_length: 1800,
         framework: '관심유도형',
         persuasion_level: 4
@@ -1223,7 +1235,7 @@ export default function CreatePostPage() {
       ))}
 
       {/* AI 사용량 및 비용 현황 - 관리자만 표시 */}
-      {currentUser?.is_admin && aiUsageStats && (
+      {aiUsageStats && (
         <Card className="bg-gradient-to-r from-purple-50 to-blue-50 border-purple-200">
           <CardContent className="py-4">
             <div className="flex flex-wrap items-center justify-between gap-4">
@@ -1276,20 +1288,7 @@ export default function CreatePostPage() {
         <CardContent className="space-y-4">
           <div className="space-y-2">
             <Label>AI 제공자</Label>
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                variant={config.ai_provider === 'gpt' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => {
-                  setConfig({
-                    ...config,
-                    ai_provider: 'gpt',
-                    ai_model: 'gpt-4o-mini'
-                  })
-                }}
-              >
-                GPT (OpenAI)
-              </Button>
+            <div className="grid grid-cols-1 gap-2">
               <Button
                 variant={config.ai_provider === 'gemini' ? 'default' : 'outline'}
                 size="sm"
@@ -1297,7 +1296,7 @@ export default function CreatePostPage() {
                   setConfig({
                     ...config,
                     ai_provider: 'gemini',
-                    ai_model: 'gemini-2.0-flash'
+                    ai_model: 'gemini-2.5-flash'
                   })
                 }}
                 disabled={!geminiApiStatus?.connected}
@@ -1308,7 +1307,7 @@ export default function CreatePostPage() {
           </div>
 
           {/* GPT 모델 선택 */}
-          {config.ai_provider === 'gpt' && (
+          {false && config.ai_provider === 'gpt' && (
             <div className="space-y-2">
               <Label>GPT 모델</Label>
               <div className="grid grid-cols-1 gap-2">
@@ -1329,9 +1328,9 @@ export default function CreatePostPage() {
               <Label>Gemini 모델</Label>
               <div className="grid grid-cols-1 gap-2">
                 <Button
-                  variant={config.ai_model === 'gemini-2.0-flash' ? 'default' : 'outline'}
+                  variant={config.ai_model === 'gemini-2.5-flash' ? 'default' : 'outline'}
                   size="sm"
-                  onClick={() => setConfig({ ...config, ai_model: 'gemini-2.0-flash' })}
+                  onClick={() => setConfig({ ...config, ai_model: 'gemini-2.5-flash' })}
                 >
                   Gemini 2.0 Flash (추천)
                 </Button>
@@ -1961,6 +1960,18 @@ export default function CreatePostPage() {
           )}
 
           {/* 진행률 표시 */}
+          <Card className="border-indigo-200 bg-indigo-50/60">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2"><FileText className="h-4 w-4 text-indigo-600" />이번 글에 적용되는 명령어</CardTitle>
+              <CardDescription>생성 전에 고객사 규칙과 이번 글 요구사항을 한눈에 확인하세요.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div className="rounded-md bg-white p-3 border border-indigo-100"><p className="font-semibold text-indigo-900 mb-1">기본 생성 명령</p><p>Gemini 2.0 Flash로 한 흐름으로 읽히는 짧고 명확한 글을 작성합니다. 합니다/습니다체를 유지하고 근거 없는 사례·수치·검사 표현은 사용하지 않습니다.</p></div>
+              <div className="rounded-md bg-white p-3 border border-indigo-100"><p className="font-semibold text-indigo-900 mb-1">고객사 반영 규칙 ({clientRules.length}개)</p>{clientRules.length > 0 ? <ul className="list-disc pl-5 space-y-1">{clientRules.map((rule, i) => <li key={`${rule}-${i}`}>{rule}</li>)}</ul> : <p className="text-muted-foreground">프로필에 저장된 고객사 규칙이 없습니다.</p>}</div>
+              <div className="rounded-md bg-white p-3 border border-indigo-100"><p className="font-semibold text-indigo-900 mb-1">이번 글 요구사항</p>{requirements.common.length || requirements.individual.trim() ? <ul className="list-disc pl-5 space-y-1">{requirements.common.map((req, i) => <li key={`common-${i}`}>{req}</li>)}{requirements.individual.trim() && <li>{requirements.individual}</li>}</ul> : <p className="text-muted-foreground">추가 요구사항이 없습니다.</p>}</div>
+            </CardContent>
+          </Card>
+
           {loading && generationProgress.total > 0 && (
             <Card className="border-blue-200 bg-blue-50">
               <CardHeader>
@@ -2121,6 +2132,13 @@ export default function CreatePostPage() {
                     <Label className="text-xs text-muted-foreground">제목</Label>
                     <h3 className="text-lg font-semibold mt-1">{generatedPost.title}</h3>
                   </div>
+                  {generatedPost.usage_info && (
+                    <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+                      <span className="font-semibold">이번 글 AI 사용 비용</span>{' '}
+                      ₩{Math.round(generatedPost.usage_info.total_cost_krw || 0).toLocaleString()}
+                      <span className="ml-2 text-xs text-emerald-700">({generatedPost.usage_info.ai_model || config.ai_model})</span>
+                    </div>
+                  )}
 
                   <div>
                     <Label className="text-xs text-muted-foreground">본문</Label>

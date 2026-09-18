@@ -370,7 +370,40 @@ class AIRewriteEngine:
         # 업종별 시스템 프롬프트 기본 문구 생성
         intro_prompt = self._get_industry_intro_prompt(industry_type, industry_config, specialty)
 
+        # Explicit quality gate for Kines drafts. Kept separate from editable
+        # presets so saved prompts cannot accidentally drop these constraints.
+        profile_identity = " ".join(
+            str(doctor_profile.get(key, ""))
+            for key in ("brand_name", "clinic_name", "company_name", "name", "specialty")
+        )
+        kines_quality_rules = """
+KINES BLOG QUALITY RULES (mandatory when the client/brand is 키네스):
+- Write one straight-line argument: reader concern -> why the factor matters -> what Kines manages -> verified case/evidence -> closing invitation.
+- Every paragraph must advance the same main point. Remove tangents and filler. Use one idea per sentence and short paragraphs.
+- Use formal Korean 합니다/습니다 endings throughout. Never mix in 요체 or chatty filler.
+- Use branch names such as 키네스 송도점 or 키네스 송도지점. Never use 키네스 센터 OO점.
+- Do not imply precocious-puberty, bone-age, growth-plate, or medical growth tests at Kines. Describe only supported management activities.
+- Use case details only from the supplied Kines Cafe case-board material. Never invent people, outcomes, durations, graphs, percentages, or measurements.
+- Include a growth graph only when the source explicitly confirms a full 12 months of management.
+- Images must match the paragraph immediately before them: branch photos for that branch, exercise/strength/graph images only while discussing that topic. Never fill slots with unrelated images.
+- Before returning, check relevance, sentence length, ending consistency, branch naming, prohibited test implications, case provenance, and image-topic alignment.
+        """ if ("키네스" in profile_identity or "키네스" in requirements_text) else ""
+
+        # Client-specific rules can be supplied by a profile/import without
+        # changing the core prompt. A list is rendered as one rule per line.
+        raw_client_rules = doctor_profile.get("client_rules") or doctor_profile.get("brand_rules") or []
+        if isinstance(raw_client_rules, str):
+            raw_client_rules = [raw_client_rules]
+        client_rules_text = ""
+        if raw_client_rules:
+            client_rules_text = "\nCLIENT-SPECIFIC RULES (mandatory):\n" + "\n".join(
+                f"- {rule}" for rule in raw_client_rules if str(rule).strip()
+            )
+        kines_quality_rules += client_rules_text
+
         system_prompt = f"""{intro_prompt}
+
+{kines_quality_rules}
 
 당신의 글쓰기 특징:
 - {formality_text}
@@ -774,7 +807,7 @@ class AIRewriteEngine:
         writing_perspective: str = "1인칭",
         custom_writing_style: Optional[Dict] = None,
         requirements: Optional[Dict] = None,
-        ai_provider: str = "gpt",
+        ai_provider: str = "gemini",
         ai_model: Optional[str] = None,
         seo_optimization: Optional[Dict] = None,
         top_post_rules: Optional[Dict] = None,
@@ -880,7 +913,7 @@ class AIRewriteEngine:
                     # Gemini 설정 (매번 새로 설정)
                     genai.configure(api_key=gemini_api_key)
 
-                    model = ai_model or "gemini-2.0-flash-exp"
+                    model = ai_model or "gemini-2.5-flash"
 
                     # Gemini 모델 생성 설정
                     generation_config = genai.GenerationConfig(

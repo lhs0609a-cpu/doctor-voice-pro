@@ -396,15 +396,15 @@ async def test_api_key(
                 message = "Gemini SDK가 설치되어 있지 않습니다"
             else:
                 genai.configure(api_key=api_key)
-                # 안정적인 gemini-2.0-flash 모델 사용
-                gemini_model = genai.GenerativeModel('gemini-2.0-flash')
+                # 안정적인 gemini-2.5-flash 모델 사용
+                gemini_model = genai.GenerativeModel('gemini-2.5-flash')
                 response = gemini_model.generate_content(
                     "test",
                     generation_config=genai.GenerationConfig(max_output_tokens=10)
                 )
                 connected = True
                 message = "Gemini API 연결 성공"
-                model = "gemini-2.0-flash"
+                model = "gemini-2.5-flash"
         else:
             message = f"지원하지 않는 provider: {provider}"
 

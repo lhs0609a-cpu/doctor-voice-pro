@@ -103,6 +103,11 @@ AI_PRICING = {
         "output": 0.60,   # $0.60 / 1M output tokens (non-thinking)
         "name": "Gemini 2.5 Flash",
     },
+    "gemini-2.5-flash": {
+        "input": 0.30,
+        "output": 2.50,
+        "name": "Gemini 2.5 Flash",
+    },
     "gemini-2.0-flash": {
         "input": 0.10,    # $0.10 / 1M input tokens
         "output": 0.40,   # $0.40 / 1M output tokens

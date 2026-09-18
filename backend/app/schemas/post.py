@@ -51,8 +51,8 @@ class PostCreate(BaseModel):
     writing_style: Optional[WritingStyleCreate] = None
     requirements: Optional[RequestRequirementsCreate] = None
     # AI 제공자 및 모델 선택
-    ai_provider: str = Field(default="gpt")  # "claude" or "gpt"
-    ai_model: Optional[str] = Field(default="gpt-4o")  # GPT: gpt-4o, gpt-4-turbo, gpt-4o-mini, gpt-3.5-turbo / Claude: claude-sonnet-4-5-20250929, claude-3-5-sonnet-20241022
+    ai_provider: str = Field(default="gemini")
+    ai_model: Optional[str] = Field(default="gemini-2.5-flash")
     # SEO 최적화 (DIA/CRANK)
     seo_optimization: Optional[SEOOptimization] = None
     # 상위글 분석 기반 규칙
@@ -117,6 +117,7 @@ class PostResponse(BaseModel):
     content_analysis: Optional[Dict] = None
     forbidden_words_check: Optional[Dict] = None
     dia_crank_analysis: Optional[Dict] = None
+    usage_info: Optional[Dict] = None
 
     class Config:
         from_attributes = True

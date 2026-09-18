@@ -266,6 +266,9 @@ async def update_my_profile(
     if profile_update.signature_phrases is not None:
         profile.signature_phrases = profile_update.signature_phrases
 
+    if profile_update.client_rules is not None:
+        profile.client_rules = profile_update.client_rules
+
     if profile_update.sample_posts is not None:
         profile.sample_posts = profile_update.sample_posts
 

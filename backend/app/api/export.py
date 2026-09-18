@@ -31,6 +31,8 @@ class ExportRequest(BaseModel):
     keywords: Optional[List[str]] = None
     emphasis_phrases: Optional[List[str]] = None
     images: Optional[List[Dict]] = None
+    place_url: Optional[str] = None
+    place_name: Optional[str] = None
 
 
 @router.post("/docx")
@@ -62,6 +64,8 @@ async def export_to_docx(
             images=request.images,
             keywords=request.keywords,
             emphasis_phrases=request.emphasis_phrases,
+            place_url=request.place_url,
+            place_name=request.place_name,
         )
 
         # 파일명 생성 (한글 파일명 URL 인코딩 - RFC 5987)
