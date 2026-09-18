@@ -27,10 +27,11 @@ class DoctorProfileCreate(BaseModel):
 
     writing_style: Optional[WritingStyle] = None
     signature_phrases: List[str] = []
-    client_rules: List[str] = []
+    differentiators: Optional[Dict] = None
     sample_posts: List[str] = []
     target_audience: Optional[TargetAudience] = None
     preferred_structure: str = "story_problem_solution"
+    client_rules: List[str] = []
 
 
 class DoctorProfileUpdate(BaseModel):
@@ -38,10 +39,11 @@ class DoctorProfileUpdate(BaseModel):
 
     writing_style: Optional[WritingStyle] = None
     signature_phrases: Optional[List[str]] = None
-    client_rules: Optional[List[str]] = None
+    differentiators: Optional[Dict] = None
     sample_posts: Optional[List[str]] = None
     target_audience: Optional[TargetAudience] = None
     preferred_structure: Optional[str] = None
+    client_rules: Optional[List[str]] = None
 
 
 class DoctorProfileResponse(BaseModel):
@@ -51,9 +53,10 @@ class DoctorProfileResponse(BaseModel):
     user_id: UUID
     writing_style: Optional[Dict]
     signature_phrases: List[str]
-    client_rules: List[str] = []
+    differentiators: Optional[Dict] = None
     target_audience: Optional[Dict]
     preferred_structure: str
+    client_rules: List[str] = []
     learned_at: Optional[datetime]
     profile_version: int
     created_at: datetime

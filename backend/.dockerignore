@@ -24,3 +24,13 @@ env
 node_modules
 alembic/versions/*.py
 !alembic/versions/__init__.py
+
+# 로컬 산출물은 이미지에 넣지 않는다
+.env
+*.db
+*.db-wal
+*.db-shm
+*.db.backup
+media/
+logs/
+test_*.py

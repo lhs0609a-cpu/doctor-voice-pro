@@ -4,7 +4,8 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
+import { Pill } from '@/components/app-shell/ui-kit'
+import { LogoMark } from '@/components/app-shell/logo'
 // P2 Fix: Textarea import 제거 (사용 안 함)
 import {
   Sparkles,
@@ -74,6 +75,43 @@ interface DemoApiResponse {
   }
 }
 
+/** 모달 공통 껍데기: 어두운 배경 + 카드 */
+function ModalShell({ children, wide = false, scroll = false }: { children: React.ReactNode; wide?: boolean; scroll?: boolean }) {
+  return (
+    <div className={`fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4 backdrop-blur-sm ${scroll ? 'overflow-y-auto' : ''}`}>
+      <Card className={`w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} ${scroll ? 'my-8' : ''} overflow-hidden shadow-pop`}>
+        <CardContent className="p-0">{children}</CardContent>
+      </Card>
+    </div>
+  )
+}
+
+/** 모달 머리: 아이콘 + 제목 + 설명 + 닫기 */
+function ModalHead({ icon, title, description, onClose, badge }: { icon: React.ReactNode; title: string; description: string; onClose: () => void; badge?: React.ReactNode }) {
+  return (
+    <div className="relative border-b px-6 py-5">
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="닫기"
+        className="absolute right-4 top-4 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      >
+        <X className="h-4 w-4" />
+      </button>
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent text-primary">{icon}</div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold leading-6">{title}</h2>
+            {badge}
+          </div>
+          <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // P2 Fix: 4단계 → 3단계로 간소화 (pricing 단계 제거 - 대시보드에서 접근 가능)
 export default function OnboardingModal({ userName, onComplete, onClose }: OnboardingModalProps) {
   const router = useRouter()
@@ -130,178 +168,127 @@ export default function OnboardingModal({ userName, onComplete, onClose }: Onboa
   // P2 Fix: handleSelectPlan, formatPrice 제거됨 (pricing 단계 삭제)
 
   if (step === 'welcome') {
+    const benefits = [
+      { icon: Rocket, title: 'AI 글 자동 생성', desc: '전문적인 블로그 글을 AI가 작성해요' },
+      { icon: Crown, title: '상위노출 분석', desc: '경쟁 키워드를 분석해 상위 노출을 노려요' },
+      { icon: Gift, title: '무료로 시작하기', desc: '매월 글 10건을 무료로 생성할 수 있어요' },
+    ]
     return (
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <Card className="w-full max-w-lg bg-white dark:bg-gray-900 shadow-2xl overflow-hidden">
-          <CardContent className="p-0">
-            {/* Header with gradient */}
-            <div className="relative bg-gradient-to-br from-blue-600 via-purple-600 to-pink-500 p-8 text-white">
-              <button
-                onClick={onClose}
-                className="absolute top-4 right-4 text-white/70 hover:text-white"
-              >
-                <X className="h-5 w-5" />
-              </button>
+      <ModalShell>
+        <div className="relative border-b px-6 py-6">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="닫기"
+            className="absolute right-4 top-4 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+          <LogoMark className="mb-4 h-9 w-9" />
+          <h1 className="text-[22px] font-semibold leading-7 tracking-tight">
+            {userName ? `${userName}님, 환영합니다` : '환영합니다'}
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            닥터보이스 프로와 함께 블로그 자동화를 시작해 보세요.
+          </p>
+        </div>
 
-              <div className="flex items-center gap-3 mb-4">
-                <div className="p-2 bg-white/20 rounded-xl">
-                  <Sparkles className="h-8 w-8" />
+        {/* Content */}
+        <div className="space-y-4 p-6">
+          {/* Benefits */}
+          <div className="divide-y rounded-lg border">
+            {benefits.map(({ icon: Icon, title, desc }) => (
+              <div key={title} className="flex items-center gap-3 px-4 py-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent text-primary">
+                  <Icon className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium">{title}</p>
+                  <p className="text-[13px] text-muted-foreground">{desc}</p>
                 </div>
               </div>
+            ))}
+          </div>
 
-              <h1 className="text-3xl font-bold mb-2">
-                {userName ? `${userName}님, 환영합니다!` : '환영합니다!'}
-              </h1>
-              <p className="text-white/90">
-                닥터보이스 프로와 함께 블로그 자동화를 시작하세요
-              </p>
-            </div>
+          {/* CTA Buttons */}
+          <div className="space-y-2 pt-2">
+            <Button className="w-full" size="lg" onClick={handleStartDemo}>
+              <Wand2 />
+              30초 체험하기
+            </Button>
 
-            {/* Content */}
-            <div className="p-6 space-y-4">
-              {/* Benefits */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                  <div className="p-2 bg-blue-100 dark:bg-blue-800 rounded-lg">
-                    <Rocket className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                  </div>
-                  <div>
-                    <p className="font-medium">AI 글 자동 생성</p>
-                    <p className="text-sm text-muted-foreground">전문적인 블로그 글을 AI가 작성</p>
-                  </div>
-                </div>
+            <Button variant="outline" className="w-full" size="lg" onClick={handleStartFree}>
+              바로 시작하기
+            </Button>
+          </div>
 
-                <div className="flex items-center gap-3 p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg">
-                  <div className="p-2 bg-purple-100 dark:bg-purple-800 rounded-lg">
-                    <Crown className="h-5 w-5 text-purple-600 dark:text-purple-400" />
-                  </div>
-                  <div>
-                    <p className="font-medium">상위노출 분석</p>
-                    <p className="text-sm text-muted-foreground">경쟁 키워드 분석으로 상위 노출</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
-                  <div className="p-2 bg-green-100 dark:bg-green-800 rounded-lg">
-                    <Gift className="h-5 w-5 text-green-600 dark:text-green-400" />
-                  </div>
-                  <div>
-                    <p className="font-medium">무료로 시작하기</p>
-                    <p className="text-sm text-muted-foreground">월 10건 글 생성 무료 제공</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* CTA Buttons */}
-              <div className="space-y-3 pt-4">
-                <Button
-                  className="w-full h-12 text-lg bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
-                  onClick={handleStartDemo}
-                >
-                  <Wand2 className="mr-2 h-5 w-5" />
-                  30초 체험하기
-                </Button>
-
-                <Button
-                  variant="outline"
-                  className="w-full h-12"
-                  onClick={handleStartFree}
-                >
-                  바로 시작하기
-                </Button>
-              </div>
-
-              <p className="text-center text-xs text-muted-foreground">
-                체험 후 무료로 시작할 수 있습니다
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+          <p className="text-center text-xs text-muted-foreground">
+            체험 후에도 무료로 시작할 수 있어요
+          </p>
+        </div>
+      </ModalShell>
     )
   }
 
   // Demo Step - AI 변환 체험
   if (step === 'demo') {
     return (
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <Card className="w-full max-w-2xl bg-white dark:bg-gray-900 shadow-2xl overflow-hidden">
-          <CardContent className="p-0">
-            {/* Header */}
-            <div className="relative bg-gradient-to-br from-purple-600 via-blue-600 to-cyan-500 p-6 text-white">
-              <button
-                onClick={onClose}
-                className="absolute top-4 right-4 text-white/70 hover:text-white"
-              >
-                <X className="h-5 w-5" />
-              </button>
+      <ModalShell wide>
+        <ModalHead
+          icon={<Wand2 className="h-5 w-5" />}
+          title="AI 변환 체험"
+          description="아래 샘플 원문이 어떻게 바뀌는지 확인해 보세요."
+          onClose={onClose}
+        />
 
-              <div className="flex items-center gap-3 mb-2">
-                <div className="p-2 bg-white/20 rounded-xl">
-                  <Wand2 className="h-6 w-6" />
-                </div>
-                <h2 className="text-2xl font-bold">AI 변환 체험</h2>
-              </div>
-              <p className="text-white/90 text-sm">
-                아래 샘플 원문이 어떻게 변환되는지 확인해보세요
+        {/* Content */}
+        <div className="space-y-4 p-6">
+          {/* 원문 */}
+          <div>
+            <label className="mb-2 block text-[13px] font-medium text-muted-foreground">
+              원본 글 (의료법 위반 표현 포함)
+            </label>
+            <div className="rounded-lg border border-danger/20 bg-danger-soft p-4">
+              <p className="text-sm leading-relaxed text-foreground">
+                {SAMPLE_ORIGINAL}
               </p>
-            </div>
-
-            {/* Content */}
-            <div className="p-6 space-y-4">
-              {/* 원문 */}
-              <div>
-                <label className="text-sm font-medium text-gray-700 mb-2 block">
-                  📝 원본 글 (의료법 위반 표현 포함)
-                </label>
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                  <p className="text-gray-800 text-sm leading-relaxed">
-                    {SAMPLE_ORIGINAL}
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {SAMPLE_LAW_CHECK.violations.map((v, i) => (
-                      <span key={i} className="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-700 text-xs rounded-full">
-                        <AlertTriangle className="h-3 w-3" />
-                        {v.text}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* 변환 버튼 */}
-              <div className="text-center py-2">
-                <Button
-                  size="lg"
-                  onClick={handleTransform}
-                  disabled={isTransforming}
-                  className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
-                >
-                  {isTransforming ? (
-                    <>
-                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                      AI가 변환 중...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="mr-2 h-5 w-5" />
-                      AI로 변환하기
-                    </>
-                  )}
-                </Button>
-              </div>
-
-              {/* 안내 */}
-              <div className="flex items-start gap-2 p-3 bg-blue-50 rounded-lg">
-                <Shield className="h-4 w-4 text-blue-600 mt-0.5 flex-shrink-0" />
-                <p className="text-xs text-blue-800">
-                  AI가 의료법 위반 표현을 자동으로 감지하고, 전문적이고 설득력 있는 문장으로 변환합니다.
-                </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {SAMPLE_LAW_CHECK.violations.map((v, i) => (
+                  <Pill key={i} tone="danger">
+                    <AlertTriangle className="h-3 w-3" />
+                    {v.text}
+                  </Pill>
+                ))}
               </div>
             </div>
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+
+          {/* 변환 버튼 */}
+          <div className="py-2 text-center">
+            <Button size="lg" onClick={handleTransform} disabled={isTransforming}>
+              {isTransforming ? (
+                <>
+                  <Loader2 className="animate-spin" />
+                  AI가 변환 중...
+                </>
+              ) : (
+                <>
+                  <Sparkles />
+                  AI로 변환하기
+                </>
+              )}
+            </Button>
+          </div>
+
+          {/* 안내 */}
+          <div className="flex items-start gap-2 rounded-lg bg-muted/40 p-3">
+            <Shield className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
+            <p className="text-xs text-muted-foreground">
+              AI가 의료법 위반 표현을 자동으로 찾아내고, 전문적이고 설득력 있는 문장으로 바꿔 줍니다.
+            </p>
+          </div>
+        </div>
+      </ModalShell>
     )
   }
 
@@ -322,120 +309,95 @@ export default function OnboardingModal({ userName, onComplete, onClose }: Onboa
 
   if (step === 'demo-result') {
     return (
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
-        <Card className="w-full max-w-2xl bg-white dark:bg-gray-900 shadow-2xl my-8">
-          <CardContent className="p-0">
-            {/* Header */}
-            <div className="relative bg-gradient-to-br from-emerald-600 via-teal-600 to-cyan-500 p-6 text-white">
-              <button
-                onClick={onClose}
-                className="absolute top-4 right-4 text-white/70 hover:text-white"
-              >
-                <X className="h-5 w-5" />
-              </button>
+      <ModalShell wide scroll>
+        <ModalHead
+          icon={<Check className="h-5 w-5" />}
+          title="변환 완료"
+          description="의료법을 지키면서 설득력 있는 글로 바뀌었습니다."
+          onClose={onClose}
+          badge={displayResult.isRealApi ? <Pill tone="ok">실제 AI 검증</Pill> : undefined}
+        />
 
-              <div className="flex items-center gap-3 mb-2">
-                <div className="p-2 bg-white/20 rounded-xl">
-                  <Check className="h-6 w-6" />
-                </div>
-                <h2 className="text-2xl font-bold">변환 완료!</h2>
-                {/* P0: 실제 API 사용 여부 표시 */}
-                {displayResult.isRealApi && (
-                  <Badge className="bg-white/20 text-white text-xs">
-                    실제 AI 검증
-                  </Badge>
-                )}
-              </div>
-              <p className="text-white/90 text-sm">
-                의료법을 준수하면서 설득력 있는 글로 변환되었습니다
+        {/* Content */}
+        <div className="space-y-4 p-6">
+          {/* 변환 전 */}
+          <div>
+            <label className="mb-2 flex items-center gap-1 text-[13px] font-medium text-danger">
+              <X className="h-4 w-4" /> 변환 전 (의료법 위반 위험)
+            </label>
+            <div className="rounded-lg border border-danger/20 bg-danger-soft p-3">
+              <p className="text-sm text-muted-foreground line-through">
+                {displayResult.originalText}
               </p>
             </div>
+          </div>
 
-            {/* Content */}
-            <div className="p-6 space-y-4">
-              {/* 변환 전 */}
-              <div>
-                <label className="text-sm font-medium text-red-600 mb-2 block flex items-center gap-1">
-                  <X className="h-4 w-4" /> 변환 전 (의료법 위반 위험)
-                </label>
-                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                  <p className="text-gray-600 text-sm line-through">
-                    {displayResult.originalText}
-                  </p>
-                </div>
-              </div>
+          {/* 변환 후 */}
+          <div>
+            <label className="mb-2 flex items-center gap-1 text-[13px] font-medium text-success">
+              <Check className="h-4 w-4" /> 변환 후 (의료법 준수 + 설득력 강화)
+            </label>
+            <div className="rounded-lg border border-success/20 bg-success-soft p-4">
+              <p className="whitespace-pre-line text-sm leading-relaxed text-foreground">
+                {displayResult.transformedText}
+              </p>
+            </div>
+          </div>
 
-              {/* 변환 후 */}
-              <div>
-                <label className="text-sm font-medium text-emerald-600 mb-2 block flex items-center gap-1">
-                  <Check className="h-4 w-4" /> 변환 후 (의료법 준수 + 설득력 강화)
-                </label>
-                <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
-                  <p className="text-gray-800 text-sm leading-relaxed whitespace-pre-line">
-                    {displayResult.transformedText}
-                  </p>
-                </div>
-              </div>
-
-              {/* 수정된 표현 */}
-              {displayResult.violations.length > 0 && (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                  <p className="text-sm font-medium text-amber-800 mb-2">🔧 자동 수정된 표현</p>
-                  <div className="space-y-2">
-                    {displayResult.violations.map((v, i) => (
-                      <div key={i} className="flex items-center gap-2 text-sm">
-                        <span className="text-red-600 line-through">{v.text}</span>
-                        <ChevronRight className="h-4 w-4 text-gray-400" />
-                        <span className="text-emerald-600 font-medium">{v.suggestion}</span>
-                      </div>
-                    ))}
+          {/* 수정된 표현 */}
+          {displayResult.violations.length > 0 && (
+            <div className="rounded-lg border border-warning/20 bg-warning-soft p-4">
+              <p className="mb-2 text-[13px] font-medium text-warning">자동으로 고친 표현</p>
+              <div className="space-y-2">
+                {displayResult.violations.map((v, i) => (
+                  <div key={i} className="flex flex-wrap items-center gap-2 text-sm">
+                    <span className="text-danger line-through">{v.text}</span>
+                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    <span className="font-medium text-success">{v.suggestion}</span>
                   </div>
-                </div>
-              )}
-
-              {/* 점수 */}
-              <div className="grid grid-cols-3 gap-3">
-                <div className="text-center p-3 bg-purple-50 rounded-lg">
-                  <p className="text-2xl font-bold text-purple-600">{displayResult.persuasionScore}점</p>
-                  <p className="text-xs text-gray-600">설득력 점수</p>
-                </div>
-                <div className="text-center p-3 bg-emerald-50 rounded-lg">
-                  <p className="text-2xl font-bold text-emerald-600">
-                    {displayResult.isCompliant ? '통과' : '수정됨'}
-                  </p>
-                  <p className="text-xs text-gray-600">의료법 검증</p>
-                </div>
-                <div className="text-center p-3 bg-blue-50 rounded-lg">
-                  <p className="text-2xl font-bold text-blue-600">{displayResult.timeSaved}분</p>
-                  <p className="text-xs text-gray-600">작성 시간</p>
-                </div>
-              </div>
-
-              {/* P2 Fix: CTA 간소화 - pricing 단계 제거, 바로 시작 유도 */}
-              <div className="space-y-3 pt-2">
-                <Button
-                  className="w-full h-12 text-lg bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700"
-                  onClick={handleStartFree}
-                >
-                  무료로 시작하기
-                  <ArrowRight className="ml-2 h-5 w-5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="w-full text-muted-foreground"
-                  onClick={() => {
-                    localStorage.setItem('onboarding_completed', 'true')
-                    router.push('/pricing')
-                    onClose()
-                  }}
-                >
-                  요금제 먼저 살펴보기
-                </Button>
+                ))}
               </div>
             </div>
-          </CardContent>
-        </Card>
-      </div>
+          )}
+
+          {/* 점수 */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-lg bg-muted/40 p-3 text-center">
+              <p className="kpi text-primary">{displayResult.persuasionScore}점</p>
+              <p className="text-xs text-muted-foreground">설득력 점수</p>
+            </div>
+            <div className="rounded-lg bg-muted/40 p-3 text-center">
+              <p className="kpi text-success">
+                {displayResult.isCompliant ? '통과' : '수정됨'}
+              </p>
+              <p className="text-xs text-muted-foreground">의료법 검증</p>
+            </div>
+            <div className="rounded-lg bg-muted/40 p-3 text-center">
+              <p className="kpi">{displayResult.timeSaved}분</p>
+              <p className="text-xs text-muted-foreground">아낀 작성 시간</p>
+            </div>
+          </div>
+
+          {/* P2 Fix: CTA 간소화 - pricing 단계 제거, 바로 시작 유도 */}
+          <div className="space-y-2 pt-2">
+            <Button className="w-full" size="lg" onClick={handleStartFree}>
+              무료로 시작하기
+              <ArrowRight />
+            </Button>
+            <Button
+              variant="ghost"
+              className="w-full text-muted-foreground"
+              onClick={() => {
+                localStorage.setItem('onboarding_completed', 'true')
+                router.push('/pricing')
+                onClose()
+              }}
+            >
+              요금제 먼저 살펴보기
+            </Button>
+          </div>
+        </div>
+      </ModalShell>
     )
   }
 

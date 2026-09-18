@@ -102,12 +102,34 @@ async def _assess_one(
     summary = None
     analyzed_count = 0
     async with _SEM:
+        # 1순위: 모바일 통합검색 분석기(serp_analyzer, 2026-09 실측 동작). 옛 블로그탭 분석기는
+        #        운영에서 셀렉터가 깨져 "상위글을 읽지 못해" 만 나왔다 → 폴백으로만 둔다.
         try:
-            top = await analyze_top_posts(keyword, top_n=top_n, db=None)
-            summary = top.get("summary")
-            analyzed_count = top.get("analyzed_count", 0)
+            from app.services import serp_analyzer as sa
+            res = await sa.analyze_keyword(keyword, max_posts=max(top_n, 5))
+            sm = res.get("summary") or {}
+            if sm.get("analyzed_count"):
+                analyzed_count = int(sm.get("analyzed_count") or 0)
+                summary = {
+                    "content": {
+                        "avg_length": sm.get("avg_chars") or 0,
+                        "avg_headings": sm.get("avg_headings") or 0,
+                        "avg_keyword_density": (sm.get("avg_kw_count") or 0) * 1000 / max(1, sm.get("avg_chars") or 1),
+                    },
+                    "media": {"avg_images": sm.get("avg_image_count") or 0},
+                    "serp": {"exposed_count": sm.get("exposed_count"), "hospital_ratio": sm.get("hospital_ratio"),
+                             "has_influencer": sm.get("has_influencer"), "verdict": res.get("verdict"),
+                             "verdict_reason": res.get("verdict_reason")},
+                }
         except Exception as e:  # noqa: BLE001
-            logger.warning("[가능성] 상위글 분석 실패(%s): %s", keyword, e)
+            logger.warning("[가능성] 통검 분석 실패(%s): %s", keyword, e)
+        if analyzed_count == 0:
+            try:
+                top = await analyze_top_posts(keyword, top_n=top_n, db=None)
+                summary = top.get("summary")
+                analyzed_count = top.get("analyzed_count", 0)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[가능성] 상위글 분석 실패(%s): %s", keyword, e)
 
     # 난이도 = 경쟁도(0.55) + 콘텐츠 벽(0.45)
     comp_score = _COMP_WEIGHT.get(competition, 55.0)
@@ -117,6 +139,8 @@ async def _assess_one(
     verdict, reason = _verdict(difficulty, volume)
     if analyzed_count == 0:
         reason = "상위글을 읽지 못해(네이버 차단 가능) 경쟁도만으로 추정한 값입니다. " + reason
+    elif summary and (summary.get("serp") or {}).get("verdict_reason"):
+        reason = f"{summary['serp']['verdict_reason']} " + reason
 
     return {
         "keyword": keyword,

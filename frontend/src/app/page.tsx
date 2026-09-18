@@ -20,8 +20,8 @@ export default function HomePage() {
   }, [router, user])
 
   return (
-    <div className="min-h-screen flex items-center justify-center">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+    <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
     </div>
   )
 }

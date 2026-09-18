@@ -423,9 +423,24 @@ export const keywordBatchAPI = {
     return response.data
   },
 
+  // 키워드 1개의 원고 생성. 예전에는 확장이 제미나이 웹 화면을 조작했지만 서버가 API 로 만든다.
+  generate: async (keyword: string, prompt: string): Promise<{ keyword: string; text: string; chars: number }> => {
+    const response = await api.post('/api/v1/keyword-batch/generate', { keyword, prompt }, { timeout: 300000 })
+    return response.data
+  },
+
   // 실검색량/경쟁도 조회 (네이버 검색광고 API, 하루 단위 캐시)
-  getVolumes: async (keywords: string[]): Promise<KeywordVolumeDTO[]> => {
-    const response = await api.post<KeywordVolumeDTO[]>('/api/v1/keyword-batch/volumes', { keywords })
+  // includeRelated: 검색광고가 함께 주는 연관검색어(검색량 포함)도 받는다. is_related 로 구분.
+  getVolumes: async (
+    keywords: string[],
+    opts: { includeRelated?: boolean; relatedLimit?: number; relatedMinVolume?: number } = {},
+  ): Promise<KeywordVolumeDTO[]> => {
+    const response = await api.post<KeywordVolumeDTO[]>('/api/v1/keyword-batch/volumes', {
+      keywords,
+      include_related: opts.includeRelated ?? true,
+      related_limit: opts.relatedLimit ?? 80,
+      related_min_volume: opts.relatedMinVolume ?? 0,
+    }, { timeout: 300000 })
     return response.data
   },
 
@@ -444,6 +459,8 @@ export interface KeywordVolumeDTO {
   competition: 'low' | 'mid' | 'high'
   comp_idx_raw?: string
   est_cpc?: number
+  is_related?: boolean   // 입력한 키워드가 아니라 검색광고 연관검색어
+  related_of?: string
 }
 
 // System API
@@ -4475,6 +4492,21 @@ export interface QueuedItem {
   scheduled_at: string
   status: string
   order_index: number
+  blog_ref_id?: string | null
+}
+
+// 글 1건을 큐에 담을 때 보내는 내용. PC 실행기가 가져가 네이버에 등록한다.
+export interface QueueJobRequest {
+  title: string
+  blocks: ExtJobBlock[]
+  tags?: string[]
+  emphasize?: string[]
+  scheduled_at?: string | null
+  final_action?: 'schedule' | 'publish' | 'draft'
+  open_type?: string
+  search?: boolean
+  category?: string | null
+  blog_ref_id?: string | null
 }
 export interface ExtJobBlock { type: 'text' | 'image'; content?: string; image?: string }
 export interface ExtJob {
@@ -4522,12 +4554,13 @@ export const publishQueueAPI = {
     text: string; delimiter?: string; top_keywords?: number
     start_at: string; interval_minutes: number; open_type?: string; assign_images?: boolean; name?: string
     category?: string | null   // 네이버 카테고리 번호. 미지정 시 네이버 기본 카테고리
+    blog_ref_id?: string | null // 어느 블로그로 발행할지. PC 실행기가 이 값으로 자기 몫을 가져간다
   }): Promise<{ batch_id: string; created: number; first_at: string; last_at: string; items: QueuedItem[]; warnings: string[] }> => {
     const res = await api.post(`${PQ}/queue/bulk`, params, { timeout: 120000 })
     return res.data
   },
 
-  // 확장이 네이버 에디터에서 읽어와 캐시해둔 카테고리 목록(드롭다운용)
+  // PC 실행기가 네이버 에디터에서 읽어와 캐시해둔 카테고리 목록(드롭다운용)
   getCategories: async (): Promise<NaverCategoriesResponse> => {
     const res = await api.get<NaverCategoriesResponse>(`${PQ}/categories`)
     return res.data
@@ -4548,12 +4581,10 @@ export const publishQueueAPI = {
     const res = await api.delete(`${PQ}/queue/batch/${batchId}`)
     return res.data
   },
-  fetchJobs: async (limit = 20): Promise<ExtJob[]> => {
-    const res = await api.get(`${PQ}/queue/jobs`, { params: { limit }, timeout: 180000 })
-    return res.data
-  },
-  reportResult: async (id: string, ok: boolean, message?: string): Promise<{ success: boolean }> => {
-    const res = await api.post(`${PQ}/queue/${id}/result`, { ok, message })
+  // 글 1건을 큐에 담는다. 예전에는 브라우저가 확장에게 바로 넘겼지만, 이제는 서버에 쌓고
+  // PC 실행기가 가져간다 — 브라우저를 닫아도 등록이 이어지고 결과가 서버에 남는다.
+  enqueueJob: async (job: QueueJobRequest): Promise<QueuedItem> => {
+    const res = await api.post(`${PQ}/queue/job`, job, { timeout: 120000 })
     return res.data
   },
 

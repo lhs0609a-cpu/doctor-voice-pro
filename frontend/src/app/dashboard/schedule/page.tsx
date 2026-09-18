@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import {
   Dialog,
@@ -24,16 +23,15 @@ import {
 } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Checkbox } from '@/components/ui/checkbox'
+import { PageHeader } from '@/components/app-shell/page-header'
+import { Pill, EmptyState, ListRow } from '@/components/app-shell/ui-kit'
 import {
   Loader2,
   Plus,
   Calendar,
-  Clock,
   Play,
   Pause,
   Trash2,
-  RefreshCw,
   Zap,
   CalendarDays,
 } from 'lucide-react'
@@ -52,11 +50,11 @@ const daysOfWeek = [
   { value: 6, label: '토' },
 ]
 
-const statusColors: Record<string, string> = {
-  active: 'bg-green-100 text-green-800',
-  paused: 'bg-yellow-100 text-yellow-800',
-  completed: 'bg-gray-100 text-gray-800',
-  cancelled: 'bg-red-100 text-red-800',
+const statusTones: Record<string, 'ok' | 'warn' | 'danger' | 'accent' | 'muted'> = {
+  active: 'ok',
+  paused: 'warn',
+  completed: 'muted',
+  cancelled: 'danger',
 }
 
 const statusLabels: Record<string, string> = {
@@ -71,7 +69,6 @@ const SCHEDULE_PRESETS = [
   {
     id: 'weekday_morning',
     name: '평일 오전 발행',
-    icon: '☀️',
     description: '월~금 오전 9시 자동 발행',
     schedule_type: 'recurring' as const,
     recurrence_pattern: 'weekly' as const,
@@ -82,7 +79,6 @@ const SCHEDULE_PRESETS = [
   {
     id: 'mwf_afternoon',
     name: '월수금 오후 발행',
-    icon: '📅',
     description: '월/수/금 오후 2시 발행',
     schedule_type: 'recurring' as const,
     recurrence_pattern: 'weekly' as const,
@@ -92,7 +88,6 @@ const SCHEDULE_PRESETS = [
   {
     id: 'daily_evening',
     name: '매일 저녁 발행',
-    icon: '🌙',
     description: '매일 오후 7시 자동 발행',
     schedule_type: 'recurring' as const,
     recurrence_pattern: 'daily' as const,
@@ -102,7 +97,6 @@ const SCHEDULE_PRESETS = [
   {
     id: 'weekend_only',
     name: '주말 발행',
-    icon: '🎉',
     description: '토/일 오전 10시 발행',
     schedule_type: 'recurring' as const,
     recurrence_pattern: 'weekly' as const,
@@ -278,256 +272,253 @@ export default function SchedulePage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="flex justify-center py-16">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
       </div>
     )
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-2xl font-bold">예약 발행</h1>
-          <p className="text-muted-foreground">네이버 블로그 자동 발행 스케줄을 관리하세요</p>
-        </div>
-        <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              새 예약
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-lg">
-            <DialogHeader>
-              <DialogTitle>새 예약 생성</DialogTitle>
-              <DialogDescription>
-                네이버 블로그 자동 발행 예약을 설정하세요
-              </DialogDescription>
-            </DialogHeader>
+      <PageHeader
+        title="예약 발행"
+        description="네이버 블로그 자동 발행 스케줄을 관리하세요"
+        actions={
+          <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="h-4 w-4" />
+                새 예약
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>새 예약 만들기</DialogTitle>
+                <DialogDescription>
+                  네이버 블로그 자동 발행 예약을 설정하세요
+                </DialogDescription>
+              </DialogHeader>
 
-            <div className="space-y-4 py-4">
-              {/* 원클릭 프리셋 */}
-              <div className="space-y-2">
-                <Label className="flex items-center gap-2">
-                  <Zap className="h-4 w-4 text-amber-500" />
-                  빠른 설정 (프리셋)
-                </Label>
-                <div className="grid grid-cols-2 gap-2">
-                  {SCHEDULE_PRESETS.map((preset) => (
-                    <button
-                      key={preset.id}
-                      onClick={() => applyPreset(preset.id)}
-                      className={`p-3 rounded-lg border text-left transition-all ${
-                        selectedPreset === preset.id
-                          ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200'
-                          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <span>{preset.icon}</span>
-                        <span className="font-medium text-sm">{preset.name}</span>
-                        {preset.recommended && (
-                          <span className="text-[10px] px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded-full">
-                            추천
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-gray-500">{preset.description}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <span className="w-full border-t" />
-                </div>
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-white px-2 text-gray-500">또는 직접 설정</span>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label>예약 이름 (선택)</Label>
-                <Input
-                  placeholder="예: 주간 건강정보 발행"
-                  value={newSchedule.name}
-                  onChange={(e) => setNewSchedule({ ...newSchedule, name: e.target.value })}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>예약 유형</Label>
-                <Select
-                  value={newSchedule.schedule_type}
-                  onValueChange={(v: any) => setNewSchedule({ ...newSchedule, schedule_type: v })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="one_time">1회성 예약</SelectItem>
-                    <SelectItem value="recurring">반복 예약</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label>발행할 글</Label>
-                <Select
-                  value={newSchedule.post_id}
-                  onValueChange={(v) => setNewSchedule({ ...newSchedule, post_id: v })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="글 선택" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {posts.map((post) => (
-                      <SelectItem key={post.id} value={post.id}>
-                        {post.title || '제목 없음'}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {newSchedule.schedule_type === 'one_time' && (
+              <div className="space-y-4 py-4">
+                {/* 원클릭 프리셋 */}
                 <div className="space-y-2">
-                  <Label>발행 날짜</Label>
+                  <Label className="flex items-center gap-2">
+                    <Zap className="h-4 w-4 text-warning" />
+                    빠른 설정 (프리셋)
+                  </Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {SCHEDULE_PRESETS.map((preset) => (
+                      <button
+                        key={preset.id}
+                        onClick={() => applyPreset(preset.id)}
+                        className={`rounded-lg border p-3 text-left transition-colors ${
+                          selectedPreset === preset.id
+                            ? 'border-primary bg-accent ring-2 ring-ring/30'
+                            : 'hover:bg-muted/40'
+                        }`}
+                      >
+                        <div className="mb-1 flex items-center gap-2">
+                          <span className="text-sm font-medium">{preset.name}</span>
+                          {preset.recommended && (
+                            <Pill tone="ok">추천</Pill>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground">{preset.description}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <span className="w-full border-t" />
+                  </div>
+                  <div className="relative flex justify-center text-xs uppercase">
+                    <span className="bg-background px-2 text-muted-foreground">또는 직접 설정</span>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>예약 이름 (선택)</Label>
                   <Input
-                    type="date"
-                    value={newSchedule.scheduled_date}
-                    onChange={(e) => setNewSchedule({ ...newSchedule, scheduled_date: e.target.value })}
+                    placeholder="예: 주간 건강정보 발행"
+                    value={newSchedule.name}
+                    onChange={(e) => setNewSchedule({ ...newSchedule, name: e.target.value })}
                   />
                 </div>
-              )}
 
-              {newSchedule.schedule_type === 'recurring' && (
-                <>
+                <div className="space-y-2">
+                  <Label>예약 유형</Label>
+                  <Select
+                    value={newSchedule.schedule_type}
+                    onValueChange={(v: any) => setNewSchedule({ ...newSchedule, schedule_type: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="one_time">1회성 예약</SelectItem>
+                      <SelectItem value="recurring">반복 예약</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>발행할 글</Label>
+                  <Select
+                    value={newSchedule.post_id}
+                    onValueChange={(v) => setNewSchedule({ ...newSchedule, post_id: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="글 선택" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {posts.map((post) => (
+                        <SelectItem key={post.id} value={post.id}>
+                          {post.title || '제목 없음'}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {newSchedule.schedule_type === 'one_time' && (
                   <div className="space-y-2">
-                    <Label>반복 패턴</Label>
-                    <Select
-                      value={newSchedule.recurrence_pattern}
-                      onValueChange={(v: any) => setNewSchedule({ ...newSchedule, recurrence_pattern: v })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="daily">매일</SelectItem>
-                        <SelectItem value="weekly">매주</SelectItem>
-                        <SelectItem value="monthly">매월</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <Label>발행 날짜</Label>
+                    <Input
+                      type="date"
+                      value={newSchedule.scheduled_date}
+                      onChange={(e) => setNewSchedule({ ...newSchedule, scheduled_date: e.target.value })}
+                    />
                   </div>
+                )}
 
-                  {newSchedule.recurrence_pattern === 'weekly' && (
+                {newSchedule.schedule_type === 'recurring' && (
+                  <>
                     <div className="space-y-2">
-                      <Label>요일 선택</Label>
-                      <div className="flex flex-wrap gap-2">
-                        {daysOfWeek.map((day) => (
-                          <label
-                            key={day.value}
-                            className={`flex items-center justify-center w-10 h-10 rounded-full cursor-pointer border-2 transition-colors ${
-                              newSchedule.days_of_week.includes(day.value)
-                                ? 'bg-primary text-primary-foreground border-primary'
-                                : 'border-gray-200 hover:border-primary'
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              className="sr-only"
-                              checked={newSchedule.days_of_week.includes(day.value)}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setNewSchedule({
-                                    ...newSchedule,
-                                    days_of_week: [...newSchedule.days_of_week, day.value].sort(),
-                                  })
-                                } else {
-                                  setNewSchedule({
-                                    ...newSchedule,
-                                    days_of_week: newSchedule.days_of_week.filter((d) => d !== day.value),
-                                  })
-                                }
-                              }}
-                            />
-                            {day.label}
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {newSchedule.recurrence_pattern === 'monthly' && (
-                    <div className="space-y-2">
-                      <Label>발행일</Label>
+                      <Label>반복 패턴</Label>
                       <Select
-                        value={String(newSchedule.day_of_month)}
-                        onValueChange={(v) => setNewSchedule({ ...newSchedule, day_of_month: parseInt(v) })}
+                        value={newSchedule.recurrence_pattern}
+                        onValueChange={(v: any) => setNewSchedule({ ...newSchedule, recurrence_pattern: v })}
                       >
                         <SelectTrigger>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {Array.from({ length: 28 }, (_, i) => i + 1).map((day) => (
-                            <SelectItem key={day} value={String(day)}>
-                              매월 {day}일
-                            </SelectItem>
-                          ))}
+                          <SelectItem value="daily">매일</SelectItem>
+                          <SelectItem value="weekly">매주</SelectItem>
+                          <SelectItem value="monthly">매월</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
-                  )}
-                </>
-              )}
 
-              <div className="space-y-2">
-                <Label>발행 시간</Label>
-                <Input
-                  type="time"
-                  value={newSchedule.scheduled_time}
-                  onChange={(e) => setNewSchedule({ ...newSchedule, scheduled_time: e.target.value })}
-                />
-              </div>
+                    {newSchedule.recurrence_pattern === 'weekly' && (
+                      <div className="space-y-2">
+                        <Label>요일 선택</Label>
+                        <div className="flex flex-wrap gap-2">
+                          {daysOfWeek.map((day) => (
+                            <label
+                              key={day.value}
+                              className={`flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border-2 text-sm transition-colors ${
+                                newSchedule.days_of_week.includes(day.value)
+                                  ? 'border-primary bg-primary text-primary-foreground'
+                                  : 'hover:border-primary'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                className="sr-only"
+                                checked={newSchedule.days_of_week.includes(day.value)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setNewSchedule({
+                                      ...newSchedule,
+                                      days_of_week: [...newSchedule.days_of_week, day.value].sort(),
+                                    })
+                                  } else {
+                                    setNewSchedule({
+                                      ...newSchedule,
+                                      days_of_week: newSchedule.days_of_week.filter((d) => d !== day.value),
+                                    })
+                                  }
+                                }}
+                              />
+                              {day.label}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id="auto-hashtags"
-                  checked={newSchedule.auto_hashtags}
-                  onCheckedChange={(checked: boolean) => setNewSchedule({ ...newSchedule, auto_hashtags: checked })}
-                />
-                <Label htmlFor="auto-hashtags">자동 해시태그 추가</Label>
-              </div>
-            </div>
-
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
-                취소
-              </Button>
-              <Button onClick={handleCreateSchedule} disabled={creating}>
-                {creating ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    생성 중...
+                    {newSchedule.recurrence_pattern === 'monthly' && (
+                      <div className="space-y-2">
+                        <Label>발행일</Label>
+                        <Select
+                          value={String(newSchedule.day_of_month)}
+                          onValueChange={(v) => setNewSchedule({ ...newSchedule, day_of_month: parseInt(v) })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {Array.from({ length: 28 }, (_, i) => i + 1).map((day) => (
+                              <SelectItem key={day} value={String(day)}>
+                                매월 {day}일
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
                   </>
-                ) : (
-                  '예약 생성'
                 )}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
 
-      <div className="grid lg:grid-cols-3 gap-6">
+                <div className="space-y-2">
+                  <Label>발행 시간</Label>
+                  <Input
+                    type="time"
+                    value={newSchedule.scheduled_time}
+                    onChange={(e) => setNewSchedule({ ...newSchedule, scheduled_time: e.target.value })}
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id="auto-hashtags"
+                    checked={newSchedule.auto_hashtags}
+                    onCheckedChange={(checked: boolean) => setNewSchedule({ ...newSchedule, auto_hashtags: checked })}
+                  />
+                  <Label htmlFor="auto-hashtags">자동 해시태그 추가</Label>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
+                  취소
+                </Button>
+                <Button onClick={handleCreateSchedule} disabled={creating}>
+                  {creating ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      생성 중...
+                    </>
+                  ) : (
+                    '예약 만들기'
+                  )}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        }
+      />
+
+      <div className="grid gap-4 lg:grid-cols-3">
         {/* 예약 목록 */}
-        <div className="lg:col-span-2 space-y-4">
+        <div className="space-y-4 lg:col-span-2">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Calendar className="h-5 w-5" />
+                <Calendar className="h-4 w-4 text-muted-foreground" />
                 예약 목록
               </CardTitle>
               <CardDescription>
@@ -536,41 +527,46 @@ export default function SchedulePage() {
             </CardHeader>
             <CardContent>
               {schedules.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  등록된 예약이 없습니다
-                </div>
+                <EmptyState
+                  icon={<Calendar className="h-8 w-8" />}
+                  title="등록된 예약이 없습니다"
+                  description="새 예약을 만들어 블로그 글을 자동으로 발행해보세요"
+                  action={
+                    <Button variant="outline" onClick={() => setShowCreateDialog(true)}>
+                      <Plus className="h-4 w-4" />
+                      새 예약 만들기
+                    </Button>
+                  }
+                />
               ) : (
-                <div className="space-y-4">
+                <div className="rounded-lg border">
                   {schedules.map((schedule) => (
-                    <div
-                      key={schedule.id}
-                      className="flex items-center justify-between p-4 border rounded-lg"
-                    >
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
+                    <ListRow key={schedule.id} className="justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-1 flex flex-wrap items-center gap-2">
                           <span className="font-medium">
                             {schedule.name || schedule.post_title || '제목 없음'}
                           </span>
-                          <Badge className={statusColors[schedule.status]}>
+                          <Pill tone={statusTones[schedule.status] || 'muted'}>
                             {statusLabels[schedule.status]}
-                          </Badge>
-                          <Badge variant="outline">
+                          </Pill>
+                          <Pill tone="muted">
                             {schedule.schedule_type === 'one_time' ? '1회' : '반복'}
-                          </Badge>
+                          </Pill>
                         </div>
-                        <p className="text-sm text-muted-foreground">
+                        <p className="text-sm tabular-nums text-muted-foreground">
                           {formatScheduleTime(schedule)}
                         </p>
                         {schedule.next_execution_at && (
-                          <p className="text-xs text-muted-foreground mt-1">
+                          <p className="mt-1 text-xs tabular-nums text-muted-foreground">
                             다음 발행: {format(parseISO(schedule.next_execution_at), 'PPpp', { locale: ko })}
                           </p>
                         )}
-                        <p className="text-xs text-muted-foreground">
+                        <p className="text-xs tabular-nums text-muted-foreground">
                           실행 횟수: {schedule.execution_count}회
                         </p>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex shrink-0 items-center gap-1">
                         <Button
                           variant="ghost"
                           size="icon"
@@ -587,10 +583,10 @@ export default function SchedulePage() {
                           size="icon"
                           onClick={() => handleDelete(schedule.id)}
                         >
-                          <Trash2 className="h-4 w-4 text-red-500" />
+                          <Trash2 className="h-4 w-4 text-danger" />
                         </Button>
                       </div>
-                    </div>
+                    </ListRow>
                   ))}
                 </div>
               )}
@@ -601,30 +597,27 @@ export default function SchedulePage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <CalendarDays className="h-5 w-5" />
+                <CalendarDays className="h-4 w-4 text-muted-foreground" />
                 이번 주 예정된 발행
               </CardTitle>
             </CardHeader>
             <CardContent>
               {upcoming.length === 0 ? (
-                <div className="text-center py-4 text-muted-foreground">
+                <p className="py-4 text-center text-sm text-muted-foreground">
                   예정된 발행이 없습니다
-                </div>
+                </p>
               ) : (
-                <div className="space-y-3">
+                <div className="rounded-lg border">
                   {upcoming.map((item) => (
-                    <div
-                      key={item.schedule_id}
-                      className="flex items-center justify-between p-3 bg-muted rounded-lg"
-                    >
-                      <div>
-                        <p className="font-medium">{item.post_title || item.schedule_name || '제목 없음'}</p>
-                        <p className="text-sm text-muted-foreground">
+                    <ListRow key={item.schedule_id} className="justify-between">
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">{item.post_title || item.schedule_name || '제목 없음'}</p>
+                        <p className="text-sm tabular-nums text-muted-foreground">
                           {format(parseISO(item.next_execution_at), 'M월 d일 (E) HH:mm', { locale: ko })}
                         </p>
                       </div>
-                      <Badge variant="outline">{item.schedule_type === 'one_time' ? '1회' : '반복'}</Badge>
-                    </div>
+                      <Pill tone="muted">{item.schedule_type === 'one_time' ? '1회' : '반복'}</Pill>
+                    </ListRow>
                   ))}
                 </div>
               )}
@@ -637,7 +630,7 @@ export default function SchedulePage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Zap className="h-5 w-5 text-yellow-500" />
+                <Zap className="h-4 w-4 text-warning" />
                 최적 발행 시간
               </CardTitle>
               <CardDescription>
@@ -645,22 +638,19 @@ export default function SchedulePage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
+              <div className="rounded-lg border">
                 {optimalTimes.slice(0, 5).map((time, index) => (
-                  <div
-                    key={index}
-                    className="flex items-center justify-between p-3 border rounded-lg"
-                  >
+                  <ListRow key={index} className="justify-between">
                     <div className="flex items-center gap-3">
-                      <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary font-bold">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-sm font-semibold tabular-nums text-primary">
                         {index + 1}
                       </div>
                       <div>
-                        <p className="font-medium">
+                        <p className="font-medium tabular-nums">
                           {time.day_name}요일 {time.recommended_hour}:
                           {String(time.recommended_minute).padStart(2, '0')}
                         </p>
-                        <p className="text-sm text-muted-foreground">
+                        <p className="text-[13px] tabular-nums text-muted-foreground">
                           참여율 {time.engagement_score.toFixed(0)}점
                         </p>
                       </div>
@@ -681,7 +671,7 @@ export default function SchedulePage() {
                     >
                       적용
                     </Button>
-                  </div>
+                  </ListRow>
                 ))}
               </div>
             </CardContent>

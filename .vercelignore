@@ -1,0 +1,15 @@
+# The linked project builds from frontend/. Upload only that application.
+*
+!frontend
+!frontend/**
+frontend/.env*
+frontend/node_modules
+frontend/.next
+frontend/.vercel
+frontend/.git
+frontend/out
+frontend/build
+frontend/coverage
+frontend/tests
+frontend/*.log
+frontend/*.tsbuildinfo

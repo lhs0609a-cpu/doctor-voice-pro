@@ -5,7 +5,6 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
@@ -37,16 +36,13 @@ import {
   Mail,
   Phone,
   Instagram,
-  Youtube,
   Star,
   TrendingUp,
   Zap,
   Target,
   Send,
   CheckCircle2,
-  Clock,
   AlertCircle,
-  Edit,
   Trash2,
   RefreshCw,
   MessageSquare,
@@ -55,25 +51,40 @@ import {
   Users,
   Calendar,
 } from 'lucide-react'
+import { PageHeader } from '@/components/app-shell/page-header'
+import { Pill, EmptyState } from '@/components/app-shell/ui-kit'
 import { outreachAPI, type NaverBlogLead, type BlogContact, type OutreachEmailLog, type OutreachEmailTemplate } from '@/lib/api'
 import { toast } from 'sonner'
 
-const BLOG_STATUSES = [
-  { value: 'new', label: '신규', color: 'bg-sky-100 text-sky-700' },
-  { value: 'contact_found', label: '연락처 발견', color: 'bg-emerald-100 text-emerald-700' },
-  { value: 'contacted', label: '연락함', color: 'bg-violet-100 text-violet-700' },
-  { value: 'responded', label: '회신받음', color: 'bg-fuchsia-100 text-fuchsia-700' },
-  { value: 'converted', label: '전환됨', color: 'bg-green-100 text-green-700' },
-  { value: 'not_interested', label: '관심없음', color: 'bg-gray-100 text-gray-600' },
-  { value: 'invalid', label: '유효하지 않음', color: 'bg-red-100 text-red-700' },
+type Tone = 'ok' | 'warn' | 'danger' | 'accent' | 'muted'
+
+const BLOG_STATUSES: { value: string; label: string; tone: Tone }[] = [
+  { value: 'new', label: '신규', tone: 'accent' },
+  { value: 'contact_found', label: '연락처 발견', tone: 'ok' },
+  { value: 'contacted', label: '연락함', tone: 'accent' },
+  { value: 'responded', label: '회신받음', tone: 'accent' },
+  { value: 'converted', label: '전환됨', tone: 'ok' },
+  { value: 'not_interested', label: '관심없음', tone: 'muted' },
+  { value: 'invalid', label: '유효하지 않음', tone: 'danger' },
 ]
 
-const GRADE_STYLES: Record<string, { bg: string; text: string }> = {
-  A: { bg: 'bg-emerald-100', text: 'text-emerald-700' },
-  B: { bg: 'bg-blue-100', text: 'text-blue-700' },
-  C: { bg: 'bg-amber-100', text: 'text-amber-700' },
-  D: { bg: 'bg-gray-100', text: 'text-gray-600' },
+const GRADE_STYLES: Record<string, string> = {
+  A: 'bg-success-soft text-success',
+  B: 'bg-accent text-primary',
+  C: 'bg-warning-soft text-warning',
+  D: 'bg-muted text-muted-foreground',
 }
+
+const EMAIL_STATUS: Record<string, { label: string; tone: Tone }> = {
+  sent: { label: '발송됨', tone: 'muted' },
+  opened: { label: '오픈됨', tone: 'accent' },
+  clicked: { label: '클릭됨', tone: 'accent' },
+  replied: { label: '회신받음', tone: 'ok' },
+  bounced: { label: '반송', tone: 'danger' },
+}
+
+const TH = 'h-10 text-[12px] font-medium uppercase tracking-wide text-muted-foreground'
+const TD = 'py-2.5'
 
 export default function BlogDetailPage() {
   const params = useParams()
@@ -210,373 +221,377 @@ export default function BlogDetailPage() {
     }
   }
 
+  const backLink = (
+    <Button variant="ghost" size="sm" className="-ml-2 tracking-normal" asChild>
+      <Link href="/dashboard/outreach">
+        <ArrowLeft className="h-4 w-4" />
+        블로그 목록
+      </Link>
+    </Button>
+  )
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
-        <RefreshCw className="w-8 h-8 animate-spin text-gray-400" />
+      <div className="flex justify-center py-16">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
       </div>
     )
   }
 
   if (!blog) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
-        <div className="text-center">
-          <AlertCircle className="w-12 h-12 mx-auto mb-4 text-gray-300" />
-          <p className="text-gray-500">블로그를 찾을 수 없습니다</p>
-          <Link href="/dashboard/outreach">
-            <Button variant="outline" className="mt-4">
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              목록으로
+      <div className="space-y-6">
+        <EmptyState
+          icon={<AlertCircle className="h-8 w-8" />}
+          title="블로그를 찾을 수 없습니다"
+          description="삭제되었거나 잘못된 주소일 수 있어요."
+          action={
+            <Button variant="outline" asChild>
+              <Link href="/dashboard/outreach">
+                <ArrowLeft className="h-4 w-4" />
+                목록으로
+              </Link>
             </Button>
-          </Link>
-        </div>
+          }
+        />
       </div>
     )
   }
 
   const gradeStyle = GRADE_STYLES[blog.lead_grade || 'D'] || GRADE_STYLES.D
-  const statusInfo = BLOG_STATUSES.find(s => s.value === blog.status)
 
   return (
-    <div className="min-h-screen bg-gray-50/50">
-      <div className="max-w-6xl mx-auto px-6 py-8">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-4">
-            <Link href="/dashboard/outreach">
-              <Button variant="ghost" size="icon" className="rounded-full">
-                <ArrowLeft className="w-5 h-5" />
-              </Button>
-            </Link>
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">
-                {blog.blog_name || blog.owner_nickname || blog.blog_id}
-              </h1>
-              <a
-                href={blog.blog_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sm text-gray-500 hover:text-violet-600 flex items-center gap-1"
-              >
-                {blog.blog_url}
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={handleDelete} className="text-red-600 hover:text-red-700">
-              <Trash2 className="w-4 h-4 mr-2" />
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow={backLink}
+        title={blog.blog_name || blog.owner_nickname || blog.blog_id}
+        description={
+          <a
+            href={blog.blog_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 hover:text-primary hover:underline"
+          >
+            {blog.blog_url}
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        }
+        actions={
+          <>
+            <Button variant="outline" onClick={handleDelete} className="text-destructive hover:text-destructive">
+              <Trash2 className="h-4 w-4" />
               삭제
             </Button>
             <Button onClick={() => setSendDialogOpen(true)} disabled={!blog.has_contact}>
-              <Send className="w-4 h-4 mr-2" />
+              <Send className="h-4 w-4" />
               이메일 발송
             </Button>
-          </div>
-        </div>
+          </>
+        }
+      />
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left Column - Blog Info */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Score Card */}
-            <Card>
-              <CardHeader className="pb-4">
-                <div className="flex items-center justify-between">
-                  <CardTitle>리드 스코어</CardTitle>
-                  <Button variant="ghost" size="sm" onClick={handleRescore}>
-                    <RefreshCw className="w-4 h-4 mr-2" />
-                    재계산
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center gap-6 mb-6">
-                  <div className="text-center">
-                    <div className={`w-20 h-20 rounded-2xl ${gradeStyle.bg} flex items-center justify-center mb-2`}>
-                      <span className={`text-3xl font-bold ${gradeStyle.text}`}>
-                        {blog.lead_grade || 'D'}
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-500">등급</p>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        {/* Left Column - Blog Info */}
+        <div className="space-y-4 lg:col-span-2">
+          {/* Score Card */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>리드 스코어</CardTitle>
+                <Button variant="ghost" size="sm" onClick={handleRescore}>
+                  <RefreshCw className="h-4 w-4" />
+                  다시 계산
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center gap-6">
+                <div className="text-center">
+                  <div className={`mb-2 flex h-16 w-16 items-center justify-center rounded-xl ${gradeStyle}`}>
+                    <span className="text-2xl font-bold">{blog.lead_grade || 'D'}</span>
                   </div>
-                  <div className="flex-1">
-                    <div className="text-4xl font-bold text-gray-900 mb-1">
-                      {blog.lead_score?.toFixed(1) || 0}
-                      <span className="text-lg text-gray-400 font-normal">/100</span>
-                    </div>
-                    <p className="text-sm text-gray-500">종합 점수</p>
-                  </div>
+                  <p className="text-[13px] font-medium text-muted-foreground">등급</p>
                 </div>
-
-                <div className="grid grid-cols-3 gap-4">
-                  {[
-                    { label: '영향력', value: blog.influence_score, icon: TrendingUp, color: 'text-blue-500' },
-                    { label: '활동성', value: blog.activity_score, icon: Zap, color: 'text-emerald-500' },
-                    { label: '관련성', value: blog.relevance_score, icon: Target, color: 'text-violet-500' },
-                  ].map((score) => (
-                    <div key={score.label} className="bg-gray-50 rounded-xl p-4 text-center">
-                      <score.icon className={`w-5 h-5 mx-auto mb-2 ${score.color}`} />
-                      <p className="text-xl font-bold text-gray-900">{score.value?.toFixed(0) || 0}</p>
-                      <p className="text-xs text-gray-500">{score.label}</p>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Metrics Card */}
-            <Card>
-              <CardHeader>
-                <CardTitle>블로그 지표</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {[
-                    { label: '일일 방문자', value: blog.visitor_daily?.toLocaleString() || 0, icon: Eye },
-                    { label: '총 방문자', value: blog.visitor_total?.toLocaleString() || 0, icon: Users },
-                    { label: '이웃 수', value: blog.neighbor_count?.toLocaleString() || 0, icon: Users },
-                    { label: '포스팅 수', value: blog.post_count?.toLocaleString() || 0, icon: MessageSquare },
-                  ].map((metric) => (
-                    <div key={metric.label} className="bg-gray-50 rounded-xl p-4">
-                      <metric.icon className="w-4 h-4 text-gray-400 mb-2" />
-                      <p className="text-xl font-bold text-gray-900">{metric.value}</p>
-                      <p className="text-xs text-gray-500">{metric.label}</p>
-                    </div>
-                  ))}
-                </div>
-
-                {blog.last_post_date && (
-                  <div className="mt-4 pt-4 border-t border-gray-100">
-                    <div className="flex items-center gap-2 text-sm text-gray-500">
-                      <Calendar className="w-4 h-4" />
-                      <span>최근 포스팅: {new Date(blog.last_post_date).toLocaleDateString()}</span>
-                    </div>
-                    {blog.last_post_title && (
-                      <p className="mt-1 text-sm text-gray-700 truncate">{blog.last_post_title}</p>
-                    )}
+                <div className="flex-1">
+                  <div className="kpi">
+                    {blog.lead_score?.toFixed(1) || 0}
+                    <span className="text-base font-normal text-muted-foreground">/100</span>
                   </div>
-                )}
-              </CardContent>
-            </Card>
+                  <p className="mt-1 text-[13px] font-medium text-muted-foreground">종합 점수</p>
+                </div>
+              </div>
 
-            {/* Email History */}
-            <Card>
-              <CardHeader>
-                <CardTitle>이메일 발송 내역</CardTitle>
-                <CardDescription>이 블로그로 발송한 이메일 기록</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {emailHistory.length === 0 ? (
-                  <div className="text-center py-8 text-gray-400">
-                    <Mail className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                    <p>발송 내역이 없습니다</p>
+              <div className="grid grid-cols-3 gap-4">
+                {[
+                  { label: '영향력', value: blog.influence_score, icon: TrendingUp },
+                  { label: '활동성', value: blog.activity_score, icon: Zap },
+                  { label: '관련성', value: blog.relevance_score, icon: Target },
+                ].map((score) => (
+                  <div key={score.label} className="rounded-lg border bg-muted/40 p-4 text-center">
+                    <score.icon className="mx-auto mb-2 h-4 w-4 text-muted-foreground" />
+                    <p className="text-lg font-semibold tabular-nums">{score.value?.toFixed(0) || 0}</p>
+                    <p className="text-xs text-muted-foreground">{score.label}</p>
                   </div>
-                ) : (
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Metrics Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle>블로그 지표</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                {[
+                  { label: '일일 방문자', value: blog.visitor_daily?.toLocaleString() || 0, icon: Eye },
+                  { label: '총 방문자', value: blog.visitor_total?.toLocaleString() || 0, icon: Users },
+                  { label: '이웃 수', value: blog.neighbor_count?.toLocaleString() || 0, icon: Users },
+                  { label: '포스팅 수', value: blog.post_count?.toLocaleString() || 0, icon: MessageSquare },
+                ].map((metric) => (
+                  <div key={metric.label} className="rounded-lg border bg-muted/40 p-4">
+                    <metric.icon className="mb-2 h-4 w-4 text-muted-foreground" />
+                    <p className="text-lg font-semibold tabular-nums">{metric.value}</p>
+                    <p className="text-xs text-muted-foreground">{metric.label}</p>
+                  </div>
+                ))}
+              </div>
+
+              {blog.last_post_date && (
+                <div className="border-t pt-4">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Calendar className="h-4 w-4" />
+                    <span>최근 포스팅: {new Date(blog.last_post_date).toLocaleDateString()}</span>
+                  </div>
+                  {blog.last_post_title && (
+                    <p className="mt-1 truncate text-sm">{blog.last_post_title}</p>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Email History */}
+          <Card>
+            <CardHeader>
+              <CardTitle>이메일 발송 내역</CardTitle>
+              <CardDescription>이 블로그로 보낸 이메일 기록</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {emailHistory.length === 0 ? (
+                <EmptyState
+                  icon={<Mail className="h-8 w-8" />}
+                  title="아직 보낸 이메일이 없어요"
+                  description="연락처가 있으면 템플릿을 골라 바로 보낼 수 있어요."
+                  action={
+                    <Button variant="outline" size="sm" onClick={() => setSendDialogOpen(true)} disabled={!blog.has_contact}>
+                      <Send className="h-4 w-4" />
+                      이메일 보내기
+                    </Button>
+                  }
+                />
+              ) : (
+                <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>제목</TableHead>
-                        <TableHead>상태</TableHead>
-                        <TableHead>발송일</TableHead>
-                        <TableHead>오픈/클릭</TableHead>
+                        <TableHead className={TH}>제목</TableHead>
+                        <TableHead className={TH}>상태</TableHead>
+                        <TableHead className={TH}>발송일</TableHead>
+                        <TableHead className={TH}>오픈/클릭</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {emailHistory.map((log) => (
-                        <TableRow key={log.id}>
-                          <TableCell className="font-medium">{log.subject}</TableCell>
-                          <TableCell>
-                            <Badge variant={
-                              log.status === 'replied' ? 'default' :
-                              log.status === 'opened' || log.status === 'clicked' ? 'secondary' :
-                              log.status === 'bounced' ? 'destructive' : 'outline'
-                            }>
-                              {log.status === 'sent' ? '발송됨' :
-                               log.status === 'opened' ? '오픈됨' :
-                               log.status === 'clicked' ? '클릭됨' :
-                               log.status === 'replied' ? '회신받음' :
-                               log.status === 'bounced' ? '반송' : log.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-gray-500">
-                            {log.sent_at ? new Date(log.sent_at).toLocaleString() : '-'}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2 text-xs text-gray-500">
-                              {log.opened_at && (
-                                <span className="flex items-center gap-1">
-                                  <Eye className="w-3 h-3" />
-                                  {new Date(log.opened_at).toLocaleDateString()}
-                                </span>
-                              )}
-                              {log.clicked_at && (
-                                <span className="flex items-center gap-1">
-                                  <MousePointerClick className="w-3 h-3" />
-                                  {new Date(log.clicked_at).toLocaleDateString()}
-                                </span>
-                              )}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {emailHistory.map((log) => {
+                        const status = EMAIL_STATUS[log.status]
+                        return (
+                          <TableRow key={log.id} className="hover:bg-muted/40">
+                            <TableCell className={`${TD} font-medium`}>{log.subject}</TableCell>
+                            <TableCell className={TD}>
+                              <Pill tone={status?.tone || 'muted'}>{status?.label || log.status}</Pill>
+                            </TableCell>
+                            <TableCell className={`${TD} text-muted-foreground tabular-nums`}>
+                              {log.sent_at ? new Date(log.sent_at).toLocaleString() : '-'}
+                            </TableCell>
+                            <TableCell className={TD}>
+                              <div className="flex items-center gap-2 text-xs text-muted-foreground tabular-nums">
+                                {log.opened_at && (
+                                  <span className="flex items-center gap-1">
+                                    <Eye className="h-3 w-3" />
+                                    {new Date(log.opened_at).toLocaleDateString()}
+                                  </span>
+                                )}
+                                {log.clicked_at && (
+                                  <span className="flex items-center gap-1">
+                                    <MousePointerClick className="h-3 w-3" />
+                                    {new Date(log.clicked_at).toLocaleDateString()}
+                                  </span>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
                     </TableBody>
                   </Table>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
-          {/* Right Column - Contacts & Status */}
-          <div className="space-y-6">
-            {/* Status Card */}
-            <Card>
-              <CardHeader>
-                <CardTitle>상태</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Select value={blog.status} onValueChange={handleStatusChange}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {BLOG_STATUSES.map((status) => (
-                      <SelectItem key={status.value} value={status.value}>
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs ${status.color}`}>
-                          {status.label}
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+        {/* Right Column - Contacts & Status */}
+        <div className="space-y-4">
+          {/* Status Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle>상태</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Select value={blog.status} onValueChange={handleStatusChange}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {BLOG_STATUSES.map((status) => (
+                    <SelectItem key={status.value} value={status.value}>
+                      <Pill tone={status.tone}>{status.label}</Pill>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
-                <div className="mt-4 flex flex-wrap gap-2">
+              {(blog.is_influencer || blog.has_contact) && (
+                <div className="flex flex-wrap gap-2">
                   {blog.is_influencer && (
-                    <Badge variant="secondary" className="bg-amber-50 text-amber-700">
-                      <Star className="w-3 h-3 mr-1" />
+                    <Pill tone="warn" className="gap-1">
+                      <Star className="h-3 w-3" />
                       인플루언서
-                    </Badge>
+                    </Pill>
                   )}
                   {blog.has_contact && (
-                    <Badge variant="secondary" className="bg-emerald-50 text-emerald-700">
-                      <CheckCircle2 className="w-3 h-3 mr-1" />
+                    <Pill tone="ok" className="gap-1">
+                      <CheckCircle2 className="h-3 w-3" />
                       연락처 보유
-                    </Badge>
+                    </Pill>
                   )}
                 </div>
-              </CardContent>
-            </Card>
+              )}
+            </CardContent>
+          </Card>
 
-            {/* Contacts Card */}
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle>연락처</CardTitle>
-                  <Button variant="ghost" size="sm" onClick={handleExtractContact}>
-                    <RefreshCw className="w-4 h-4 mr-2" />
-                    추출
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {!blog.contacts || blog.contacts.length === 0 ? (
-                  <div className="text-center py-6 text-gray-400">
-                    <Mail className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                    <p className="text-sm">연락처 없음</p>
-                    <Button variant="outline" size="sm" className="mt-3" onClick={handleExtractContact}>
+          {/* Contacts Card */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>연락처</CardTitle>
+                <Button variant="ghost" size="sm" onClick={handleExtractContact}>
+                  <RefreshCw className="h-4 w-4" />
+                  추출
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {!blog.contacts || blog.contacts.length === 0 ? (
+                <EmptyState
+                  icon={<Mail className="h-6 w-6" />}
+                  title="연락처가 없어요"
+                  description="블로그에서 이메일·전화번호를 찾아볼게요."
+                  className="py-8"
+                  action={
+                    <Button variant="outline" size="sm" onClick={handleExtractContact}>
                       연락처 추출하기
                     </Button>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {blog.contacts.map((contact: any, idx: number) => (
-                      <div key={idx} className="space-y-2">
-                        {contact.email && (
-                          <div className="flex items-center gap-2 text-sm">
-                            <Mail className="w-4 h-4 text-gray-400" />
-                            <a href={`mailto:${contact.email}`} className="text-blue-600 hover:underline">
-                              {contact.email}
-                            </a>
-                          </div>
-                        )}
-                        {contact.phone && (
-                          <div className="flex items-center gap-2 text-sm">
-                            <Phone className="w-4 h-4 text-gray-400" />
-                            <span>{contact.phone}</span>
-                          </div>
-                        )}
-                        {contact.instagram && (
-                          <div className="flex items-center gap-2 text-sm">
-                            <Instagram className="w-4 h-4 text-gray-400" />
-                            <a
-                              href={`https://instagram.com/${contact.instagram}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-blue-600 hover:underline"
-                            >
-                              @{contact.instagram}
-                            </a>
-                          </div>
-                        )}
-                      </div>
-                    ))}
+                  }
+                />
+              ) : (
+                <div className="space-y-3">
+                  {blog.contacts.map((contact: any, idx: number) => (
+                    <div key={idx} className="space-y-2">
+                      {contact.email && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <Mail className="h-4 w-4 text-muted-foreground" />
+                          <a href={`mailto:${contact.email}`} className="text-primary hover:underline">
+                            {contact.email}
+                          </a>
+                        </div>
+                      )}
+                      {contact.phone && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <Phone className="h-4 w-4 text-muted-foreground" />
+                          <span className="tabular-nums">{contact.phone}</span>
+                        </div>
+                      )}
+                      {contact.instagram && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <Instagram className="h-4 w-4 text-muted-foreground" />
+                          <a
+                            href={`https://instagram.com/${contact.instagram}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-primary hover:underline"
+                          >
+                            @{contact.instagram}
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Notes Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle>메모</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Textarea
+                placeholder="메모 입력..."
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={4}
+                className="resize-none"
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-3 w-full"
+                onClick={handleSaveNotes}
+                disabled={savingNotes}
+              >
+                {savingNotes ? '저장 중...' : '메모 저장'}
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Category & Tags */}
+          <Card>
+            <CardHeader>
+              <CardTitle>분류</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                <div>
+                  <Label className="text-[13px] font-medium text-muted-foreground">카테고리</Label>
+                  <p className="text-sm font-medium">{blog.category || '미분류'}</p>
+                </div>
+                {blog.keywords && blog.keywords.length > 0 && (
+                  <div>
+                    <Label className="text-[13px] font-medium text-muted-foreground">키워드</Label>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {blog.keywords.map((kw: string, idx: number) => (
+                        <Pill key={idx} tone="muted">{kw}</Pill>
+                      ))}
+                    </div>
                   </div>
                 )}
-              </CardContent>
-            </Card>
-
-            {/* Notes Card */}
-            <Card>
-              <CardHeader>
-                <CardTitle>메모</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Textarea
-                  placeholder="메모 입력..."
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  rows={4}
-                  className="resize-none"
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-3 w-full"
-                  onClick={handleSaveNotes}
-                  disabled={savingNotes}
-                >
-                  {savingNotes ? '저장 중...' : '메모 저장'}
-                </Button>
-              </CardContent>
-            </Card>
-
-            {/* Category & Tags */}
-            <Card>
-              <CardHeader>
-                <CardTitle>분류</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  <div>
-                    <Label className="text-xs text-gray-500">카테고리</Label>
-                    <p className="font-medium">{blog.category || '미분류'}</p>
-                  </div>
-                  {blog.keywords && blog.keywords.length > 0 && (
-                    <div>
-                      <Label className="text-xs text-gray-500">키워드</Label>
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {blog.keywords.map((kw: string, idx: number) => (
-                          <Badge key={idx} variant="outline" className="text-xs">
-                            {kw}
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
 

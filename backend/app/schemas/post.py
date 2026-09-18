@@ -51,8 +51,8 @@ class PostCreate(BaseModel):
     writing_style: Optional[WritingStyleCreate] = None
     requirements: Optional[RequestRequirementsCreate] = None
     # AI 제공자 및 모델 선택
-    ai_provider: str = Field(default="gemini")
-    ai_model: Optional[str] = Field(default="gemini-2.5-flash")
+    ai_provider: str = Field(default="gemini")  # 원고 생성은 Gemini 단일 스택
+    ai_model: Optional[str] = Field(default=None)  # 비우면 서버 기본값(gemini-2.5-flash). 예: gemini-2.5-flash-lite, gemini-2.5-pro
     # SEO 최적화 (DIA/CRANK)
     seo_optimization: Optional[SEOOptimization] = None
     # 상위글 분석 기반 규칙
@@ -117,7 +117,10 @@ class PostResponse(BaseModel):
     content_analysis: Optional[Dict] = None
     forbidden_words_check: Optional[Dict] = None
     dia_crank_analysis: Optional[Dict] = None
-    usage_info: Optional[Dict] = None
+    # 원고 품질 종합 점수 (quality_scorer.py)
+    quality_score: Optional[float] = None
+    quality_grade: Optional[str] = None
+    quality_report: Optional[Dict] = None
 
     class Config:
         from_attributes = True

@@ -3,40 +3,16 @@ DIA/CRANK SEO Score Analyzer
 글 작성 후 네이버 검색 알고리즘 점수 분석
 """
 
-from typing import Dict, Optional
-import anthropic
-from app.core.config import settings
+from typing import Dict
 
-
-# DB에서 API 키 로드하는 함수
-async def get_api_key_from_db(provider: str) -> Optional[str]:
-    """
-    DB에서 특정 provider의 API 키를 조회합니다.
-    DB에 키가 없으면 환경변수에서 가져옵니다.
-    """
-    try:
-        from app.db.database import AsyncSessionLocal
-        from app.models import APIKey
-        from sqlalchemy import select
-
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                select(APIKey).where(APIKey.provider == provider, APIKey.is_active == True)
-            )
-            key_record = result.scalar_one_or_none()
-            if key_record:
-                return key_record.api_key
-    except Exception as e:
-        print(f"[WARNING] DB에서 API 키 조회 실패: {e}")
-
-    # DB에 없으면 환경변수에서 로드
-    if provider == "claude":
-        return settings.ANTHROPIC_API_KEY
-    elif provider == "gpt":
-        return settings.OPENAI_API_KEY
-    elif provider == "gemini":
-        return settings.GEMINI_API_KEY
-    return None
+# 원고 생성 스택과 같은 Gemini 경로를 쓴다.
+# (예전에는 이 파일만 Claude 를 썼는데, 키를 두 벌 관리해야 하고 비용도 따로 나갔다)
+from app.services.ai_rewrite_engine import (
+    ai_rewrite_engine,
+    JUDGE_MODEL,
+    THINKING_BUDGET_LIGHT,
+    get_api_key_from_db,  # noqa: F401  (기존 임포트 호환)
+)
 
 
 class DIACRANKAnalyzer:
@@ -195,22 +171,16 @@ class DIACRANKAnalyzer:
 반드시 JSON만 출력하세요."""
 
         try:
-            # DB에서 Claude API 키 로드
-            claude_api_key = await get_api_key_from_db("claude")
-            if not claude_api_key:
-                raise Exception("Claude API 키가 설정되지 않았습니다.")
-
-            claude_client = anthropic.Anthropic(api_key=claude_api_key, timeout=60.0)
-
-            response = claude_client.messages.create(
-                model="claude-sonnet-4-5-20250929",
-                max_tokens=4000,
+            res = await ai_rewrite_engine._gemini_call(
+                user_prompt=prompt,
+                max_output_tokens=4000,
                 temperature=0.3,
-                messages=[{"role": "user", "content": prompt}]
+                thinking_budget=THINKING_BUDGET_LIGHT,
+                model=JUDGE_MODEL,
             )
 
             import json
-            result_text = response.content[0].text
+            result_text = res["text"]
             # JSON 추출
             if "```json" in result_text:
                 result_text = result_text.split("```json")[1].split("```")[0].strip()

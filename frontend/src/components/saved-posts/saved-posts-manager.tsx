@@ -28,10 +28,13 @@ import {
   Layers,
   Folder,
   Upload,
+  Check,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { ExtensionStatusBadge, ExtensionStatusCard, EXTENSION_DOWNLOAD_URL } from '@/components/extension-status'
-import { useExtensionStatus } from '@/lib/use-extension-status'
+import { PageHeader } from '@/components/app-shell/page-header'
+import { Pill, EmptyState } from '@/components/app-shell/ui-kit'
+import { LauncherCard, LAUNCHER_DOWNLOAD_URL, TargetBlogSelect, useTargetBlog } from '@/components/launcher/launcher-card'
+import { buildInterleavedBlocks, extractKeywords } from '@/lib/post-blocks'
 import { PublishGuide } from './publish-guide'
 import { mediaPoolAPI, publishQueueAPI, type PoolCollectionItem, type NaverCategory } from '@/lib/api'
 import { preparedStore, requestPersistentStorage, storageHeadroom } from '@/lib/prepared-store'
@@ -137,21 +140,6 @@ const ACTION_OPTIONS: { key: FinalAction; label: string; desc: string; icon: any
 
 const INTERVAL_PRESETS = [2, 3, 4, 6]
 
-// 확장 프로그램에 메시지 (externally_connectable)
-function sendMessageToExtension(extId: string, message: any): Promise<any> {
-  return new Promise((resolve, reject) => {
-    if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) {
-      reject(new Error('Chrome API를 사용할 수 없습니다')); return
-    }
-    try {
-      chrome.runtime.sendMessage(extId, message, (res: any) => {
-        if (chrome.runtime.lastError) reject(chrome.runtime.lastError)
-        else resolve(res)
-      })
-    } catch (e) { reject(e) }
-  })
-}
-
 // 고정 하단 이미지의 '과거 변형' 회피셋 상한. 서버의 uniq.SIBLING_WINDOW 와 맞춘다
 // (서버도 방어적으로 같은 값으로 자르므로, 더 보내봐야 버려지고 저장 공간만 쓴다).
 const FIXED_SIBLING_WINDOW = 24
@@ -173,45 +161,6 @@ function imageToCleanBase64(file: File, maxWidth = 1280, quality = 0.9): Promise
     img.onerror = reject
     img.src = URL.createObjectURL(file)
   })
-}
-
-// 본문에서 자동 강조할 키워드(반복 단어) 추출 — 조사 제거 + 불용어 제외 + 빈도순
-const _JOSA = ['으로써','으로서','이라고','라고','에서는','에서도','으로','에서','에게','한테','부터','까지','처럼','같이','마다','조차','밖에','이나','라도','이란','은','는','이','가','을','를','에','와','과','도','만','의','로']
-const _STOP = new Set(['그리고','그러나','하지만','그래서','또한','또는','그런데','때문','위해','통해','대해','경우','정도','우리','여러분','있습니다','합니다','입니다','습니다','됩니다','있는','하는','되는','매우','정말','너무','아주','가장','모든','다양한','오늘','안녕하세요','감사합니다'])
-function stripJosa(w: string): string {
-  if (!/[가-힣]$/.test(w)) return w
-  for (const j of _JOSA) if (w.endsWith(j) && w.length - j.length >= 2) return w.slice(0, -j.length)
-  return w
-}
-function extractKeywords(text: string, topN = 6): string[] {
-  const counts = new Map<string, number>()
-  const words = (text || '').match(/[가-힣A-Za-z0-9]+/g) || []
-  for (const raw of words) {
-    const w = stripJosa(raw)
-    if (w.length < 2 || _STOP.has(w) || /^[0-9]+$/.test(w)) continue
-    counts.set(w, (counts.get(w) || 0) + 1)
-  }
-  const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1])
-  const repeated = sorted.filter(([, c]) => c >= 2).map(([w]) => w)
-  return repeated.slice(0, topN)
-}
-
-// 본문을 문단으로 나눠 이미지를 고르게 끼운 블록(글-이미지-글-이미지)
-function buildInterleavedBlocks(content: string, images: string[]): { type: 'text' | 'image'; content?: string; image?: string }[] {
-  const text = (content || '').replace(/\r\n/g, '\n').trim()
-  let paras = text.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean)
-  if (paras.length <= 1) paras = text.split(/\n/).map((p) => p.trim()).filter(Boolean)
-  if (paras.length === 0) paras = [text || '']
-  const n = images.length
-  const blocks: { type: 'text' | 'image'; content?: string; image?: string }[] = []
-  let imgIdx = 0
-  for (let p = 0; p < paras.length; p++) {
-    blocks.push({ type: 'text', content: paras[p] })
-    const upto = Math.round(((p + 1) * n) / paras.length)
-    while (imgIdx < upto) { blocks.push({ type: 'image', image: images[imgIdx] }); imgIdx++ }
-  }
-  while (imgIdx < n) { blocks.push({ type: 'image', image: images[imgIdx] }); imgIdx++ }
-  return blocks
 }
 
 // 텍스트에서 첫 비어있지 않은 줄
@@ -246,7 +195,7 @@ function fmtKo(d: Date): string {
 
 export function SavedPostsManager() {
   const router = useRouter()
-  const ext = useExtensionStatus()
+  const target = useTargetBlog()
 
   const [savedPosts, setSavedPosts] = useState<SavedPost[]>([])
 
@@ -292,21 +241,19 @@ export function SavedPostsManager() {
   const [prepared, setPrepared] = useState<PreparedItem[]>([])
   const [preparing, setPreparing] = useState(false)
 
-  // 현재 로그인된 네이버 블로그. null = 확장으로 아직 확인 못 함
-  const [blogId, setBlogId] = useState<string | null>(null)
-  const [blogChecking, setBlogChecking] = useState(false)
-  // 지난 세션에서 확인됐던 블로그(localStorage). 확장이 붙기 전의 임시 기준.
+  // 발행 대상 블로그(서버에 등록된 캠페인 블로그). 예전에는 확장에게 "지금 어느 블로그에
+  // 로그인돼 있냐"고 물었지만, 이제는 사용자가 고르고 실행기가 그 블로그로 등록한다.
+  const blogId = target.blogId || null
+  const blogChecking = target.loading
+  // 지난 세션에서 쓰던 블로그(localStorage). 목록을 불러오기 전의 임시 기준.
   const [cachedBlogId, setCachedBlogId] = useState<string | null>(null)
   const [scopeLoaded, setScopeLoaded] = useState(false) // 캐시 읽기를 시도했는가
 
-  // 읽기·쓰기에 실제로 쓰는 스코프. 확장 확인값이 있으면 그게 우선, 없으면 캐시.
+  // 읽기·쓰기에 실제로 쓰는 스코프. 고른 블로그가 있으면 그게 우선, 없으면 캐시.
   const scopeId = blogId ?? cachedBlogId
-  // 확장이 지금 이 순간 확인해 준 값인가. 간격 예약 허용 여부를 여기서 가른다.
-  const blogConfirmed = !!blogId
+  // 블로그가 정해졌는가. 간격 예약 허용 여부를 여기서 가른다.
+  const blogConfirmed = !!target.blogRefId
 
-  // 배치 결과 리스너는 deps [] 라 state 를 직접 읽으면 초기값(null)에 묶인다 → 거울 ref 로 읽는다.
-  const blogIdRef = useRef<string | null>(null)
-  useEffect(() => { blogIdRef.current = blogId }, [blogId])
   // 저장은 '읽을 때 쓰는 키'와 반드시 같아야 한다 → scopeId 를 따라간다.
   const scopeIdRef = useRef<string | null>(null)
   useEffect(() => { scopeIdRef.current = scopeId }, [scopeId])
@@ -317,216 +264,41 @@ export function SavedPostsManager() {
 
   // 실패한 건의 사유 (준비함에 남겨두고 표시 → 다시 시도 가능)
   const [failedIds, setFailedIds] = useState<Record<string, string>>({})
-  // 진행 중인 배치 상태 (총 건수/완료 건수)
+  // 서버 큐로 올리는 중의 진행 상태 (총 건수/올린 건수)
   const [batchProgress, setBatchProgress] = useState<{ total: number; done: number; ok: number } | null>(null)
 
-  // 이벤트 리스너에서 최신 준비함을 읽기 위한 거울 (stale closure 방지)
-  const preparedRef = useRef<PreparedItem[]>([])
-  useEffect(() => { preparedRef.current = prepared }, [prepared])
-
-  // 배치 진행 카운터. 리스너가 매번 최신값을 봐야 하므로 ref.
-  const batchRef = useRef<{ total: number; done: number; ok: number }>({ total: 0, done: 0, ok: 0 })
-  // 결과가 한참 안 오면(탭 닫힘 등) 버튼이 영구히 잠기지 않도록 푸는 감시 타이머
-  const stallTimerRef = useRef<any>(null)
-
-  // 확장이 각 글을 처리하기 직전에 그 글의 payload 를 요청한다 → 그때 한 건만 만들어 넘긴다.
-  // 미리 다 만들어두면 100건 × 4~5MB ≈ 500MB 가 탭 메모리에 한꺼번에 올라가 죽는다.
-  useEffect(() => {
-    const onRequest = async (e: any) => {
-      const { id, token } = e.detail || {}
-      const reply = (job: any) =>
-        window.dispatchEvent(new CustomEvent('doctorvoice-job-payload', { detail: { token, job } }))
-      try {
-        const item = preparedRef.current.find((p) => p.id === id)
-        if (!item) { reply(null); return }
-        // 사진은 지금 IndexedDB 에서 꺼낸다 → 이 한 건만 잠깐 메모리에 올라간다.
-        // get() 이 throw 하면 아래 catch 가 reply(null) → 확장은 이 건을 실패로 처리하고
-        // 준비함에 그대로 남는다. 사진 없이 나가는 것보다 실패가 낫다.
-        const payload = await preparedStore.get(id)
-        const images = payload?.images || []
-
-        // 담을 때 기록해 둔 장수와 대조한다. 어긋나면 사진이 유실된 것이므로 발행하지 않는다.
-        // (예전엔 대조가 없어서, imageCount 12 인 글이 0장으로 나가도 '성공'으로 보고되고
-        //  준비함 항목과 IndexedDB 사진이 함께 지워져 복구가 불가능했다)
-        if (images.length !== item.imageCount) {
-          throw new Error(`사진 유실: ${item.imageCount}장 중 ${images.length}장만 읽힘`)
-        }
-        if (item.hasFixed && !payload?.fixedImage) {
-          throw new Error('고정 하단 이미지 유실')
-        }
-
-        const blocks = buildInterleavedBlocks(item.content, images)
-        if (payload?.fixedImage) blocks.push({ type: 'image', image: payload.fixedImage })
-        reply({
-          id: item.id, title: item.title, content: item.content,
-          // images 는 싣지 않는다 — 확장의 normalizeJob 이 blocks 에서 본문과 사진을
-          // 모두 파생시키므로, 따로 보내면 같은 base64 가 두 번 실려 전송량만 2배가 된다.
-          blocks,
-          tags: item.tags, emphasize: item.emphasize,
-          options: { openType: item.openType, search: true, category: item.category || null },
-          finalAction: 'schedule', schedule: { datetime: item.scheduleISO },
-          expectedBlogId: blogIdRef.current,
-        })
-      } catch (err: any) {
-        // 왜 건너뛰었는지 남긴다 — 조용히 실패하면 사용자는 '왜 이 글만 안 올라갔지'만 남는다.
-        console.error('[doctorvoice] payload 준비 실패', id, err)
-        toast.error('사진을 준비하지 못해 이 글을 건너뛰었어요', {
-          description: `${err?.message || '알 수 없는 오류'} — 준비함에 남겨뒀으니 다시 담아주세요.`,
-        })
-        reply(null)
-      }
+  // 준비함의 글 1건을 서버 큐가 받을 형태로 만든다. 사진은 지금 IndexedDB 에서 꺼낸다 —
+  // 100건을 미리 다 만들면 수백 MB 가 한꺼번에 메모리에 올라가 탭이 죽는다.
+  const buildQueueJob = async (item: PreparedItem) => {
+    const payload = await preparedStore.get(item.id)
+    const images = payload?.images || []
+    // 담을 때 기록해 둔 장수와 대조한다. 어긋나면 사진이 유실된 것이므로 발행하지 않는다.
+    if (images.length !== item.imageCount) {
+      throw new Error(`사진 유실: ${item.imageCount}장 중 ${images.length}장만 읽힘`)
     }
-    window.addEventListener('doctorvoice-job-request', onRequest)
-    return () => window.removeEventListener('doctorvoice-job-request', onRequest)
-  }, [])
-
-  // 확장이 글 한 건을 끝낼 때마다 결과를 보낸다.
-  // 성공한 건만 준비함에서 빼고, 실패한 건은 사유와 함께 남겨 다시 시도할 수 있게 한다.
-  // (예전엔 전송 직후 준비함을 통째로 비워서 실패한 글이 흔적 없이 사라졌다)
-  useEffect(() => {
-    const onResult = (e: any) => {
-      const { id, ok, message, uncertain } = e.detail || {}
-      if (!id) return
-      const b = batchRef.current
-      if (!b.total) return // 이 화면이 시작한 배치가 아님
-
-      b.done += 1
-      if (ok) {
-        b.ok += 1
-        const item = preparedRef.current.find((p) => p.id === id)
-        setPrepared((prev) => {
-          const next = prev.filter((p) => p.id !== id)
-          persistPrepared(next)
-          return next
-        })
-        preparedStore.remove(id)
-        if (item) {
-          advanceCursor(item.scheduleISO)
-          setScheduleLog((prev) => {
-            const next = [...prev, { title: item.title || '(제목 없음)', at: item.scheduleISO }]
-              .sort((a, b2) => a.at.localeCompare(b2.at)).slice(-200)
-            localStorage.setItem(scopedKey('doctorvoice-schedule-log', scopeIdRef.current), JSON.stringify(next))
-            return next
-          })
-        }
-      } else if (uncertain) {
-        // 시간 초과로 끝난 건 — 실제로는 발행됐을 수 있다. 그냥 다시 발행하면 중복 예약이 되므로
-        // 사용자가 네이버에서 확인하고 판단하도록 따로 표시한다.
-        setFailedIds((prev) => ({
-          ...prev,
-          [id]: '⚠️ 응답 시간 초과 — 네이버에 이미 예약됐을 수 있어요. 확인 후 다시 발행하세요(중복 주의)',
-        }))
-      } else {
-        setFailedIds((prev) => ({ ...prev, [id]: message || '실패' }))
-      }
-      setBatchProgress({ total: b.total, done: b.done, ok: b.ok })
-      try { localStorage.setItem(BATCH_KEY, JSON.stringify({ ...b, at: Date.now() })) } catch { /* noop */ }
-      armStallTimer()
-
-      if (b.done >= b.total) {
-        const failed = b.total - b.ok
-        if (failed > 0) {
-          toast.warning(`예약 등록 완료 — ${b.ok}건 성공, ${failed}건 실패`, {
-            description: '실패한 글은 준비함에 남겨뒀어요. 사유를 확인하고 다시 발행하세요.',
-          })
-        } else {
-          toast.success(`${b.ok}건 모두 예약 등록했어요`)
-        }
-        endBatch()
-      }
+    if (item.hasFixed && !payload?.fixedImage) throw new Error('고정 하단 이미지 유실')
+    const blocks = buildInterleavedBlocks(item.content, images)
+    if (payload?.fixedImage) blocks.push({ type: 'image', image: payload.fixedImage })
+    return {
+      title: item.title,
+      blocks,
+      tags: item.tags,
+      emphasize: item.emphasize,
+      scheduled_at: item.scheduleISO,
+      final_action: 'schedule' as const,
+      open_type: item.openType,
+      search: true,
+      category: item.category || null,
+      blog_ref_id: target.blogRefId,
     }
-    window.addEventListener('doctorvoice-job-result', onResult)
-    return () => window.removeEventListener('doctorvoice-job-result', onResult)
-  }, [])
-
-  // 배치 시작/종료를 localStorage 에도 남긴다.
-  // 발행 도중 새로고침하면 확장은 계속 도는데 이 화면이 결과를 무시해버려,
-  // 이미 등록된 글이 준비함에 남고 사용자가 다시 눌러 중복 발행되는 문제가 있었다.
-  const BATCH_KEY = 'doctorvoice-batch-active'
-
-  // 결과가 이만큼 안 오면 멈춘 것으로 본다.
-  // 확장의 건당 가드(jobGuardMs)는 180초 + 캡차 200초 + 사진당 30초라, 사진 10장이면
-  // 11분이 넘는다. 예전엔 여기가 7분이라 정상적으로 오래 걸리는 글도 '응답 없음'으로
-  // 끊겼다 — 화면만 풀리고 확장은 계속 발행하니, 다시 누르면 같은 글이 두 번 예약됐다.
-  // 반드시 확장 가드의 최댓값보다 길어야 한다.
-  const STALL_MS = 15 * 60 * 1000
-
-  const beginBatch = (total: number) => {
-    batchRef.current = { total, done: 0, ok: 0 }
-    setBatchProgress({ total, done: 0, ok: 0 })
-    try { localStorage.setItem(BATCH_KEY, JSON.stringify({ total, done: 0, ok: 0, at: Date.now() })) } catch { /* noop */ }
-    setPublishing(true)
-    armStallTimer()
   }
 
-  const endBatch = () => {
-    batchRef.current = { total: 0, done: 0, ok: 0 }
-    if (stallTimerRef.current) { clearTimeout(stallTimerRef.current); stallTimerRef.current = null }
-    try { localStorage.removeItem(BATCH_KEY) } catch { /* noop */ }
-    setBatchProgress(null)
-    setPublishing(false)
-  }
-
-  // 새로고침 후 진행 중이던 배치 이어받기 (7분 넘게 조용했으면 죽은 것으로 보고 버린다)
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(BATCH_KEY)
-      if (!raw) return
-      const s = JSON.parse(raw)
-      if (!s?.total || Date.now() - (s.at || 0) > STALL_MS) { localStorage.removeItem(BATCH_KEY); return }
-      batchRef.current = { total: s.total, done: s.done || 0, ok: s.ok || 0 }
-      setBatchProgress({ total: s.total, done: s.done || 0, ok: s.ok || 0 })
-      setPublishing(true)
-      armStallTimer()
-    } catch { /* noop */ }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    if (!blogId) return
+    try { localStorage.setItem(BLOGID_KEY, blogId) } catch { /* noop */ }
+  }, [blogId])
 
-  // 결과 하나가 올 때마다 다시 감는다 → 배치 전체가 아니라 '한 건'이 멈춘 것을 잡는다.
-  const armStallTimer = () => {
-    if (stallTimerRef.current) clearTimeout(stallTimerRef.current)
-    stallTimerRef.current = setTimeout(() => {
-      const b = batchRef.current
-      if (!b.total) return
-      toast.error('발행이 응답하지 않아 중단했어요', {
-        description: `${b.ok}건 완료. 확장 팝업의 '문제진단 로그 복사'로 원인을 확인할 수 있어요.`,
-      })
-      endBatch()
-    }, STALL_MS)
-  }
-
-  // 어느 블로그에 로그인돼 있는지 확장에 물어본다. 이게 정해져야 예약 기준을 계산할 수 있다.
-  const detectBlog = async (silent = true) => {
-    if (!ext.connected || !ext.extensionId) return null
-    setBlogChecking(true)
-    try {
-      const res = await sendMessageToExtension(ext.extensionId, { action: 'SYNC_BLOG' })
-      if (res?.success && res.blogId) {
-        setBlogId((prev) => {
-          if (prev && prev !== res.blogId) {
-            toast.info(`블로그가 '${res.blogId}' 로 바뀌었어요`, {
-              description: '예약 기준과 준비함이 이 블로그 것으로 전환됩니다.',
-            })
-          }
-          return res.blogId
-        })
-        // 다음 방문 때 확장이 붙기 전에도 이 블로그 기준으로 복원할 수 있게 기억해 둔다.
-        try { localStorage.setItem(BLOGID_KEY, res.blogId) } catch { /* noop */ }
-        return res.blogId as string
-      }
-      if (!silent) toast.error('블로그 확인 실패', { description: res?.error || '다시 시도해주세요' })
-    } catch (e: any) {
-      if (!silent) toast.error('블로그 확인 실패', { description: e.message })
-    } finally {
-      setBlogChecking(false)
-    }
-    return null
-  }
-
-  useEffect(() => { if (ext.connected) detectBlog(true) }, [ext.connected]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // 확장 연결과 무관하게, 마지막으로 알던 블로그를 먼저 읽는다. 이게 있어야 복원이
-  // 확장 연결 체인(ext.connected → SYNC_BLOG → 네이버 탭)에 묶이지 않는다.
+  // 블로그 목록을 불러오기 전에도 복원이 되도록, 마지막으로 알던 블로그를 먼저 읽는다.
   useEffect(() => {
     try { setCachedBlogId(localStorage.getItem(BLOGID_KEY)) } catch { /* noop */ }
     setScopeLoaded(true)
@@ -734,25 +506,19 @@ export function SavedPostsManager() {
     })
   }
 
-  // 카테고리 목록 확보: 확장이 스스로 네이버 글쓰기를 열어 읽어오고 서버에 저장한다.
-  // silent=true 는 첫 진입 자동 확보 — 실패해도 조용히 두고 사용자가 직접 누를 수 있게 한다.
+  // 카테고리 목록은 PC 실행기가 네이버 에디터에서 읽어 서버에 저장해 둔다.
+  // 여기서는 그 캐시를 다시 읽기만 한다(실행기가 아직 안 돌았으면 비어 있다).
   const syncCategories = async (silent = false) => {
-    if (!ext.extensionId) {
-      if (!silent) toast.error('확장 프로그램이 연결되어 있지 않습니다')
-      return
-    }
     setSyncingCats(true)
     try {
-      const res = await sendMessageToExtension(ext.extensionId, { action: 'SYNC_CATEGORIES' })
-      if (!res?.success || !res.categories?.length) {
-        if (!silent || res?.needLogin) toast.error(res?.error || '카테고리를 불러오지 못했습니다')
-        return
+      const res = await publishQueueAPI.getCategories()
+      setCategories(res.categories || [])
+      if (!silent) {
+        if (res.categories?.length) toast.success(`카테고리 ${res.categories.length}개`)
+        else toast.info('아직 카테고리를 못 받았어요', { description: 'PC 실행기가 네이버에 한 번 다녀오면 채워집니다.' })
       }
-      await publishQueueAPI.setCategories(res.categories)
-      setCategories(res.categories)
-      if (!silent) toast.success(`카테고리 ${res.categories.length}개를 불러왔습니다`)
     } catch {
-      if (!silent) toast.error('카테고리 동기화 실패')
+      if (!silent) toast.error('카테고리를 불러오지 못했습니다')
     } finally {
       setSyncingCats(false)
     }
@@ -873,14 +639,12 @@ export function SavedPostsManager() {
   // 지나간(과거) 예약은 현황에서 정리
   const upcomingLog = scheduleLog.filter((x) => new Date(x.at).getTime() > Date.now())
 
-  // ── 핵심: 확장 프로그램으로 발행 (세션 재사용, 로그인 정보 없음) ──
+  // ── 핵심: 서버 큐에 담고 PC 실행기가 네이버에 등록한다 ──
   const publish = async () => {
     const { title: finalTitle, body: finalBody } = splitTitleBody(draftTitle, draftBody)
     if (!finalBody && !finalTitle) { toast.error('발행할 글을 입력하세요'); return }
-    if (!ext.connected || !ext.extensionId) {
-      toast.error('확장 프로그램이 연결되지 않았습니다', {
-        description: '상단 안내에서 확장 프로그램을 설치/실행한 뒤 다시 시도하세요',
-      })
+    if (!target.blogRefId) {
+      toast.error('발행할 블로그를 먼저 고르세요', { description: '원스톱 자동화의 연결 설정에서 네이버 블로그를 등록할 수 있습니다' })
       return
     }
 
@@ -894,8 +658,9 @@ export function SavedPostsManager() {
         if (!scheduleDate || !scheduleTime) { toast.error('예약 날짜와 시간을 선택하세요'); return }
         dt = new Date(`${scheduleDate}T${scheduleTime}`)
       }
-      if (isNaN(dt.getTime()) || dt.getTime() <= Date.now()) {
-        toast.error('예약 시간은 현재 이후여야 합니다'); return
+      // 실행기가 에디터를 열 시간이 필요하다. 서버도 같은 기준으로 거른다.
+      if (isNaN(dt.getTime()) || dt.getTime() <= Date.now() + 5 * 60 * 1000) {
+        toast.error('예약 시간은 지금부터 5분 뒤 이후여야 합니다'); return
       }
       scheduleISO = toLocalInput(dt)
     }
@@ -931,25 +696,21 @@ export function SavedPostsManager() {
       const fixedUniq = await resolveFixedImage()
       const blocks = buildInterleavedBlocks(finalBody || finalTitle, images)
       if (fixedUniq) blocks.push({ type: 'image', image: fixedUniq })
-      const allImages = fixedUniq ? [...images, fixedUniq] : images
 
-      const job = {
-        id: savedId || `post-${Date.now()}`,
+      toast.loading('PC 실행기에 넘길 준비 중...', { id: t })
+      await publishQueueAPI.enqueueJob({
         title: finalTitle,
-        content: finalBody || finalTitle,
-        images: allImages,
         blocks, // 글-이미지-글-이미지 + 맨 아래 고정 이미지
         tags,
         emphasize: extractKeywords(finalBody || finalTitle), // 핵심 키워드 자동 굵게
-        options: { openType, search: true, category: category || null },
-        finalAction,
-        schedule: scheduleISO ? { datetime: scheduleISO } : null,
-        expectedBlogId: blogId, // 발행 직전 실제 로그인 계정과 대조 → 다르면 중단
-      }
-
-      toast.loading('네이버 블로그로 전송 중...', { id: t })
-      const res = await sendMessageToExtension(ext.extensionId, { action: 'SUBMIT_JOB', job })
-      if (!res?.success) throw new Error(res?.error || '발행 전송 실패')
+        scheduled_at: scheduleISO,
+        final_action: finalAction === 'publishNow' ? 'publish' : finalAction,
+        open_type: openType,
+        search: true,
+        category: category || null,
+        // 실행기가 이 블로그에 로그인돼 있는지 확인한 뒤에만 글을 쓴다.
+        blog_ref_id: target.blogRefId,
+      })
 
       // 예약이면 다음 글 간격 계산 기준으로 기억 + 예약 현황에 기록
       if (finalAction === 'schedule' && scheduleISO) {
@@ -964,13 +725,14 @@ export function SavedPostsManager() {
       }
 
       const when = scheduleISO ? scheduleISO.replace('T', ' ') : ''
+      const where = target.selected?.label || target.blogId
       const msg =
-        finalAction === 'draft' ? { title: '임시저장을 시작했어요', desc: '새 탭에서 자동으로 초안이 저장됩니다' }
-          : finalAction === 'schedule' ? { title: '예약 발행을 등록했어요', desc: `${when} 예약으로 자동 발행됩니다` }
-            : { title: '발행을 시작했어요', desc: '새 탭에서 자동으로 글이 작성·발행됩니다' }
-      toast.success(msg.title, { id: t, description: msg.desc })
+        finalAction === 'draft' ? { title: '임시저장을 맡겼어요', desc: `${where} · 실행기가 초안으로 저장합니다` }
+          : finalAction === 'schedule' ? { title: '예약 발행을 맡겼어요', desc: `${where} · ${when} 예약으로 등록합니다` }
+            : { title: '발행을 맡겼어요', desc: `${where} · 실행기가 바로 작성·발행합니다` }
+      toast.success(msg.title, { id: t, description: msg.desc + '. 이 창은 닫아도 됩니다.' })
     } catch (e: any) {
-      toast.error('발행 실패', { id: t, description: e.message || '다시 시도해주세요' })
+      toast.error('발행 실패', { id: t, description: e?.response?.data?.detail || e.message || '다시 시도해주세요' })
     } finally {
       setPublishing(false)
     }
@@ -1063,34 +825,60 @@ export function SavedPostsManager() {
     }
   }
 
-  // 준비함의 모든 글을 확장으로 한 번에 예약 발행
+  // 준비함의 모든 글을 서버 큐에 올린다. 네이버 등록은 PC 실행기가 이어서 한다 —
+  // 예전에는 확장이 이 탭에 붙어 한 건씩 처리해서 창을 닫으면 멈췄다.
   const publishAllPrepared = async () => {
-    if (!ext.connected || !ext.extensionId) { toast.error('확장 프로그램이 연결되지 않았습니다'); return }
+    if (!target.blogRefId) {
+      toast.error('발행할 블로그를 먼저 고르세요')
+      return
+    }
     if (prepared.length === 0) return
     setFailedIds({})
-    const t = toast.loading(`준비한 ${prepared.length}건 예약 등록 시작...`)
+    setPublishing(true)
+    const total = prepared.length
+    setBatchProgress({ total, done: 0, ok: 0 })
+    const t = toast.loading(`준비한 ${total}건을 실행기에 넘기는 중...`)
+    let ok = 0
+    const failures: Record<string, string> = {}
     try {
-      // 사진이 빠진 메타데이터만 보낸다(100건이어도 수십 KB).
-      // 실제 payload 는 확장이 글을 처리하기 직전에 doctorvoice-job-request 로 한 건씩 받아간다.
-      const metas = prepared.map((p) => ({
-        id: p.id, title: p.title,
-        options: { openType: p.openType, search: true, category: p.category || null },
-        finalAction: 'schedule', schedule: { datetime: p.scheduleISO },
-        expectedBlogId: blogId,
-      }))
-      const res = await sendMessageToExtension(ext.extensionId, {
-        action: 'SUBMIT_BATCH', jobs: metas, expectedBlogId: blogId,
-      })
-      if (!res?.success) throw new Error(res?.error || '발행 전송 실패')
-
-      // 준비함은 비우지 않는다 — 각 글의 결과를 받아 성공한 것만 하나씩 뺀다.
-      beginBatch(metas.length)
-      toast.success(`${metas.length}건 예약 등록을 시작했어요`, {
-        id: t, description: '새 탭에서 순서대로 등록됩니다. 완료까지 이 창을 열어두세요.',
-      })
-    } catch (e: any) {
-      toast.error('발행 실패', { id: t, description: e.message || '다시 시도해주세요' })
-      endBatch()
+      for (const [index, item] of prepared.entries()) {
+        try {
+          await publishQueueAPI.enqueueJob(await buildQueueJob(item))
+          ok += 1
+          // 서버가 받은 건만 준비함에서 뺀다. 실패한 건은 사유와 함께 남겨 다시 시도한다.
+          setPrepared((prev) => {
+            const next = prev.filter((p) => p.id !== item.id)
+            persistPrepared(next)
+            return next
+          })
+          preparedStore.remove(item.id)
+          advanceCursor(item.scheduleISO)
+          setScheduleLog((prev) => {
+            const next = [...prev, { title: item.title || '(제목 없음)', at: item.scheduleISO }]
+              .sort((a, b) => a.at.localeCompare(b.at)).slice(-200)
+            localStorage.setItem(scopedKey('doctorvoice-schedule-log', scopeIdRef.current), JSON.stringify(next))
+            return next
+          })
+        } catch (e: any) {
+          failures[item.id] = e?.response?.data?.detail || e?.message || '올리지 못했습니다'
+        }
+        setBatchProgress({ total, done: index + 1, ok })
+        toast.loading(`${index + 1}/${total} 전달 중...`, { id: t })
+      }
+      setFailedIds(failures)
+      const failed = total - ok
+      if (failed > 0) {
+        toast.warning(`${ok}건 전달, ${failed}건 실패`, {
+          id: t, description: '실패한 글은 준비함에 남겨뒀어요. 사유를 확인하고 다시 시도하세요.',
+        })
+      } else {
+        toast.success(`${ok}건을 실행기에 넘겼어요`, {
+          id: t, description: 'PC 실행기가 예약 시각 순서대로 네이버에 등록합니다. 이 창은 닫아도 됩니다.',
+        })
+      }
+    } finally {
+      setPublishing(false)
+      setBatchProgress(null)
     }
   }
 
@@ -1105,105 +893,129 @@ export function SavedPostsManager() {
 
   const listTitle = (p: SavedPost) => p.suggested_titles?.[0] || p.title || '제목 없음'
   const hasContent = !!(draftTitle.trim() || draftBody.trim())
-  const canPublish = hasContent && ext.connected && !publishing
+  const canPublish = hasContent && !!target.blogRefId && !publishing
   const intervalSlot = computeIntervalSlot()
 
   return (
-    <div className="container mx-auto p-6 space-y-5 max-w-6xl">
-      {/* 헤더 */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold">네이버 블로그 자동 발행</h1>
-          <p className="text-muted-foreground mt-1">글을 붙여넣고 사진을 더한 뒤 바로 발행 — 한 화면에서 끝납니다</p>
+    <div className="space-y-6">
+      <PageHeader
+        title="블로그 발행"
+        description="글을 붙여넣고 사진을 더한 뒤 네이버 블로그에 바로 발행하세요. 한 화면에서 끝납니다."
+        actions={
+          <>
+            <Button variant="outline" onClick={() => router.push('/dashboard/bulk')}>
+              <Layers />
+              대량 발행
+            </Button>
+            <Button variant="outline" onClick={() => setGuideOpen(true)}>
+              <PlayCircle />
+              발행 가이드
+            </Button>
+          </>
+        }
+      />
+
+      {/* 어느 블로그로 보낼지 + PC 실행기 안내 */}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="surface space-y-2 p-4">
+          <div className="text-sm font-semibold">발행할 블로그</div>
+          <TargetBlogSelect
+            blogs={target.blogs} value={target.blogRefId} onChange={target.choose}
+            loading={target.loading} onRefresh={target.refresh}
+          />
+          <p className="text-xs text-muted-foreground">
+            {target.blogs.length === 0
+              ? '등록된 블로그가 없습니다. 원스톱 자동화의 연결 설정에서 네이버 블로그를 먼저 등록하세요.'
+              : '예약 기준과 준비함은 고른 블로그별로 따로 관리됩니다.'}
+          </p>
         </div>
-        <div className="flex items-center gap-2">
-          <ExtensionStatusBadge />
-          <Button variant="outline" onClick={() => router.push('/dashboard/bulk')} className="gap-2">
-            <Layers className="w-4 h-4" />
-            대량 발행
-          </Button>
-          <Button variant="outline" onClick={() => setGuideOpen(true)} className="gap-2">
-            <PlayCircle className="w-4 h-4" />
-            발행 가이드
-          </Button>
-        </div>
+        <LauncherCard compact />
       </div>
 
-      {/* 실시간 연동 신호등 + 버전 + 자동 업데이트 */}
-      <ExtensionStatusCard />
-
       {/* 본문: 좌 저장 목록(재사용) / 우 인라인 작성+발행 */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
         {/* 왼쪽: 저장된 글(재사용 라이브러리) */}
         <Card className="lg:col-span-2">
-          <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <FileText className="w-4 h-4 text-emerald-600" />
-              저장된 글
-            </CardTitle>
-            <CardDescription>글 {savedPosts.length}개 · 클릭하면 오른쪽에서 바로 수정·발행</CardDescription>
+          <CardHeader>
+            <CardTitle>저장된 글</CardTitle>
+            <CardDescription>
+              <span className="tabular-nums">{savedPosts.length}</span>개 · 누르면 오른쪽에서 바로 수정·발행
+            </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-2 max-h-[620px] overflow-y-auto">
+          <CardContent className="max-h-[620px] overflow-y-auto p-0">
             {savedPosts.length === 0 ? (
-              <div className="text-center py-10 text-muted-foreground">
-                <FileText className="w-10 h-10 mx-auto mb-2 opacity-50" />
-                <p>저장된 글이 없습니다</p>
+              <div className="p-5">
+                <EmptyState
+                  icon={<FileText className="h-8 w-8" />}
+                  title="저장된 글이 없어요"
+                  description="글 작성에서 만든 글을 저장하면 여기에 모입니다."
+                  action={
+                    <Button variant="outline" size="sm" onClick={() => router.push('/dashboard/create')}>
+                      <Plus /> 글 작성하러 가기
+                    </Button>
+                  }
+                />
               </div>
             ) : (
-              savedPosts.map((post) => {
-                const active = selectedId === post.id
-                return (
-                  <div
-                    key={post.id}
-                    onClick={() => loadPost(post)}
-                    className={`p-3 border rounded-lg cursor-pointer transition-all ${
-                      active ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500'
-                        : 'border-gray-200 hover:border-emerald-300 hover:bg-emerald-50/40'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <h3 className="font-semibold text-sm line-clamp-2 flex-1">{listTitle(post)}</h3>
-                      {active ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-none" />
-                      ) : post.sourceType === 'database' ? (
-                        <span className="flex-none inline-flex items-center gap-1 px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-medium rounded">
-                          <Database className="w-2.5 h-2.5" />DB
+              <div className="divide-y">
+                {savedPosts.map((post) => {
+                  const active = selectedId === post.id
+                  return (
+                    <div
+                      key={post.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => loadPost(post)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); loadPost(post) } }}
+                      className={`cursor-pointer px-5 py-3 transition-colors ${
+                        active ? 'bg-accent' : 'hover:bg-muted/40'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <h3 className={`flex-1 text-sm font-medium leading-5 line-clamp-2 ${active ? 'text-accent-foreground' : ''}`}>
+                          {listTitle(post)}
+                        </h3>
+                        {active ? (
+                          <CheckCircle2 className="h-4 w-4 flex-none text-primary" />
+                        ) : post.sourceType === 'database' ? (
+                          <Pill tone="muted"><Database className="h-3 w-3" />DB</Pill>
+                        ) : null}
+                      </div>
+                      <div className="mt-1.5 flex items-center justify-between">
+                        <span className="text-xs tabular-nums text-muted-foreground">
+                          {new Date(post.savedAt).toLocaleDateString('ko-KR')}
                         </span>
-                      ) : null}
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-danger"
+                          aria-label="삭제"
+                          onClick={(e) => { e.stopPropagation(); deletePost(post.id) }}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between mt-2">
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(post.savedAt).toLocaleDateString('ko-KR')}
-                      </span>
-                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-rose-500 hover:text-rose-600 hover:bg-rose-50"
-                        onClick={(e) => { e.stopPropagation(); deletePost(post.id) }}>
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-                  </div>
-                )
-              })
+                  )
+                })}
+              </div>
             )}
           </CardContent>
         </Card>
 
         {/* 오른쪽: 인라인 작성 → 사진 → 발행 (한 화면) */}
         <Card className="lg:col-span-3">
-          <CardHeader className="pb-3 flex flex-row items-start justify-between space-y-0">
+          <CardHeader className="flex flex-row items-start justify-between space-y-0">
             <div>
-              <CardTitle className="text-base">발행 준비</CardTitle>
+              <CardTitle>발행 준비</CardTitle>
               <CardDescription>
                 {selectedId ? '불러온 글을 수정할 수 있어요' : '여기에 글을 붙여넣고 바로 발행하세요'}
               </CardDescription>
             </div>
-            <Button size="sm" variant="outline" onClick={newDraft} className="gap-1.5 flex-none">
-              <Plus className="w-3.5 h-3.5" /> 새 글
+            <Button size="sm" variant="outline" onClick={newDraft} className="flex-none">
+              <Plus /> 새 글
             </Button>
           </CardHeader>
           <CardContent className="space-y-6">
             {/* STEP 1. 글 작성/붙여넣기 (인라인) */}
-            <section className="space-y-2">
-              <div className="flex items-center gap-2 font-semibold">
+            <section className="space-y-3">
+              <div className="flex items-center gap-2 text-sm font-semibold">
                 <StepDot n={1} done={hasContent} />
                 글 작성 · 붙여넣기
               </div>
@@ -1223,7 +1035,7 @@ export function SavedPostsManager() {
 
             {/* STEP 2. 사진 */}
             <section className="space-y-3">
-              <div className="flex items-center gap-2 font-semibold">
+              <div className="flex items-center gap-2 text-sm font-semibold">
                 <StepDot n={2} done={photoMode === 'collection' ? !!selectedCollectionId : uploadedImages.length > 0} />
                 사진 추가 <span className="text-xs font-normal text-muted-foreground">(선택)</span>
               </div>
@@ -1231,43 +1043,45 @@ export function SavedPostsManager() {
               {/* 소스 토글 */}
               <div className="grid grid-cols-2 gap-2">
                 <button
+                  type="button"
                   onClick={() => setPhotoMode('upload')}
-                  className={`flex items-center justify-center gap-2 h-10 rounded-lg border text-sm transition ${
+                  className={`flex h-10 items-center justify-center gap-2 rounded-lg border text-sm transition-colors ${
                     photoMode === 'upload'
-                      ? 'border-emerald-500 bg-emerald-50 text-emerald-700 ring-1 ring-emerald-500'
-                      : 'border-gray-200 text-gray-600 hover:border-emerald-300'
+                      ? 'border-primary bg-accent text-accent-foreground ring-1 ring-primary'
+                      : 'text-muted-foreground hover:bg-muted/40'
                   }`}
                 >
-                  <Upload className="w-4 h-4" /> 직접 업로드
+                  <Upload className="h-4 w-4" /> 직접 업로드
                 </button>
                 <button
+                  type="button"
                   onClick={() => setPhotoMode('collection')}
-                  className={`flex items-center justify-center gap-2 h-10 rounded-lg border text-sm transition ${
+                  className={`flex h-10 items-center justify-center gap-2 rounded-lg border text-sm transition-colors ${
                     photoMode === 'collection'
-                      ? 'border-emerald-500 bg-emerald-50 text-emerald-700 ring-1 ring-emerald-500'
-                      : 'border-gray-200 text-gray-600 hover:border-emerald-300'
+                      ? 'border-primary bg-accent text-accent-foreground ring-1 ring-primary'
+                      : 'text-muted-foreground hover:bg-muted/40'
                   }`}
                 >
-                  <Folder className="w-4 h-4" /> 저장된 목록에서
+                  <Folder className="h-4 w-4" /> 저장된 목록에서
                 </button>
               </div>
 
               {photoMode === 'upload' ? (
                 <>
-                  <label className="flex items-center justify-center gap-2 h-11 rounded-lg border-2 border-dashed border-gray-300 cursor-pointer hover:border-emerald-400 hover:bg-emerald-50/40 text-sm text-gray-600">
-                    <ImageIcon className="w-4 h-4" />
+                  <label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed text-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground">
+                    <ImageIcon className="h-4 w-4" />
                     사진 선택 (여러 장 가능 · 촬영정보 자동 제거)
                     <input type="file" multiple accept="image/*" onChange={handleImageUpload} className="hidden" />
                   </label>
                   {uploadedImages.length > 0 && (
                     <div className="grid grid-cols-5 gap-2">
                       {imagePreview.map((src, i) => (
-                        <div key={i} className="relative group">
+                        <div key={i} className="group relative">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={src} alt="" className="w-full h-16 object-cover rounded-md border" />
-                          <button onClick={() => removeImage(i)}
-                            className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition">
-                            <X className="w-3 h-3" />
+                          <img src={src} alt="" className="h-16 w-full rounded-md border object-cover" />
+                          <button type="button" onClick={() => removeImage(i)} aria-label="사진 제거"
+                            className="absolute -right-1.5 -top-1.5 rounded-full bg-destructive p-0.5 text-destructive-foreground opacity-0 transition-opacity group-hover:opacity-100">
+                            <X className="h-3 w-3" />
                           </button>
                         </div>
                       ))}
@@ -1277,40 +1091,41 @@ export function SavedPostsManager() {
               ) : (
                 <div className="space-y-3">
                   {collections.length === 0 ? (
-                    <div className="rounded-lg border border-dashed border-gray-300 p-4 text-sm text-gray-500 text-center">
-                      저장된 목록이 없습니다.{' '}
-                      <button
-                        onClick={() => router.push('/dashboard/media')}
-                        className="text-emerald-600 underline underline-offset-2"
-                      >
-                        사진 페이지
-                      </button>
-                      에서 목록을 만들고 사진을 담아주세요.
-                    </div>
+                    <EmptyState
+                      className="py-8"
+                      title="저장된 사진 목록이 없어요"
+                      description="사진 풀에서 목록을 만들고 사진을 담아두면 발행할 때마다 자동으로 골라 넣습니다."
+                      action={
+                        <Button variant="outline" size="sm" onClick={() => router.push('/dashboard/media')}>
+                          <ImageIcon /> 사진 풀로 가기
+                        </Button>
+                      }
+                    />
                   ) : (
                     <>
                       {/* 목록 선택 칩 */}
                       <div className="flex flex-wrap gap-2">
                         {collections.map((c) => (
                           <button
+                            type="button"
                             key={c.id}
                             onClick={() => setSelectedCollectionId(c.id)}
-                            className={`flex items-center gap-1.5 pl-3 pr-2 py-1.5 rounded-full text-sm border transition ${
+                            className={`flex items-center gap-1.5 rounded-full border py-1.5 pl-3 pr-2 text-sm transition-colors ${
                               selectedCollectionId === c.id
-                                ? 'border-emerald-500 bg-emerald-50 text-emerald-700 ring-1 ring-emerald-500'
-                                : 'border-gray-200 text-gray-600 hover:border-emerald-300'
+                                ? 'border-primary bg-accent text-accent-foreground ring-1 ring-primary'
+                                : 'text-muted-foreground hover:bg-muted/40'
                             }`}
                           >
-                            <Folder className="w-3.5 h-3.5" />
+                            <Folder className="h-3.5 w-3.5" />
                             {c.name}
-                            <span className="text-[11px] text-muted-foreground">{c.count}장</span>
+                            <span className="text-[11px] tabular-nums text-muted-foreground">{c.count}장</span>
                           </button>
                         ))}
                       </div>
                       {/* 장수 입력(기억됨) + 빠른 선택 */}
                       <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <Label htmlFor="colCount" className="text-sm text-gray-600">이 글에 넣을 사진 수</Label>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Label htmlFor="colCount" className="text-[13px] font-medium text-muted-foreground">이 글에 넣을 사진 수</Label>
                           <Input
                             id="colCount"
                             type="number"
@@ -1318,18 +1133,19 @@ export function SavedPostsManager() {
                             max={30}
                             value={collectionCount}
                             onChange={(e) => setCollectionCount(Math.max(1, Math.min(30, Number(e.target.value) || 1)))}
-                            className="w-20 h-9"
+                            className="h-9 w-20 tabular-nums"
                           />
                           <span className="text-xs text-muted-foreground">장</span>
                           <div className="flex gap-1">
                             {[8, 10, 12, 15].map((n) => (
                               <button
+                                type="button"
                                 key={n}
                                 onClick={() => setCollectionCount(n)}
-                                className={`px-2.5 h-8 rounded-md text-xs border transition ${
+                                className={`h-8 rounded-md border px-2.5 text-xs tabular-nums transition-colors ${
                                   collectionCount === n
-                                    ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
-                                    : 'border-gray-200 text-gray-600 hover:border-emerald-300'
+                                    ? 'border-primary bg-accent text-accent-foreground'
+                                    : 'text-muted-foreground hover:bg-muted/40'
                                 }`}
                               >
                                 {n}
@@ -1342,9 +1158,9 @@ export function SavedPostsManager() {
                         </p>
                       </div>
                       {selectedCollectionId && (
-                        <p className="text-xs text-emerald-700 bg-emerald-50 rounded-md px-3 py-2">
+                        <p className="rounded-md bg-accent px-3 py-2 text-xs text-accent-foreground">
                           &lsquo;{collections.find((c) => c.id === selectedCollectionId)?.name}&rsquo; 목록에서{' '}
-                          {collectionCount}장이 유니크화되어 자동으로 들어갑니다.
+                          <span className="tabular-nums">{collectionCount}</span>장이 유니크화되어 자동으로 들어갑니다.
                         </p>
                       )}
                     </>
@@ -1353,30 +1169,30 @@ export function SavedPostsManager() {
               )}
 
               {/* 고정 하단 이미지 — 모든 글 맨 아래에 항상(유니크화되어) */}
-              <div className="rounded-lg border border-dashed border-gray-300 p-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-medium flex items-center gap-1.5">
-                    <ImageIcon className="w-4 h-4 text-emerald-600" /> 고정 하단 이미지 <span className="text-xs font-normal text-muted-foreground">(선택 · 모든 글 맨 아래)</span>
+              <div className="rounded-lg border border-dashed p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 text-sm font-medium">
+                    <ImageIcon className="h-4 w-4 text-muted-foreground" /> 고정 하단 이미지 <span className="text-xs font-normal text-muted-foreground">(선택 · 모든 글 맨 아래)</span>
                   </div>
                   {fixedImage ? (
-                    <button onClick={removeFixedImage} className="text-xs text-rose-500 hover:text-rose-600 underline">해제</button>
+                    <button type="button" onClick={removeFixedImage} className="text-xs text-danger underline underline-offset-2">해제</button>
                   ) : (
-                    <label className="text-xs text-emerald-600 hover:text-emerald-700 underline cursor-pointer">
+                    <label className="cursor-pointer text-xs text-primary underline underline-offset-2">
                       등록
                       <input type="file" accept="image/*" onChange={handleFixedImageUpload} className="hidden" />
                     </label>
                   )}
                 </div>
                 {fixedImage ? (
-                  <div className="flex items-center gap-2 mt-2">
+                  <div className="mt-2 flex items-center gap-2">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={fixedImage} alt="고정" className="w-16 h-16 object-cover rounded border" />
+                    <img src={fixedImage} alt="고정" className="h-16 w-16 rounded border object-cover" />
                     <p className="text-xs text-muted-foreground">
-                      등록됨 — 발행할 때마다 <b>유니크화(보정)</b>되어 본문 맨 아래에 자동으로 들어갑니다.
+                      등록됨 — 발행할 때마다 <b className="font-medium text-foreground">유니크화(보정)</b>되어 본문 맨 아래에 자동으로 들어갑니다.
                     </p>
                   </div>
                 ) : (
-                  <p className="text-[11px] text-muted-foreground mt-1">
+                  <p className="mt-1 text-xs text-muted-foreground">
                     로고·연락처·안내 이미지 등을 등록하면, 랜덤 사진 외에 모든 글 하단에 항상 붙습니다(매번 다른 변형).
                   </p>
                 )}
@@ -1385,7 +1201,7 @@ export function SavedPostsManager() {
 
             {/* STEP 3. 발행 방식 */}
             <section className="space-y-3">
-              <div className="flex items-center gap-2 font-semibold">
+              <div className="flex items-center gap-2 text-sm font-semibold">
                 <StepDot n={3} done={false} />
                 발행 방식 선택
               </div>
@@ -1394,14 +1210,13 @@ export function SavedPostsManager() {
                   const Icon = opt.icon
                   const active = finalAction === opt.key
                   return (
-                    <button key={opt.key} onClick={() => setFinalAction(opt.key)}
-                      className={`flex flex-col items-center gap-1 rounded-lg border p-3 text-center transition ${
-                        active ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500'
-                          : 'border-gray-200 hover:border-emerald-300'
+                    <button type="button" key={opt.key} onClick={() => setFinalAction(opt.key)}
+                      className={`flex flex-col items-center gap-1 rounded-lg border p-3 text-center transition-colors ${
+                        active ? 'border-primary bg-accent ring-1 ring-primary' : 'hover:bg-muted/40'
                       }`}>
-                      <Icon className={`w-5 h-5 ${active ? 'text-emerald-600' : 'text-gray-400'}`} />
-                      <span className="text-sm font-medium">{opt.label}</span>
-                      <span className="text-[11px] text-muted-foreground leading-tight">{opt.desc}</span>
+                      <Icon className={`h-5 w-5 ${active ? 'text-primary' : 'text-muted-foreground'}`} />
+                      <span className={`text-sm font-medium ${active ? 'text-accent-foreground' : ''}`}>{opt.label}</span>
+                      <span className="text-[11px] leading-tight text-muted-foreground">{opt.desc}</span>
                     </button>
                   )
                 })}
@@ -1409,25 +1224,27 @@ export function SavedPostsManager() {
 
               {/* 예약 발행 상세 */}
               {finalAction === 'schedule' && (
-                <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 space-y-3">
+                <div className="space-y-3 rounded-lg border bg-muted/30 p-4">
                   {/* 방식 토글: 직접 지정 / 간격 예약 */}
                   <div className="grid grid-cols-2 gap-2">
                     <button
+                      type="button"
                       onClick={() => setScheduleMode('manual')}
-                      className={`h-9 rounded-md border text-sm transition ${
+                      className={`h-9 rounded-md border text-sm transition-colors ${
                         scheduleMode === 'manual'
-                          ? 'border-amber-500 bg-white text-amber-800 ring-1 ring-amber-400'
-                          : 'border-amber-200 text-amber-700 hover:bg-white/60'
+                          ? 'border-primary bg-card text-foreground ring-1 ring-primary'
+                          : 'bg-card text-muted-foreground hover:bg-muted/40'
                       }`}
                     >
                       날짜·시간 직접 지정
                     </button>
                     <button
+                      type="button"
                       onClick={() => setScheduleMode('interval')}
-                      className={`h-9 rounded-md border text-sm transition ${
+                      className={`h-9 rounded-md border text-sm transition-colors ${
                         scheduleMode === 'interval'
-                          ? 'border-amber-500 bg-white text-amber-800 ring-1 ring-amber-400'
-                          : 'border-amber-200 text-amber-700 hover:bg-white/60'
+                          ? 'border-primary bg-card text-foreground ring-1 ring-primary'
+                          : 'bg-card text-muted-foreground hover:bg-muted/40'
                       }`}
                     >
                       간격으로 예약
@@ -1437,82 +1254,83 @@ export function SavedPostsManager() {
                   {scheduleMode === 'manual' ? (
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <Label className="text-xs text-amber-800">날짜</Label>
+                        <Label className="text-[13px] font-medium text-muted-foreground">날짜</Label>
                         <Input type="date" value={scheduleDate} onChange={(e) => setScheduleDate(e.target.value)} className="mt-1" />
                       </div>
                       <div>
-                        <Label className="text-xs text-amber-800">시간</Label>
+                        <Label className="text-[13px] font-medium text-muted-foreground">시간</Label>
                         <Input type="time" step={600} value={scheduleTime} onChange={(e) => setScheduleTime(e.target.value)} className="mt-1" />
                       </div>
-                      <p className="col-span-2 text-[11px] text-amber-700">※ 네이버 예약은 10분 단위 — 분은 자동 내림 처리됩니다</p>
+                      <p className="col-span-2 text-xs text-muted-foreground">※ 네이버 예약은 10분 단위 — 분은 자동 내림 처리됩니다</p>
                     </div>
                   ) : (
                     <div className="space-y-2.5">
                       {/* 간격 프리셋 + 커스텀 */}
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs text-amber-800">발행 간격</span>
+                        <span className="text-[13px] font-medium text-muted-foreground">발행 간격</span>
                         {INTERVAL_PRESETS.map((h) => (
                           <button
+                            type="button"
                             key={h}
                             onClick={() => setIntervalHours(h)}
-                            className={`px-2.5 h-8 rounded-full text-sm border transition ${
+                            className={`h-8 rounded-full border px-2.5 text-sm tabular-nums transition-colors ${
                               intervalHours === h
-                                ? 'border-amber-500 bg-amber-500 text-white'
-                                : 'border-amber-300 bg-white text-amber-700 hover:bg-amber-100'
+                                ? 'border-primary bg-primary text-primary-foreground'
+                                : 'bg-card text-muted-foreground hover:bg-muted/40'
                             }`}
                           >
                             {h}시간
                           </button>
                         ))}
-                        <span className="mx-1 text-amber-300">|</span>
+                        <span className="mx-1 text-border">|</span>
                         <Input
                           type="number"
                           min={1}
                           max={48}
                           value={intervalHours}
                           onChange={(e) => setIntervalHours(Math.max(1, Math.min(48, Number(e.target.value) || 1)))}
-                          className="w-16 h-8 bg-white"
+                          className="h-8 w-16 tabular-nums"
                         />
-                        <span className="text-xs text-amber-800">시간마다</span>
+                        <span className="text-xs text-muted-foreground">시간마다</span>
                       </div>
 
                       {/* 어느 블로그 기준인지 — 계정마다 예약 기준이 따로 관리된다 */}
-                      <div className="flex items-center justify-between rounded-md bg-white border border-amber-200 px-3 py-1.5 text-xs">
-                        <span className="text-amber-900">
+                      <div className="flex items-center justify-between gap-2 rounded-md border bg-card px-3 py-1.5 text-xs">
+                        <span className="text-muted-foreground">
                           기준 블로그{' '}
                           {blogConfirmed ? (
-                            <b className="font-semibold">{blogId}</b>
+                            <b className="font-semibold text-foreground">{blogId}</b>
                           ) : cachedBlogId ? (
                             <>
-                              <b className="font-semibold">{cachedBlogId}</b>
-                              <span className="ml-1 text-amber-600">(지난 기록 · 확인 전)</span>
+                              <b className="font-semibold text-foreground">{cachedBlogId}</b>
+                              <span className="ml-1 text-warning">(지난 기록 · 확인 전)</span>
                             </>
                           ) : (
-                            <span className="text-red-600">확인 안 됨 — 간격 예약을 쓸 수 없습니다</span>
+                            <span className="text-danger">고른 블로그 없음 — 간격 예약을 쓸 수 없습니다</span>
                           )}
                         </span>
-                        <button onClick={() => detectBlog(false)} disabled={blogChecking}
-                          className="text-amber-700 underline underline-offset-2 disabled:opacity-50">
-                          {blogChecking ? '확인 중...' : '다시 확인'}
+                        <button type="button" onClick={target.refresh} disabled={blogChecking}
+                          className="shrink-0 text-primary underline underline-offset-2 disabled:opacity-50">
+                          {blogChecking ? '확인 중...' : '목록 새로고침'}
                         </button>
                       </div>
 
                       {/* 다음 예약 시각 */}
-                      <div className="flex items-center justify-between rounded-md bg-white border border-amber-200 px-3 py-2">
+                      <div className="flex items-center justify-between gap-2 rounded-md border bg-card px-3 py-2">
                         <div className="flex items-center gap-2">
-                          <Clock className="w-4 h-4 text-amber-600" />
-                          <span className="text-sm font-medium text-amber-900">
+                          <Clock className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-sm font-medium tabular-nums">
                             예약 시각 {fmtKo(intervalSlot)}
                           </span>
                         </div>
                         {lastScheduledAt && (
-                          <button onClick={resetSchedule} className="text-xs text-amber-700 underline underline-offset-2">
+                          <button type="button" onClick={resetSchedule} className="shrink-0 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground">
                             기준 초기화
                           </button>
                         )}
                       </div>
 
-                      <p className="text-[11px] text-amber-700">
+                      <p className={`text-xs ${!intervalReady ? 'text-warning' : 'text-muted-foreground'}`}>
                         {!intervalReady
                           ? '기준 블로그를 확인해야 간격 예약을 쓸 수 있어요. 기준을 모르면 이미 잡아둔 예약 위에 겹쳐 잡힙니다.'
                           : lastScheduledAt
@@ -1522,18 +1340,18 @@ export function SavedPostsManager() {
 
                       {/* 예약 현황 — 이미 잡아둔 예약들(중복 방지 확인용) */}
                       {upcomingLog.length > 0 && (
-                        <div className="rounded-md bg-white border border-amber-200 p-3">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-semibold text-amber-900">
-                              예약 대기 {upcomingLog.length}건
+                        <div className="rounded-md border bg-card p-3">
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <span className="text-xs font-semibold">
+                              예약 대기 <span className="tabular-nums">{upcomingLog.length}</span>건
                             </span>
-                            <span className="text-[11px] text-amber-600">다음 글은 맨 아래 예약 다음으로 잡힙니다</span>
+                            <span className="text-[11px] text-muted-foreground">다음 글은 맨 아래 예약 다음으로 잡힙니다</span>
                           </div>
-                          <div className="max-h-40 overflow-y-auto divide-y divide-amber-50">
+                          <div className="max-h-40 divide-y overflow-y-auto">
                             {upcomingLog.map((x, i) => (
                               <div key={i} className="flex items-center gap-2 py-1.5 text-xs">
-                                <span className="tabular-nums text-amber-800 w-40 shrink-0">{fmtKo(new Date(x.at))}</span>
-                                <span className="truncate text-gray-700">{x.title}</span>
+                                <span className="w-40 shrink-0 tabular-nums text-muted-foreground">{fmtKo(new Date(x.at))}</span>
+                                <span className="truncate">{x.title}</span>
                               </div>
                             ))}
                           </div>
@@ -1547,9 +1365,9 @@ export function SavedPostsManager() {
               {/* 공개 범위 (발행 계열) */}
               {finalAction !== 'draft' && (
                 <div>
-                  <Label className="text-xs text-muted-foreground">공개 범위</Label>
+                  <Label className="text-[13px] font-medium text-muted-foreground">공개 범위</Label>
                   <select value={openType} onChange={(e) => setOpenType(e.target.value as OpenType)}
-                    className="mt-1 w-full h-10 rounded-md border border-input bg-background px-3 text-sm">
+                    className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
                     <option value="public">전체 공개</option>
                     <option value="neighbor">이웃 공개</option>
                     <option value="both">서로이웃 공개</option>
@@ -1562,22 +1380,22 @@ export function SavedPostsManager() {
               {finalAction !== 'draft' && (
                 <div>
                   <div className="flex items-center justify-between">
-                    <Label className="text-xs text-muted-foreground">카테고리</Label>
+                    <Label className="text-[13px] font-medium text-muted-foreground">카테고리</Label>
                     <button type="button" onClick={() => syncCategories(false)} disabled={syncingCats}
-                      className="text-xs text-emerald-700 hover:underline disabled:opacity-50">
+                      className="text-xs text-primary hover:underline disabled:opacity-50">
                       {syncingCats ? '불러오는 중...' : '목록 새로고침'}
                     </button>
                   </div>
                   <select value={category} onChange={(e) => setCategory(e.target.value)}
                     disabled={syncingCats}
-                    className="mt-1 w-full h-10 rounded-md border border-input bg-background px-3 text-sm disabled:opacity-60">
+                    className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:opacity-60">
                     <option value="">네이버 기본 카테고리</option>
                     {categories.map((c) => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
                   {!syncingCats && categories.length === 0 && (
-                    <p className="mt-1 text-[11px] text-muted-foreground">
+                    <p className="mt-1 text-xs text-muted-foreground">
                       카테고리를 불러오지 못했습니다. 네이버 로그인 상태를 확인한 뒤 &lsquo;목록 새로고침&rsquo;을 눌러주세요.
                     </p>
                   )}
@@ -1586,18 +1404,16 @@ export function SavedPostsManager() {
             </section>
 
             {/* 저장 + 발행 */}
-            <div className="pt-1">
+            <div className="space-y-2 border-t pt-4">
               <div className="flex gap-2">
-                <Button size="lg" variant="outline" onClick={() => saveDraft(false)} disabled={!hasContent}
-                  className="h-12 gap-2">
-                  <Save className="w-4 h-4" /> 저장
+                <Button size="lg" variant="outline" onClick={() => saveDraft(false)} disabled={!hasContent}>
+                  <Save /> 저장
                 </Button>
-                <Button size="lg" disabled={!canPublish} onClick={publish}
-                  className="flex-1 h-12 text-base gap-2 bg-emerald-600 hover:bg-emerald-700">
+                <Button size="lg" disabled={!canPublish} onClick={publish} className="flex-1">
                   {publishing ? (
-                    <><Loader2 className="w-5 h-5 animate-spin" />발행 중...</>
+                    <><Loader2 className="animate-spin" />발행 중...</>
                   ) : (
-                    <><Send className="w-5 h-5" />
+                    <><Send />
                       {finalAction === 'draft' ? '임시저장하기' : finalAction === 'schedule' ? '예약 발행하기' : '지금 발행하기'}
                     </>
                   )}
@@ -1606,68 +1422,66 @@ export function SavedPostsManager() {
 
               {/* 예약 준비함에 담기 (지금 발행하지 않고 모아두기) */}
               {finalAction === 'schedule' && (
-                <Button variant="outline" onClick={preparePost} disabled={!hasContent || preparing}
-                  className="w-full mt-2 h-11 gap-2 border-amber-300 text-amber-700 hover:bg-amber-50">
-                  {preparing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Layers className="w-4 h-4" />}
+                <Button variant="outline" onClick={preparePost} disabled={!hasContent || preparing} className="w-full">
+                  {preparing ? <Loader2 className="animate-spin" /> : <Layers />}
                   예약 준비함에 담기 (지금 발행 안 함)
                 </Button>
               )}
 
-              {!ext.connected && (
-                <p className="mt-2 text-center text-xs text-rose-600">
-                  확장 프로그램이 연결되어야 발행할 수 있어요 —{' '}
-                  <a href={EXTENSION_DOWNLOAD_URL} target="_blank" rel="noopener noreferrer" className="underline font-medium">
-                    설치하기
-                  </a>
+              {!target.blogRefId && (
+                <p className="text-center text-xs text-danger">
+                  발행할 블로그를 먼저 골라야 합니다 (위 &lsquo;발행할 블로그&rsquo;).
                 </p>
               )}
-              <p className="mt-2 text-center text-[11px] text-muted-foreground">
-                브라우저에 네이버가 로그인되어 있어야 합니다(비밀번호는 저장하지 않아요). 미로그인 시 로그인 창이 열립니다.
+              <p className="text-center text-xs text-muted-foreground">
+                담은 글은 서버에 쌓이고, 켜져 있는 PC 실행기가 네이버에 등록합니다. 이 창은 닫아도 됩니다.{' '}
+                <a href={LAUNCHER_DOWNLOAD_URL} download className="font-medium underline">실행기 설치</a>
               </p>
 
               {/* 예약 준비함 — 모아둔 글을 한 번에 발행 */}
               {prepared.length > 0 && (
-                <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50/60 p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-semibold text-amber-900 flex items-center gap-1.5">
-                      <Layers className="w-4 h-4" /> 예약 준비함 {prepared.length}건
+                <div className="mt-4 rounded-lg border p-4">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-1.5 text-sm font-semibold">
+                      <Layers className="h-4 w-4 text-muted-foreground" /> 예약 준비함
+                      <Pill tone="accent"><span className="tabular-nums">{prepared.length}</span>건</Pill>
                     </span>
-                    <Button size="sm" onClick={publishAllPrepared} disabled={!ext.connected || publishing}
-                      className="h-8 gap-1.5 bg-emerald-600 hover:bg-emerald-700">
-                      {publishing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                    <Button size="sm" onClick={publishAllPrepared} disabled={!target.blogRefId || publishing}>
+                      {publishing ? <Loader2 className="animate-spin" /> : <Send />}
                       준비한 {prepared.length}건 한번에 발행
                     </Button>
                   </div>
                   {batchProgress && (
-                    <div className="mb-2">
-                      <div className="flex items-center justify-between text-[11px] text-amber-800 mb-1">
-                        <span>등록 중… {batchProgress.done}/{batchProgress.total}건</span>
-                        <span>성공 {batchProgress.ok}건{batchProgress.done > batchProgress.ok && ` · 실패 ${batchProgress.done - batchProgress.ok}건`}</span>
+                    <div className="mb-3">
+                      <div className="mb-1 flex items-center justify-between text-[11px] tabular-nums text-muted-foreground">
+                        <span>실행기로 넘기는 중… {batchProgress.done}/{batchProgress.total}건</span>
+                        <span>전달 {batchProgress.ok}건{batchProgress.done > batchProgress.ok && ` · 실패 ${batchProgress.done - batchProgress.ok}건`}</span>
                       </div>
-                      <div className="h-1.5 rounded-full bg-amber-100 overflow-hidden">
-                        <div className="h-full bg-emerald-500 transition-all"
+                      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                        <div className="h-full bg-primary transition-all"
                           style={{ width: `${Math.round((batchProgress.done / batchProgress.total) * 100)}%` }} />
                       </div>
                     </div>
                   )}
-                  <div className="max-h-52 overflow-y-auto divide-y divide-amber-100">
+                  <div className="max-h-52 divide-y overflow-y-auto">
                     {prepared.map((p) => (
-                      <div key={p.id} className="flex items-center gap-2 py-1.5 text-xs">
-                        <span className="tabular-nums text-amber-800 w-36 shrink-0">{fmtKo(new Date(p.scheduleISO))}</span>
-                        <span className="flex-1 truncate text-gray-700">{p.title || '(제목 없음)'}</span>
+                      <div key={p.id} className="flex items-center gap-2 py-2 text-xs">
+                        <span className="w-36 shrink-0 tabular-nums text-muted-foreground">{fmtKo(new Date(p.scheduleISO))}</span>
+                        <span className="flex-1 truncate">{p.title || '(제목 없음)'}</span>
                         {failedIds[p.id] && (
-                          <span className="text-[11px] text-rose-600 shrink-0 max-w-40 truncate" title={failedIds[p.id]}>
-                            실패: {failedIds[p.id]}
-                          </span>
+                          <Pill tone="danger" className="max-w-40 shrink-0 truncate" >
+                            <span className="truncate" title={failedIds[p.id]}>실패: {failedIds[p.id]}</span>
+                          </Pill>
                         )}
-                        <span className="text-[11px] text-muted-foreground shrink-0">사진 {p.imageCount}</span>
-                        <button onClick={() => removePrepared(p.id)} className="text-rose-500 hover:text-rose-600 shrink-0">
-                          <X className="w-3.5 h-3.5" />
+                        <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">사진 {p.imageCount}</span>
+                        <button type="button" onClick={() => removePrepared(p.id)} aria-label="준비함에서 제거"
+                          className="shrink-0 text-muted-foreground hover:text-danger">
+                          <X className="h-3.5 w-3.5" />
                         </button>
                       </div>
                     ))}
                   </div>
-                  <p className="mt-2 text-[11px] text-amber-700">
+                  <p className="mt-3 text-xs text-muted-foreground">
                     담아둔 글은 여기 저장돼요(새로고침해도 유지). 다 모은 뒤 &lsquo;한번에 발행&rsquo;을 누르면 확장이 순서대로
                     네이버 예약발행에 등록하고, 등록에 성공한 글만 목록에서 빠집니다.
                   </p>
@@ -1682,8 +1496,8 @@ export function SavedPostsManager() {
       <PublishGuide
         isOpen={guideOpen}
         onClose={() => setGuideOpen(false)}
-        onDownloadExtension={() => window.open(EXTENSION_DOWNLOAD_URL, '_blank')}
-        hasExtension={ext.connected}
+        onDownloadLauncher={() => window.open(LAUNCHER_DOWNLOAD_URL, '_blank')}
+        hasLauncherBlog={!!target.blogRefId}
         hasSelectedPost={hasContent}
         hasImages={photoMode === 'collection' ? !!selectedCollectionId : uploadedImages.length > 0}
         onStartPublish={publish}
@@ -1692,12 +1506,13 @@ export function SavedPostsManager() {
   )
 }
 
+/** 단계 번호 원(28px). 완료 = 성공색 + 체크, 미완 = 중립. */
 function StepDot({ n, done }: { n: number; done: boolean }) {
   return (
-    <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${
-      done ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-600'
+    <span className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold tabular-nums ${
+      done ? 'bg-success-soft text-success' : 'bg-muted text-muted-foreground'
     }`}>
-      {done ? <CheckCircle2 className="w-4 h-4" /> : n}
+      {done ? <Check className="h-4 w-4" /> : n}
     </span>
   )
 }

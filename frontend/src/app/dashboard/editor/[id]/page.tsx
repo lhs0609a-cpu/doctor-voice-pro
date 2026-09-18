@@ -4,7 +4,8 @@ import { useParams, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { BlogEditor } from '@/components/blog-editor/blog-editor'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, Loader2 } from 'lucide-react'
+import { EmptyState } from '@/components/app-shell/ui-kit'
+import { ArrowLeft, FileText } from 'lucide-react'
 import { toast } from 'sonner'
 import type { SavedPost } from '@/types'
 
@@ -61,27 +62,27 @@ export default function EditorPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+      <div className="flex justify-center py-16">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
       </div>
     )
   }
 
   if (!post) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-4">
-        <p className="text-gray-500">글을 찾을 수 없습니다</p>
-        <Button onClick={() => router.push('/dashboard/saved')}>
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          돌아가기
-        </Button>
-      </div>
+      <EmptyState
+        icon={<FileText className="h-8 w-8" />}
+        title="글을 찾을 수 없습니다"
+        description="저장된 글 목록에서 다시 선택해 주세요."
+        action={
+          <Button onClick={() => router.push('/dashboard/saved')}>
+            <ArrowLeft />
+            저장된 글로 돌아가기
+          </Button>
+        }
+      />
     )
   }
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <BlogEditor post={post} onSave={handleSave} />
-    </div>
-  )
+  return <BlogEditor post={post} onSave={handleSave} />
 }

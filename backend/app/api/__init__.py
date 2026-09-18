@@ -12,6 +12,8 @@ from app.api import (
     media_pool,  # 사진 풀 + 이미지 유니크화
     publish_queue,  # 대량 자동발행 큐
     keyword_batch,  # 키워드 대량 생성 프롬프트 템플릿(계정 동기화)
+    campaign,  # 캠페인(병원 단위 대량 발행: 키워드→원고→사진→예약→현황)
+    blog_index,  # 블로그 지수 + 상위노출 가능성 판정
 )
 
 api_router = APIRouter()
@@ -68,3 +70,7 @@ api_router.include_router(media_pool.router, prefix="/media", tags=["media"])
 api_router.include_router(publish_queue.router, prefix="/publish", tags=["publish-queue"])
 # 키워드 대량 생성 프롬프트 템플릿 (계정별 서버 동기화)
 api_router.include_router(keyword_batch.router, prefix="/keyword-batch", tags=["keyword-batch"])
+# 캠페인(병원 단위 대량 발행)
+api_router.include_router(campaign.router, prefix="/campaign", tags=["campaign"])
+# 블로그 지수 / 상위노출 가능성
+api_router.include_router(blog_index.router, prefix="/blog-index", tags=["blog-index"])

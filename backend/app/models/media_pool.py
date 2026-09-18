@@ -6,7 +6,7 @@
 import uuid
 from datetime import datetime
 from sqlalchemy import (
-    Column, String, Integer, Float, Boolean, DateTime, ForeignKey, LargeBinary, Text
+    Column, String, Integer, Float, Boolean, DateTime, ForeignKey, LargeBinary, Text, JSON
 )
 from sqlalchemy.orm import relationship
 from app.db.database import Base
@@ -32,6 +32,17 @@ class PoolImage(Base):
     active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     last_used_at = Column(DateTime, nullable=True)
+
+    # AI 사진 인식(업로드 후 1회). 글 문단과 사진을 맞출 때 쓴다.
+    #   scene: exterior|reception|consult|treatment|equipment|herbal|staff|illustration|other
+    #   tags: ["피부", "진료실", "실내", ...]  caption: 한 줄 설명
+    scene = Column(String(30), nullable=True)
+    tags = Column(JSON, nullable=True)
+    caption = Column(Text, nullable=True)
+    has_text = Column(Boolean, nullable=True)      # 사진 안에 글자가 있는지(간판/안내문)
+    suitable_for = Column(JSON, nullable=True)    # 어울리는 글 단계 ["도입","진료과정",...]
+    tagged_at = Column(DateTime, nullable=True)
+    tag_error = Column(Text, nullable=True)
 
     variants = relationship(
         "ImageVariant", back_populates="pool_image", cascade="all, delete-orphan"

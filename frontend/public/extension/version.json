@@ -1,7 +1,8 @@
 {
-  "version": "16.0.8",
-  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v16.0.8.zip",
-  "notes": "v16.0.8 — Gemini 글 생성이 산발적으로 '응답이 시작되지 않았습니다'로 실패하던 문제 수정(입력 좌표·전송 검증) · 실패 사유를 한도/거부/탭꺼짐으로 구분해 표시",
-  "minVersion": "15.0.0",
-  "releasedAt": "2026-08-24"
+  "version": "17.1.0",
+  "downloadUrl": "https://doctor-voice-pro-ghwi.vercel.app/extension/doctorvoice-extension-v17.1.0.zip",
+  "notes": "v17.1 — 랜딩 링크 검증, URL 입력 보존, 서버 예약 동작 연결 수정, 결과 보고 복구.",
+  "minVersion": "17.1.0",
+  "releasedAt": "2026-09-09",
+  "sha256": "7dc29c38f278716cf67d6c91b3ac688d09f74265336ad4275451941e7dc9471e"
 }

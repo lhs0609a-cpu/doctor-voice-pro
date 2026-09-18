@@ -1,6 +1,6 @@
 'use client'
 
-import { Card, CardContent } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { List } from 'lucide-react'
 
 interface SubtitlePreviewProps {
@@ -14,31 +14,24 @@ export function SubtitlePreview({ subtitles }: SubtitlePreviewProps) {
 
   return (
     <Card>
-      <CardContent className="p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <List className="h-4 w-4 text-purple-600" />
-          <h3 className="font-semibold text-sm">추천 소제목</h3>
-        </div>
-
-        <div className="space-y-3">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <List className="h-4 w-4 text-muted-foreground" />
+          추천 소제목
+        </CardTitle>
+        <CardDescription>본문 흐름에 맞춰 AI가 제안한 소제목입니다</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="divide-y rounded-lg border">
           {subtitles.map((subtitle, index) => (
-            <div
-              key={index}
-              className="flex items-start gap-3 p-3 bg-gradient-to-r from-purple-50 to-transparent rounded-lg border border-purple-100"
-            >
-              <div className="flex-shrink-0 w-6 h-6 rounded-full bg-purple-500 text-white flex items-center justify-center text-xs font-bold">
+            <div key={index} className="flex items-start gap-3 px-4 py-3 text-sm">
+              <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-accent text-xs font-semibold tabular-nums text-primary">
                 {index + 1}
               </div>
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">{subtitle}</p>
-              </div>
+              <p className="flex-1 font-medium">{subtitle}</p>
             </div>
           ))}
         </div>
-
-        <p className="text-xs text-gray-500 mt-3">
-          📝 본문의 흐름에 맞는 매력적인 소제목입니다
-        </p>
       </CardContent>
     </Card>
   )

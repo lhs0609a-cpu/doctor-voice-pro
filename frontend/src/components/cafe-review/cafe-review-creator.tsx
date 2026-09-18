@@ -7,6 +7,8 @@ import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Slider } from '@/components/ui/slider'
+import { EmptyState } from '@/components/app-shell/ui-kit'
+import { cn } from '@/lib/utils'
 import type { CafeReviewInput, CafeReviewStyle } from '@/types'
 import { ReviewStyleConfig } from './review-style-config'
 import { Loader2, Sparkles, Coffee, FileDown, FileText, Copy, CheckCircle2 } from 'lucide-react'
@@ -41,7 +43,7 @@ export function CafeReviewCreator() {
   const [copied, setCopied] = useState(false)
   // AI 제공자 및 모델 선택 (GPT만 사용)
   const [aiProvider] = useState('gpt')
-  const [aiModel, setAiModel] = useState('gpt-4o-mini')
+  const [aiModel, setAiModel] = useState('gemini-2.5-flash')
 
   const handleGenerate = async () => {
     // 입력 검증 (최소 글자수 제한 제거, 간단한 키워드만 있어도 OK)
@@ -282,13 +284,13 @@ ${reviewInput.emphasis_points ? `[특히 강조하고 싶은 점]\n${reviewInput
   }
 
   return (
-    <div className="grid lg:grid-cols-2 gap-6">
+    <div className="grid gap-4 lg:grid-cols-2">
       {/* 입력 섹션 */}
-      <div className="space-y-6">
+      <div className="space-y-4">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Coffee className="h-5 w-5 text-amber-600" />
+              <Coffee className="h-4 w-4 text-muted-foreground" />
               카페 바이럴 후기 정보
             </CardTitle>
             <CardDescription>
@@ -336,8 +338,8 @@ ${reviewInput.emphasis_points ? `[특히 강조하고 싶은 점]\n${reviewInput
                 value={reviewInput.experience_content}
                 onChange={(e) => setReviewInput({ ...reviewInput, experience_content: e.target.value })}
               />
-              <div className="text-sm text-muted-foreground">
-                {reviewInput.experience_content.length}자 / 최소 10자 (짧아도 괜찮습니다!)
+              <div className="text-xs tabular-nums text-muted-foreground">
+                {reviewInput.experience_content.length}자 / 최소 10자 (짧아도 괜찮습니다)
               </div>
             </div>
 
@@ -366,7 +368,7 @@ ${reviewInput.emphasis_points ? `[특히 강조하고 싶은 점]\n${reviewInput
                       const clampedValue = Math.max(300, Math.min(2500, value))
                       setReviewInput({ ...reviewInput, target_length: clampedValue })
                     }}
-                    className="w-24 h-8 text-sm"
+                    className="h-8 w-24 text-sm tabular-nums"
                   />
                   <span className="text-sm text-muted-foreground">자</span>
                 </div>
@@ -392,8 +394,9 @@ ${reviewInput.emphasis_points ? `[특히 강조하고 싶은 점]\n${reviewInput
                 {['1인칭', '3인칭', '대화형'].map((perspective) => (
                   <Button
                     key={perspective}
-                    variant={writingPerspective === perspective ? 'default' : 'outline'}
+                    variant="outline"
                     size="sm"
+                    className={cn(writingPerspective === perspective && 'border-primary bg-accent text-accent-foreground')}
                     onClick={() => setWritingPerspective(perspective)}
                   >
                     {perspective}
@@ -402,16 +405,25 @@ ${reviewInput.emphasis_points ? `[특히 강조하고 싶은 점]\n${reviewInput
               </div>
             </div>
 
-            {/* GPT 모델 선택 */}
-            <div className="space-y-2 pt-4 border-t">
-              <Label>GPT 모델 선택</Label>
+            {/* 모델 선택 */}
+            <div className="space-y-2 border-t pt-4">
+              <Label>모델 선택</Label>
               <div className="grid grid-cols-1 gap-2">
                 <Button
-                  variant={aiModel === 'gpt-4o-mini' ? 'default' : 'outline'}
+                  variant="outline"
                   size="sm"
-                  onClick={() => setAiModel('gpt-4o-mini')}
+                  className={cn(aiModel === 'gemini-2.5-flash' && 'border-primary bg-accent text-accent-foreground')}
+                  onClick={() => setAiModel('gemini-2.5-flash')}
                 >
-                  GPT-4o Mini (빠름)
+                  Gemini 2.5 Flash (추천)
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={cn(aiModel === 'gemini-3.5-flash-lite' && 'border-primary bg-accent text-accent-foreground')}
+                  onClick={() => setAiModel('gemini-3.5-flash-lite')}
+                >
+                  Gemini 3.5 Flash Lite (저비용)
                 </Button>
               </div>
             </div>
@@ -422,8 +434,9 @@ ${reviewInput.emphasis_points ? `[특히 강조하고 싶은 점]\n${reviewInput
                 {[1, 2, 3, 4, 5].map((count) => (
                   <Button
                     key={count}
-                    variant={generateCount === count ? 'default' : 'outline'}
+                    variant="outline"
                     size="sm"
+                    className={cn('tabular-nums', generateCount === count && 'border-primary bg-accent text-accent-foreground')}
                     onClick={() => setGenerateCount(count)}
                   >
                     {count}개
@@ -436,7 +449,7 @@ ${reviewInput.emphasis_points ? `[특히 강조하고 싶은 점]\n${reviewInput
             </div>
 
             <Button
-              className="w-full gap-2"
+              className="w-full"
               size="lg"
               onClick={handleGenerate}
               disabled={loading || !reviewInput.hospital_name || !reviewInput.visit_purpose || reviewInput.experience_content.length < 10}
@@ -460,33 +473,30 @@ ${reviewInput.emphasis_points ? `[특히 강조하고 싶은 점]\n${reviewInput
       </div>
 
       {/* 출력 섹션 */}
-      <div className="space-y-6">
+      <div className="space-y-4">
         {!generatedReview ? (
-          <Card className="border-dashed">
-            <CardContent className="pt-6">
-              <div className="text-center py-12 text-muted-foreground">
-                <Coffee className="h-12 w-12 mx-auto mb-3 text-amber-300" />
-                <p>정보를 입력하고 생성하기를 눌러주세요</p>
-                <p className="text-sm mt-2">AI가 자연스러운 카페 후기를 작성합니다</p>
-              </div>
-            </CardContent>
-          </Card>
+          <EmptyState
+            icon={<Coffee className="h-8 w-8" />}
+            title="정보를 입력하고 생성하기를 눌러주세요"
+            description="AI가 자연스러운 카페 후기를 작성합니다"
+            className="h-full"
+          />
         ) : (
           <>
             {/* 여러 버전 선택 UI */}
             {generatedReviews.length > 1 && (
-              <Card>
-                <CardContent className="pt-4">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Label className="text-sm font-medium">생성된 버전 선택</Label>
-                    <span className="text-xs text-muted-foreground">({generatedReviews.length}개)</span>
+              <div className="surface p-4">
+                  <div className="mb-3 flex items-center gap-2">
+                    <Label className="text-[13px] font-medium text-muted-foreground">생성된 버전 선택</Label>
+                    <span className="text-xs tabular-nums text-muted-foreground">({generatedReviews.length}개)</span>
                   </div>
                   <div className="grid grid-cols-5 gap-2">
                     {generatedReviews.map((_, index) => (
                       <Button
                         key={index}
-                        variant={selectedReviewIndex === index ? 'default' : 'outline'}
+                        variant="outline"
                         size="sm"
+                        className={cn(selectedReviewIndex === index && 'border-primary bg-accent text-accent-foreground')}
                         onClick={() => {
                           setSelectedReviewIndex(index)
                           setGeneratedReview(generatedReviews[index])
@@ -496,57 +506,52 @@ ${reviewInput.emphasis_points ? `[특히 강조하고 싶은 점]\n${reviewInput
                       </Button>
                     ))}
                   </div>
-                </CardContent>
-              </Card>
+              </div>
             )}
 
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center justify-between">
-                  생성된 카페 후기
-                  {generatedReviews.length > 1 && (
-                    <span className="text-sm font-normal text-muted-foreground">
-                      (버전 {selectedReviewIndex + 1}/{generatedReviews.length})
-                    </span>
-                  )}
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleCopy}
-                      className="gap-2"
-                    >
-                      {copied ? (
-                        <>
-                          <CheckCircle2 className="h-4 w-4" />
-                          복사됨
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="h-4 w-4" />
-                          복사
-                        </>
-                      )}
-                    </Button>
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <CardTitle>생성된 카페 후기</CardTitle>
+                    {generatedReviews.length > 1 && (
+                      <CardDescription className="tabular-nums">
+                        버전 {selectedReviewIndex + 1}/{generatedReviews.length}
+                      </CardDescription>
+                    )}
                   </div>
-                </CardTitle>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCopy}
+                  >
+                    {copied ? (
+                      <>
+                        <CheckCircle2 className="h-4 w-4" />
+                        복사됨
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="h-4 w-4" />
+                        복사
+                      </>
+                    )}
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent className="space-y-4">
-              <div className="prose prose-sm max-w-none">
-                <div className="whitespace-pre-wrap text-sm leading-relaxed max-h-[500px] overflow-y-auto border rounded-md p-4 bg-amber-50">
-                  {generatedReview}
-                </div>
+              <div className="max-h-[500px] overflow-y-auto whitespace-pre-wrap rounded-lg border bg-muted/40 p-4 text-sm leading-relaxed">
+                {generatedReview}
               </div>
 
-              <div className="text-xs text-muted-foreground pt-2">
+              <div className="text-xs tabular-nums text-muted-foreground">
                 글자수: {generatedReview.length}자
               </div>
 
-              <div className="grid grid-cols-2 gap-2 pt-4 border-t">
+              <div className="grid grid-cols-2 gap-2 border-t pt-4">
                 <Button
                   variant="outline"
                   onClick={handleDownloadWord}
-                  className="gap-2"
                 >
                   <FileDown className="h-4 w-4" />
                   Word 저장
@@ -554,16 +559,15 @@ ${reviewInput.emphasis_points ? `[특히 강조하고 싶은 점]\n${reviewInput
                 <Button
                   variant="outline"
                   onClick={handleDownloadText}
-                  className="gap-2"
                 >
                   <FileText className="h-4 w-4" />
                   텍스트 저장
                 </Button>
               </div>
 
-              <div className="bg-blue-50 border border-blue-200 rounded-md p-3 text-xs space-y-1">
-                <p className="font-medium text-blue-900">💡 카페 게시 팁</p>
-                <ul className="text-blue-700 space-y-0.5 pl-4">
+              <div className="space-y-1 rounded-lg bg-accent p-3 text-xs">
+                <p className="font-medium text-accent-foreground">카페 게시 팁</p>
+                <ul className="space-y-0.5 pl-4 text-muted-foreground">
                   <li>• 제목은 짧고 흥미롭게 (예: "○○피부과 다녀왔어요!")</li>
                   <li>• 사진이 있으면 신뢰도가 훨씬 높아집니다</li>
                   <li>• 댓글에 친절하게 답변하면 더 자연스러워요</li>

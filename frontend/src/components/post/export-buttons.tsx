@@ -1,7 +1,7 @@
 'use client'
 
 import { Button } from '@/components/ui/button'
-import { FileDown, FileText, Sparkles } from 'lucide-react'
+import { FileDown, FileText, Sparkles, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useState } from 'react'
 
@@ -192,15 +192,15 @@ export function ExportButtons({
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-col gap-2">
-        <p className="text-sm font-medium text-gray-700">블로그 복붙용 다운로드</p>
-        <p className="text-xs text-gray-500">
-          워드 문서(.docx)를 다운로드하여 블로그에 붙여넣으면 색상, 강조, 인용구가 모두 유지됩니다
+    <div className="space-y-4">
+      <div className="space-y-1">
+        <p className="text-sm font-semibold">블로그 복붙용 다운로드</p>
+        <p className="text-xs text-muted-foreground">
+          워드 문서(.docx)를 내려받아 블로그에 붙여넣으면 색상, 강조, 인용구가 그대로 유지됩니다
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
         {/* 워드 다운로드 (추천) */}
         <Button
           onClick={exportToDocx}
@@ -210,12 +210,12 @@ export function ExportButtons({
         >
           {exporting ? (
             <>
-              <FileDown className="w-4 h-4 mr-2 animate-spin" />
+              <Loader2 className="h-4 w-4 animate-spin" />
               생성 중...
             </>
           ) : (
             <>
-              <FileDown className="w-4 h-4 mr-2" />
+              <FileDown className="h-4 w-4" />
               워드 다운로드 (추천)
             </>
           )}
@@ -228,7 +228,7 @@ export function ExportButtons({
           variant="outline"
           className="w-full"
         >
-          <FileText className="w-4 h-4 mr-2" />
+          <FileText className="h-4 w-4" />
           HTML 복사
         </Button>
 
@@ -236,17 +236,17 @@ export function ExportButtons({
         <Button
           onClick={autoExport}
           disabled={autoExporting || !content}
-          variant="secondary"
+          variant="outline"
           className="w-full"
         >
           {autoExporting ? (
             <>
-              <Sparkles className="w-4 h-4 mr-2 animate-pulse" />
+              <Sparkles className="h-4 w-4 animate-pulse" />
               AI 분석 중...
             </>
           ) : (
             <>
-              <Sparkles className="w-4 h-4 mr-2" />
+              <Sparkles className="h-4 w-4" />
               AI 자동 강조
             </>
           )}
@@ -254,17 +254,17 @@ export function ExportButtons({
       </div>
 
       {/* 사용 가이드 */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
-        <p className="text-xs font-semibold text-blue-900">📋 사용 방법</p>
-        <ol className="text-xs text-blue-800 space-y-1 list-decimal list-inside">
+      <div className="space-y-2 rounded-lg border bg-muted/40 p-4">
+        <p className="text-[13px] font-medium text-muted-foreground">사용 방법</p>
+        <ol className="list-inside list-decimal space-y-1 text-xs text-muted-foreground">
           <li>워드 다운로드 버튼 클릭</li>
           <li>다운로드된 .docx 파일 열기</li>
           <li>전체 선택 (Ctrl+A 또는 Cmd+A)</li>
           <li>복사 (Ctrl+C 또는 Cmd+C)</li>
           <li>네이버/티스토리 블로그 에디터에 붙여넣기 (Ctrl+V)</li>
         </ol>
-        <p className="text-xs text-blue-700 mt-2">
-          ✨ 모든 스타일(색상, 강조, 인용구)이 완벽하게 유지됩니다!
+        <p className="text-xs text-foreground">
+          모든 스타일(색상, 강조, 인용구)이 그대로 유지됩니다.
         </p>
       </div>
     </div>

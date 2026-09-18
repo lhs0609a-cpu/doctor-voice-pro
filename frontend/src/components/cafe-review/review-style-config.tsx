@@ -24,7 +24,6 @@ export function ReviewStyleConfig({ value, onChange }: ReviewStyleConfigProps) {
       description: '격식있게 ↔ 친구처럼',
       min: '격식있게',
       max: '친구처럼',
-      color: 'blue'
     },
     {
       key: 'emotion' as keyof CafeReviewStyle,
@@ -33,7 +32,6 @@ export function ReviewStyleConfig({ value, onChange }: ReviewStyleConfigProps) {
       description: '담담하게 ↔ 감정 풍부',
       min: '담담하게',
       max: '감정 풍부',
-      color: 'pink'
     },
     {
       key: 'humor' as keyof CafeReviewStyle,
@@ -42,7 +40,6 @@ export function ReviewStyleConfig({ value, onChange }: ReviewStyleConfigProps) {
       description: '진지하게 ↔ 재치있게',
       min: '진지하게',
       max: '재치있게',
-      color: 'yellow'
     },
     {
       key: 'colloquial' as keyof CafeReviewStyle,
@@ -51,7 +48,6 @@ export function ReviewStyleConfig({ value, onChange }: ReviewStyleConfigProps) {
       description: '문어체 ↔ 말하듯',
       min: '문어체',
       max: '말하듯',
-      color: 'green'
     },
     {
       key: 'emoji_usage' as keyof CafeReviewStyle,
@@ -60,7 +56,6 @@ export function ReviewStyleConfig({ value, onChange }: ReviewStyleConfigProps) {
       description: '없음 ↔ 많이',
       min: '없음',
       max: '많이',
-      color: 'purple'
     },
     {
       key: 'detail_level' as keyof CafeReviewStyle,
@@ -69,7 +64,6 @@ export function ReviewStyleConfig({ value, onChange }: ReviewStyleConfigProps) {
       description: '간략히 ↔ 구체적으로',
       min: '간략히',
       max: '구체적으로',
-      color: 'indigo'
     },
     {
       key: 'honesty' as keyof CafeReviewStyle,
@@ -78,32 +72,31 @@ export function ReviewStyleConfig({ value, onChange }: ReviewStyleConfigProps) {
       description: '긍정만 ↔ 단점도 언급',
       min: '긍정만',
       max: '단점도',
-      color: 'orange'
-    }
+    },
   ]
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Sparkles className="h-5 w-5 text-purple-600" />
+          <Sparkles className="h-4 w-4 text-muted-foreground" />
           후기 작성 스타일
         </CardTitle>
         <CardDescription>
-          슬라이더를 조절하여 원하는 스타일로 커스터마이징하세요
+          슬라이더를 움직여 원하는 말투로 맞추세요
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent className="space-y-4">
         {styleOptions.map((option) => {
           const Icon = option.icon
           return (
             <div key={option.key} className="space-y-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <Icon className={`h-4 w-4 text-${option.color}-600`} />
+                  <Icon className="h-4 w-4 text-muted-foreground" />
                   <Label className="text-sm font-medium">{option.label}</Label>
                 </div>
-                <span className="text-sm font-mono text-muted-foreground">
+                <span className="text-sm tabular-nums text-muted-foreground">
                   {value[option.key]}
                 </span>
               </div>
@@ -124,14 +117,12 @@ export function ReviewStyleConfig({ value, onChange }: ReviewStyleConfigProps) {
           )
         })}
 
-        <div className="pt-4 border-t">
-          <p className="text-xs text-muted-foreground mb-3">
-            💡 <strong>자연스러운 후기 팁:</strong>
-          </p>
-          <ul className="text-xs text-muted-foreground space-y-1 pl-4">
+        <div className="rounded-lg border bg-muted/40 p-3">
+          <p className="mb-2 text-[13px] font-medium">자연스러운 후기 팁</p>
+          <ul className="space-y-1 pl-4 text-xs text-muted-foreground">
             <li>• 친근함 7-9: 실제 지인에게 추천하는 느낌</li>
             <li>• 감정 6-8: 솔직한 느낌을 담되 과하지 않게</li>
-            <li>• 솔직함 6-7: 작은 단점도 언급하면 신뢰도 UP</li>
+            <li>• 솔직함 6-7: 작은 단점도 언급하면 신뢰도가 올라갑니다</li>
             <li>• 디테일 7-8: 구체적인 경험일수록 진짜처럼</li>
           </ul>
         </div>

@@ -1,14 +1,24 @@
-import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
+import type { Metadata, Viewport } from 'next'
 import { Toaster } from 'sonner'
 import { ThemeProvider } from '@/components/theme-provider'
 import './globals.css'
 
-const inter = Inter({ subsets: ['latin'] })
-
 export const metadata: Metadata = {
-  title: '닥터보이스 프로 - AI 블로그 자동화 솔루션 | 플라톤마케팅',
-  description: '플라톤마케팅이 개발한 AI 블로그 자동화 솔루션. AI가 전문적인 블로그 글을 작성하고 네이버 블로그에 자동으로 발행합니다.',
+  title: {
+    default: '닥터보이스 프로',
+    template: '%s · 닥터보이스 프로',
+  },
+  description: '병원 블로그 키워드 추출부터 원고, 사진 배치, 예약 발행까지 한 흐름으로. 플라톤마케팅.',
+  applicationName: '닥터보이스 프로',
+}
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#F7F8FA' },
+    { media: '(prefers-color-scheme: dark)', color: '#12151C' },
+  ],
+  width: 'device-width',
+  initialScale: 1,
 }
 
 export default function RootLayout({
@@ -18,7 +28,15 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ko" suppressHydrationWarning>
-      <body className={inter.className}>
+      <head>
+        {/* Pretendard Variable: 한국어 SaaS 표준 서체. 동적 서브셋이라 첫 로드가 가볍다. */}
+        <link rel="preconnect" href="https://cdn.jsdelivr.net" crossOrigin="anonymous" />
+        <link
+          rel="stylesheet"
+          href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
+        />
+      </head>
+      <body className="font-sans">
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
@@ -31,6 +49,7 @@ export default function RootLayout({
             richColors
             closeButton
             duration={4000}
+            toastOptions={{ className: 'font-sans text-sm' }}
           />
         </ThemeProvider>
       </body>

@@ -266,8 +266,8 @@ async def update_my_profile(
     if profile_update.signature_phrases is not None:
         profile.signature_phrases = profile_update.signature_phrases
 
-    if profile_update.client_rules is not None:
-        profile.client_rules = profile_update.client_rules
+    if profile_update.differentiators is not None:
+        profile.differentiators = profile_update.differentiators
 
     if profile_update.sample_posts is not None:
         profile.sample_posts = profile_update.sample_posts
@@ -277,6 +277,9 @@ async def update_my_profile(
 
     if profile_update.preferred_structure is not None:
         profile.preferred_structure = profile_update.preferred_structure
+
+    if profile_update.client_rules is not None:
+        profile.client_rules = profile_update.client_rules
 
     await db.commit()
     await db.refresh(profile)

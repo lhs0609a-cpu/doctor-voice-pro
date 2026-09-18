@@ -1,10 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { DashboardNav } from '@/components/dashboard-nav'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -56,10 +54,14 @@ import {
   ReviewAnalytics,
   RewardType
 } from '@/lib/api'
+import { PageHeader } from '@/components/app-shell/page-header'
+import { Pill, StatTile, EmptyState } from '@/components/app-shell/ui-kit'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 import { ko } from 'date-fns/locale'
 
+const TH = 'h-10 text-[12px] font-medium uppercase tracking-wide text-muted-foreground'
+const TD = 'py-2.5'
 
 export default function PlacePage() {
   const [activeTab, setActiveTab] = useState('overview')
@@ -276,11 +278,11 @@ export default function PlacePage() {
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'pass':
-        return <CheckCircle2 className="h-4 w-4 text-green-500" />
+        return <CheckCircle2 className="h-4 w-4 text-success" />
       case 'warning':
-        return <AlertTriangle className="h-4 w-4 text-yellow-500" />
+        return <AlertTriangle className="h-4 w-4 text-warning" />
       case 'fail':
-        return <AlertCircle className="h-4 w-4 text-red-500" />
+        return <AlertCircle className="h-4 w-4 text-danger" />
       default:
         return null
     }
@@ -289,54 +291,38 @@ export default function PlacePage() {
   const getSentimentIcon = (sentiment: string) => {
     switch (sentiment) {
       case 'positive':
-        return <ThumbsUp className="h-4 w-4 text-green-500" />
+        return <ThumbsUp className="h-4 w-4 text-success" />
       case 'negative':
-        return <ThumbsDown className="h-4 w-4 text-red-500" />
+        return <ThumbsDown className="h-4 w-4 text-danger" />
       default:
-        return <Minus className="h-4 w-4 text-gray-400" />
+        return <Minus className="h-4 w-4 text-muted-foreground" />
     }
   }
 
   const getTrendIcon = (trend: string, change: number) => {
     if (change > 0) {
-      return <TrendingUp className="h-4 w-4 text-green-500" />
+      return <TrendingUp className="h-4 w-4 text-success" />
     } else if (change < 0) {
-      return <TrendingDown className="h-4 w-4 text-red-500" />
+      return <TrendingDown className="h-4 w-4 text-danger" />
     }
-    return <Minus className="h-4 w-4 text-gray-400" />
+    return <Minus className="h-4 w-4 text-muted-foreground" />
   }
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-        <DashboardNav />
-        <main className="container mx-auto px-4 py-8">
-          <div className="flex items-center justify-center h-64">
-            <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-          </div>
-        </main>
+      <div className="flex justify-center py-16">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-      <DashboardNav />
-
-      <main className="container mx-auto px-4 py-8">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-              <MapPin className="h-8 w-8 text-green-600" />
-              플레이스 관리
-            </h1>
-            <p className="text-gray-600 mt-1">
-              네이버 플레이스를 통합 관리하고 최적화하세요
-            </p>
-          </div>
-
-          <div className="flex gap-2">
+    <div className="space-y-6">
+      <PageHeader
+        title="플레이스 관리"
+        description="네이버 플레이스의 리뷰, 경쟁사, 검색 순위를 한곳에서 관리하세요."
+        actions={
+          <>
             {selectedPlace && (
               <Select
                 value={selectedPlace.id}
@@ -401,7 +387,7 @@ export default function PlacePage() {
                         setConnectForm({ ...connectForm, place_url: e.target.value })
                       }
                     />
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-muted-foreground">
                       네이버 지도에서 플레이스 페이지의 URL을 복사해 붙여넣으세요
                     </p>
                   </div>
@@ -414,25 +400,22 @@ export default function PlacePage() {
                 </DialogFooter>
               </DialogContent>
             </Dialog>
-          </div>
-        </div>
+          </>
+        }
+      />
 
         {places.length === 0 ? (
-          <Card>
-            <CardContent className="py-16 text-center">
-              <MapPin className="h-16 w-16 mx-auto text-gray-300 mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">
-                연동된 플레이스가 없습니다
-              </h3>
-              <p className="text-gray-500 mb-6">
-                네이버 플레이스를 연동하여 리뷰 관리, 경쟁 분석, 순위 추적을 시작하세요
-              </p>
-              <Button onClick={() => setIsConnectDialogOpen(true)}>
-                <Plus className="h-4 w-4 mr-2" />
+          <EmptyState
+            icon={<MapPin className="h-8 w-8" />}
+            title="연동된 플레이스가 없습니다"
+            description="네이버 플레이스를 연동하면 리뷰 관리, 경쟁 분석, 순위 추적을 시작할 수 있어요."
+            action={
+              <Button variant="outline" onClick={() => setIsConnectDialogOpen(true)}>
+                <Plus className="h-4 w-4" />
                 첫 플레이스 연동하기
               </Button>
-            </CardContent>
-          </Card>
+            }
+          />
         ) : (
           <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList className="mb-6">
@@ -458,19 +441,19 @@ export default function PlacePage() {
                     {selectedPlace && (
                       <div className="space-y-4">
                         <div>
-                          <div className="text-sm text-gray-500">상호명</div>
+                          <div className="text-sm text-muted-foreground">상호명</div>
                           <div className="font-medium">{selectedPlace.place_name}</div>
                         </div>
                         <div>
-                          <div className="text-sm text-gray-500">카테고리</div>
+                          <div className="text-sm text-muted-foreground">카테고리</div>
                           <div className="font-medium">{selectedPlace.category || '-'}</div>
                         </div>
                         <div>
-                          <div className="text-sm text-gray-500">주소</div>
+                          <div className="text-sm text-muted-foreground">주소</div>
                           <div className="font-medium">{selectedPlace.address || '-'}</div>
                         </div>
                         <div>
-                          <div className="text-sm text-gray-500">전화번호</div>
+                          <div className="text-sm text-muted-foreground">전화번호</div>
                           <div className="font-medium">{selectedPlace.phone || '-'}</div>
                         </div>
                         {selectedPlace.place_url && (
@@ -502,24 +485,24 @@ export default function PlacePage() {
                   </CardHeader>
                   <CardContent>
                     <div className="text-center py-4">
-                      <div className="text-5xl font-bold text-blue-600 mb-2">
+                      <div className="kpi text-primary">
                         {optimization?.optimization_score || 0}
+                        <span className="ml-1 text-base font-normal text-muted-foreground">/ 100점</span>
                       </div>
-                      <div className="text-gray-500 mb-4">/ 100점</div>
-                      <Progress value={optimization?.optimization_score || 0} className="h-3" />
+                      <Progress value={optimization?.optimization_score || 0} className="mt-4 h-2" />
                     </div>
                     {optimization?.checks && (
-                      <div className="mt-6 space-y-3">
+                      <div className="mt-4 space-y-2">
                         {optimization.checks.map((check, index) => (
                           <div
                             key={index}
-                            className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg"
+                            className="flex items-start gap-3 rounded-lg border bg-muted/40 p-3"
                           >
                             {getStatusIcon(check.status)}
                             <div className="flex-1">
                               <div className="font-medium text-sm">{check.message}</div>
                               {check.suggestion && (
-                                <div className="text-xs text-gray-500 mt-1">
+                                <div className="text-xs text-muted-foreground mt-1">
                                   {check.suggestion}
                                 </div>
                               )}
@@ -538,60 +521,29 @@ export default function PlacePage() {
               <div className="grid gap-6">
                 {/* Review Analytics */}
                 {reviewAnalytics && (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <Card>
-                      <CardContent className="pt-6">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm font-medium text-gray-500">총 리뷰</p>
-                            <p className="text-2xl font-bold">
-                              {reviewAnalytics.summary?.total_reviews || 0}
-                            </p>
-                          </div>
-                          <MessageSquare className="h-8 w-8 text-blue-200" />
-                        </div>
-                      </CardContent>
-                    </Card>
-                    <Card>
-                      <CardContent className="pt-6">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm font-medium text-gray-500">평균 별점</p>
-                            <p className="text-2xl font-bold flex items-center">
-                              {reviewAnalytics.summary?.avg_rating?.toFixed(1) || '-'}
-                              <Star className="h-5 w-5 text-yellow-400 ml-1" />
-                            </p>
-                          </div>
-                          <Star className="h-8 w-8 text-yellow-200" />
-                        </div>
-                      </CardContent>
-                    </Card>
-                    <Card>
-                      <CardContent className="pt-6">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm font-medium text-gray-500">긍정 리뷰</p>
-                            <p className="text-2xl font-bold text-green-600">
-                              {reviewAnalytics.sentiment_breakdown?.positive || 0}
-                            </p>
-                          </div>
-                          <ThumbsUp className="h-8 w-8 text-green-200" />
-                        </div>
-                      </CardContent>
-                    </Card>
-                    <Card>
-                      <CardContent className="pt-6">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-sm font-medium text-gray-500">부정 리뷰</p>
-                            <p className="text-2xl font-bold text-red-600">
-                              {reviewAnalytics.sentiment_breakdown?.negative || 0}
-                            </p>
-                          </div>
-                          <ThumbsDown className="h-8 w-8 text-red-200" />
-                        </div>
-                      </CardContent>
-                    </Card>
+                  <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                    <StatTile
+                      label="총 리뷰"
+                      value={(reviewAnalytics.summary?.total_reviews || 0).toLocaleString()}
+                      icon={<MessageSquare className="h-4 w-4" />}
+                    />
+                    <StatTile
+                      label="평균 별점"
+                      value={reviewAnalytics.summary?.avg_rating?.toFixed(1) || '-'}
+                      icon={<Star className="h-4 w-4" />}
+                    />
+                    <StatTile
+                      label="긍정 리뷰"
+                      value={(reviewAnalytics.sentiment_breakdown?.positive || 0).toLocaleString()}
+                      tone="ok"
+                      icon={<ThumbsUp className="h-4 w-4" />}
+                    />
+                    <StatTile
+                      label="부정 리뷰"
+                      value={(reviewAnalytics.sentiment_breakdown?.negative || 0).toLocaleString()}
+                      tone="danger"
+                      icon={<ThumbsDown className="h-4 w-4" />}
+                    />
                   </div>
                 )}
 
@@ -611,16 +563,23 @@ export default function PlacePage() {
                   </CardHeader>
                   <CardContent>
                     {reviews.length === 0 ? (
-                      <div className="text-center py-12">
-                        <MessageSquare className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                        <p className="text-gray-500">리뷰가 없습니다</p>
-                      </div>
+                      <EmptyState
+                        icon={<MessageSquare className="h-8 w-8" />}
+                        title="아직 리뷰가 없어요"
+                        description="새로고침하면 네이버 플레이스의 최신 리뷰를 가져와요."
+                        action={
+                          <Button variant="outline" size="sm" onClick={loadPlaceData}>
+                            <RefreshCw className="h-4 w-4" />
+                            새로고침
+                          </Button>
+                        }
+                      />
                     ) : (
-                      <div className="space-y-4">
+                      <div className="space-y-3">
                         {reviews.map((review) => (
                           <div
                             key={review.id}
-                            className="p-4 border rounded-lg hover:bg-gray-50"
+                            className="rounded-lg border p-4 transition-colors hover:bg-muted/40"
                           >
                             <div className="flex items-start justify-between">
                               <div className="flex items-center gap-3">
@@ -630,8 +589,8 @@ export default function PlacePage() {
                                       key={i}
                                       className={`h-4 w-4 ${
                                         i < (review.rating || 0)
-                                          ? 'text-yellow-400 fill-yellow-400'
-                                          : 'text-gray-200'
+                                          ? 'fill-current text-warning'
+                                          : 'text-muted'
                                       }`}
                                     />
                                   ))}
@@ -641,17 +600,15 @@ export default function PlacePage() {
                               </div>
                               <div className="flex items-center gap-2">
                                 {review.is_replied ? (
-                                  <Badge className="bg-green-100 text-green-700">
-                                    답변완료
-                                  </Badge>
+                                  <Pill tone="ok">답변완료</Pill>
                                 ) : (
-                                  <Badge variant="outline">미답변</Badge>
+                                  <Pill tone="muted">미답변</Pill>
                                 )}
                               </div>
                             </div>
-                            <p className="mt-2 text-gray-700">{review.content}</p>
+                            <p className="mt-2 text-foreground">{review.content}</p>
                             <div className="mt-3 flex items-center justify-between">
-                              <span className="text-sm text-gray-500">
+                              <span className="text-sm text-muted-foreground">
                                 {review.written_at
                                   ? format(new Date(review.written_at), 'yyyy.MM.dd', {
                                       locale: ko,
@@ -673,11 +630,11 @@ export default function PlacePage() {
                               )}
                             </div>
                             {review.is_replied && review.reply_content && (
-                              <div className="mt-3 p-3 bg-blue-50 rounded-lg">
-                                <div className="text-sm font-medium text-blue-700 mb-1">
+                              <div className="mt-3 rounded-lg bg-accent p-3">
+                                <div className="mb-1 text-[13px] font-medium text-primary">
                                   답변
                                 </div>
-                                <p className="text-sm text-gray-700">{review.reply_content}</p>
+                                <p className="text-sm text-foreground">{review.reply_content}</p>
                               </div>
                             )}
                           </div>
@@ -699,19 +656,19 @@ export default function PlacePage() {
                   </DialogHeader>
                   {selectedReview && (
                     <div className="space-y-4">
-                      <div className="p-3 bg-gray-50 rounded-lg">
+                      <div className="p-3 bg-muted/40 rounded-lg">
                         <div className="flex items-center gap-2 mb-2">
                           <span className="font-medium">{selectedReview.author_name || '익명'}</span>
                           <div className="flex">
                             {Array.from({ length: selectedReview.rating || 0 }).map((_, i) => (
                               <Star
                                 key={i}
-                                className="h-3 w-3 text-yellow-400 fill-yellow-400"
+                                className="h-3 w-3 fill-current text-warning"
                               />
                             ))}
                           </div>
                         </div>
-                        <p className="text-sm text-gray-700">{selectedReview.content}</p>
+                        <p className="text-sm text-foreground">{selectedReview.content}</p>
                       </div>
                       <div className="space-y-2">
                         <Label>생성된 답변</Label>
@@ -754,8 +711,8 @@ export default function PlacePage() {
                       <Trophy className="h-5 w-5" />
                       경쟁사 분석
                     </span>
-                    <Button size="sm" onClick={handleAutoDetectCompetitors}>
-                      <Search className="h-4 w-4 mr-2" />
+                    <Button variant="outline" size="sm" onClick={handleAutoDetectCompetitors}>
+                      <Search className="h-4 w-4" />
                       자동 탐지
                     </Button>
                   </CardTitle>
@@ -765,64 +722,57 @@ export default function PlacePage() {
                 </CardHeader>
                 <CardContent>
                   {competitors.length === 0 ? (
-                    <div className="text-center py-12">
-                      <Users className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                      <p className="text-gray-500">경쟁사가 등록되지 않았습니다</p>
-                      <p className="text-sm text-gray-400 mt-1">
-                        자동 탐지 버튼을 클릭하여 주변 경쟁사를 찾아보세요
-                      </p>
-                    </div>
+                    <EmptyState
+                      icon={<Users className="h-8 w-8" />}
+                      title="등록된 경쟁사가 없어요"
+                      description="자동 탐지로 주변 경쟁 병원을 찾아보세요."
+                      action={
+                        <Button variant="outline" size="sm" onClick={handleAutoDetectCompetitors}>
+                          <Search className="h-4 w-4" />
+                          자동 탐지
+                        </Button>
+                      }
+                    />
                   ) : (
+                    <div className="overflow-x-auto">
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>병원명</TableHead>
-                          <TableHead>거리</TableHead>
-                          <TableHead className="text-right">리뷰수</TableHead>
-                          <TableHead className="text-right">별점</TableHead>
-                          <TableHead>강점</TableHead>
-                          <TableHead>약점</TableHead>
+                          <TableHead className={TH}>병원명</TableHead>
+                          <TableHead className={`${TH} text-right`}>거리</TableHead>
+                          <TableHead className={`${TH} text-right`}>리뷰수</TableHead>
+                          <TableHead className={`${TH} text-right`}>별점</TableHead>
+                          <TableHead className={TH}>강점</TableHead>
+                          <TableHead className={TH}>약점</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {competitors.map((comp) => (
-                          <TableRow key={comp.id}>
-                            <TableCell className="font-medium">
+                          <TableRow key={comp.id} className="hover:bg-muted/40">
+                            <TableCell className={`${TD} font-medium`}>
                               {comp.place_name}
                             </TableCell>
-                            <TableCell>{comp.distance_km?.toFixed(1)}km</TableCell>
-                            <TableCell className="text-right">
+                            <TableCell className={`${TD} text-right tabular-nums`}>{comp.distance_km?.toFixed(1)}km</TableCell>
+                            <TableCell className={`${TD} text-right tabular-nums`}>
                               {comp.review_count.toLocaleString()}
                             </TableCell>
-                            <TableCell className="text-right">
+                            <TableCell className={`${TD} text-right tabular-nums`}>
                               <span className="flex items-center justify-end gap-1">
                                 {comp.avg_rating?.toFixed(1)}
-                                <Star className="h-3 w-3 text-yellow-400 fill-yellow-400" />
+                                <Star className="h-3 w-3 fill-current text-warning" />
                               </span>
                             </TableCell>
-                            <TableCell>
+                            <TableCell className={TD}>
                               <div className="flex flex-wrap gap-1">
                                 {comp.strengths?.slice(0, 2).map((s, i) => (
-                                  <Badge
-                                    key={i}
-                                    variant="outline"
-                                    className="text-green-600 border-green-200"
-                                  >
-                                    {s}
-                                  </Badge>
+                                  <Pill key={i} tone="ok">{s}</Pill>
                                 ))}
                               </div>
                             </TableCell>
-                            <TableCell>
+                            <TableCell className={TD}>
                               <div className="flex flex-wrap gap-1">
                                 {comp.weaknesses?.slice(0, 2).map((w, i) => (
-                                  <Badge
-                                    key={i}
-                                    variant="outline"
-                                    className="text-red-600 border-red-200"
-                                  >
-                                    {w}
-                                  </Badge>
+                                  <Pill key={i} tone="danger">{w}</Pill>
                                 ))}
                               </div>
                             </TableCell>
@@ -830,6 +780,7 @@ export default function PlacePage() {
                         ))}
                       </TableBody>
                     </Table>
+                    </div>
                   )}
                 </CardContent>
               </Card>
@@ -846,8 +797,8 @@ export default function PlacePage() {
                     </span>
                     <Dialog open={isKeywordDialogOpen} onOpenChange={setIsKeywordDialogOpen}>
                       <DialogTrigger asChild>
-                        <Button size="sm">
-                          <Plus className="h-4 w-4 mr-2" />
+                        <Button variant="outline" size="sm">
+                          <Plus className="h-4 w-4" />
                           키워드 추가
                         </Button>
                       </DialogTrigger>
@@ -898,45 +849,50 @@ export default function PlacePage() {
                 </CardHeader>
                 <CardContent>
                   {keywords.length === 0 ? (
-                    <div className="text-center py-12">
-                      <Search className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                      <p className="text-gray-500">추적 중인 키워드가 없습니다</p>
-                      <p className="text-sm text-gray-400 mt-1">
-                        키워드를 추가하여 순위 변동을 모니터링하세요
-                      </p>
-                    </div>
+                    <EmptyState
+                      icon={<Search className="h-8 w-8" />}
+                      title="추적 중인 키워드가 없어요"
+                      description="키워드를 추가하면 검색 순위 변동을 매일 확인할 수 있어요."
+                      action={
+                        <Button variant="outline" size="sm" onClick={() => setIsKeywordDialogOpen(true)}>
+                          <Plus className="h-4 w-4" />
+                          키워드 추가
+                        </Button>
+                      }
+                    />
                   ) : (
+                    <div className="overflow-x-auto">
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>키워드</TableHead>
-                          <TableHead className="text-center">현재 순위</TableHead>
-                          <TableHead className="text-center">변동</TableHead>
-                          <TableHead className="text-center">최고</TableHead>
-                          <TableHead className="text-center">최저</TableHead>
-                          <TableHead>마지막 체크</TableHead>
+                          <TableHead className={TH}>키워드</TableHead>
+                          <TableHead className={`${TH} text-right`}>현재 순위</TableHead>
+                          <TableHead className={`${TH} text-right`}>변동</TableHead>
+                          <TableHead className={`${TH} text-right`}>최고</TableHead>
+                          <TableHead className={`${TH} text-right`}>최저</TableHead>
+                          <TableHead className={TH}>마지막 체크</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {keywords.map((kw) => (
-                          <TableRow key={kw.id}>
-                            <TableCell className="font-medium">{kw.keyword}</TableCell>
-                            <TableCell className="text-center">
-                              <span className="text-lg font-bold">
+                          <TableRow key={kw.id} className="hover:bg-muted/40">
+                            <TableCell className={`${TD} font-medium`}>{kw.keyword}</TableCell>
+                            <TableCell className={`${TD} text-right tabular-nums`}>
+                              <span className="text-base font-semibold">
                                 {kw.current_rank || '-'}
                               </span>
-                              <span className="text-gray-400 text-sm">위</span>
+                              <span className="text-xs text-muted-foreground">위</span>
                             </TableCell>
-                            <TableCell className="text-center">
-                              <div className="flex items-center justify-center gap-1">
+                            <TableCell className={`${TD} text-right tabular-nums`}>
+                              <div className="flex items-center justify-end gap-1">
                                 {getTrendIcon(kw.trend, kw.rank_change)}
                                 <span
                                   className={
                                     kw.rank_change > 0
-                                      ? 'text-green-600'
+                                      ? 'text-success'
                                       : kw.rank_change < 0
-                                      ? 'text-red-600'
-                                      : 'text-gray-400'
+                                      ? 'text-danger'
+                                      : 'text-muted-foreground'
                                   }
                                 >
                                   {kw.rank_change > 0 ? '+' : ''}
@@ -944,13 +900,13 @@ export default function PlacePage() {
                                 </span>
                               </div>
                             </TableCell>
-                            <TableCell className="text-center text-green-600">
+                            <TableCell className={`${TD} text-right tabular-nums text-success`}>
                               {kw.best_rank || '-'}
                             </TableCell>
-                            <TableCell className="text-center text-red-600">
+                            <TableCell className={`${TD} text-right tabular-nums text-danger`}>
                               {kw.worst_rank || '-'}
                             </TableCell>
-                            <TableCell className="text-gray-500 text-sm">
+                            <TableCell className={`${TD} text-muted-foreground tabular-nums`}>
                               {kw.last_checked_at
                                 ? format(new Date(kw.last_checked_at), 'MM.dd HH:mm')
                                 : '-'}
@@ -959,6 +915,7 @@ export default function PlacePage() {
                         ))}
                       </TableBody>
                     </Table>
+                    </div>
                   )}
                 </CardContent>
               </Card>
@@ -978,8 +935,8 @@ export default function PlacePage() {
                       onOpenChange={setIsCampaignDialogOpen}
                     >
                       <DialogTrigger asChild>
-                        <Button size="sm">
-                          <Plus className="h-4 w-4 mr-2" />
+                        <Button variant="outline" size="sm">
+                          <Plus className="h-4 w-4" />
                           캠페인 만들기
                         </Button>
                       </DialogTrigger>
@@ -1093,53 +1050,48 @@ export default function PlacePage() {
                 </CardHeader>
                 <CardContent>
                   {campaigns.length === 0 ? (
-                    <div className="text-center py-12">
-                      <QrCode className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                      <p className="text-gray-500">진행 중인 캠페인이 없습니다</p>
-                      <p className="text-sm text-gray-400 mt-1">
-                        캠페인을 만들어 리뷰 작성을 유도해보세요
-                      </p>
-                    </div>
+                    <EmptyState
+                      icon={<QrCode className="h-8 w-8" />}
+                      title="진행 중인 캠페인이 없어요"
+                      description="캠페인을 만들면 QR 코드로 리뷰 작성을 유도할 수 있어요."
+                      action={
+                        <Button variant="outline" size="sm" onClick={() => setIsCampaignDialogOpen(true)}>
+                          <Plus className="h-4 w-4" />
+                          캠페인 만들기
+                        </Button>
+                      }
+                    />
                   ) : (
-                    <div className="space-y-4">
+                    <div className="space-y-3">
                       {campaigns.map((campaign) => (
                         <div
                           key={campaign.id}
-                          className="p-4 border rounded-lg hover:bg-gray-50"
+                          className="rounded-lg border p-4 transition-colors hover:bg-muted/40"
                         >
                           <div className="flex items-start justify-between">
                             <div>
                               <div className="flex items-center gap-2">
                                 <span className="font-medium">{campaign.name}</span>
-                                <Badge
-                                  variant={
-                                    campaign.status === 'active' ? 'default' : 'secondary'
-                                  }
-                                  className={
-                                    campaign.status === 'active'
-                                      ? 'bg-green-100 text-green-700'
-                                      : ''
-                                  }
-                                >
+                                <Pill tone={campaign.status === 'active' ? 'ok' : 'muted'}>
                                   {campaign.status === 'active'
                                     ? '진행중'
                                     : campaign.status === 'ended'
                                     ? '종료'
                                     : '준비중'}
-                                </Badge>
+                                </Pill>
                               </div>
-                              <p className="text-sm text-gray-500 mt-1">
+                              <p className="mt-1 text-sm text-muted-foreground">
                                 {campaign.reward_description}
                               </p>
                             </div>
                             <div className="text-right">
-                              <div className="text-2xl font-bold text-blue-600">
+                              <div className="kpi text-primary">
                                 {campaign.current_count}
-                                <span className="text-gray-400 text-base">
+                                <span className="text-base font-normal text-muted-foreground">
                                   /{campaign.target_count}
                                 </span>
                               </div>
-                              <div className="text-xs text-gray-500">리뷰</div>
+                              <div className="text-xs text-muted-foreground">리뷰</div>
                             </div>
                           </div>
                           <Progress
@@ -1147,7 +1099,7 @@ export default function PlacePage() {
                             className="h-2 mt-3"
                           />
                           <div className="flex items-center justify-between mt-3">
-                            <span className="text-sm text-gray-500">
+                            <span className="text-sm text-muted-foreground">
                               {format(new Date(campaign.start_date), 'yyyy.MM.dd')} -{' '}
                               {format(new Date(campaign.end_date), 'yyyy.MM.dd')}
                             </span>
@@ -1171,7 +1123,6 @@ export default function PlacePage() {
             </TabsContent>
           </Tabs>
         )}
-      </main>
     </div>
   )
 }

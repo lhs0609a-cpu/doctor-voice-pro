@@ -8,7 +8,7 @@ import sqlalchemy as sa
 
 
 revision = "6f1a2c3d4e5f"
-down_revision = "b7f3c1d9e2a4"
+down_revision = "20260916_blog_proxy"
 branch_labels = None
 depends_on = None
 

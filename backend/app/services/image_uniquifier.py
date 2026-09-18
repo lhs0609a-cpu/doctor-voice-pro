@@ -25,6 +25,11 @@
   → "계속·절대 중복으로 안 걸리게 자동 변경"을 게이트로 보장.
 
 의존성: Pillow, numpy 만 사용 (imagehash/piexif 불필요 — pHash 직접 구현, Pillow 내장 EXIF).
+
+2026-09-11 정책 변경: 기본은 '모양 그대로'(preserve_geometry=True, 아래 _uniquify_preserve).
+사진이 잘리거나 기울거나 늘어나면 글이 이상해 보인다는 운영 요구 때문이다. 위의 재구도 방식은
+preserve_geometry=False 로만 쓴다. 모양 그대로에서는 파일 지문·메타값은 전부 바뀌지만
+pHash 거리는 0~4 에 그친다(위 '보장'은 재구도 방식에만 해당).
 """
 from __future__ import annotations
 
@@ -34,8 +39,11 @@ import random
 from dataclasses import dataclass, field
 from typing import Iterable
 
+from datetime import datetime, timedelta, timezone
+
 import numpy as np
 from PIL import Image, ImageOps, ImageDraw, ImageFilter, ImageEnhance, ImageStat
+from PIL.TiffImagePlugin import IFDRational
 
 # ---- 기본 파라미터 ----
 MIN_DISTANCE = 12          # 원본과의 최소 pHash Hamming 거리(64bit 중) — 엄격
@@ -74,12 +82,23 @@ TRIM_STEP = 0.02
 TRIM_MAX = 0.24
 TRIM_MAX_CROP = 0.32     # allow_crop=True 일 때 상한
 
-_EXIF_MAKES = [
-    ("Samsung", "SM-S928N"), ("Samsung", "SM-G998N"), ("Apple", "iPhone 15 Pro"),
-    ("Apple", "iPhone 14"), ("Canon", "Canon EOS R6"), ("SONY", "ILCE-7M4"),
-    ("Xiaomi", "23078PND5G"), ("LGE", "LM-V500N"),
+# 기기 프로필 — 기종·렌즈·펌웨어·촬영값이 서로 어울려야 한다(아이폰인데 렌즈가 RF24-105 이면 오히려 튄다).
+# (make, model, lens_model, 펌웨어 후보, 초점거리 mm 후보, 35mm 환산, f값 후보)
+# 실행기는 make 를 읽어 그 기종다운 파일 이름(IMG_1234.JPG, 20260812_143512.jpg …)을 붙인다.
+_DEVICES = [
+    ("samsung", "SM-S928N", "Galaxy S24 Ultra Rear Camera", ["S928NKSU2AXF3", "S928NKSU3AXH1"], [6.3], 23, [1.7]),
+    ("samsung", "SM-S921N", None, ["S921NKSU2AXF3", "S921NKSU3AXG2"], [6.4], 24, [1.8]),
+    ("samsung", "SM-G998N", None, ["G998NKSU5FWL2"], [6.7], 26, [1.8]),
+    ("Apple", "iPhone 15 Pro", "iPhone 15 Pro back triple camera 6.765mm f/1.78", ["17.5.1", "17.6", "18.0"], [6.765], 24, [1.78]),
+    ("Apple", "iPhone 14", "iPhone 14 back dual wide camera 5.7mm f/1.5", ["17.4.1", "17.6.1"], [5.7], 26, [1.5]),
+    ("Apple", "iPhone 13", "iPhone 13 back dual wide camera 5.1mm f/1.6", ["16.7.2", "17.5"], [5.1], 26, [1.6]),
+    ("Canon", "Canon EOS R6", "RF24-105mm F4 L IS USM", ["Firmware Version 1.8.2"], [24, 35, 50, 70], None, [4.0, 5.6]),
+    ("SONY", "ILCE-7M4", "FE 24-70mm F2.8 GM II", ["ILCE-7M4 v3.01"], [24, 35, 50], None, [2.8, 4.0]),
+    ("Xiaomi", "23078PND5G", None, ["MIUI Camera"], [6.0], 24, [1.9]),
+    ("LGE", "LM-V500N", None, ["V500N20k"], [4.4], 27, [1.8]),
 ]
-_EXIF_SOFTWARE = ["Photos 2.0", "Snapseed 2.21", "Adobe Lightroom", "MediaTek Camera", None]
+# 대부분은 폰에서 바로 올린 사진, 가끔은 보정 앱을 거친 사진
+_EDIT_SOFTWARE = [None, None, None, "Snapseed 2.21", "Adobe Lightroom 9.2", "Photos 9.0"]
 
 
 # ============================================================
@@ -433,20 +452,161 @@ def _transform_body(
     return Image.fromarray(arr.astype(np.uint8))
 
 
-def _inject_exif(rng: random.Random) -> bytes:
+def _inject_exif(rng: random.Random, size: tuple[int, int] | None = None, dpi: int | None = None) -> bytes:
+    """메타값을 한 기기 프로필로 통째로 새로 만든다(원본 메타는 하나도 넘기지 않는다).
+
+    IFD0: 기종·모델·소프트웨어·수정시각·해상도 / Exif IFD: 촬영시각·서브초·시간대·셔터·조리개·ISO·
+    초점거리·35mm 환산·플래시·화이트밸런스·렌즈·픽셀 크기·고유 ID.
+    촬영시각은 오늘(한국 시각) 기준 2~120일 전 낮 시간 — 미래 날짜나 한 해에 몰린 날짜가 나오지 않게.
+    GPS 는 넣지 않는다(엉뚱한 위치가 찍히면 병원 글에서 더 이상하다).
+    """
+    fmt = "%Y:%m:%d %H:%M:%S"
+    make, model, lens, firmwares, focals, f35, fnums = rng.choice(_DEVICES)
+    now_kst = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=9)
+    shot = (now_kst - timedelta(days=rng.randint(2, 120))).replace(
+        hour=rng.randint(8, 20), minute=rng.randint(0, 59), second=rng.randint(0, 59), microsecond=0)
+    edit = rng.choice(_EDIT_SOFTWARE)
+    dpi = dpi or rng.choice((72, 72, 96, 150, 300))
+
     exif = Image.Exif()
-    make, model = rng.choice(_EXIF_MAKES)
-    exif[0x010F] = make          # Make
-    exif[0x0110] = model         # Model
-    sw = rng.choice(_EXIF_SOFTWARE)
-    if sw:
-        exif[0x0131] = sw        # Software
-    # 촬영시각 지터 (지난 30일 내 임의 시각, 초 단위까지 랜덤)
-    yy = 2026
-    mo = rng.randint(1, 7)
-    dd = rng.randint(1, 28)
-    exif[0x0132] = f"{yy}:{mo:02d}:{dd:02d} {rng.randint(6,22):02d}:{rng.randint(0,59):02d}:{rng.randint(0,59):02d}"
+    exif[0x010F] = make
+    exif[0x0110] = model
+    exif[0x0131] = edit or rng.choice(firmwares)                                           # Software
+    exif[0x0132] = (shot + timedelta(minutes=rng.randint(3, 900)) if edit else shot).strftime(fmt)  # 수정 시각
+    exif[0x011A] = IFDRational(dpi, 1)
+    exif[0x011B] = IFDRational(dpi, 1)
+    exif[0x0128] = 2                                                                       # 단위: 인치
+    focal = rng.choice(focals)
+    sub = {
+        0x9003: shot.strftime(fmt), 0x9004: shot.strftime(fmt),                            # 촬영·디지털화 시각
+        0x9010: "+09:00", 0x9011: "+09:00",                                                # 시간대
+        0x9291: f"{rng.randint(0, 999):03d}",                                              # 서브초
+        0x829A: IFDRational(1, rng.choice((30, 50, 60, 100, 120, 125, 200, 250, 500))),   # 셔터
+        0x829D: IFDRational(round(rng.choice(fnums) * 100), 100),                          # 조리개
+        0x8827: rng.choice((50, 64, 80, 100, 125, 160, 200, 250, 320, 400, 640, 800)),    # ISO
+        0x920A: IFDRational(round(focal * 100), 100),                                      # 초점거리
+        0x9209: rng.choice((0, 16, 24)),                                                   # 플래시 안 터짐
+        0xA402: 0,                                                                         # 노출 모드 자동
+        0xA403: rng.choice((0, 0, 1)),                                                     # 화이트밸런스
+        0xA001: 1,                                                                         # sRGB
+        0xA420: f"{rng.getrandbits(128):032X}",                                            # 사진 고유 ID
+    }
+    if f35:
+        sub[0xA405] = f35
+    if lens:
+        sub[0xA434] = lens
+    if size:
+        sub[0xA002], sub[0xA003] = size
+    exif[0x8769] = sub
     return exif.tobytes()
+
+
+# ============================================================
+# 모양 그대로 모드 (기본)
+# ============================================================
+# 운영 요구(2026-09-11): 사진이 잘리거나·기울거나·늘어나면 글이 이상해 보인다 → 금지.
+# trim=0 이면 _geom_warp 의 회전·원근·이동이 모두 0 이 되어 '같은 비율 리사이즈'만 남는다.
+# 테두리도 쓰지 않는다(soft_shadow 의 둥근 모서리는 사진 모서리를 깎는다).
+# 바뀌는 것: 파일 지문(재인코딩·크기 ±4%·미세 톤/노이즈)과 메타값(기종·소프트웨어·촬영시각) 전부.
+# 한계(실측): 원본과의 pHash 거리 0~4 — 기존 게이트(12)는 구조적으로 넘을 수 없다.
+# 그래서 거리는 기록만 하고, 몇 번 만들어 과거 변형과 가장 먼 것을 고른다.
+PRESERVE_TRIES = 4
+
+
+_ICC: bytes | None = None
+
+
+def _srgb_icc() -> bytes | None:
+    """sRGB 색 프로파일(한 번만 만든다). 넣은 파일/안 넣은 파일이 섞이게 쓴다."""
+    global _ICC
+    if _ICC is None:
+        try:
+            from PIL import ImageCms
+            _ICC = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+        except Exception:  # noqa: BLE001 — ImageCms 가 없는 빌드
+            _ICC = b""
+    return _ICC or None
+
+
+def _preserve_body(base: Image.Image, rng: random.Random, max_width: int) -> tuple[Image.Image, str]:
+    """모양은 그대로 두고 픽셀만 바꾼다. 매번 처리 조합(레시피)을 다르게 골라 같은 사진의 변형끼리도 달라진다.
+
+    항상: 같은 비율 리사이즈(86~100%, 리샘플 방식도 무작위) + 톤(채도·밝기·대비·감마).
+    그중 2~4개: w 화이트밸런스 · l 조명 · v 비네팅(약) · s 선명 · b 부드럽게 · g 입자 · c 색노이즈.
+    전부 '눈으로 나란히 봐야 겨우 보이는' 세기만 쓴다. 반환: (이미지, 레시피 약어)
+    """
+    W, H = base.size
+    scale = min(1.0, max_width / W) * rng.uniform(0.86, 1.0)   # 줄이기만 한다(늘리면 흐려진다)
+    img = base.resize((max(1, round(W * scale)), max(1, round(H * scale))),
+                      rng.choice((Image.Resampling.LANCZOS, Image.Resampling.BICUBIC, Image.Resampling.HAMMING)))
+    img = ImageEnhance.Color(img).enhance(rng.uniform(0.95, 1.05))
+    img = img.point(_tone_lut(img, rng))
+
+    picks = rng.sample(("w", "l", "v", "s", "b", "g", "c"), rng.randint(2, 4))
+    if "s" in picks and "b" in picks:
+        picks.remove(rng.choice(("s", "b")))
+    if "s" in picks:
+        img = img.filter(ImageFilter.UnsharpMask(radius=rng.uniform(0.8, 1.6), percent=rng.randint(20, 45),
+                                                 threshold=rng.randint(2, 4)))
+    if "b" in picks:
+        img = img.filter(ImageFilter.GaussianBlur(rng.uniform(0.3, 0.6)))
+
+    arr = np.asarray(img, dtype=np.float32)
+    h, w = arr.shape[:2]
+    if "w" in picks:
+        arr *= np.array([1 + rng.uniform(-0.03, 0.03), 1.0, 1 + rng.uniform(-0.03, 0.03)], dtype=np.float32)
+    if "l" in picks:
+        arr *= (1.0 + rng.uniform(0.02, 0.04) * _light_plane(h, w, rng))[..., None]
+    if "v" in picks:
+        yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+        r = np.sqrt(((xx - w / 2) / (w / 2)) ** 2 + ((yy - h / 2) / (h / 2)) ** 2)
+        arr *= (1.0 - np.clip(r - 0.6, 0, 1) * rng.uniform(0.04, 0.07))[..., None]
+    nrng = np.random.default_rng(rng.randint(0, 2**31))
+    if "g" in picks:
+        arr += (nrng.standard_normal((h, w), dtype=np.float32) * rng.uniform(1.5, 3.0))[..., None]
+    if "c" in picks:
+        arr += nrng.standard_normal((h, w, 3), dtype=np.float32) * rng.uniform(0.8, 1.6)
+    if "g" not in picks and "c" not in picks:
+        arr += (nrng.standard_normal((h, w), dtype=np.float32))[..., None]   # 파일 지문을 흩는 최소 노이즈
+    np.clip(arr, 0, 255, out=arr)
+    return Image.fromarray(arr.astype(np.uint8)), "t" + "".join(sorted(picks))
+
+
+def _uniquify_preserve(base: Image.Image, orig_ph: int, siblings: set, rng: random.Random,
+                       max_width: int, min_ssim: float) -> UniquifyResult:
+    """레시피·저장 방식·메타값을 매번 새로 골라 PRESERVE_TRIES 개를 만들고, 과거 변형과 가장 먼 것을 쓴다."""
+    best = None
+    for _ in range(PRESERVE_TRIES):
+        body, recipe = _preserve_body(base, rng, max_width)
+        quality = rng.randint(86, 95)
+        subsampling = rng.choice((0, 1, 2))          # 4:4:4 / 4:2:2 / 4:2:0 — 카메라·앱마다 다르다
+        progressive = rng.random() < 0.5
+        dpi = rng.choice((72, 72, 96, 150, 300))
+        opts = dict(quality=quality, subsampling=subsampling, progressive=progressive, optimize=True,
+                    dpi=(dpi, dpi), exif=_inject_exif(rng, body.size, dpi))
+        icc = _srgb_icc() if rng.random() < 0.5 else None
+        if icc:
+            opts["icc_profile"] = icc
+        buf = io.BytesIO()
+        body.save(buf, "JPEG", **opts)
+        data = buf.getvalue()
+        dec = Image.open(io.BytesIO(data)).convert("RGB")
+        dec.load()
+        ph = phash(dec)
+        d_orig = hamming(ph, orig_ph)
+        d_sib = min((hamming(ph, s) for s in siblings), default=64)
+        tag = f"p:{recipe}|q{quality}s{subsampling}{'p' if progressive else ''}{'i' if icc else ''}"[:30]
+        key = (d_sib, d_orig)
+        if best is None or key > best[0]:
+            best = (key, data, body, dec, ph, d_orig, d_sib, quality, tag)
+    _key, data, body, dec, ph, d_orig, d_sib, quality, tag = best
+    q = ssim(body, dec)
+    return UniquifyResult(
+        image_bytes=data, phash=to_hex(ph), dhash=to_hex(dhash(dec)), ssim=round(q, 4),
+        min_distance=min(d_orig, d_sib), attempts=PRESERVE_TRIES, frame_style=tag,
+        passed=q >= min_ssim,   # 이 모드의 합격 = 화질 유지. 해시 거리는 min_distance 로 기록만 한다.
+        quality=quality, trim=0.0,
+    )
 
 
 # ============================================================
@@ -467,6 +627,7 @@ def uniquify(
     allow_crop: bool = False,  # True 면 가장자리 다듬기 한도를 4%→7% 로 넓힌다
     trim_start: float | None = None,   # 직전에 통과한 재구도 예산(있으면 거기서 시작)
     seed: int | None = None,
+    preserve_geometry: bool = True,    # 기본: 자르기·회전·원근·비율 변경·테두리 없이 사진 모양 그대로
 ) -> UniquifyResult:
     """원본 바이트 → 유니크화된 JPEG + 검증 결과.
 
@@ -490,6 +651,8 @@ def uniquify(
 
     styles = list(frame_styles) if frame_styles else list(FRAME_STYLES)
     rng = random.Random(seed)
+    if preserve_geometry:
+        return _uniquify_preserve(base, orig_ph, siblings, rng, max_width, min_ssim)
 
     ratios = list(RESHAPE_FACTORS) if allow_reframe else [None]
 

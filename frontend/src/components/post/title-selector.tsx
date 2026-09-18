@@ -1,8 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Card, CardContent } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Lightbulb, Check } from 'lucide-react'
 
 interface TitleSelectorProps {
@@ -25,48 +24,48 @@ export function TitleSelector({ titles, currentTitle, onSelect }: TitleSelectorP
 
   return (
     <Card>
-      <CardContent className="p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <Lightbulb className="h-4 w-4 text-yellow-600" />
-          <h3 className="font-semibold text-sm">추천 제목</h3>
-          <span className="text-xs text-gray-500 ml-auto">클릭하여 선택</span>
+      <CardHeader className="flex flex-row items-start justify-between space-y-0">
+        <div>
+          <CardTitle className="flex items-center gap-2">
+            <Lightbulb className="h-4 w-4 text-muted-foreground" />
+            추천 제목
+          </CardTitle>
+          <CardDescription className="mt-1">AI가 클릭을 유도하는 제목을 제안했습니다</CardDescription>
         </div>
-
+        <span className="text-xs text-muted-foreground">클릭하여 선택</span>
+      </CardHeader>
+      <CardContent>
         <div className="space-y-2">
-          {titles.map((title, index) => (
-            <button
-              key={index}
-              onClick={() => handleSelect(title, index)}
-              className={`w-full text-left p-3 rounded-lg border-2 transition-all ${
-                selectedIndex === index || currentTitle === title
-                  ? 'border-blue-500 bg-blue-50'
-                  : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-              }`}
-            >
-              <div className="flex items-start gap-2">
-                <div className={`mt-0.5 h-5 w-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
-                  selectedIndex === index || currentTitle === title
-                    ? 'border-blue-500 bg-blue-500'
-                    : 'border-gray-300'
-                }`}>
-                  {(selectedIndex === index || currentTitle === title) && (
-                    <Check className="h-3 w-3 text-white" />
-                  )}
+          {titles.map((title, index) => {
+            const isSelected = selectedIndex === index || currentTitle === title
+            return (
+              <button
+                key={index}
+                type="button"
+                onClick={() => handleSelect(title, index)}
+                className={`w-full rounded-lg border p-3 text-left transition-colors ${
+                  isSelected
+                    ? 'border-primary bg-accent'
+                    : 'hover:bg-muted/40'
+                }`}
+              >
+                <div className="flex items-start gap-2">
+                  <div
+                    className={`mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border ${
+                      isSelected ? 'border-primary bg-primary' : 'border-border'
+                    }`}
+                  >
+                    {isSelected && <Check className="h-3 w-3 text-primary-foreground" />}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">{title}</p>
+                    <p className="mt-1 text-xs tabular-nums text-muted-foreground">{title.length}자</p>
+                  </div>
                 </div>
-                <div className="flex-1">
-                  <p className="text-sm font-medium">{title}</p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    {title.length}자
-                  </p>
-                </div>
-              </div>
-            </button>
-          ))}
+              </button>
+            )
+          })}
         </div>
-
-        <p className="text-xs text-gray-500 mt-3">
-          💡 AI가 클릭을 유도하는 매력적인 제목을 생성했습니다
-        </p>
       </CardContent>
     </Card>
   )

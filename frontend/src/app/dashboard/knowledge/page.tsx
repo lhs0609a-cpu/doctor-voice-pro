@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { DashboardNav } from '@/components/dashboard-nav'
+import { PageHeader } from '@/components/app-shell/page-header'
+import { Pill, StatTile, EmptyState } from '@/components/app-shell/ui-kit'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -306,15 +307,15 @@ export default function KnowledgePage() {
 
   // 계정 상태 배지
   const getAccountStatusBadge = (status: string) => {
-    const statusConfig: Record<string, { label: string; className: string }> = {
-      active: { label: '활성', className: 'bg-green-100 text-green-800' },
-      warming: { label: '워밍업', className: 'bg-yellow-100 text-yellow-800' },
-      resting: { label: '휴식', className: 'bg-gray-100 text-gray-800' },
-      blocked: { label: '차단', className: 'bg-red-100 text-red-800' },
-      disabled: { label: '비활성', className: 'bg-gray-200 text-gray-600' },
+    const statusConfig: Record<string, { label: string; tone: 'ok' | 'warn' | 'danger' | 'accent' | 'muted' }> = {
+      active: { label: '활성', tone: 'ok' },
+      warming: { label: '워밍업', tone: 'warn' },
+      resting: { label: '휴식', tone: 'muted' },
+      blocked: { label: '차단', tone: 'danger' },
+      disabled: { label: '비활성', tone: 'muted' },
     }
-    const config = statusConfig[status] || { label: status, className: 'bg-gray-100 text-gray-800' }
-    return <Badge className={config.className}>{config.label}</Badge>
+    const config = statusConfig[status] || { label: status, tone: 'muted' as const }
+    return <Pill tone={config.tone}>{config.label}</Pill>
   }
 
   // 질문 수집
@@ -588,109 +589,39 @@ export default function KnowledgePage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-        <DashboardNav />
-        <main className="container mx-auto px-4 py-8">
-          <div className="flex items-center justify-center h-64">
-            <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-          </div>
-        </main>
+      <div className="flex justify-center py-16">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
-      <DashboardNav />
-
-      <main className="container mx-auto px-4 py-8">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-              <HelpCircle className="h-8 w-8 text-green-600" />
-              지식인 답변 도우미
-            </h1>
-            <p className="text-gray-600 mt-1">
-              네이버 지식인 질문을 모니터링하고 AI로 답변을 생성하세요
-            </p>
-          </div>
-
-          <div className="flex gap-2">
+    <div className="space-y-6">
+      <PageHeader
+        title="지식인 답변 도우미"
+        description="네이버 지식인 질문을 모니터링하고 AI로 답변을 만드세요."
+        actions={
+          <>
             <Button variant="outline" onClick={loadData}>
-              <RefreshCw className="h-4 w-4 mr-2" />
+              <RefreshCw />
               새로고침
             </Button>
             <Button onClick={handleCollect} disabled={isCollecting}>
-              {isCollecting ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <Search className="h-4 w-4 mr-2" />
-              )}
+              {isCollecting ? <Loader2 className="animate-spin" /> : <Search />}
               질문 수집
             </Button>
-          </div>
-        </div>
+          </>
+        }
+      />
 
-        {/* Summary Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-500">오늘 수집</p>
-                  <p className="text-2xl font-bold text-blue-600">
-                    {dashboard?.today_collected || 0}
-                  </p>
-                </div>
-                <Search className="h-8 w-8 text-blue-200" />
-              </div>
-            </CardContent>
-          </Card>
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <StatTile label="오늘 수집" value={dashboard?.today_collected || 0} icon={<Search className="h-4 w-4" />} />
+        <StatTile label="답변 대기" value={dashboard?.pending_questions || 0} tone="warn" icon={<Clock className="h-4 w-4" />} />
+        <StatTile label="초안 답변" value={dashboard?.draft_answers || 0} icon={<FileText className="h-4 w-4" />} />
+        <StatTile label="이번 주 답변" value={dashboard?.week_answered || 0} tone="ok" icon={<TrendingUp className="h-4 w-4" />} />
+      </div>
 
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-500">답변 대기</p>
-                  <p className="text-2xl font-bold text-orange-600">
-                    {dashboard?.pending_questions || 0}
-                  </p>
-                </div>
-                <Clock className="h-8 w-8 text-orange-200" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-500">초안 답변</p>
-                  <p className="text-2xl font-bold text-purple-600">
-                    {dashboard?.draft_answers || 0}
-                  </p>
-                </div>
-                <FileText className="h-8 w-8 text-purple-200" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-500">이번 주 답변</p>
-                  <p className="text-2xl font-bold text-green-600">
-                    {dashboard?.week_answered || 0}
-                  </p>
-                </div>
-                <TrendingUp className="h-8 w-8 text-green-200" />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
+      <div>
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="mb-6">
             <TabsTrigger value="overview">개요</TabsTrigger>
@@ -710,7 +641,7 @@ export default function KnowledgePage() {
 
           {/* 개요 탭 */}
           <TabsContent value="overview">
-            <div className="grid md:grid-cols-2 gap-6">
+            <div className="grid gap-4 md:grid-cols-2">
               {/* 모니터링 키워드 */}
               <Card>
                 <CardHeader>
@@ -721,8 +652,8 @@ export default function KnowledgePage() {
                     </CardTitle>
                     <Dialog open={isKeywordDialogOpen} onOpenChange={setIsKeywordDialogOpen}>
                       <DialogTrigger asChild>
-                        <Button size="sm">
-                          <Plus className="h-4 w-4 mr-1" />
+                        <Button variant="outline" size="sm">
+                          <Plus />
                           추가
                         </Button>
                       </DialogTrigger>
@@ -783,15 +714,22 @@ export default function KnowledgePage() {
                 </CardHeader>
                 <CardContent>
                   {keywords.length === 0 ? (
-                    <p className="text-center text-gray-500 py-8">
-                      등록된 키워드가 없습니다
-                    </p>
+                    <EmptyState
+                      title="등록된 키워드가 없습니다"
+                      description="모니터링할 키워드를 추가하면 관련 질문을 자동으로 수집합니다."
+                      action={
+                        <Button variant="outline" size="sm" onClick={() => setIsKeywordDialogOpen(true)}>
+                          <Plus />
+                          키워드 추가
+                        </Button>
+                      }
+                    />
                   ) : (
                     <div className="space-y-2">
                       {keywords.map((kw) => (
                         <div
                           key={kw.id}
-                          className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                          className="flex items-center justify-between rounded-lg border bg-muted/40 p-3"
                         >
                           <div className="flex items-center gap-3">
                             <Badge variant="outline">{kw.priority}</Badge>
@@ -801,7 +739,7 @@ export default function KnowledgePage() {
                             )}
                           </div>
                           <div className="flex items-center gap-2">
-                            <span className="text-sm text-gray-500">
+                            <span className="text-sm tabular-nums text-muted-foreground">
                               {kw.question_count}개 발견
                             </span>
                             <Button
@@ -809,7 +747,7 @@ export default function KnowledgePage() {
                               size="icon"
                               onClick={() => handleDeleteKeyword(kw.id)}
                             >
-                              <Trash2 className="h-4 w-4 text-red-500" />
+                              <Trash2 className="text-danger" />
                             </Button>
                           </div>
                         </div>
@@ -823,7 +761,7 @@ export default function KnowledgePage() {
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <Star className="h-5 w-5 text-yellow-500" />
+                    <Star className="h-4 w-4 text-warning" />
                     고관련성 질문 TOP 5
                   </CardTitle>
                   <CardDescription>
@@ -832,15 +770,16 @@ export default function KnowledgePage() {
                 </CardHeader>
                 <CardContent>
                   {topQuestions.length === 0 ? (
-                    <p className="text-center text-gray-500 py-8">
-                      수집된 질문이 없습니다
-                    </p>
+                    <EmptyState
+                      title="수집된 질문이 없습니다"
+                      description="질문을 수집하면 관련성 높은 질문이 여기에 표시됩니다."
+                    />
                   ) : (
                     <div className="space-y-3">
                       {topQuestions.map((q) => (
                         <div
                           key={q.id}
-                          className="p-3 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer"
+                          className="cursor-pointer rounded-lg border bg-muted/40 p-3 transition-colors hover:bg-muted"
                           onClick={() => {
                             setSelectedQuestion(q)
                             setActiveTab('questions')
@@ -862,6 +801,7 @@ export default function KnowledgePage() {
                               </div>
                             </div>
                             <Button
+                              variant="outline"
                               size="sm"
                               onClick={(e) => {
                                 e.stopPropagation()
@@ -869,7 +809,7 @@ export default function KnowledgePage() {
                               }}
                               disabled={isGenerating}
                             >
-                              <Sparkles className="h-3 w-3 mr-1" />
+                              <Sparkles />
                               답변
                             </Button>
                           </div>
@@ -907,19 +847,23 @@ export default function KnowledgePage() {
               </CardHeader>
               <CardContent>
                 {questions.length === 0 ? (
-                  <div className="text-center py-12">
-                    <HelpCircle className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                    <p className="text-gray-500">수집된 질문이 없습니다</p>
-                    <Button className="mt-4" onClick={handleCollect} disabled={isCollecting}>
-                      질문 수집하기
-                    </Button>
-                  </div>
+                  <EmptyState
+                    icon={<HelpCircle className="h-8 w-8" />}
+                    title="수집된 질문이 없습니다"
+                    description="등록한 키워드로 네이버 지식인 질문을 수집해 보세요."
+                    action={
+                      <Button variant="outline" onClick={handleCollect} disabled={isCollecting}>
+                        <Search />
+                        질문 수집하기
+                      </Button>
+                    }
+                  />
                 ) : (
                   <div className="space-y-3">
                     {questions.map((q) => (
                       <div
                         key={q.id}
-                        className="p-4 border rounded-lg hover:border-blue-300 transition-colors"
+                        className="rounded-lg border p-4 transition-colors hover:bg-muted/40"
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex-1">
@@ -933,9 +877,9 @@ export default function KnowledgePage() {
                             </div>
                             <h3 className="font-semibold mb-1">{q.title}</h3>
                             {q.content && (
-                              <p className="text-sm text-gray-600 line-clamp-2">{q.content}</p>
+                              <p className="text-sm text-muted-foreground line-clamp-2">{q.content}</p>
                             )}
-                            <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
+                            <div className="mt-2 flex items-center gap-4 text-xs tabular-nums text-muted-foreground">
                               <span>조회 {q.view_count}</span>
                               <span>답변 {q.answer_count}개</span>
                               {q.matched_keywords && q.matched_keywords.length > 0 && (
@@ -952,15 +896,16 @@ export default function KnowledgePage() {
                               </Button>
                             )}
                             <Button
+                              variant="outline"
                               size="sm"
                               onClick={() => handleGenerateAnswer(q.id)}
                               disabled={isGenerating || q.status === 'answered'}
                             >
                               {isGenerating ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
+                                <Loader2 className="animate-spin" />
                               ) : (
                                 <>
-                                  <Sparkles className="h-4 w-4 mr-1" />
+                                  <Sparkles />
                                   답변 생성
                                 </>
                               )}
@@ -1000,10 +945,16 @@ export default function KnowledgePage() {
               </CardHeader>
               <CardContent>
                 {answers.length === 0 ? (
-                  <div className="text-center py-12">
-                    <FileText className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                    <p className="text-gray-500">생성된 답변이 없습니다</p>
-                  </div>
+                  <EmptyState
+                    icon={<FileText className="h-8 w-8" />}
+                    title="생성된 답변이 없습니다"
+                    description="질문 모니터링 탭에서 질문을 고르고 답변을 생성해 보세요."
+                    action={
+                      <Button variant="outline" onClick={() => setActiveTab('questions')}>
+                        질문 보러 가기
+                      </Button>
+                    }
+                  />
                 ) : (
                   <div className="space-y-4">
                     {answers.map((answer) => (
@@ -1021,17 +972,17 @@ export default function KnowledgePage() {
                                 </Badge>
                               )}
                               {answer.is_chosen && (
-                                <Badge className="bg-yellow-100 text-yellow-800">
-                                  <Award className="h-3 w-3 mr-1" />
+                                <Pill tone="warn">
+                                  <Award className="mr-1 h-3 w-3" />
                                   채택됨
-                                </Badge>
+                                </Pill>
                               )}
                             </div>
-                            <p className="text-sm text-gray-700 whitespace-pre-wrap line-clamp-4">
+                            <p className="text-sm text-foreground whitespace-pre-wrap line-clamp-4">
                               {answer.final_content || answer.content}
                             </p>
                             {answer.blog_link && (
-                              <p className="text-xs text-blue-600 mt-2">
+                              <p className="mt-2 text-xs text-primary">
                                 블로그: {answer.blog_link}
                               </p>
                             )}
@@ -1048,8 +999,9 @@ export default function KnowledgePage() {
                               <>
                                 <Button
                                   size="sm"
-                                  variant="default"
+                                  variant="outline"
                                   onClick={() => handleApproveAnswer(answer.id)}
+                                  title="승인"
                                 >
                                   <CheckCircle className="h-4 w-4" />
                                 </Button>
@@ -1059,7 +1011,7 @@ export default function KnowledgePage() {
                               <>
                                 <Button
                                   size="sm"
-                                  variant="default"
+                                  variant="outline"
                                   onClick={() => handleAutoPost(answer.id)}
                                   disabled={!posterStatus?.logged_in || isPosting}
                                   title={posterStatus?.logged_in ? '자동 등록' : '로그인 필요'}
@@ -1094,37 +1046,12 @@ export default function KnowledgePage() {
             <div className="space-y-6">
               {/* 계정 통계 */}
               {accountStats && (
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                  <Card>
-                    <CardContent className="pt-6 text-center">
-                      <p className="text-2xl font-bold text-blue-600">{accountStats.total_accounts}</p>
-                      <p className="text-xs text-gray-500">전체 계정</p>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent className="pt-6 text-center">
-                      <p className="text-2xl font-bold text-green-600">{accountStats.active}</p>
-                      <p className="text-xs text-gray-500">활성</p>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent className="pt-6 text-center">
-                      <p className="text-2xl font-bold text-yellow-600">{accountStats.warming}</p>
-                      <p className="text-xs text-gray-500">워밍업</p>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent className="pt-6 text-center">
-                      <p className="text-2xl font-bold text-gray-600">{accountStats.resting}</p>
-                      <p className="text-xs text-gray-500">휴식</p>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent className="pt-6 text-center">
-                      <p className="text-2xl font-bold text-purple-600">{accountStats.avg_adoption_rate.toFixed(1)}%</p>
-                      <p className="text-xs text-gray-500">평균 채택률</p>
-                    </CardContent>
-                  </Card>
+                <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
+                  <StatTile label="전체 계정" value={accountStats.total_accounts} />
+                  <StatTile label="활성" value={accountStats.active} tone="ok" />
+                  <StatTile label="워밍업" value={accountStats.warming} tone="warn" />
+                  <StatTile label="휴식" value={accountStats.resting} />
+                  <StatTile label="평균 채택률" value={`${accountStats.avg_adoption_rate.toFixed(1)}%`} tone="accent" />
                 </div>
               )}
 
@@ -1138,8 +1065,8 @@ export default function KnowledgePage() {
                     </CardTitle>
                     <Dialog open={isAccountDialogOpen} onOpenChange={setIsAccountDialogOpen}>
                       <DialogTrigger asChild>
-                        <Button>
-                          <UserPlus className="h-4 w-4 mr-2" />
+                        <Button variant="outline" size="sm">
+                          <UserPlus />
                           계정 추가
                         </Button>
                       </DialogTrigger>
@@ -1206,26 +1133,30 @@ export default function KnowledgePage() {
                 </CardHeader>
                 <CardContent>
                   {accounts.length === 0 ? (
-                    <div className="text-center py-12">
-                      <Users className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                      <p className="text-gray-500">등록된 계정이 없습니다</p>
-                      <p className="text-sm text-gray-400 mt-1">
-                        다중 계정을 등록하면 로테이션으로 게시하여 차단 위험을 줄일 수 있습니다
-                      </p>
-                    </div>
+                    <EmptyState
+                      icon={<Users className="h-8 w-8" />}
+                      title="등록된 계정이 없습니다"
+                      description="여러 계정을 등록하면 순환 게시로 차단 위험을 줄일 수 있습니다."
+                      action={
+                        <Button variant="outline" onClick={() => setIsAccountDialogOpen(true)}>
+                          <UserPlus />
+                          계정 추가
+                        </Button>
+                      }
+                    />
                   ) : (
                     <div className="space-y-3">
                       {accounts.map((account) => (
                         <div
                           key={account.id}
-                          className="p-4 border rounded-lg hover:border-blue-300 transition-colors"
+                          className="rounded-lg border p-4 transition-colors hover:bg-muted/40"
                         >
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-3">
                               <div className={`w-3 h-3 rounded-full ${
-                                account.status === 'active' ? 'bg-green-500' :
-                                account.status === 'warming' ? 'bg-yellow-500 animate-pulse' :
-                                account.status === 'blocked' ? 'bg-red-500' : 'bg-gray-400'
+                                account.status === 'active' ? 'bg-success' :
+                                account.status === 'warming' ? 'bg-warning animate-pulse' :
+                                account.status === 'blocked' ? 'bg-danger' : 'bg-muted-foreground/50'
                               }`} />
                               <div>
                                 <div className="flex items-center gap-2">
@@ -1237,23 +1168,23 @@ export default function KnowledgePage() {
                                     </Badge>
                                   )}
                                 </div>
-                                <p className="text-sm text-gray-500">{account.account_id}</p>
+                                <p className="text-sm text-muted-foreground">{account.account_id}</p>
                               </div>
                             </div>
                             <div className="flex items-center gap-4">
                               {/* 오늘 활동량 */}
                               <div className="text-center">
-                                <p className="text-lg font-semibold text-blue-600">
+                                <p className="text-lg font-semibold tabular-nums text-foreground">
                                   {account.today_answers}/{account.daily_answer_limit}
                                 </p>
-                                <p className="text-xs text-gray-500">오늘 답변</p>
+                                <p className="text-xs text-muted-foreground">오늘 답변</p>
                               </div>
                               {/* 채택률 */}
                               <div className="text-center">
-                                <p className="text-lg font-semibold text-green-600">
+                                <p className="text-lg font-semibold tabular-nums text-success">
                                   {account.adoption_rate.toFixed(1)}%
                                 </p>
-                                <p className="text-xs text-gray-500">채택률</p>
+                                <p className="text-xs text-muted-foreground">채택률</p>
                               </div>
                               {/* 액션 버튼 */}
                               <div className="flex gap-1">
@@ -1291,7 +1222,7 @@ export default function KnowledgePage() {
                                   variant="ghost"
                                   size="sm"
                                   onClick={() => handleDeleteAccount(account.id)}
-                                  className="text-red-500 hover:text-red-700"
+                                  className="text-danger hover:text-danger"
                                   title="삭제"
                                 >
                                   <Trash2 className="h-4 w-4" />
@@ -1300,7 +1231,7 @@ export default function KnowledgePage() {
                             </div>
                           </div>
                           {/* 추가 정보 */}
-                          <div className="mt-3 pt-3 border-t flex items-center justify-between text-xs text-gray-500">
+                          <div className="mt-3 flex items-center justify-between border-t pt-3 text-xs text-muted-foreground">
                             <div className="flex gap-4">
                               <span>총 답변: {account.total_answers}</span>
                               <span>총 채택: {account.total_adoptions}</span>
@@ -1324,7 +1255,7 @@ export default function KnowledgePage() {
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <RotateCcw className="h-5 w-5 text-blue-500" />
+                    <RotateCcw className="h-4 w-4 text-primary" />
                     로테이션 게시
                   </CardTitle>
                   <CardDescription>
@@ -1332,34 +1263,31 @@ export default function KnowledgePage() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="p-4 bg-blue-50 rounded-lg">
+                  <div className="rounded-lg border bg-muted/40 p-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="font-medium text-blue-800">대기 중인 승인된 답변</p>
-                        <p className="text-sm text-blue-600">
+                        <p className="font-medium">대기 중인 승인된 답변</p>
+                        <p className="text-sm tabular-nums text-muted-foreground">
                           {schedulerStatus?.pending?.draft_answers || 0}개
                         </p>
                       </div>
                       <Button
+                        variant="outline"
                         onClick={() => handlePostRotated(5)}
                         disabled={isPosting || accounts.length === 0}
                       >
-                        {isPosting ? (
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        ) : (
-                          <Upload className="h-4 w-4 mr-2" />
-                        )}
+                        {isPosting ? <Loader2 className="animate-spin" /> : <Upload />}
                         로테이션 게시 (5개)
                       </Button>
                     </div>
                   </div>
 
                   {accounts.length === 0 && (
-                    <div className="p-4 bg-yellow-50 rounded-lg flex items-start gap-3">
-                      <AlertCircle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                    <div className="flex items-start gap-3 rounded-lg bg-warning-soft p-4">
+                      <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-warning" />
                       <div>
-                        <p className="font-medium text-yellow-800">계정을 먼저 등록하세요</p>
-                        <p className="text-sm text-yellow-600">
+                        <p className="font-medium text-warning">계정을 먼저 등록하세요</p>
+                        <p className="text-sm text-muted-foreground">
                           로테이션 게시를 사용하려면 최소 1개 이상의 네이버 계정이 필요합니다.
                         </p>
                       </div>
@@ -1378,8 +1306,8 @@ export default function KnowledgePage() {
                   <CardTitle>답변 템플릿</CardTitle>
                   <Dialog open={isTemplateDialogOpen} onOpenChange={setIsTemplateDialogOpen}>
                     <DialogTrigger asChild>
-                      <Button>
-                        <Plus className="h-4 w-4 mr-2" />
+                      <Button variant="outline" size="sm">
+                        <Plus />
                         템플릿 추가
                       </Button>
                     </DialogTrigger>
@@ -1459,12 +1387,19 @@ export default function KnowledgePage() {
               </CardHeader>
               <CardContent>
                 {templates.length === 0 ? (
-                  <div className="text-center py-12">
-                    <FileText className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                    <p className="text-gray-500">등록된 템플릿이 없습니다</p>
-                  </div>
+                  <EmptyState
+                    icon={<FileText className="h-8 w-8" />}
+                    title="등록된 템플릿이 없습니다"
+                    description="자주 쓰는 답변 형식을 템플릿으로 저장해 두면 빠르게 답변할 수 있습니다."
+                    action={
+                      <Button variant="outline" onClick={() => setIsTemplateDialogOpen(true)}>
+                        <Plus />
+                        템플릿 추가
+                      </Button>
+                    }
+                  />
                 ) : (
-                  <div className="grid md:grid-cols-2 gap-4">
+                  <div className="grid gap-4 md:grid-cols-2">
                     {templates.map((template) => (
                       <div
                         key={template.id}
@@ -1480,13 +1415,13 @@ export default function KnowledgePage() {
                               <Badge variant="outline">
                                 {TONE_OPTIONS.find((t) => t.value === template.tone)?.label}
                               </Badge>
-                              <span className="text-xs text-gray-500">
+                              <span className="text-xs tabular-nums text-muted-foreground">
                                 {template.usage_count}회 사용
                               </span>
                             </div>
                           </div>
                         </div>
-                        <p className="text-sm text-gray-600 line-clamp-3">
+                        <p className="text-sm text-muted-foreground line-clamp-3">
                           {template.template_content}
                         </p>
                       </div>
@@ -1499,12 +1434,12 @@ export default function KnowledgePage() {
 
           {/* 자동화 탭 */}
           <TabsContent value="automation">
-            <div className="grid md:grid-cols-2 gap-6">
+            <div className="grid gap-4 md:grid-cols-2">
               {/* 스케줄러 상태 */}
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <Zap className="h-5 w-5 text-yellow-500" />
+                    <Zap className="h-4 w-4 text-warning" />
                     자동 수집 스케줄러
                   </CardTitle>
                   <CardDescription>
@@ -1514,9 +1449,9 @@ export default function KnowledgePage() {
                 <CardContent className="space-y-4">
                   {schedulerStatus ? (
                     <>
-                      <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                      <div className="flex items-center justify-between rounded-lg border bg-muted/40 p-3">
                         <div className="flex items-center gap-2">
-                          <div className={`w-3 h-3 rounded-full ${schedulerStatus.is_running ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
+                          <div className={`w-3 h-3 rounded-full ${schedulerStatus.is_running ? 'bg-success animate-pulse' : 'bg-muted-foreground/50'}`} />
                           <span className="font-medium">
                             {schedulerStatus.is_running ? '실행 중' : '중지됨'}
                           </span>
@@ -1527,29 +1462,29 @@ export default function KnowledgePage() {
                             중지
                           </Button>
                         ) : (
-                          <Button size="sm" onClick={handleStartScheduler}>
-                            <Play className="h-4 w-4 mr-1" />
+                          <Button variant="outline" size="sm" onClick={handleStartScheduler}>
+                            <Play />
                             시작
                           </Button>
                         )}
                       </div>
 
                       <div className="grid grid-cols-2 gap-3">
-                        <div className="p-3 bg-blue-50 rounded-lg text-center">
-                          <p className="text-2xl font-bold text-blue-600">
+                        <div className="rounded-lg border bg-muted/40 p-3 text-center">
+                          <p className="kpi">
                             {schedulerStatus.today?.collected || 0}
                           </p>
-                          <p className="text-xs text-gray-500">오늘 수집</p>
+                          <p className="text-xs text-muted-foreground">오늘 수집</p>
                         </div>
-                        <div className="p-3 bg-purple-50 rounded-lg text-center">
-                          <p className="text-2xl font-bold text-purple-600">
+                        <div className="rounded-lg border bg-muted/40 p-3 text-center">
+                          <p className="kpi">
                             {schedulerStatus.today?.generated || 0}
                           </p>
-                          <p className="text-xs text-gray-500">오늘 생성</p>
+                          <p className="text-xs text-muted-foreground">오늘 생성</p>
                         </div>
                       </div>
 
-                      <div className="text-xs text-gray-500 space-y-1">
+                      <div className="space-y-1 text-xs tabular-nums text-muted-foreground">
                         <p>일일 수집 한도: {schedulerStatus.today?.collect_limit || 100}개</p>
                         <p>일일 생성 한도: {schedulerStatus.today?.answer_limit || 20}개</p>
                         <p className="flex items-center gap-1">
@@ -1590,9 +1525,9 @@ export default function KnowledgePage() {
                       </div>
                     </>
                   ) : (
-                    <div className="text-center py-8">
-                      <Loader2 className="h-8 w-8 mx-auto animate-spin text-gray-300" />
-                      <p className="text-gray-500 mt-2">상태 로딩 중...</p>
+                    <div className="flex flex-col items-center justify-center gap-3 py-8">
+                      <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
+                      <p className="text-sm text-muted-foreground">상태를 불러오는 중...</p>
                     </div>
                   )}
                 </CardContent>
@@ -1602,7 +1537,7 @@ export default function KnowledgePage() {
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <Upload className="h-5 w-5 text-green-500" />
+                    <Upload className="h-4 w-4 text-success" />
                     자동 답변 등록
                   </CardTitle>
                   <CardDescription>
@@ -1615,15 +1550,15 @@ export default function KnowledgePage() {
                     <div className="flex items-center justify-between mb-3">
                       <span className="font-medium">네이버 계정</span>
                       {posterStatus?.logged_in ? (
-                        <Badge className="bg-green-100 text-green-800">
-                          <CheckCircle className="h-3 w-3 mr-1" />
+                        <Pill tone="ok">
+                          <CheckCircle className="mr-1 h-3 w-3" />
                           로그인됨
-                        </Badge>
+                        </Pill>
                       ) : (
-                        <Badge variant="secondary">
-                          <XCircle className="h-3 w-3 mr-1" />
+                        <Pill tone="muted">
+                          <XCircle className="mr-1 h-3 w-3" />
                           로그아웃
-                        </Badge>
+                        </Pill>
                       )}
                     </div>
 
@@ -1633,8 +1568,8 @@ export default function KnowledgePage() {
                         로그아웃
                       </Button>
                     ) : (
-                      <Button size="sm" onClick={() => setIsLoginDialogOpen(true)} className="w-full">
-                        <LogIn className="h-4 w-4 mr-2" />
+                      <Button variant="outline" size="sm" onClick={() => setIsLoginDialogOpen(true)} className="w-full">
+                        <LogIn />
                         네이버 로그인
                       </Button>
                     )}
@@ -1642,15 +1577,16 @@ export default function KnowledgePage() {
 
                   {/* 대기중인 답변 */}
                   {schedulerStatus?.pending && (
-                    <div className="p-4 bg-orange-50 rounded-lg">
+                    <div className="rounded-lg border bg-muted/40 p-4">
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className="font-medium text-orange-800">등록 대기</p>
-                          <p className="text-sm text-orange-600">
+                          <p className="font-medium">등록 대기</p>
+                          <p className="text-sm tabular-nums text-muted-foreground">
                             승인된 답변 {schedulerStatus.pending.draft_answers}개
                           </p>
                         </div>
                         <Button
+                          variant="outline"
                           size="sm"
                           onClick={handleBulkPost}
                           disabled={!posterStatus?.logged_in || isPosting || schedulerStatus.pending.draft_answers === 0}
@@ -1667,7 +1603,7 @@ export default function KnowledgePage() {
                   )}
 
                   {!posterStatus?.logged_in && (
-                    <p className="text-sm text-gray-500 text-center py-4">
+                    <p className="py-4 text-center text-sm text-muted-foreground">
                       네이버 계정에 로그인하면 자동 답변 등록을 사용할 수 있습니다
                     </p>
                   )}
@@ -1676,15 +1612,15 @@ export default function KnowledgePage() {
             </div>
 
             {/* 안내 메시지 */}
-            <Card className="mt-6">
-              <CardContent className="pt-6">
+            <Card className="mt-4">
+              <CardContent className="pt-5">
                 <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                    <Bot className="h-5 w-5 text-blue-600" />
+                  <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-accent text-primary">
+                    <Bot className="h-4 w-4" />
                   </div>
                   <div>
-                    <h3 className="font-semibold mb-1">자동화 작동 방식</h3>
-                    <ul className="text-sm text-gray-600 space-y-1">
+                    <h3 className="mb-1 font-semibold">자동화 작동 방식</h3>
+                    <ul className="space-y-1 text-sm text-muted-foreground">
                       <li>1. 스케줄러가 설정된 키워드로 지식인 질문을 자동 수집합니다</li>
                       <li>2. 관련성 높은 질문에 대해 AI가 자동으로 답변을 생성합니다</li>
                       <li>3. 생성된 답변을 검토하고 승인하면 자동 등록됩니다</li>
@@ -1705,8 +1641,8 @@ export default function KnowledgePage() {
                   답변 생성 설정
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="grid md:grid-cols-2 gap-6">
+              <CardContent className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-4">
                     <h3 className="font-semibold">기본 답변 스타일</h3>
                     <div className="grid gap-4">
@@ -1764,7 +1700,7 @@ export default function KnowledgePage() {
             </Card>
           </TabsContent>
         </Tabs>
-      </main>
+      </div>
 
       {/* 답변 확인 다이얼로그 */}
       <Dialog open={isAnswerDialogOpen} onOpenChange={setIsAnswerDialogOpen}>
@@ -1784,14 +1720,14 @@ export default function KnowledgePage() {
                   {TONE_OPTIONS.find((t) => t.value === selectedAnswer.tone)?.label}
                 </Badge>
               </div>
-              <div className="p-4 bg-gray-50 rounded-lg">
+              <div className="rounded-lg border bg-muted/40 p-4">
                 <p className="whitespace-pre-wrap text-sm">
                   {selectedAnswer.content}
                 </p>
               </div>
               {selectedAnswer.promotion_text && (
-                <div className="p-3 bg-blue-50 rounded-lg">
-                  <p className="text-sm text-blue-800">{selectedAnswer.promotion_text}</p>
+                <div className="rounded-lg bg-accent p-3">
+                  <p className="text-sm text-accent-foreground">{selectedAnswer.promotion_text}</p>
                 </div>
               )}
             </div>
@@ -1848,7 +1784,7 @@ export default function KnowledgePage() {
                 onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
               />
             </div>
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-muted-foreground">
               * 비밀번호는 서버에 저장되지 않으며, 로그인 세션만 유지됩니다.
             </p>
           </div>

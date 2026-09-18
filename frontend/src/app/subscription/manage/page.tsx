@@ -3,11 +3,12 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import {
-  CreditCard, Calendar, AlertTriangle, Check, X, ChevronRight,
-  RefreshCw, Shield, Clock, ExternalLink
-} from 'lucide-react'
-import { billingAPI, paymentAPI, type SubscriptionManage } from '@/lib/api'
+import { CreditCard, AlertTriangle, ChevronRight, Shield, ExternalLink } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { PageHeader } from '@/components/app-shell/page-header'
+import { Pill, EmptyState } from '@/components/app-shell/ui-kit'
+import { billingAPI, type SubscriptionManage } from '@/lib/api'
 
 export default function SubscriptionManagePage() {
   const router = useRouter()
@@ -87,230 +88,228 @@ export default function SubscriptionManagePage() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'active':
-        return <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-sm">활성</span>
+        return <Pill tone="ok">활성</Pill>
       case 'trialing':
-        return <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-sm">무료체험 중</span>
+        return <Pill tone="accent">무료체험 중</Pill>
       case 'past_due':
-        return <span className="px-2 py-1 bg-red-100 text-red-800 rounded-full text-sm">결제 연체</span>
+        return <Pill tone="danger">결제 연체</Pill>
       case 'cancelled':
-        return <span className="px-2 py-1 bg-gray-100 text-gray-800 rounded-full text-sm">해지됨</span>
+        return <Pill tone="muted">해지됨</Pill>
       default:
-        return <span className="px-2 py-1 bg-gray-100 text-gray-800 rounded-full text-sm">{status}</span>
+        return <Pill tone="muted">{status}</Pill>
     }
   }
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-muted border-t-primary" />
       </div>
     )
   }
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <AlertTriangle className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-gray-700 mb-2">{error}</h2>
-          <Link href="/pricing" className="text-blue-600 hover:underline">
-            요금제 보기
-          </Link>
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <div className="w-full max-w-md">
+          <EmptyState
+            icon={<AlertTriangle className="h-8 w-8" />}
+            title={error}
+            description="요금제를 선택하면 구독을 시작할 수 있습니다."
+            action={
+              <Button asChild>
+                <Link href="/pricing">요금제 보기</Link>
+              </Button>
+            }
+          />
         </div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* 헤더 */}
-      <div className="bg-white border-b">
-        <div className="container mx-auto px-4 py-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">구독 관리</h1>
-              <p className="text-sm text-gray-600 mt-1">결제 수단 및 구독 상태를 관리하세요</p>
-            </div>
-            <Link href="/dashboard" className="text-blue-600 hover:underline text-sm">
-              대시보드로 돌아가기
-            </Link>
-          </div>
-        </div>
-      </div>
+    <div className="min-h-screen bg-background">
+      <div className="mx-auto max-w-3xl space-y-6 px-4 py-8">
+        <PageHeader
+          title="구독 관리"
+          description="결제 수단과 구독 상태를 관리하세요"
+          actions={
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/dashboard">대시보드로 돌아가기</Link>
+            </Button>
+          }
+        />
 
-      <div className="container mx-auto px-4 py-8">
-        <div className="max-w-3xl mx-auto space-y-6">
-          {/* 현재 구독 정보 */}
-          <div className="bg-white rounded-lg shadow-sm border p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-lg font-semibold text-gray-900">현재 구독</h2>
-              {subscription && getStatusBadge(subscription.status)}
-            </div>
-
-            {subscription && (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between py-3 border-b">
-                  <span className="text-gray-600">플랜</span>
+        {/* 현재 구독 정보 */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <CardTitle>현재 구독</CardTitle>
+            {subscription && getStatusBadge(subscription.status)}
+          </CardHeader>
+          {subscription && (
+            <CardContent className="space-y-4">
+              <div className="divide-y text-sm">
+                <div className="flex items-center justify-between py-3">
+                  <span className="text-muted-foreground">플랜</span>
                   <span className="font-medium">{subscription.plan_name}</span>
                 </div>
 
-                <div className="flex items-center justify-between py-3 border-b">
-                  <span className="text-gray-600">월 결제 금액</span>
-                  <span className="font-medium">{formatPrice(subscription.plan_price)}원</span>
+                <div className="flex items-center justify-between py-3">
+                  <span className="text-muted-foreground">월 결제 금액</span>
+                  <span className="font-medium tabular-nums">{formatPrice(subscription.plan_price)}원</span>
                 </div>
 
-                <div className="flex items-center justify-between py-3 border-b">
-                  <span className="text-gray-600">현재 기간</span>
-                  <span className="font-medium">
+                <div className="flex items-center justify-between py-3">
+                  <span className="text-muted-foreground">현재 기간</span>
+                  <span className="font-medium tabular-nums">
                     {formatDate(subscription.current_period_start)} ~ {formatDate(subscription.current_period_end)}
                   </span>
                 </div>
 
                 {subscription.is_trialing && subscription.trial_end && (
-                  <div className="flex items-center justify-between py-3 border-b bg-blue-50 -mx-6 px-6">
-                    <span className="text-blue-700">무료체험 종료일</span>
-                    <span className="font-medium text-blue-700">{formatDate(subscription.trial_end)}</span>
+                  <div className="flex items-center justify-between py-3">
+                    <span className="text-primary">무료체험 종료일</span>
+                    <span className="font-medium tabular-nums text-primary">{formatDate(subscription.trial_end)}</span>
                   </div>
                 )}
 
                 {subscription.next_billing_date && !subscription.cancel_at_period_end && (
-                  <div className="flex items-center justify-between py-3 border-b">
-                    <span className="text-gray-600">다음 결제일</span>
-                    <span className="font-medium text-blue-600">{formatDate(subscription.next_billing_date)}</span>
-                  </div>
-                )}
-
-                {subscription.cancel_at_period_end && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mt-4">
-                    <div className="flex items-start gap-3">
-                      <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-                      <div>
-                        <p className="font-medium text-amber-800">해지 예정</p>
-                        <p className="text-sm text-amber-700 mt-1">
-                          {formatDate(subscription.current_period_end)}에 구독이 해지됩니다.
-                          그 전까지 서비스를 계속 이용하실 수 있습니다.
-                        </p>
-                        <button
-                          onClick={handleReactivate}
-                          className="mt-3 text-sm text-amber-800 font-medium hover:underline"
-                        >
-                          해지 취소하고 계속 이용하기
-                        </button>
-                      </div>
-                    </div>
+                  <div className="flex items-center justify-between py-3">
+                    <span className="text-muted-foreground">다음 결제일</span>
+                    <span className="font-medium tabular-nums text-primary">{formatDate(subscription.next_billing_date)}</span>
                   </div>
                 )}
               </div>
-            )}
-          </div>
 
-          {/* 결제 수단 */}
-          <div className="bg-white rounded-lg shadow-sm border p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-lg font-semibold text-gray-900">결제 수단</h2>
-              <Link
-                href="/payment/billing-setup"
-                className="text-blue-600 text-sm hover:underline flex items-center gap-1"
-              >
-                {subscription?.has_card ? '카드 변경' : '카드 등록'}
-                <ChevronRight className="w-4 h-4" />
-              </Link>
-            </div>
-
-            {subscription?.has_card ? (
-              <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg">
-                <div className="w-12 h-8 bg-gradient-to-r from-blue-600 to-blue-400 rounded flex items-center justify-center">
-                  <CreditCard className="w-6 h-6 text-white" />
+              {subscription.cancel_at_period_end && (
+                <div className="rounded-lg bg-warning-soft p-4">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-warning" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium text-warning">해지 예정</p>
+                      <p className="text-sm text-muted-foreground">
+                        {formatDate(subscription.current_period_end)}에 구독이 해지됩니다.
+                        그 전까지 서비스를 계속 이용하실 수 있습니다.
+                      </p>
+                      <Button variant="outline" size="sm" className="mt-2" onClick={handleReactivate}>
+                        해지 취소하고 계속 이용하기
+                      </Button>
+                    </div>
+                  </div>
                 </div>
-                <div>
+              )}
+            </CardContent>
+          )}
+        </Card>
+
+        {/* 결제 수단 */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <CardTitle>결제 수단</CardTitle>
+            <Button variant="ghost" size="sm" asChild>
+              <Link href="/payment/billing-setup">
+                {subscription?.has_card ? '카드 변경' : '카드 등록'}
+                <ChevronRight className="h-4 w-4" />
+              </Link>
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {subscription?.has_card ? (
+              <div className="flex items-center gap-4 rounded-lg border bg-muted/40 p-4">
+                <div className="flex h-9 w-12 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+                  <CreditCard className="h-5 w-5" />
+                </div>
+                <div className="text-sm">
                   <p className="font-medium">{subscription.card_company}</p>
-                  <p className="text-sm text-gray-500">**** **** **** {subscription.card_number_last4}</p>
+                  <p className="tabular-nums text-muted-foreground">**** **** **** {subscription.card_number_last4}</p>
                 </div>
               </div>
             ) : (
-              <div className="text-center py-8">
-                <CreditCard className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                <p className="text-gray-500 mb-4">등록된 결제 수단이 없습니다</p>
-                <Link
-                  href="/payment/billing-setup"
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                >
-                  <CreditCard className="w-4 h-4" />
-                  카드 등록하기
-                </Link>
-              </div>
-            )}
-          </div>
-
-          {/* 결제 내역 */}
-          <div className="bg-white rounded-lg shadow-sm border p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-lg font-semibold text-gray-900">결제 내역</h2>
-              <Link
-                href="/payment/history"
-                className="text-blue-600 text-sm hover:underline flex items-center gap-1"
-              >
-                전체 보기
-                <ChevronRight className="w-4 h-4" />
-              </Link>
-            </div>
-
-            <p className="text-gray-500 text-center py-4">
-              결제 내역은 <Link href="/payment/history" className="text-blue-600 hover:underline">결제 내역</Link> 페이지에서 확인하실 수 있습니다.
-            </p>
-          </div>
-
-          {/* 플랜 변경 */}
-          <div className="bg-white rounded-lg shadow-sm border p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">플랜 변경</h2>
-                <p className="text-sm text-gray-500 mt-1">더 높은 플랜으로 업그레이드하세요</p>
-              </div>
-              <Link
-                href="/pricing"
-                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-              >
-                플랜 보기
-                <ExternalLink className="w-4 h-4" />
-              </Link>
-            </div>
-          </div>
-
-          {/* 구독 해지 */}
-          {subscription && !subscription.cancel_at_period_end && (
-            <div className="bg-white rounded-lg shadow-sm border p-6">
-              <h2 className="text-lg font-semibold text-gray-900 mb-4">구독 해지</h2>
-              <p className="text-gray-600 text-sm mb-4">
-                구독을 해지하시면 현재 결제 기간 종료 후 서비스 이용이 제한됩니다.
-              </p>
-              <button
-                onClick={() => setShowCancelModal(true)}
-                className="text-red-600 hover:text-red-700 text-sm font-medium"
-              >
-                구독 해지하기
-              </button>
-            </div>
-          )}
-
-          {/* 법적 안내 */}
-          <div className="bg-gray-100 rounded-lg p-4">
-            <div className="flex items-start gap-3">
-              <Shield className="w-5 h-5 text-gray-500 flex-shrink-0 mt-0.5" />
-              <div className="text-sm text-gray-600">
-                <p className="font-medium text-gray-700 mb-1">자동결제 안내</p>
-                <ul className="space-y-1">
-                  <li>결제 7일 전 이메일로 결제 예정 안내를 발송합니다.</li>
-                  <li>해지는 언제든지 이 페이지에서 가능합니다.</li>
-                  <li>
-                    자세한 내용은{' '}
-                    <Link href="/legal" className="text-blue-600 hover:underline">
-                      이용약관
+              <EmptyState
+                icon={<CreditCard className="h-8 w-8" />}
+                title="등록된 결제 수단이 없습니다"
+                description="카드를 등록하면 자동으로 결제됩니다."
+                action={
+                  <Button asChild>
+                    <Link href="/payment/billing-setup">
+                      <CreditCard className="h-4 w-4" />
+                      카드 등록하기
                     </Link>
-                    을 확인해 주세요.
-                  </li>
-                </ul>
-              </div>
+                  </Button>
+                }
+              />
+            )}
+          </CardContent>
+        </Card>
+
+        {/* 결제 내역 */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <CardTitle>결제 내역</CardTitle>
+            <Button variant="ghost" size="sm" asChild>
+              <Link href="/payment/history">
+                전체 보기
+                <ChevronRight className="h-4 w-4" />
+              </Link>
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <p className="py-2 text-center text-sm text-muted-foreground">
+              결제 내역은 <Link href="/payment/history" className="text-primary hover:underline">결제 내역</Link> 페이지에서 확인하실 수 있습니다.
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* 플랜 변경 */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <div className="space-y-1.5">
+              <CardTitle>플랜 변경</CardTitle>
+              <CardDescription>더 높은 플랜으로 업그레이드하세요</CardDescription>
+            </div>
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/pricing">
+                플랜 보기
+                <ExternalLink className="h-4 w-4" />
+              </Link>
+            </Button>
+          </CardHeader>
+        </Card>
+
+        {/* 구독 해지 */}
+        {subscription && !subscription.cancel_at_period_end && (
+          <Card>
+            <CardHeader>
+              <CardTitle>구독 해지</CardTitle>
+              <CardDescription>
+                구독을 해지하시면 현재 결제 기간 종료 후 서비스 이용이 제한됩니다.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button variant="ghost" size="sm" className="text-danger hover:text-danger" onClick={() => setShowCancelModal(true)}>
+                구독 해지하기
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* 법적 안내 */}
+        <div className="rounded-xl bg-muted p-4">
+          <div className="flex items-start gap-3">
+            <Shield className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+            <div className="text-sm text-muted-foreground">
+              <p className="mb-1 font-medium text-foreground">자동결제 안내</p>
+              <ul className="space-y-1">
+                <li>결제 7일 전 이메일로 결제 예정 안내를 발송합니다.</li>
+                <li>해지는 언제든지 이 페이지에서 가능합니다.</li>
+                <li>
+                  자세한 내용은{' '}
+                  <Link href="/legal" className="text-primary hover:underline">
+                    이용약관
+                  </Link>
+                  을 확인해 주세요.
+                </li>
+              </ul>
             </div>
           </div>
         </div>
@@ -318,66 +317,59 @@ export default function SubscriptionManagePage() {
 
       {/* 해지 모달 */}
       {showCancelModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg max-w-md w-full p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">구독 해지</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="surface w-full max-w-md space-y-4 p-6" role="dialog" aria-modal="true" aria-labelledby="cancel-title">
+            <h3 id="cancel-title" className="section-title">구독 해지</h3>
 
-            <div className="space-y-4 mb-6">
-              <label className="flex items-start gap-3 p-4 border rounded-lg cursor-pointer hover:bg-gray-50">
+            <div className="space-y-3">
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors hover:bg-muted/40">
                 <input
                   type="radio"
                   name="cancelType"
                   value="period_end"
                   checked={cancelType === 'period_end'}
                   onChange={() => setCancelType('period_end')}
-                  className="mt-1"
+                  className="mt-1 accent-primary"
                 />
-                <div>
+                <div className="text-sm">
                   <p className="font-medium">기간 종료 시 해지</p>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-muted-foreground">
                     {subscription && formatDate(subscription.current_period_end)}까지 서비스를 이용하고 해지됩니다.
                   </p>
                 </div>
               </label>
 
-              <label className="flex items-start gap-3 p-4 border rounded-lg cursor-pointer hover:bg-gray-50">
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-colors hover:bg-muted/40">
                 <input
                   type="radio"
                   name="cancelType"
                   value="immediate"
                   checked={cancelType === 'immediate'}
                   onChange={() => setCancelType('immediate')}
-                  className="mt-1"
+                  className="mt-1 accent-primary"
                 />
-                <div>
+                <div className="text-sm">
                   <p className="font-medium">즉시 해지</p>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-muted-foreground">
                     지금 바로 해지하고 미사용 기간에 대해 일할 환불받습니다.
                   </p>
                 </div>
               </label>
             </div>
 
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-6">
-              <p className="text-sm text-amber-800">
+            <div className="rounded-lg bg-warning-soft p-3">
+              <p className="text-sm text-warning">
                 해지 후에도 계정과 데이터는 30일간 보관됩니다.
               </p>
             </div>
 
             <div className="flex gap-3">
-              <button
-                onClick={() => setShowCancelModal(false)}
-                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
-              >
+              <Button variant="outline" className="flex-1" onClick={() => setShowCancelModal(false)}>
                 취소
-              </button>
-              <button
-                onClick={handleCancel}
-                disabled={cancelLoading}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
-              >
+              </Button>
+              <Button variant="destructive" className="flex-1" onClick={handleCancel} disabled={cancelLoading}>
                 {cancelLoading ? '처리 중...' : '해지하기'}
-              </button>
+              </Button>
             </div>
           </div>
         </div>

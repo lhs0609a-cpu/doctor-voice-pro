@@ -99,6 +99,16 @@ class Post(Base):
     #   "estimated_ranking": "상위 5%"
     # }
 
+    # 원고 품질 종합 점수 (quality_scorer.py). 생성할 때마다 채점하고, 낮으면 한 번 고쳐 쓴다.
+    quality_score = Column(Float, default=0.0)   # 0~100 총점
+    quality_grade = Column(String(2), nullable=True)  # A / B / C / D
+    quality_report = Column(JSON, nullable=True)  # 축별 점수 + 감점 사유 + 의료광고법 위반 목록
+    # {
+    #   "total": 82.4, "grade": "B", "capped_by_law": false, "score_cap": 100,
+    #   "law": {"passed": true, "violations": [...], "counts": {...}},
+    #   "reader_appeal": {...}, "naver_fit": {...}, "trust": {...}, "llm_judge": {...}
+    # }
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(

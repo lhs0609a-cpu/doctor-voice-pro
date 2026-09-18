@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { postsAPI, postsAPIExtended, tagsAPI } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -22,13 +22,14 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { PostListSkeleton } from '@/components/post-skeleton'
+import { PageHeader } from '@/components/app-shell/page-header'
+import { Pill, EmptyState, ListRow } from '@/components/app-shell/ui-kit'
 import { toast } from 'sonner'
 import {
   FileText,
   Star,
   StarOff,
   Search,
-  Filter,
   Copy,
   Trash2,
   MoreVertical,
@@ -51,6 +52,20 @@ interface Tag {
   name: string
   color: string
   post_count: number
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  draft: '작성중',
+  published: '발행됨',
+  scheduled: '예약됨',
+  archived: '보관됨',
+}
+
+const STATUS_TONE: Record<string, 'ok' | 'warn' | 'danger' | 'accent' | 'muted'> = {
+  draft: 'muted',
+  published: 'ok',
+  scheduled: 'accent',
+  archived: 'muted',
 }
 
 export default function PostsPageEnhanced() {
@@ -227,42 +242,37 @@ export default function PostsPageEnhanced() {
     scoreRange[1] < 100
 
   return (
-    <div className="container mx-auto p-6">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-3xl font-bold mb-2">포스팅 관리</h1>
-          <p className="text-muted-foreground">모든 포스팅을 관리하고 검색하세요</p>
-        </div>
-        <Button onClick={() => router.push('/dashboard/create')}>
-          <FileText className="mr-2 h-4 w-4" />
-          새 포스팅
-        </Button>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="포스팅 관리"
+        description="작성한 글을 검색하고 상태를 관리하세요"
+        actions={
+          <Button onClick={() => router.push('/dashboard/create')}>
+            <FileText className="h-4 w-4" />
+            새 글 만들기
+          </Button>
+        }
+      />
 
       {/* Search & Filters */}
-      <Card className="mb-6">
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-2">
-            <Search className="h-5 w-5 text-muted-foreground" />
-            <span className="font-semibold">검색 및 필터</span>
-            {hasActiveFilters && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={clearFilters}
-                className="ml-auto"
-              >
-                <X className="h-4 w-4 mr-1" />
-                초기화
-              </Button>
-            )}
-          </div>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle className="flex items-center gap-2">
+            <Search className="h-4 w-4 text-muted-foreground" />
+            검색 및 필터
+          </CardTitle>
+          {hasActiveFilters && (
+            <Button variant="ghost" size="sm" onClick={clearFilters}>
+              <X className="h-4 w-4" />
+              초기화
+            </Button>
+          )}
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <CardContent>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
             {/* Search */}
             <Input
-              placeholder="제목 또는 내용 검색..."
+              placeholder="제목 또는 내용 검색"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -298,13 +308,12 @@ export default function PostsPageEnhanced() {
 
             {/* Favorite Filter */}
             <Button
-              variant={favoriteFilter ? 'default' : 'outline'}
+              variant={favoriteFilter ? 'secondary' : 'outline'}
               onClick={() =>
                 setFavoriteFilter(favoriteFilter === true ? undefined : true)
               }
-              className="gap-2"
             >
-              <Star className="h-4 w-4" />
+              <Star className={`h-4 w-4 ${favoriteFilter ? 'fill-current text-warning' : ''}`} />
               즐겨찾기만
             </Button>
           </div>
@@ -313,149 +322,176 @@ export default function PostsPageEnhanced() {
 
       {/* Bulk Actions */}
       {selectedPosts.size > 0 && (
-        <Card className="mb-4 bg-blue-50 dark:bg-blue-950">
-          <CardContent className="py-3">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">
-                {selectedPosts.size}개 선택됨
-              </span>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" onClick={() => setSelectedPosts(new Set())}>
-                  선택 취소
-                </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={handleBulkDelete}
-                >
-                  <Trash2 className="h-4 w-4 mr-1" />
-                  삭제
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="flex items-center justify-between rounded-lg border bg-accent px-4 py-2.5 text-sm">
+          <span className="font-medium text-accent-foreground">
+            {selectedPosts.size}개 선택됨
+          </span>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setSelectedPosts(new Set())}>
+              선택 취소
+            </Button>
+            <Button variant="destructive" size="sm" onClick={handleBulkDelete}>
+              <Trash2 className="h-4 w-4" />
+              삭제
+            </Button>
+          </div>
+        </div>
       )}
 
       {/* Posts List */}
       {loading ? (
         <PostListSkeleton count={5} />
       ) : posts.length === 0 ? (
-        <Card className="border-dashed">
-          <CardContent className="pt-6">
-            <div className="text-center py-12 text-muted-foreground">
-              <FileText className="h-12 w-12 mx-auto mb-3 text-gray-300" />
-              <p>검색 결과가 없습니다</p>
-              <p className="text-sm mt-2">다른 조건으로 검색해보세요</p>
-            </div>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={<FileText className="h-8 w-8" />}
+          title={hasActiveFilters ? '검색 결과가 없습니다' : '아직 작성한 글이 없습니다'}
+          description={
+            hasActiveFilters
+              ? '다른 조건으로 다시 검색해보세요'
+              : '첫 글을 만들어 블로그 포스팅을 시작하세요'
+          }
+          action={
+            hasActiveFilters ? (
+              <Button variant="outline" onClick={clearFilters}>
+                <X className="h-4 w-4" />
+                필터 초기화
+              </Button>
+            ) : (
+              <Button onClick={() => router.push('/dashboard/create')}>
+                <FileText className="h-4 w-4" />
+                새 글 만들기
+              </Button>
+            )
+          }
+        />
       ) : (
-        <div className="space-y-4">
+        <div className="surface overflow-hidden">
+          <div className="flex items-center gap-3 border-b bg-muted/40 px-4 py-2 text-[12px] font-medium uppercase tracking-wide text-muted-foreground">
+            <Checkbox
+              checked={posts.length > 0 && selectedPosts.size === posts.length}
+              onCheckedChange={toggleSelectAll}
+              aria-label="전체 선택"
+            />
+            <span className="flex-1">제목</span>
+            <span className="hidden w-20 text-right sm:block">설득력</span>
+            <span className="hidden w-24 text-right md:block">작성일</span>
+            <span className="w-[72px]" />
+          </div>
           {posts.map((post) => (
-            <Card
-              key={post.id}
-              className="cursor-pointer hover:shadow-md transition-shadow"
-              onClick={() => router.push(`/dashboard/posts/${post.id}`)}
-            >
-              <CardContent className="pt-6">
-                <div className="flex items-start gap-4">
-                  <Checkbox
-                    checked={selectedPosts.has(post.id)}
-                    onCheckedChange={() => toggleSelectPost(post.id)}
-                    onClick={(e) => e.stopPropagation()}
-                  />
+            <ListRow key={post.id} className="p-0">
+              <div
+                role="link"
+                tabIndex={0}
+                className="flex flex-1 cursor-pointer items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/40"
+                onClick={() => router.push(`/dashboard/posts/${post.id}`)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') router.push(`/dashboard/posts/${post.id}`)
+                }}
+              >
+              <Checkbox
+                checked={selectedPosts.has(post.id)}
+                onCheckedChange={() => toggleSelectPost(post.id)}
+                onClick={(e) => e.stopPropagation()}
+                aria-label="선택"
+              />
 
-                  <div className="flex-1">
-                    <div className="flex items-start justify-between mb-2">
-                      <h3 className="font-semibold text-lg">{post.title}</h3>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={(e) => handleToggleFavorite(post.id, e)}
-                        >
-                          {post.is_favorited ? (
-                            <Star className="h-5 w-5 fill-yellow-400 text-yellow-400" />
-                          ) : (
-                            <StarOff className="h-5 w-5" />
-                          )}
-                        </Button>
-
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <MoreVertical className="h-5 w-5" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={(e) => handleDuplicate(post.id, e)}>
-                              <Copy className="h-4 w-4 mr-2" />
-                              복제
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={(e) => handleDelete(post.id, e)}
-                              className="text-red-600"
-                            >
-                              <Trash2 className="h-4 w-4 mr-2" />
-                              삭제
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <Badge variant={post.status === 'published' ? 'default' : 'secondary'}>
-                        {post.status === 'draft' && '작성중'}
-                        {post.status === 'published' && '발행됨'}
-                        {post.status === 'scheduled' && '예약됨'}
-                        {post.status === 'archived' && '보관됨'}
-                      </Badge>
-                      <Badge variant="outline">
-                        설득력 {Math.round(post.persuasion_score)}점
-                      </Badge>
-                      {post.tags &&
-                        post.tags.map((tag) => (
-                          <Badge
-                            key={tag.id}
-                            style={{ backgroundColor: tag.color, color: 'white' }}
-                          >
-                            {tag.name}
-                          </Badge>
-                        ))}
-                    </div>
-
-                    <p className="text-sm text-muted-foreground mt-2">
-                      {new Date(post.created_at).toLocaleDateString('ko-KR')}
-                    </p>
-                  </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="truncate font-medium">{post.title || '제목 없음'}</span>
+                  <Pill tone={STATUS_TONE[post.status] ?? 'muted'}>
+                    {STATUS_LABEL[post.status] ?? post.status}
+                  </Pill>
                 </div>
-              </CardContent>
-            </Card>
+                {post.tags && post.tags.length > 0 && (
+                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                    {post.tags.map((tag) => (
+                      <Badge
+                        key={tag.id}
+                        className="border-transparent text-[11px] font-medium"
+                        style={{ backgroundColor: tag.color, color: 'white' }}
+                      >
+                        {tag.name}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-0.5 text-xs text-muted-foreground md:hidden">
+                  {new Date(post.created_at).toLocaleDateString('ko-KR')}
+                </p>
+              </div>
+
+              <span className="hidden w-20 text-right tabular-nums text-muted-foreground sm:block">
+                {Math.round(post.persuasion_score)}점
+              </span>
+              <span className="hidden w-24 text-right tabular-nums text-muted-foreground md:block">
+                {new Date(post.created_at).toLocaleDateString('ko-KR')}
+              </span>
+
+              <div className="flex w-[72px] items-center justify-end gap-0.5">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={(e) => handleToggleFavorite(post.id, e)}
+                  aria-label={post.is_favorited ? '즐겨찾기 해제' : '즐겨찾기 추가'}
+                >
+                  {post.is_favorited ? (
+                    <Star className="h-4 w-4 fill-current text-warning" />
+                  ) : (
+                    <StarOff className="h-4 w-4 text-muted-foreground" />
+                  )}
+                </Button>
+
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label="더 보기"
+                    >
+                      <MoreVertical className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={(e) => handleDuplicate(post.id, e)}>
+                      <Copy className="mr-2 h-4 w-4" />
+                      복제
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={(e) => handleDelete(post.id, e)}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      삭제
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+              </div>
+            </ListRow>
           ))}
         </div>
       )}
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2 mt-6">
+        <div className="flex items-center justify-center gap-2">
           <Button
             variant="outline"
+            size="sm"
             disabled={page === 1}
             onClick={() => setPage(page - 1)}
           >
             이전
           </Button>
-          <span className="text-sm text-muted-foreground">
+          <span className="text-sm tabular-nums text-muted-foreground">
             {page} / {totalPages}
           </span>
           <Button
             variant="outline"
+            size="sm"
             disabled={page === totalPages}
             onClick={() => setPage(page + 1)}
           >
