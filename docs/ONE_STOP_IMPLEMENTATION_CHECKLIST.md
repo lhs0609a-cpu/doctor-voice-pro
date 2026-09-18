@@ -31,3 +31,18 @@
 - 에이전트가 네이버에 로그인된 persistent profile을 사용해야 합니다.
 - 네이버 검색 결과는 로그인 상태·노출 지역·시점에 따라 달라질 수 있습니다.
 - 캡처 파일은 백엔드 `/data/verification`에 저장됩니다.
+
+## 실측 결과 (2026-09-18)
+
+- [x] 로컬 에이전트 오프라인 시뮬레이션: 70 passed, 5 subtests passed
+- [x] 이미지 매칭·배치 테스트: 16 passed
+- [x] 캡처 전송 단위 시뮬레이션: Base64 PNG 전송 성공
+- [~] 발행 프로토콜: 13 passed, 2 failed — Windows SQLite 임시 파일 잠금으로 테스트 정리 단계에서 실패
+- [x] SQLite 비동기 URL 정규화 수정: 커밋 `717c93e`
+
+## 다음 개선 항목
+
+- [ ] 캡처 파일을 대시보드에서 직접 열 수 있는 인증 URL 제공
+- [ ] 검색 결과에서 1위만 확인하지 않고 검색 블록별 실제 순위 계산
+- [ ] Windows CI에 `pytest`, `playwright install chromium` 설치 단계를 고정
+- [ ] SQLite 테스트 fixture에서 연결 종료 후 파일 삭제를 보장
