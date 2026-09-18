@@ -287,6 +287,7 @@ export interface PublishJobItem {
   images_ready: boolean
   image_count: number
   published_at?: string | null
+  verification?: { rank?: number | null; search_url?: string | null; searched_at?: string; screenshot_path?: string } | null
 }
 
 export interface ClaimedJob {

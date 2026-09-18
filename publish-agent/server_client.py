@@ -199,6 +199,11 @@ class ServerClient:
         }
         return self._request("POST", f"/campaign/agent/jobs/{job_id}/result", json=body) or {}
 
+    def save_verification(self, job_id: str, *, rank=None, search_url=None, screenshot_data_url=None):
+        return self._request("POST", f"/campaign/jobs/{job_id}/verification", json={
+            "rank": rank, "search_url": search_url, "screenshot_data_url": screenshot_data_url,
+        }) or {}
+
     # ------------------------------------------------------- 신호등
     def heartbeat(self, *, device_id: str, version: str, running: bool,
                   label: str = "", note: str = "") -> Dict[str, Any]:

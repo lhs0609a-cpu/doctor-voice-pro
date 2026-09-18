@@ -399,6 +399,8 @@ export function AutomationHome() {
                     return (
                       <li key={j.id} className="flex items-center gap-3 px-3 py-2">
                         <span className="w-24 shrink-0 text-xs tabular-nums text-muted-foreground">{shortTime(j.scheduled_at)}</span>
+                        {j.verification?.rank != null && <span className="text-xs text-success">검색 {j.verification.rank}위</span>}
+                        {j.verification?.search_url && <a className="text-xs underline" href={j.verification.search_url} target="_blank" rel="noreferrer">검색 확인</a>}
                         <span className="min-w-0 flex-1 truncate text-sm">{j.title}</span>
                         <Pill tone={label.tone} className="shrink-0">{label.label}</Pill>
                       </li>
