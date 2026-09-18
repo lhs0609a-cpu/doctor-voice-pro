@@ -444,7 +444,7 @@ async def health_check():
     # AI 연동 상태 확인
     ai_status = {
         "connected": bool(settings.OPENAI_API_KEY and settings.OPENAI_API_KEY.startswith("sk-")),
-        "model": "gpt-4o-mini" if settings.OPENAI_API_KEY else None
+        "model": "gemini-2.5-flash" if settings.GEMINI_API_KEY else None
     }
 
     return {
