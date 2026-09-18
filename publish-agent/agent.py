@@ -61,7 +61,6 @@ class JobResult:
     captcha: bool = False
     receipt_id: Optional[str] = None
     verification: Optional[Dict[str, Any]] = None
-    verification: Optional[Dict[str, Any]] = None
 
     def as_report(self) -> Dict[str, Any]:
         return asdict(self)
