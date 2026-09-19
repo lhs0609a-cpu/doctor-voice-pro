@@ -915,6 +915,18 @@ class AIRewriteEngine:
 """
         user_prompt += strict_topic
 
+        # 생성 단계는 긴 업종별 예시보다 주제 고정과 사실 보존이 우선이다.
+        # 세부 품질 규칙은 사용자 프롬프트에 두고, 시스템에는 충돌하지 않는 핵심만 남긴다.
+        generation_system = f"""당신은 한국어 의료 콘텐츠 편집자입니다.
+반드시 원본 정보와 검색 키워드만 사용해 하나의 완성된 블로그 글을 작성합니다.
+검색 키워드: {keyword or '원본 주제'}
+원본에 없는 질환, 신체 부위, 증상, 사례, 수치, 기간, 치료법, 의사 경험담을 만들지 않습니다.
+제목에는 검색 키워드를 그대로 포함합니다.
+독자의 걱정 하나를 공감하되 공포를 키우지 않고, 설명과 근거와 선택 가능한 다음 행동을 논리적으로 연결합니다.
+사실과 해석을 구분하고, 근거가 없으면 단정하지 않습니다.
+합니다·했습니다·입니다체를 끝까지 유지하며, 짧고 자연스러운 문장으로 씁니다.
+출력은 제목 한 줄과 본문만 작성합니다."""
+
         total_input = 0
         total_output = 0
         total_thinking = 0
@@ -922,7 +934,7 @@ class AIRewriteEngine:
         try:
             result = await self._gemini_call(
                 user_prompt=user_prompt,
-                system_prompt=system_prompt,
+                system_prompt=generation_system,
                 max_output_tokens=max_output_tokens,
                 temperature=0.2,
                 thinking_budget=THINKING_BUDGET,
@@ -963,7 +975,7 @@ class AIRewriteEngine:
 </긴급 주제 교정>"""
                 retry = await self._gemini_call(
                     user_prompt=retry_prompt,
-                    system_prompt=system_prompt,
+                    system_prompt=generation_system,
                     max_output_tokens=max_output_tokens,
                     temperature=0.2,
                     thinking_budget=THINKING_BUDGET,
