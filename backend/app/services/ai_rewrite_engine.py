@@ -903,6 +903,18 @@ class AIRewriteEngine:
             original_content, framework, persuasion_level, ask_length, target_audience, top_post_rules, keyword
         )
 
+        # 긴 일반 지침보다 이번 원고의 주제와 원본을 우선하도록 마지막에 짧은 잠금 블록을 둔다.
+        # Gemini가 시스템 예시를 따라 다른 질환 글을 만드는 현상을 줄이기 위한 장치다.
+        strict_topic = f"""
+<이번 원고 최종 잠금>
+제목은 반드시 '{keyword or '원본 주제'}'를 포함한다.
+원본 주제: {original_content[:1800]}
+이 원본의 주제와 직접 관련된 내용만 쓴다. 원본에 없는 질환명, 증상, 신체 부위, 사례, 통계, 치료법을 추가하지 않는다.
+원본으로 충분히 설명할 수 없으면 내용을 지어내지 말고 원본의 정보만 간결하게 확장한다.
+</이번 원고 최종 잠금>
+"""
+        user_prompt += strict_topic
+
         total_input = 0
         total_output = 0
         total_thinking = 0
@@ -912,7 +924,7 @@ class AIRewriteEngine:
                 user_prompt=user_prompt,
                 system_prompt=system_prompt,
                 max_output_tokens=max_output_tokens,
-                temperature=0.7,
+                temperature=0.2,
                 thinking_budget=THINKING_BUDGET,
                 model=model,
             )
