@@ -201,10 +201,13 @@ EXPLAIN_MARKERS = re.compile(
 )
 
 # PEMAT Actionability: 독자가 할 수 있는 구체적 행동
+# 예전에는 '[가-힣]{2,}하세요' 처럼 어간까지 묶어서 잡았다.
+# 그러면 '정하세요'(앞이 한 글자), '멈추세요', '받아보세요' 처럼
+# 평범한 한국어 명령형이 통째로 빠져서, 행동을 제대로 안내한 원고가 0점을 받았다.
+# 종결어미 자체를 잡고 앞에 한 글자만 요구한다.
 ACTION_PATTERNS = re.compile(
-    r"([가-힣]{2,}\s*해\s*보세요|[가-힣]{2,}하세요|[가-힣]{2,}하시면\s*됩니다|"
-    r"[가-힣]{2,}부터\s*(?:시작|해)|권해드립니다|권합니다|점검해|확인해\s*보|"
-    r"줄여\s*보|늘려\s*보|바꿔\s*보|해\s*보시는\s*것)"
+    r"([가-힣]\s*세요|[가-힣]\s*십시오|권해드립니다|권합니다|"
+    r"[가-힣]{2,}하시면\s*됩니다|[가-힣]{2,}부터\s*(?:시작|해))"
 )
 # 단계로 안내하는 신호
 STEP_PATTERNS = re.compile(
@@ -246,8 +249,11 @@ REFUTATION = re.compile(
 )
 
 # 자기참조 (독자를 직접 지목)
+# 물음표를 필수로 걸어두면 '~하신가요.' 처럼 마침표로 닫는 한국어 블로그 문장이
+# 전부 빠진다. 그러면 사실상 '혹시' 라는 단어를 몇 번 썼는지만 재게 된다.
+# 물음표 여부와 무관하게 독자를 지목하는 어미를 잡는다.
 SELF_REFERENCE = re.compile(
-    r"(신가요\?|하시나요\?|으신가요\?|보신\s*적|여러분|혹시\s|"
+    r"(으?신가요|하시나요|있나요|보신\s*적|여러분|혹시\s|"
     r"당신|이런\s*경험|겪어\s*보셨|느끼신)"
 )
 # 서사 몰입 (장면·시간 전개)
@@ -679,7 +685,9 @@ class QualityScorer:
         return {"score": round(sum(d["score"] for d in details.values()), 1), "max": 18, "details": details}
 
     # ── G. 네이버 적합도 (8점) ─────────────────────────────────
-    def score_naver_fit(self, text: str, keyword: Optional[str] = None) -> Dict:
+    def score_naver_fit(
+        self, text: str, keyword: Optional[str] = None, source_text: Optional[str] = None
+    ) -> Dict:
         details = {}
         length = len(text)
 
@@ -725,12 +733,30 @@ class QualityScorer:
         details["topic_focus"] = {"score": round(_clamp(focus, 0, 3), 1), "max": 3, "notes": notes}
 
         # C3. 구체 정보 밀도 (5점) - DIA 가 보는 '실질 정보'
+        # 숫자 개수만 세면 모델이 점수를 받으려고 원본에 없는 기간·횟수를 지어낸다.
+        # 실제로 '무릎을 깊게 굽히는 동작을 하루 3회 이상 피하고' 처럼
+        # 뜻이 성립하지 않는 문장이 나왔다. 원본에 있는 숫자만 가점한다.
         notes = []
-        concrete = len(CONCRETE_SIGNALS.findall(text))
+        found = CONCRETE_SIGNALS.findall(text)
+        if source_text:
+            src_nums = set(re.findall(r"\d+", source_text))
+            grounded, invented = [], []
+            for token in found:
+                num = re.search(r"\d+", token)
+                (grounded if num and num.group(0) in src_nums else invented).append(token)
+            concrete = len(grounded)
+            if invented:
+                notes.append(
+                    f"원본에 없는 수치를 {len(invented)}개 만들었습니다. "
+                    "사실이면 원본에 근거를 넣고, 아니면 숫자를 빼세요: "
+                    + ", ".join(invented[:3])
+                )
+        else:
+            concrete = len(found)
         per_1k = concrete / max(1, length / 1000)
         dens = 2.0 * _band_score(per_1k, 4, 16, 0, 30)
         if per_1k < 4:
-            notes.append(f"구체적인 수치가 1,000자당 {per_1k:.1f}개뿐입니다. 기간, 빈도, 정도를 나타내는 숫자를 본문에 더 넣어 일반론에서 벗어나게 하세요")
+            notes.append(f"원본에 근거가 있는 수치가 1,000자당 {per_1k:.1f}개뿐입니다. 기간, 빈도, 정도를 나타내는 숫자를 원본에 넣고 본문에서 인용하세요")
         details["concreteness"] = {"score": round(dens, 1), "max": 2, "notes": notes}
 
         total = sum(d["score"] for d in details.values())
@@ -840,7 +866,7 @@ class QualityScorer:
         actionability = self.score_actionability(text)
         trust = self.score_trust(text, source_text=source_text)
         diff = self.score_differentiation(text, differentiators)
-        naver = self.score_naver_fit(text, keyword)
+        naver = self.score_naver_fit(text, keyword, source_text=source_text)
         # 14 + 14 + 14 + 18 + 12 + 8 = 80점
         rule_total = (
             engagement["score"] + understandability["score"] + actionability["score"]
