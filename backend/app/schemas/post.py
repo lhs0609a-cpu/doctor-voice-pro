@@ -57,6 +57,9 @@ class PostCreate(BaseModel):
     seo_optimization: Optional[SEOOptimization] = None
     # 상위글 분석 기반 규칙
     top_post_rules: Optional[TopPostRules] = None
+    # 이 글이 노리는 검색 키워드. 제목 키워드 강제, 주제 이탈 검증,
+    # 채점의 주제 집중도가 이 값에 의존한다. 비우면 해당 기능들이 동작하지 않는다.
+    keyword: Optional[str] = Field(default=None, max_length=100)
 
 
 class RewriteRequest(BaseModel):

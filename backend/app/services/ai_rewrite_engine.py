@@ -813,7 +813,7 @@ class AIRewriteEngine:
         structure = self._plan_structure(target_length, top_post_rules)
 
         keyword_text = f"\n<검색 키워드>\n{keyword}\n</검색 키워드>" if keyword else ""
-        return f"""<원본 정보>
+        prompt = f"""<원본 정보>
 {original_content}
 </원본 정보>
 {keyword_text}

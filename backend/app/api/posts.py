@@ -94,6 +94,7 @@ async def create_post(
                 ai_model=post_data.ai_model,
                 seo_optimization=seo_optimization_dict,
                 top_post_rules=top_post_rules_dict,
+                keyword=post_data.keyword,
                 websocket_manager=ws_manager,
             )
 

@@ -43,6 +43,7 @@ class PostService:
         ai_model: Optional[str] = None,
         seo_optimization: Optional[Dict] = None,
         top_post_rules: Optional[Dict] = None,
+        keyword: Optional[str] = None,
         websocket_manager=None,
         task_id: str = None,
     ) -> Post:
@@ -139,6 +140,9 @@ class PostService:
             seo_optimization=seo_optimization,
             top_post_rules=top_post_rules,
             industry_type=industry_type,
+            # 키워드를 넘기지 않으면 제목 키워드 강제, 주제 이탈 검증과 재생성,
+            # 채점의 주제 집중도가 전부 동작하지 않는다.
+            keyword=keyword,
         )
 
         # 품질 채점 결과. generate() 직후에 읽어야 한다
@@ -310,10 +314,20 @@ class PostService:
             version_number=1,
             content=generated_content,
             persuasion_score=persuasion_scores["total"],
+            # 재작성 때 같은 조건으로 다시 뽑으려면 설정 전체가 남아 있어야 한다.
+            # 예전에는 framework/persuasion_level/target_length 만 남겨서
+            # 재작성하면 모델과 요청사항, 키워드가 통째로 초기화됐다.
             generation_config={
                 "framework": framework,
                 "persuasion_level": persuasion_level,
                 "target_length": target_length,
+                "keyword": keyword,
+                "ai_provider": ai_provider,
+                "ai_model": ai_model,
+                "writing_style": writing_style,
+                "requirements": requirements,
+                "seo_optimization": seo_optimization,
+                "top_post_rules": top_post_rules,
             },
         )
 
@@ -383,10 +397,26 @@ class PostService:
         profile = await self._get_doctor_profile(db, user_id)
         profile_dict = self._profile_to_dict(user, profile)
 
+        # 직전 버전의 생성 설정을 불러와 기본값으로 쓴다.
+        # 이게 없으면 재작성 때마다 모델·요청사항·SEO·키워드가 초기화되어
+        # 처음 생성한 원고보다 품질이 떨어진 결과가 나온다.
+        last_version_result = await db.execute(
+            select(PostVersion)
+            .where(PostVersion.post_id == post_id)
+            .order_by(PostVersion.version_number.desc())
+        )
+        last_version = last_version_result.scalars().first()
+        prev = (last_version.generation_config or {}) if last_version else {}
+
         # 기존 설정 또는 새 설정 사용
-        framework = framework or "AIDA"
-        persuasion_level = persuasion_level or 3
-        target_length = target_length or 1500
+        framework = framework or prev.get("framework") or "AIDA"
+        persuasion_level = persuasion_level or prev.get("persuasion_level") or 3
+        target_length = target_length or prev.get("target_length") or 1500
+
+        # 키워드는 설정에 없으면 생성 때 뽑아둔 대표 키워드로 되살린다
+        keyword = prev.get("keyword")
+        if not keyword and post.seo_keywords:
+            keyword = post.seo_keywords[0]
 
         # 업종 타입 가져오기
         industry_type = user.industry_type if user else IndustryType.MEDICAL
@@ -400,6 +430,13 @@ class PostService:
             target_length=target_length,
             target_audience=profile.target_audience if profile else None,
             industry_type=industry_type,
+            keyword=keyword,
+            ai_provider=prev.get("ai_provider") or "gemini",
+            ai_model=prev.get("ai_model"),
+            custom_writing_style=prev.get("writing_style"),
+            requirements=prev.get("requirements"),
+            seo_optimization=prev.get("seo_optimization"),
+            top_post_rules=prev.get("top_post_rules"),
         )
 
         # 검증 및 점수 계산
@@ -423,10 +460,13 @@ class PostService:
             version_number=new_version_number,
             content=generated_content,
             persuasion_score=persuasion_scores["total"],
+            # 다음 재작성도 같은 조건을 이어받도록 설정 전체를 남긴다
             generation_config={
+                **prev,
                 "framework": framework,
                 "persuasion_level": persuasion_level,
                 "target_length": target_length,
+                "keyword": keyword,
             },
         )
 
