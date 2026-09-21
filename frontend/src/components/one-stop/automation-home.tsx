@@ -18,13 +18,15 @@ import { Pill } from '@/components/app-shell/ui-kit'
 import { AutopilotPanel } from '@/components/campaign/autopilot-panel'
 import { LauncherCard } from '@/components/launcher/launcher-card'
 import { useLauncherStatus } from '@/lib/use-launcher-status'
-import { campaignAPI, type Campaign, type Client, type PublishJobItem } from '@/lib/campaign-api'
+import { campaignAPI, type Campaign, type Client, type Keyword, type PublishJobItem } from '@/lib/campaign-api'
 import { errMsg } from '@/components/campaign/common'
 import { cn } from '@/lib/utils'
 import { QuickAutomationSetup } from './quick-automation-setup'
 import { BulkPublishPanel } from './bulk-publish-panel'
 import { PhotoStep } from './photo-step'
 import { BlogStep } from './blog-step'
+import { KeywordStep } from './keyword-step'
+import { WordPublishPanel } from './word-publish-panel'
 
 type Tone = 'ok' | 'warn' | 'danger' | 'accent' | 'muted'
 
@@ -39,7 +41,8 @@ const JOB_LABEL: Record<string, { label: string; tone: Tone }> = {
   cancelled: { label: '뺀 글', tone: 'muted' },
 }
 
-const TITLES = ['PC 실행기 켜기', '블로그 연결', '사진 올리기', '글 쓰기 시작']
+const TITLES = ['PC 실행기 켜기', '블로그 연결', '키워드 찾기', '사진 올리기', '글 쓰기 시작']
+const LAST = TITLES.length   // 글 쓰기 칸 번호. 준비(1~4)가 끝나면 이 칸만 남는다
 
 /** 누를 곳을 가리키는 표시. 펼쳐진 칸에 하나만 쓴다. */
 function Here({ children }: { children: React.ReactNode }) {
@@ -107,6 +110,7 @@ export function AutomationHome() {
   const [campaign, setCampaign] = useState<Campaign | null>(null)
   const [client, setClient] = useState<Client | null>(null)
   const [jobs, setJobs] = useState<PublishJobItem[]>([])
+  const [keywords, setKeywords] = useState<Keyword[]>([])
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
@@ -131,12 +135,14 @@ export function AutomationHome() {
   useEffect(() => {
     if (!selected) return
     let alive = true
-    setCampaign(null); setJobs([]); setReadError(''); setActionMsg('')
+    setCampaign(null); setJobs([]); setKeywords([]); setReadError(''); setActionMsg('')
     const load = async () => {
       try {
         const next = await campaignAPI.getCampaign(selected)
-        const [hospital, rows] = await Promise.all([campaignAPI.getClient(next.client_id), campaignAPI.listJobs(selected)])
-        if (alive) { setCampaign(next); setClient(hospital); setJobs(rows); setReadError('') }
+        const [hospital, rows, found] = await Promise.all([
+          campaignAPI.getClient(next.client_id), campaignAPI.listJobs(selected), campaignAPI.listKeywords(selected),
+        ])
+        if (alive) { setCampaign(next); setClient(hospital); setJobs(rows); setKeywords(found); setReadError('') }
       } catch (e) { if (alive) setReadError(errMsg(e)) }
     }
     void load()
@@ -148,6 +154,11 @@ export function AutomationHome() {
     if (!campaign) return
     try { setClient(await campaignAPI.getClient(campaign.client_id)) } catch { /* 다음 주기에 다시 읽는다 */ }
   }, [campaign])
+
+  const reloadKeywords = useCallback(async () => {
+    if (!selected) return
+    try { setKeywords(await campaignAPI.listKeywords(selected)) } catch { /* 다음 주기에 다시 읽는다 */ }
+  }, [selected])
 
   const act = async (key: string, work: () => Promise<string>) => {
     setActing(key); setActionMsg('')
@@ -183,18 +194,20 @@ export function AutomationHome() {
 
   // 실행기가 켜져 연결만 된 상태(running=false)에서는 아무것도 올라가지 않는다 → '발행 대기 중'이어야 완료.
   const launcherIdle = launcher.online && !launcher.running
+  const picked = keywords.filter(k => k.selected)
   const done = [
     launcher.online && launcher.running,
     ready && blogs.length > 0 && login.length === 0,
+    ready && picked.length > 0,
     ready && (hasPhotos || skipPhotos),
     ready && started,
   ]
   const current = done.findIndex(d => !d)                     // -1 이면 전부 끝
-  const setupDone = done[0] && done[1] && done[2]
-  // 지금 펼쳐진 칸(1~4). 준비를 접어 둔 동안에는 1~3번 줄 자체가 없으므로 4번만 열린다
+  const setupDone = done.slice(0, LAST - 1).every(Boolean)
+  // 지금 펼쳐진 칸. 준비를 접어 둔 동안에는 준비 줄 자체가 없으므로 마지막 칸만 열린다
   // — 안 그러면 사용자가 아까 열어 둔 2번을 따라가다 아무 칸도 안 펼쳐진 빈 화면이 된다.
-  const open = setupDone && !showSetup ? 4 : (opened ?? (current === -1 ? 4 : current + 1))
-  const locked = (n: number) => n >= 3 && !ready              // 병원을 만들기 전에는 3·4번을 못 연다
+  const open = setupDone && !showSetup ? LAST : (opened ?? (current === -1 ? LAST : current + 1))
+  const locked = (n: number) => n >= 3 && !ready              // 병원을 만들기 전에는 3번 뒤를 못 연다
 
   // 접혔을 때 이 한 줄만 읽으면 되게 쓴다.
   const notes = [
@@ -205,6 +218,9 @@ export function AutomationHome() {
       : !ready ? '불러오는 중…'
         : login.length ? `네이버 로그인 필요: ${login.map(b => b.label || b.blog_id).join(', ')}`
           : blogs.length ? `${client?.name} · 블로그 ${blogs.length}개` : '올릴 블로그를 고르세요',
+    !ready ? '블로그를 먼저 연결하세요'
+      : picked.length ? `쓸 키워드 ${picked.length}개 · 후보 ${keywords.length}개`
+        : '우리 블로그로 뚫리는 키워드를 찾습니다',
     hasPhotos ? '사진 준비됨' : skipPhotos ? '사진 없이 진행' : '안 올려도 됩니다',
     started ? `글 ${jobs.length}건 진행 중` : '몇 개 쓸지 정하면 시작합니다',
   ]
@@ -255,11 +271,15 @@ export function AutomationHome() {
         </div>
       : null
 
-  const step3 = ready && campaign && client
+  const step3 = ready
+    ? <KeywordStep key={selected} campaignId={selected} keywords={keywords} onChanged={() => { void reloadKeywords() }} />
+    : null
+
+  const step4 = ready && campaign && client
     ? <PhotoStep campaign={campaign} client={client} setCampaign={setCampaign} skipped={skipPhotos} onSkip={chooseNoPhotos} />
     : null
 
-  const step4 = ready ? (
+  const step5 = ready ? (
     <div className="space-y-3">
       <div className="grid gap-2 sm:grid-cols-2" role="group" aria-label="발행 방식">
         <button type="button" aria-pressed={mode === 'bulk'} onClick={() => setMode('bulk')}
@@ -275,7 +295,8 @@ export function AutomationHome() {
       </div>
       {!started && <Here>개수를 정하고 <b>시작</b>을 누르면 끝입니다. 창을 닫아도 서버가 계속 씁니다.</Here>}
       {mode === 'bulk'
-        ? <BulkPublishPanel key={selected} campaignId={selected} noImages={noImages} onRecurring={() => setMode('recurring')} />
+        ? <BulkPublishPanel key={selected} campaignId={selected} noImages={noImages} huntedCount={picked.length}
+            onRecurring={() => setMode('recurring')} onStarted={() => { void reloadKeywords() }} />
         : <AutopilotPanel key={selected} campaignId={selected} inline noImages={noImages} onComplete={() => { void loadList() }} />}
     </div>
   ) : null
@@ -326,6 +347,7 @@ export function AutomationHome() {
               {slot(1, step1)}
               {slot(2, step2)}
               {slot(3, step3)}
+              {slot(4, step4)}
               {showSetup && (
                 <Button variant="outline" size="sm" className="w-full" onClick={() => { setShowSetup(false); setOpened(null) }}>
                   준비 접기
@@ -334,7 +356,12 @@ export function AutomationHome() {
             </>
           )}
 
-          {slot(4, step4)}
+          {slot(LAST, step5)}
+
+          {ready && campaign && client && <details className="rounded-2xl border bg-card p-5">
+            <summary className="cursor-pointer font-semibold">Word 원고로 예약 발행</summary>
+            <div className="mt-4"><WordPublishPanel key={campaign.id} campaign={campaign} client={client} onUpdated={setCampaign} /></div>
+          </details>}
 
           {/* 현황 — 단계가 아니라 결과다. 시작한 뒤에만 보인다. */}
           {ready && jobs.length > 0 && (

@@ -53,7 +53,9 @@ async def run(ctx):
     if p.get('strict_quality'):
         from app.services.editorial_quality import approved
         drafts = [d for d in drafts if approved(d)]
-    if p.get('discover_keywords') and not p.get('autopilot') and p.get('strict_quality'):
+    # 대량 발행 표식. 발굴로 고른 키워드로 시작해도(discover_keywords=False) 같은 표식이 필요하다
+    # — 이게 없으면 반복 운영 일시정지가 이 예약까지 막는다.
+    if p.get('strict_quality') and not p.get('autopilot'):
         for draft in drafts:
             draft.checks = {**(draft.checks or {}), 'bulk_publication': {
                 'task_id': ctx.job.id, 'image_count': p.get('image_count', 0)}}
@@ -98,6 +100,8 @@ async def run(ctx):
     by_ref = {b.id: b for b in blogs}
     for draft, (ref, at) in zip(drafts, assigned):
         blog = by_ref[ref]
+        from app.services.point_formatting import PointFormatting
+        draft.checks = {**(draft.checks or {}), 'formatting': PointFormatting.model_validate((campaign.settings or {}).get('formatting') or {}).model_dump()}
         ctx.db.add(PublishJob(user_id=ctx.user_id, campaign_id=campaign.id, draft_id=draft.id,
                               blog_ref_id=ref, naver_blog_id=blog.blog_id, scheduled_at=at,
                               status='queued', category=blog.default_category, open_type=blog.open_type))

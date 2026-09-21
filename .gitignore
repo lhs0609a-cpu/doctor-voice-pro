@@ -23,3 +23,10 @@ publish-agent/profiles/
 publish-agent/debug.log
 publish-agent/build/
 publish-agent/dist/
+
+# 빌드 잔여물 / 로컬 실행 산출물
+frontend/public/downloads/*.zip
+frontend/tests/__pycache__/
+backend/.live_draft_id
+output/
+.review/

@@ -16,7 +16,7 @@ jobs:
         with:
           node-version: '20'
       - run: pip install -r backend/requirements.txt -r publish-agent/requirements.txt
-      - run: python -m unittest test_publish_protocol test_publish_api test_automation_pipeline test_publication_verifier test_autopilot test_editorial_quality test_landing_links test_naver_search_credentials test_publish_queue_api test_agent_status test_agent_pairing
+      - run: python -m unittest test_publish_protocol test_publish_api test_automation_pipeline test_publication_verifier test_autopilot test_editorial_quality test_landing_links test_naver_search_credentials test_publish_queue_api test_agent_status test_agent_pairing test_keyword_hunt test_docx_import test_docx_publish test_point_formatting
         working-directory: backend
         env:
           DATABASE_URL: sqlite+aiosqlite:///./test-unused.db

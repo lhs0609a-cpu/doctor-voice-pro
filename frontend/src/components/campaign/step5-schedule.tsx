@@ -17,7 +17,7 @@ import {
 import { campaignAPI, type ScheduleInput, type SchedulePreview } from '@/lib/campaign-api'
 import { EmptyNote, Pill, StepFooter, TABLE_CLS, errMsg, fmt, fmtDateTime, todayPlus, type StepProps } from './common'
 
-export function Step5Schedule({ campaign, client, setCampaign, goStep }: StepProps) {
+export function Step5Schedule({ campaign, client, setCampaign, goStep, draftIds }: StepProps & { draftIds?: string[] }) {
   const candidateBlogs = useMemo(() => {
     const active = (client.blogs || []).filter((b) => b.status === 'active')
     const inCampaign = active.filter((b) => campaign.blog_ids?.includes(b.id))
@@ -42,6 +42,7 @@ export function Step5Schedule({ campaign, client, setCampaign, goStep }: StepPro
     blog_ids: blogIds,
     per_day: perDay.trim() ? Number(perDay) : null,
     include_needs_review: includeNeedsReview,
+    draft_ids: draftIds,
   })
 
   const validate = () => {
@@ -213,7 +214,7 @@ export function Step5Schedule({ campaign, client, setCampaign, goStep }: StepPro
         </Card>
       )}
 
-      <StepFooter onBack={() => goStep(4)} onNext={() => goStep(6)} nextLabel="현황 보기" />
+      <StepFooter onBack={() => goStep(4)} onNext={draftIds ? undefined : () => goStep(6)} nextLabel="현황 보기" />
 
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>

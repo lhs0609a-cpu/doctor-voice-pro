@@ -220,6 +220,22 @@ export interface ImageSlot {
   stage?: string
 }
 
+/** 워드에서 읽어 온 내역 — checks.import 에 들어 있다(backend/app/services/docx_import.py) */
+export interface DocImport {
+  source: 'docx'
+  images: number
+  tables: number
+  headings: number
+  warnings: string[]
+}
+
+export interface PointFormattingConfig {
+  enabled: boolean; bold: boolean; quote: boolean; color: boolean; background: boolean
+  text_color: string; background_color: string; phrases: string[]
+}
+export interface FormattedSpan { t: string; b?: boolean; i?: boolean; u?: boolean; color?: string; background?: string; size?: number }
+export interface FormattedBlock { type: string; content?: string; spans?: FormattedSpan[]; items?: FormattedSpan[][]; rows?: FormattedSpan[][][] }
+
 export interface Draft {
   id: string
   campaign_id?: string | null
@@ -371,7 +387,7 @@ export const campaignAPI = {
   setLanding: async (id: string, body: AutopilotConfig): Promise<void> => { await api.put(`${C}/campaigns/${id}/landing`, body) },
   setAutopilot: async (id: string, body: AutopilotConfig & { enabled: boolean }): Promise<AutopilotState> =>
     (await api.put(`${C}/campaigns/${id}/autopilot`, body)).data,
-  startAutomation: async (id: string, body: { max_keywords: number; image_count: number; auto_schedule: boolean; start_date: string; days: number; discover_keywords?: boolean; quality?: AutopilotConfig }): Promise<Task> =>
+  startAutomation: async (id: string, body: { max_keywords: number; image_count: number; auto_schedule: boolean; start_date: string; days: number; discover_keywords?: boolean; strict_quality?: boolean; quality?: AutopilotConfig }): Promise<Task> =>
     (await api.post(`${C}/campaigns/${id}/automation`, body)).data,
   listCampaigns: async (clientId?: string): Promise<Campaign[]> => (await api.get(`${C}/campaigns`, { params: clientId ? { client_id: clientId } : {} })).data,
   createCampaign: async (clientId: string, name?: string): Promise<Campaign> => (await api.post(`${C}/campaigns`, { client_id: clientId, name })).data,
@@ -383,6 +399,9 @@ export const campaignAPI = {
   // 2단계 키워드
   expandKeywords: async (id: string, body: { seeds?: string[]; regions?: string[]; diseases?: string[]; level?: number; min_volume_region?: number; min_volume_national?: number; include_related?: boolean; analyze_after?: boolean }): Promise<Task> =>
     (await api.post(`${C}/campaigns/${id}/keywords/expand`, body)).data,
+  // 발굴 — 씨앗 확장 → 통합검색 자리 확인 → 내 블로그로 뚫리는지 판정을 한 작업으로
+  huntKeywords: async (id: string, body: { target: number; blog_id?: string; screen_limit?: number; verdict_limit?: number }): Promise<Task> =>
+    (await api.post(`${C}/campaigns/${id}/keywords/hunt`, body)).data,
   addKeywords: async (id: string, keywords: string[], fetchVolume = true): Promise<Keyword[]> =>
     (await api.post(`${C}/campaigns/${id}/keywords`, { keywords, fetch_volume: fetchVolume })).data,
   listKeywords: async (id: string): Promise<Keyword[]> => (await api.get(`${C}/campaigns/${id}/keywords`)).data,
@@ -394,6 +413,10 @@ export const campaignAPI = {
   sheetCheck: async (id: string): Promise<Task> => (await api.post(`${C}/campaigns/${id}/keywords/sheet-check`)).data,
   keywordSerp: async (id: string, keywordId: string): Promise<{ keyword: string; fetched_at?: string; posts: SerpPost[]; summary: SerpSummary | null; verdict?: string; verdict_reason?: string; error?: string | null }> =>
     (await api.get(`${C}/campaigns/${id}/keywords/${keywordId}/serp`)).data,
+
+  getPointFormatting: async (id: string): Promise<PointFormattingConfig> => (await api.get(`${C}/campaigns/${id}/formatting`)).data,
+  savePointFormatting: async (id: string, body: PointFormattingConfig): Promise<PointFormattingConfig> => (await api.put(`${C}/campaigns/${id}/formatting`, body)).data,
+  previewPointFormatting: async (id: string, body: PointFormattingConfig): Promise<{ title: string; blocks: FormattedBlock[] }> => (await api.post(`${C}/drafts/${id}/formatting-preview`, body)).data,
 
   // 3단계 원고
   generateDrafts: async (id: string, body: { keyword_ids?: string[]; brief_id?: string | null; target_chars?: number; heading_count?: number; keyword_count?: number; image_count?: number; instructions?: string; force?: boolean }): Promise<Task> =>

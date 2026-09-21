@@ -35,6 +35,8 @@ from app.models.publish_queue import ScheduleMark
 from app.services import campaign_crypto as crypto
 from app.services import campaign_jobs
 from app.services import campaign_writer as writer
+from app.services import docx_import
+from app.services.point_formatting import PointFormatting, apply_points
 from app.services import image_uniquifier as uniq
 from app.services import job_worker
 from app.services import schedule_engine as se
@@ -657,6 +659,29 @@ async def patch_campaign(campaign_id: str, body: CampaignPatch, current_user: Us
     return await _campaign_out(db, c)
 
 
+@router.get("/campaigns/{campaign_id}/formatting", response_model=PointFormatting)
+async def get_point_formatting(campaign_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
+    return PointFormatting.model_validate((c.settings or {}).get('formatting') or {})
+
+
+@router.put("/campaigns/{campaign_id}/formatting", response_model=PointFormatting)
+async def save_point_formatting(campaign_id: str, body: PointFormatting, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
+    c.settings = {**(c.settings or {}), 'formatting': body.model_dump()}
+    await db.commit()
+    return body
+
+
+@router.post("/drafts/{draft_id}/formatting-preview")
+async def preview_point_formatting(draft_id: str, body: PointFormatting, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    d = await _owned(db, Draft, draft_id, current_user, "원고")
+    blocks = d.blocks or [{'type':'text','content':p} for p in re.split(r'\n\s*\n', d.body or '') if p]
+    styled = apply_points(blocks, body.model_dump(), [d.keyword or '', *(d.emphasize or [])])
+    # Keep image bytes and pool identifiers out of the text preview.
+    return {'title': d.title, 'blocks': [b if b.get('type') != 'image' else {'type':'image'} for b in styled]}
+
+
 @router.delete("/campaigns/{campaign_id}")
 async def delete_campaign(campaign_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
@@ -728,6 +753,22 @@ async def expand_keywords(campaign_id: str, body: ExpandIn, current_user: User =
     job = await job_worker.enqueue(db, "keyword_expand", payload, _uid(current_user), dedupe_key=f"expand:{c.id}")
     if body.analyze_after:
         await job_worker.enqueue(db, "serp_analyze", {"campaign_id": c.id}, _uid(current_user), dedupe_key=f"serp:{c.id}", run_after=datetime.utcnow() + timedelta(seconds=1))
+    return _task_out(job)
+
+
+class HuntIn(BaseModel):
+    """키워드 발굴: 씨앗 확장 → 통합검색 자리 확인 → 내 블로그로 뚫리는지 판정."""
+    target: int = Field(100, ge=10, le=300)          # 최종으로 쓰고 싶은 키워드 수
+    blog_id: Optional[str] = None                     # 판정 기준 블로그(비우면 캠페인의 정상 블로그)
+    screen_limit: Optional[int] = Field(None, ge=10, le=600)    # ② 통검을 볼 최대 개수
+    verdict_limit: Optional[int] = Field(None, ge=0, le=300)    # ③ 내 블로그 판정 최대 개수
+
+
+@router.post("/campaigns/{campaign_id}/keywords/hunt", response_model=TaskOut)
+async def hunt_keywords(campaign_id: str, body: HuntIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
+    payload = {"campaign_id": c.id, **body.model_dump(exclude_none=True)}
+    job = await job_worker.enqueue(db, "keyword_hunt", payload, _uid(current_user), dedupe_key=f"hunt:{c.id}")
     return _task_out(job)
 
 
@@ -903,25 +944,16 @@ async def make_variants(campaign_id: str, body: VariantsIn, current_user: User =
 
 
 def _parse_upload(name: str, data: bytes) -> tuple[str, str]:
-    """txt/md/docx → (제목, 본문). 제목 = 첫 줄(없으면 파일명)."""
-    lower = name.lower()
+    """txt/md → (제목, 본문). 제목 = 첫 줄(없으면 파일명). 워드는 _parse_docx_upload 가 맡는다."""
     text = ""
-    if lower.endswith(".docx"):
+    for enc in ("utf-8-sig", "utf-8", "cp949", "euc-kr"):
         try:
-            import docx  # python-docx
-            doc = docx.Document(io.BytesIO(data))
-            text = "\n".join(p.text for p in doc.paragraphs)
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(status_code=400, detail=f"{name}: 워드 파일을 읽지 못했습니다 ({e})")
-    else:
-        for enc in ("utf-8-sig", "utf-8", "cp949", "euc-kr"):
-            try:
-                text = data.decode(enc)
-                break
-            except Exception:  # noqa: BLE001
-                continue
-        if not text:
-            raise HTTPException(status_code=400, detail=f"{name}: 텍스트 인코딩을 알 수 없습니다")
+            text = data.decode(enc)
+            break
+        except Exception:  # noqa: BLE001
+            continue
+    if not text:
+        raise HTTPException(status_code=400, detail=f"{name}: 텍스트 인코딩을 알 수 없습니다")
     text = text.replace("\r\n", "\n").strip()
     lines = [ln for ln in text.split("\n")]
     first = next((ln.strip() for ln in lines if ln.strip()), "")
@@ -934,6 +966,62 @@ def _parse_upload(name: str, data: bytes) -> tuple[str, str]:
     return stem, text
 
 
+def _data_url_bytes(raw: str) -> bytes:
+    _, _, b64 = (raw or "").partition(",")
+    try:
+        return base64.b64decode(b64)
+    except Exception:  # noqa: BLE001
+        return b""
+
+
+async def _store_doc_image(db: AsyncSession, user_id: str, block: Dict[str, Any], warnings: List[str]) -> Optional[str]:
+    """문서 안 사진 한 장 → 사진 풀의 행. 바이트를 원고에 담지 않으려고 풀에 넣고 번호만 참조한다."""
+    from app.api.media_pool import _normalize_upload
+
+    name = block.get("name") or "사진"
+    raw = _data_url_bytes(block.get("image") or "")
+    if not raw:
+        warnings.append(f"{name}: 사진을 읽지 못해 건너뜁니다")
+        return None
+    try:
+        data, w, h, ph, thumb = await run_in_threadpool(_normalize_upload, raw)
+    except Exception:  # noqa: BLE001
+        warnings.append(f"{name}: 사진 형식을 알 수 없어 건너뜁니다")
+        return None
+    row = PoolImage(
+        user_id=user_id, filename=name, content_type="image/jpeg", data=data, thumbnail=thumb,
+        original_phash=ph, width=w, height=h, size_bytes=len(data),
+    )
+    db.add(row)
+    await db.flush()
+    return row.id
+
+
+async def _parse_docx_upload(db: AsyncSession, user_id: str, name: str, data: bytes) -> tuple[str, str, List[Dict[str, Any]], Dict[str, Any]]:
+    """워드 → (제목, 평문, 서식 블록, 읽은 내역). 사진은 풀에 넣고 블록에는 번호만 남긴다."""
+    try:
+        parsed = await run_in_threadpool(docx_import.parse_docx, data, name=name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"{name}: {e}")
+
+    blocks: List[Dict[str, Any]] = []
+    for block in parsed.blocks:
+        if block.get("type") != "image":
+            blocks.append(block)
+            continue
+        pool_image_id = await _store_doc_image(db, user_id, block, parsed.warnings)
+        if pool_image_id:
+            blocks.append({"type": "image", "content": "", "pool_image_id": pool_image_id, "name": block.get("name")})
+    summary = {
+        "source": "docx",
+        "images": sum(1 for b in blocks if b["type"] == "image"),
+        "tables": sum(1 for b in blocks if b["type"] == "table"),
+        "headings": sum(1 for b in blocks if b["type"] == "heading"),
+        "warnings": parsed.warnings[:10],
+    }
+    return parsed.title, parsed.text, blocks, summary
+
+
 @router.post("/campaigns/{campaign_id}/drafts/upload", response_model=List[DraftOut])
 async def upload_drafts(campaign_id: str, files: List[UploadFile] = File(...), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
@@ -942,8 +1030,15 @@ async def upload_drafts(campaign_id: str, files: List[UploadFile] = File(...), c
     out: List[Draft] = []
     for f in files[:200]:
         data = await f.read()
-        title, body = _parse_upload(f.filename or "원고.txt", data)
-        body = writer.reflow(body)
+        name = f.filename or "원고.txt"
+        blocks: Optional[List[Dict[str, Any]]] = None
+        imported: Optional[Dict[str, Any]] = None
+        if name.lower().endswith(".docx"):
+            # 워드는 글쓴이가 잡아 둔 서식이 곧 원고다. reflow 로 문단을 다시 나누면 블록과 어긋난다.
+            title, body, blocks, imported = await _parse_docx_upload(db, _uid(current_user), name, data)
+        else:
+            title, body = _parse_upload(name, data)
+            body = writer.reflow(body)
         # 키워드 자동 매칭: 제목/본문에 들어 있는 캠페인 키워드 중 가장 긴 것
         matched = None
         hay = (title + "\n" + body).replace(" ", "")
@@ -952,10 +1047,12 @@ async def upload_drafts(campaign_id: str, files: List[UploadFile] = File(...), c
                 matched = k
                 break
         checks = writer.run_static_checks(title, body, client.forbidden_words if client else [])
+        if imported:
+            checks["import"] = imported
         d = Draft(
             user_id=_uid(current_user), client_id=c.client_id, campaign_id=c.id,
             keyword_id=matched.id if matched else None, keyword=matched.keyword if matched else None,
-            source="upload", title=title[:200], body=body, char_count=writer.count_chars(body),
+            source="upload", title=title[:200], body=body, blocks=blocks, char_count=writer.count_chars(body),
             status="ready" if checks["ok"] else "needs_review", checks=checks,
             tags=[matched.keyword] if matched else [], emphasize=[matched.keyword] if matched else [],
         )
@@ -1022,6 +1119,11 @@ async def update_draft(draft_id: str, body: DraftPatch, current_user: User = Dep
         client = await db.get(Client, d.client_id) if d.client_id else None
         checks = dict(d.checks or {})
         checks.update(writer.run_static_checks(d.title, d.body, client.forbidden_words if client else []))
+        if d.blocks:
+            # 본문을 손으로 고치면 워드 서식 블록은 더 이상 이 글이 아니다. 고친 글이 이긴다 —
+            # 그대로 두면 발행은 블록을 먼저 보므로 수정이 조용히 사라진다.
+            d.blocks = None
+            checks.pop("import", None)
         d.checks = checks
         if d.status in ("needs_review", "failed"):
             d.status = "ready" if checks.get("ok") else "needs_review"
@@ -1038,6 +1140,9 @@ async def update_draft(draft_id: str, body: DraftPatch, current_user: User = Dep
         if previous_checks.get('landing'):
             checks['landing'] = previous_checks['landing']
             checks['ok'] = checks['ok'] and d.body.count(checks['landing']['url']) == 1
+        for preserved in ('import','formatting'):
+            if preserved in previous_checks:
+                checks[preserved] = previous_checks[preserved]
         if previous_checks.get('editorial'):
             from app.services.editorial_quality import fingerprint
             editorial = dict(previous_checks['editorial'])
@@ -1208,13 +1313,17 @@ async def _schedule_inputs(db: AsyncSession, c: Campaign, body: ScheduleIn, user
         usable.append(b)
     if not usable:
         raise HTTPException(status_code=400, detail="발행할 수 있는 블로그가 없습니다. 병원 설정에서 블로그를 추가하거나 상태를 '정상'으로 바꾸세요.")
-    q = select(Draft).where(Draft.campaign_id == c.id, Draft.source != "upload")
+    q = select(Draft).where(Draft.campaign_id == c.id)
     statuses = ["ready"] + (["needs_review"] if body.include_needs_review else [])
     q = q.where(Draft.status.in_(statuses))
     if body.draft_ids:
         q = q.where(Draft.id.in_(body.draft_ids))
     drafts = (await db.execute(q.order_by(Draft.created_at.asc()))).scalars().all()
-    parent_ids = {d.parent_draft_id for d in drafts if d.parent_draft_id}
+    # 변형의 원본만 제외한다. 올린 원고 전부를 빼면(예전 `source != "upload"`) 워드로 올린
+    # 완성 원고를 영영 예약할 수 없다 — 변형을 안 뜬 원본과 구별되는 것은 자식의 유무뿐이다.
+    # 이번에 고른 원고 밖의 변형도 봐야 하므로 캠페인 전체에서 부모를 모은다.
+    parent_ids = {r for (r,) in (await db.execute(select(Draft.parent_draft_id).where(
+        Draft.campaign_id == c.id, Draft.parent_draft_id.isnot(None)))).all()}
     drafts = [d for d in drafts if d.id not in parent_ids]
     # 이미 활성 발행건이 있는 원고는 제외
     busy = {r for (r,) in (await db.execute(select(PublishJob.draft_id).where(PublishJob.campaign_id == c.id, PublishJob.status.in_(list(JOB_ACTIVE))))).all()}
@@ -1261,6 +1370,7 @@ async def schedule_commit(campaign_id: str, body: ScheduleIn, current_user: User
     by_ref = {b.id: b for b in blogs}
     for d, (ref, at) in zip(drafts, assigned):
         b = by_ref[ref]
+        d.checks = {**(d.checks or {}), 'formatting': PointFormatting.model_validate((c.settings or {}).get('formatting') or {}).model_dump()}
         db.add(PublishJob(
             user_id=_uid(current_user), campaign_id=c.id, draft_id=d.id, blog_ref_id=ref, naver_blog_id=b.blog_id,
             scheduled_at=at, status="queued", open_type=b.open_type or "public", category=b.default_category,
@@ -1411,6 +1521,8 @@ class AutomationIn(BaseModel):
     start_date: date
     days: int = Field(default=14, ge=1, le=90)
     discover_keywords: bool = False
+    # 발굴로 이미 고른 키워드를 쓸 때(discover_keywords=False)도 대량 발행과 같은 검수·사진 기준을 적용한다.
+    strict_quality: bool = False
     quality: PolicyConfig = Field(default_factory=PolicyConfig)
 
 
@@ -1418,7 +1530,8 @@ class AutomationIn(BaseModel):
 async def start_automation(campaign_id: str, body: AutomationIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     campaign = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
     uid = _uid(current_user)
-    if body.discover_keywords:
+    policy = None
+    if body.discover_keywords or body.strict_quality:
         # Use the same lock order as recurring replenishment.
         await db.execute(update(AutopilotPolicy).where(AutopilotPolicy.campaign_id == campaign_id).values(updated_at=datetime.utcnow()))
         policy = await db.get(AutopilotPolicy, campaign_id, populate_existing=True)
@@ -1439,20 +1552,23 @@ async def start_automation(campaign_id: str, body: AutomationIn, current_user: U
     if not keyword_ids and not body.discover_keywords:
         raise HTTPException(status_code=400, detail="2단계에서 자동화할 키워드를 선택하세요")
     payload = {**body.model_dump(mode="json"), "campaign_id": campaign_id, "keyword_ids": keyword_ids}
-    if body.discover_keywords:
+    if body.discover_keywords or body.strict_quality:
         from app.services.autopilot import preflight
         issues = await preflight(db, campaign, body.quality)
         if issues:
             raise HTTPException(status_code=400, detail={"issues": issues})
         client = await db.get(Client, campaign.client_id)
-        payload.update({**body.quality.model_dump(), "keyword_ids": [], "strict_quality": True,
-                        "auto_schedule": True, "collection_id": campaign.collection_id or client.default_collection_id})
+        # 발굴로 고른 키워드는 그대로 쓴다. 발굴 없이 시작하면 파이프라인이 직접 찾는다(빈 목록).
+        payload.update({**body.quality.model_dump(),
+                        "keyword_ids": [] if body.discover_keywords else keyword_ids,
+                        "strict_quality": True, "auto_schedule": True,
+                        "collection_id": campaign.collection_id or client.default_collection_id})
         campaign.settings = {**(campaign.settings or {}), "landing": body.quality.model_dump()}
         if policy:
             policy.config = body.quality.model_dump()
     job = BackgroundJob(user_id=uid, type="automation_pipeline", status="pending",
                         payload=payload,
-                        result={"requested": body.max_keywords} if body.discover_keywords else None,
+                        result={"requested": len(keyword_ids) or body.max_keywords} if (body.discover_keywords or body.strict_quality) else None,
                         max_attempts=2, total=4, run_after=datetime.utcnow())
     db.add(job)
     await db.flush()
@@ -1489,9 +1605,20 @@ class ClaimIn(BaseModel):
 
 
 class JobBlock(BaseModel):
+    """발행 실행기로 보내는 블록 하나.
+
+    `content` 는 항상 채운다 — 서식을 모르는 옛 실행기(rich_text_v1 능력 없음)에는
+    서식 필드를 떼고 이것만 보낸다. 규격은 services/docx_import.py 참고.
+    """
     type: str
     content: Optional[str] = None
     image: Optional[str] = None
+    spans: Optional[List[Dict[str, Any]]] = None      # text/heading/quote
+    level: Optional[int] = None                        # heading
+    ordered: Optional[bool] = None                     # list
+    items: Optional[List[List[Dict[str, Any]]]] = None  # list
+    header: Optional[bool] = None                      # table
+    rows: Optional[List[List[List[Dict[str, Any]]]]] = None  # table
 
 
 class ClaimedJob(BaseModel):
@@ -1499,7 +1626,8 @@ class ClaimedJob(BaseModel):
     lock_token: str
     title: str
     content: str
-    blocks: List[JobBlock]
+    # JobBlock 을 빈 필드 없이 편 것. 블록마다 null 8개를 실어 보내지 않으려고 dict 로 둔다.
+    blocks: List[Dict[str, Any]]
     tags: List[str] = []
     emphasize: List[str] = []
     finalAction: str = "schedule"
@@ -1512,7 +1640,27 @@ class ClaimedJob(BaseModel):
     lease_seconds: int = protocol.LEASE_SECONDS
 
 
-def _assemble_blocks(draft: Draft, variants: List[Dict[str, Any]], include_images: bool) -> List[JobBlock]:
+async def _doc_blocks(db: AsyncSession, draft: Draft, include_images: bool) -> List[JobBlock]:
+    """워드에서 올라온 원고 — 글쓴이가 잡아 둔 순서·서식 그대로. 사진은 풀에서 꺼내 실어 보낸다."""
+    out: List[JobBlock] = []
+    for block in draft.blocks or []:
+        if block.get("type") == "image":
+            if not include_images:
+                continue
+            image = await db.get(PoolImage, block.get("pool_image_id") or "")
+            if not image or not image.data:
+                raise ValueError("문서 안 사진을 찾지 못했습니다. 원고를 다시 올려 주세요")
+            out.append(JobBlock(type="image", content="",
+                                image=f"data:{image.content_type or 'image/jpeg'};base64,"
+                                      + base64.b64encode(image.data).decode()))
+            continue
+        out.append(JobBlock(**{k: v for k, v in block.items() if k in JobBlock.model_fields}))
+    return out
+
+
+async def _assemble_blocks(db: AsyncSession, draft: Draft, variants: List[Dict[str, Any]], include_images: bool) -> List[JobBlock]:
+    if draft.blocks:
+        return await _doc_blocks(db, draft, include_images)
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", draft.body or "") if p.strip()]
     by_para: Dict[int, List[Dict[str, Any]]] = {}
     for v in variants:
@@ -1553,6 +1701,9 @@ async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_us
         candidate_draft = await db.get(Draft, candidate.draft_id)
         if candidate_draft and (candidate_draft.checks or {}).get('landing') and 'landing_links_v1' not in body.capabilities:
             raise HTTPException(status_code=426, detail='랜딩 링크 검증을 지원하는 최신 실행기로 업데이트하세요')
+        point_settings = (candidate_draft.checks or {}).get('formatting', {}) if candidate_draft else {}
+        if point_settings.get('enabled') and 'point_styles_v1' not in body.capabilities:
+            raise HTTPException(status_code=426, detail='중요 포인트 서식을 지원하는 최신 실행기로 업데이트하세요')
         policy = await db.get(AutopilotPolicy, candidate.campaign_id)
         bulk_publication = (candidate_draft.checks or {}).get('bulk_publication') if candidate_draft else None
         if policy and not policy.enabled and not bulk_publication:
@@ -1589,15 +1740,26 @@ async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_us
             if body.include_images and not j.images_ready and draft.image_plan:
                 j.image_variants = await campaign_jobs.prepare_job_images(db, j, draft)
                 j.images_ready = True
-            blocks = _assemble_blocks(draft, j.image_variants or [], body.include_images)
+            blocks = await _assemble_blocks(db, draft, j.image_variants or [], body.include_images)
             if body.include_images and draft.image_plan and sum(b.type == "image" for b in blocks) != len(draft.image_plan):
                 raise ValueError("필수 이미지가 누락되었습니다")
+            if 'point_styles_v1' in body.capabilities:
+                blocks = [JobBlock(**b) for b in apply_points(
+                    [b.model_dump(exclude_none=True) for b in blocks], point_settings,
+                    [draft.keyword or '', *(draft.emphasize or [])])]
+            if "rich_text_v1" not in body.capabilities and 'point_styles_v1' not in body.capabilities:
+                # 서식을 모르는 실행기 — 굵게·표·목록을 평문으로 눌러서 보낸다(사진은 그대로).
+                blocks = [JobBlock(**b) for b in
+                          docx_import.flatten_blocks([b.model_dump(exclude_none=True) for b in blocks])]
             payload = ClaimedJob(
                 id=j.id, lock_token=token, title=draft.title,
-                content="\n\n".join(b.content for b in blocks if b.type == "text" and b.content),
-                blocks=blocks, tags=(draft.tags or [])[:10], emphasize=draft.emphasize or [],
+                content="\n\n".join(b.content for b in blocks if b.type != "image" and b.content),
+                blocks=[b.model_dump(exclude_none=True) for b in blocks],
+                tags=(draft.tags or [])[:10], emphasize=draft.emphasize or [],
                 schedule={"datetime": j.scheduled_at.isoformat(timespec="minutes") + "+09:00"},
                 options={"openType": j.open_type or "public", "search": True, "category": j.category,
+                         # 워드 원고는 글쓴이가 잡아 둔 줄바꿈이 곧 원고다. 실행기의 모바일 재정렬을 끈다.
+                         "reformat": not draft.blocks,
                          "requiredLinks": [draft.checks['landing']['url']] if (draft.checks or {}).get('landing') else []},
                 expectedBlogId=j.naver_blog_id, blog_ref_id=j.blog_ref_id, draft_id=j.draft_id,
             )

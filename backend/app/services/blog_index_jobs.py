@@ -219,17 +219,19 @@ async def blog_verdict_batch(ctx: JobContext) -> dict:
         res["keyword"] = kw
         summ = summarize_verdict(res)
         items.append({**summ, "detail": res})
-        # 부분 결과 스트리밍: 화면은 완료를 기다리지 않고 키워드마다 바로 표에 그린다
-        partial = {"blog_id": blog_id, "requested_blog_id": requested_id, "partial": True,
-                   "my": ({"score": my.get("score"), "level": my.get("level"), "grade": my.get("grade"), "blog_name": my.get("blog_name")} if my else None),
-                   "items": [{k: v for k, v in x.items() if k != "detail"} for x in items]}
-        _jid = ctx.job.id
+        # 부분 결과 스트리밍: 화면은 완료를 기다리지 않고 키워드마다 바로 표에 그린다.
+        # 다른 잡이 이 핸들러를 한 단계로 부를 때는(keyword_hunt) 그 잡의 result 를 덮으면 안 되므로 끈다.
+        if p.get("stream_partial", True):
+            partial = {"blog_id": blog_id, "requested_blog_id": requested_id, "partial": True,
+                       "my": ({"score": my.get("score"), "level": my.get("level"), "grade": my.get("grade"), "blog_name": my.get("blog_name")} if my else None),
+                       "items": [{k: v for k, v in x.items() if k != "detail"} for x in items]}
+            _jid = ctx.job.id
 
-        async def _do_partial(sess, _p=partial, _j=_jid):
-            j = await sess.get(BackgroundJob, _j)
-            if j is not None and j.status == "running":
-                j.result = _p
-        await isolated_write(_do_partial, what="partial result", retries=1)
+            async def _do_partial(sess, _p=partial, _j=_jid):
+                j = await sess.get(BackgroundJob, _j)
+                if j is not None and j.status == "running":
+                    j.result = _p
+            await isolated_write(_do_partial, what="partial result", retries=1)
         row = kw_rows.get(normalize_keyword(kw))
         if row is not None:
             row.my_blog_id = blog_id

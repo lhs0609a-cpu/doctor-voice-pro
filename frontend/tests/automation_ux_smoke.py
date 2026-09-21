@@ -18,7 +18,19 @@ async def main():
         'blog_ids': ['blog'], 'collection_id': 'photos', 'settings': {}, 'stats': {}, 'status': 'draft', 'step': 1}
     config = dict(daily_posts=2, buffer_days=3, image_count=3, target_chars=2000, min_score=85,
         max_rewrites=2, daily_generation_limit=6, landing_url='', landing_label='자세한 안내 확인하기', landing_purpose='', landing_tracking=False)
-    state = {'empty': False, 'enabled': False, 'config': config, 'starts': 0, 'fail': False, 'bulk': None}
+    keywords = [
+        {'id': 'k1', 'keyword': '습진 초기증상', 'source': 'related', 'scope': 'national', 'monthly_mobile': 880,
+         'monthly_pc': 120, 'total_volume': 1000, 'competition': 'mid', 'verdict': 'possible',
+         'verdict_reason': '병원 블로그 진입 여지가 있습니다', 'in_sheet': False, 'selected': True,
+         'passes_filter': True, 'has_draft': False, 'my_blog_id': 'springclinic', 'my_verdict': 'likely',
+         'my_probability': 0.78},
+        {'id': 'k2', 'keyword': '습진 연고 종류', 'source': 'related', 'scope': 'national', 'monthly_mobile': 420,
+         'monthly_pc': 60, 'total_volume': 480, 'competition': 'high', 'verdict': 'avoid',
+         'verdict_reason': '병원 블로그가 전혀 노출되지 않습니다', 'in_sheet': False, 'selected': False,
+         'passes_filter': True, 'has_draft': False, 'my_verdict': None, 'my_probability': None},
+    ]
+    state = {'empty': False, 'enabled': False, 'config': config, 'starts': 0, 'fail': False, 'bulk': None,
+             'hunt': None, 'keywords': keywords}
 
     async def route(request_route):
         request = request_route.request
@@ -78,6 +90,14 @@ async def main():
             if method == 'PATCH':
                 campaign.update(request.post_data_json)
             response = campaign
+        elif path.endswith('/keywords/hunt') and method == 'POST':
+            state['hunt'] = {'id': 'hunt-task', 'type': 'keyword_hunt', 'status': 'running', 'progress': 1,
+                             'total': 200, 'message': '통검 자리 확인 12/200', 'result': {}}
+            response = state['hunt']
+        elif path.endswith('/tasks/hunt-task'):
+            response = state['hunt']
+        elif path.endswith('/keywords'):
+            response = state['keywords']
         elif path.endswith('/jobs'):
             response = [{'id': str(i), 'title': title, 'status': status, 'scheduled_at': '2026-09-15T10:00:00'} for i, (title, status) in enumerate([
                 ('습진 관리 안내', 'published'), ('피부 상담 전 알아둘 점', 'submitted'), ('진료 과정 안내', 'uncertain')])]

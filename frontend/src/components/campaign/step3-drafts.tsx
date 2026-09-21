@@ -12,12 +12,26 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
-import { campaignAPI, type Brief, type Draft, type Keyword, type Task } from '@/lib/campaign-api'
+import { campaignAPI, type Brief, type DocImport, type Draft, type Keyword, type Task } from '@/lib/campaign-api'
 import { EmptyNote, Pill, StepFooter, TABLE_CLS, TaskProgress, errMsg, fmt, taskOutcome, type StepProps } from './common'
 import { DraftDialog, summarizeChecks } from './draft-dialog'
+import { PointFormattingPanel } from './point-formatting'
 
 const NONE = '__none__'
 const SOURCE_LABEL: Record<string, string> = { generated: '자동 작성', variant: '변형', upload: '파일', manual: '붙여넣기' }
+
+/** 워드에서 무엇을 살려 읽었는지 한 줄로. 못 읽은 것이 있으면 그것을 먼저 알린다. */
+function readSummary(drafts: Draft[]): string | undefined {
+  const read = drafts.map((d) => d.checks?.import as DocImport | undefined).filter(Boolean) as DocImport[]
+  if (!read.length) return undefined
+  const warnings = read.flatMap((r) => r.warnings || [])
+  if (warnings.length) return warnings.slice(0, 3).join(' / ')
+  const kept = [
+    read.reduce((n, r) => n + (r.tables || 0), 0) && `표 ${read.reduce((n, r) => n + (r.tables || 0), 0)}개`,
+    read.reduce((n, r) => n + (r.images || 0), 0) && `사진 ${read.reduce((n, r) => n + (r.images || 0), 0)}장`,
+  ].filter(Boolean).join(' · ')
+  return kept ? `서식 그대로 읽었어요 — ${kept}` : '서식 그대로 읽었어요'
+}
 
 export function Step3Drafts({ campaign, client, goStep }: StepProps) {
   const [drafts, setDrafts] = useState<Draft[]>([])
@@ -26,6 +40,7 @@ export function Step3Drafts({ campaign, client, goStep }: StepProps) {
   const [loading, setLoading] = useState(true)
   const [taskId, setTaskId] = useState<string | null>(null)
   const [openDraft, setOpenDraft] = useState<Draft | null>(null)
+  const [formattingSaved, setFormattingSaved] = useState(false)
 
   // 자동 작성
   const [briefId, setBriefId] = useState(campaign.brief_id || NONE)
@@ -121,7 +136,7 @@ export function Step3Drafts({ campaign, client, goStep }: StepProps) {
     setUploading(true)
     try {
       const res = await campaignAPI.uploadDrafts(campaign.id, ok)
-      toast.success(`${res.length}개 원고를 올렸어요`)
+      toast.success(`${res.length}개 원고를 올렸어요`, { description: readSummary(res) })
       loadDrafts()
     } catch (err: any) {
       toast.error('업로드 실패', { description: errMsg(err) })
@@ -248,6 +263,8 @@ export function Step3Drafts({ campaign, client, goStep }: StepProps) {
 
       <TaskProgress taskId={taskId} onDone={onTaskDone} />
 
+      <PointFormattingPanel key={campaign.id} campaignId={campaign.id} drafts={drafts} onSavedState={setFormattingSaved} />
+
       {/* 원고 목록 */}
       <Card className="space-y-4 p-5">
         <div className="flex items-center gap-2">
@@ -312,7 +329,7 @@ export function Step3Drafts({ campaign, client, goStep }: StepProps) {
         </div>
       </Card>
 
-      <StepFooter onBack={() => goStep(2)} onNext={() => goStep(4)} nextLabel={`다음: 사진 (준비된 원고 ${fmt(readyCount)}건)`} />
+      <StepFooter onBack={() => goStep(2)} onNext={() => goStep(4)} nextDisabled={!formattingSaved} nextLabel={`다음: 사진 (준비된 원고 ${fmt(readyCount)}건)`} />
 
       <DraftDialog
         draft={openDraft}

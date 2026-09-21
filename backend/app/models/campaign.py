@@ -213,6 +213,9 @@ class Draft(Base):
     brief_id = Column(String(36), nullable=True)
     title = Column(String(500), nullable=False, default="")
     body = Column(Text, nullable=False, default="")
+    # 워드 업로드가 살려 온 서식 블록(굵게·소제목·인용·목록·표·문서 안 사진).
+    # 없으면(생성·직접입력) body 를 문단으로 잘라 발행 블록을 만든다. services/docx_import.py 참고.
+    blocks = Column(JSON, nullable=True)
     char_count = Column(Integer, default=0)
     # generating | ready | needs_review | failed
     status = Column(String(20), default="ready", index=True)

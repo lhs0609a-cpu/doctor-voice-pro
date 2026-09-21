@@ -238,6 +238,7 @@ async def _run_jobs(poll_interval: float = POLL_INTERVAL) -> None:
     from app.services import campaign_jobs  # noqa: F401
     from app.services import blog_index_jobs  # noqa: F401
     from app.services import automation_pipeline  # noqa: F401
+    from app.services import keyword_hunt  # noqa: F401
 
     logger.info("[worker] 시작. 핸들러 %d개", len(HANDLERS))
     while True:
