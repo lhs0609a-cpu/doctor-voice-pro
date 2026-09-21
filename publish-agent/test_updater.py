@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import tempfile
 import unittest
 from unittest import mock
@@ -137,6 +138,9 @@ class StrayCopyTests(unittest.TestCase):
     def test_the_installed_one_is_left_alone(self):
         self.assertIsNone(self.run_as(self.installed, self.installed))
 
+    # 대소문자를 가리지 않는 파일 시스템(윈도우)에서만 성립하는 상황이다.
+    # 리눅스 CI 에서는 대문자로 쓴 경로가 아예 다른 파일이라 전제가 깨진다.
+    @unittest.skipIf(os.path.normcase('A') != 'a', '대소문자를 가리는 파일 시스템')
     def test_same_path_written_differently_is_not_a_stray_copy(self):
         # 윈도우는 대소문자를 가리지 않는다 — 글자만 비교하면 멀쩡한 설치본을 쫓아낸다.
         disguised = Path(str(self.installed).upper())
