@@ -4,12 +4,13 @@ API responses are isolated fixtures. Real Naver editing is verified separately.
 """
 import asyncio
 import io
+import os
 from pathlib import Path
 from urllib.parse import urlparse
 from docx import Document
 from playwright.async_api import async_playwright, expect
 
-BASE='http://127.0.0.1:8317'
+BASE=os.environ.get('UX_BASE_URL', 'http://127.0.0.1:8317').rstrip('/')
 OUTPUT=Path(__file__).resolve().parents[2]/'output/naver-formatting-verification'
 
 async def main():
@@ -30,7 +31,7 @@ async def main():
         elif path.endswith('/clients'):response=[client]
         elif path.endswith('/clients/h'):response=client
         elif path.endswith('/campaigns/c'):response=campaign
-        elif path.endswith('/agent/status'):response={'online':False,'running':False}
+        elif path.endswith('/agent/status'):response={'online':False,'running':False,'devices':[]}
         elif path.endswith('/formatting'):
             if req.method=='PUT':config.update(req.post_data_json);state['saves']+=1
             response=config
@@ -56,7 +57,8 @@ async def main():
         await context.add_init_script("localStorage.setItem('access_token','fixture');localStorage.setItem('user',JSON.stringify({id:'u',name:'테스트',email:'test@example.invalid'}));")
         await context.route('**/*',route)
         page=await context.new_page();errors=[]
-        page.on('pageerror',lambda e:errors.append(str(e)))
+        page.set_default_timeout(120000)
+        page.on('pageerror',lambda e:errors.append(e.stack or str(e)))
         await page.goto(BASE+'/dashboard/one-stop',timeout=120000)
         await page.get_by_text('Word 원고로 예약 발행',exact=True).click()
         doc=Document();doc.add_heading(draft['title'],level=1);doc.add_paragraph('핵심 기준과 일반 본문입니다.')
@@ -81,8 +83,12 @@ async def main():
         await expect(page.get_by_text('배정 미리보기',exact=True)).to_be_visible()
         await page.screenshot(path=str(OUTPUT/'homepage-word-schedule.png'),full_page=True)
         assert not state['scheduled'],'Preview must not create a reservation'
+        await page.get_by_role('button',name='예약 걸기',exact=True).click()
+        await page.get_by_role('alertdialog').get_by_role('button',name='예약 걸기',exact=True).click()
+        await expect(page.get_by_text('예약을 저장했습니다.',exact=False)).to_be_visible()
+        assert state['scheduled'],'Confirmation must submit the selected manuscript'
         assert not errors,errors
         await browser.close()
-    print('PASS: Word upload, selected manuscript, automatic save, reload persistence, styled preview, selected-only schedule preview; no publication')
+    print('PASS: Word upload, automatic save, reload persistence, styled preview, selected-only schedule preview and confirmation; API fixtures only, no real publication')
 
 asyncio.run(main())

@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from playwright.async_api import Frame, Page, TimeoutError as PWTimeout
 
-from plan import Op, camera_filename, decode_data_url, ext_for_mime, merge_text_ops, plan_blocks
+from plan import Op, camera_filename, decode_data_url, ext_for_mime, merge_text_ops, plan_blocks, has_formatting
 
 log = logging.getLogger("editor")
 
@@ -449,7 +449,11 @@ class NaverEditor:
         로그인 페이지로 튕기면 LoginRequired, 보안 화면이면 CaptchaDetected."""
         self._frame = None
         log.info("글쓰기 페이지 이동: %s", self.write_url)
-        await self.page.goto(self.write_url, wait_until="domcontentloaded")
+        # 이동이 '시작'된 것까지만 기다리고, 무엇이 떴는지는 아래 루프가 판단한다.
+        # domcontentloaded 로 기다리면 세션 없는 첫 실행에서 로그인 페이지 로딩에 걸려
+        # 타임아웃이 나고, '로그인 필요' 대신 알 수 없는 오류로 끝난다(2026-09-21 실측).
+        # 컨텍스트 기본 타임아웃(15초)도 새 크롬 프로필 첫 이동에는 모자라 넉넉히 준다.
+        await self.page.goto(self.write_url, wait_until="commit", timeout=timeout_ms)
         deadline = time.monotonic() + timeout_ms / 1000
         while time.monotonic() < deadline:
             url = self.page.url or ""
@@ -635,6 +639,9 @@ class NaverEditor:
     async def insert_body_blocks(self, blocks: Sequence[Dict[str, Any]], emphasize: Sequence[str], *, reformat: bool = True) -> int:
         """블록(글/이미지) 순서대로 본문에 넣는다. 반환: 삽입된 이미지 수.
         이미지 한 장이라도 실패하면 EditorError (사진 빠진 글이 나가면 안 된다)."""
+        if has_formatting(blocks):
+            from rich_editor import insert_rich_blocks
+            return await insert_rich_blocks(self, blocks)
         ops = merge_text_ops(plan_blocks(blocks, emphasize, reformat=reformat))
         n_img = sum(1 for o in ops if o.kind == "image")
         n_txt = sum(len(o.payload) for o in ops if o.kind in ("text", "bold"))

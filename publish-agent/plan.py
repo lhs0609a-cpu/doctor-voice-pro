@@ -90,18 +90,37 @@ def pick_emphasize(raw: Optional[Iterable[Any]]) -> List[str]:
 # ---------------------------------------------------------------- 타이핑 계획
 @dataclass(frozen=True)
 class Op:
-    """에디터에 보낼 한 동작. kind: text | bold | enter | image"""
+    """에디터에 보낼 한 동작.
+
+    kind:
+      text   글자 넣기. `attrs` 에 서식({'b','i','u','color','size'})이 있으면 그 서식으로.
+      bold   강조어 한 번 굵게(Ctrl+B 켜고 끄기). 서식 없는 글에서만 쓴다.
+      enter  줄바꿈
+      image  사진(data URL)
+      para   뒤따르는 글의 문단 종류. `attrs` {'kind': 'text'|'heading'|'quote'|'list', 'level', 'ordered'}
+      table  표. `attrs` {'header': bool, 'rows': [[[span…], …], …]}
+    """
 
     kind: str
     payload: str = ""
+    attrs: Optional[Dict[str, Any]] = None
 
     def __repr__(self) -> str:  # 테스트/로그 가독성
         if self.kind in ("text", "bold"):
             p = self.payload if len(self.payload) <= 24 else self.payload[:21] + "..."
-            return f"{self.kind}({p!r})"
+            return f"{self.kind}({p!r})" if not self.attrs else f"{self.kind}({p!r},{_attr_tag(self.attrs)})"
         if self.kind == "image":
             return f"image(<{len(self.payload)}b>)"
+        if self.kind == "para":
+            return f"para({_attr_tag(self.attrs or {})})"
+        if self.kind == "table":
+            rows = (self.attrs or {}).get("rows") or []
+            return f"table({len(rows)}x{len(rows[0]) if rows else 0})"
         return self.kind
+
+
+def _attr_tag(attrs: Dict[str, Any]) -> str:
+    return ",".join(f"{k}={v}" for k, v in sorted(attrs.items()) if k != "rows")
 
 
 def _emphasis_regex(words: Sequence[str]) -> Optional["re.Pattern[str]"]:
@@ -168,14 +187,99 @@ def plan_blocks(blocks: Sequence[Dict[str, Any]], emphasize: Sequence[str], *, r
 
 
 def merge_text_ops(ops: Sequence[Op]) -> List[Op]:
-    """연속된 text 를 하나로 합쳐 insertText 호출 수를 줄인다(의미 동일)."""
+    """연속된 text 를 하나로 합쳐 insertText 호출 수를 줄인다(의미 동일).
+    서식이 다르면 합치지 않는다 — 합치면 뒤 글자가 앞 글자의 서식을 뒤집어쓴다."""
     out: List[Op] = []
     for op in ops:
-        if op.kind == "text" and out and out[-1].kind == "text":
-            out[-1] = Op("text", out[-1].payload + op.payload)
+        if op.kind == "text" and out and out[-1].kind == "text" and out[-1].attrs == op.attrs:
+            out[-1] = Op("text", out[-1].payload + op.payload, op.attrs)
         else:
             out.append(op)
     return out
+
+
+# ------------------------------------------------- 서식 있는 블록(rich_text_v1)
+_SPAN_STYLE_KEYS = ("b", "i", "u", "color", "background", "size")
+
+
+def _span_style(span: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    style = {k: span[k] for k in _SPAN_STYLE_KEYS if span.get(k)}
+    return style or None
+
+
+def _spans_ops(spans: Sequence[Dict[str, Any]]) -> List[Op]:
+    """span 들 → text 동작. 워드 원고는 글쓴이 서식이 곧 원고라서 강조어를 더 넣지 않는다."""
+    ops: List[Op] = []
+    for span in spans or []:
+        text = span.get("t") or ""
+        if not text:
+            continue
+        for i, line in enumerate(text.split("\n")):
+            if i:
+                ops.append(Op("enter"))
+            if line:
+                ops.append(Op("text", line, _span_style(span)))
+    return ops
+
+
+def plan_rich_blocks(blocks: Sequence[Dict[str, Any]]) -> List[Op]:
+    """서식 블록(docx_import 규격) → 동작. 문단 사이는 빈 줄, 글↔사진/표 사이는 한 줄.
+
+    소제목·인용구·목록은 `para` 로 문단 종류를 바꾸고, 끝나면 본문으로 되돌린다
+    (되돌리지 않으면 다음 문단까지 소제목으로 이어진다)."""
+    ops: List[Op] = []
+    first = True
+    prev: Optional[str] = None
+
+    def gap(kind: str) -> None:
+        nonlocal first
+        if first:
+            first = False
+            return
+        ops.append(Op("enter"))
+        if prev in ("text", "heading", "quote") and kind in ("text", "heading", "quote"):
+            ops.append(Op("enter"))
+
+    for block in blocks or []:
+        kind = block.get("type")
+        if kind == "image" and block.get("image"):
+            gap("image")
+            ops.append(Op("image", block["image"]))
+            prev = "image"
+        elif kind == "table" and block.get("rows"):
+            gap("table")
+            ops.append(Op("table", attrs={"header": bool(block.get("header")), "rows": block["rows"]}))
+            prev = "table"
+        elif kind == "list" and block.get("items"):
+            gap("list")
+            ops.append(Op("para", attrs={"kind": "list", "ordered": bool(block.get("ordered"))}))
+            for i, item in enumerate(block["items"]):
+                if i:
+                    ops.append(Op("enter"))
+                ops.extend(_spans_ops(item))
+            ops.append(Op("para", attrs={"kind": "text"}))
+            prev = "list"
+        elif kind in ("text", "heading", "quote") and block.get("spans"):
+            gap(kind)
+            if kind == "heading":
+                ops.append(Op("para", attrs={"kind": "heading", "level": int(block.get("level") or 2)}))
+            elif kind == "quote":
+                ops.append(Op("para", attrs={"kind": "quote"}))
+            ops.extend(_spans_ops(block["spans"]))
+            if kind in ("heading", "quote"):
+                ops.append(Op("para", attrs={"kind": "text"}))
+            prev = kind
+        elif kind == 'text' and block.get('content'):
+            gap(kind)
+            ops.extend(plan_text(block['content'], []))
+            prev = kind
+    return ops
+
+
+def has_formatting(blocks: Sequence[Dict[str, Any]]) -> bool:
+    """서식 블록이 섞여 있나. 평문 text/image 만 오면 예전 경로로 간다."""
+    return any(b.get("type") in ("heading", "quote", "list", "table") or b.get("spans")
+               for b in blocks or [])
 
 
 # ---------------------------------------------------------------- 예약 시각

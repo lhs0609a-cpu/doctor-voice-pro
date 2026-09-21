@@ -165,7 +165,7 @@ class ServerClient:
     def claim(self, blog_ref_id: str, limit: int = 1, include_images: bool = True, mode: str = "live") -> List[Dict[str, Any]]:
         """→ [ClaimedJob]. 서버가 20분 잠금을 건다(만료 후 재클레임 가능)."""
         body = {"blog_ref_id": blog_ref_id, "limit": limit, "include_images": include_images, "mode": mode, "protocol_version": 2,
-                "capabilities": ["landing_links_v1"]}
+                "capabilities": ["landing_links_v1", "point_styles_v1"]}
         return self._request("POST", "/campaign/agent/claim", json=body) or []
 
     def checkpoint(self, job_id: str, lock_token: str, stage: str = "heartbeat"):

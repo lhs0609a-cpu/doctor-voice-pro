@@ -129,7 +129,9 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
         # 3) 제목/본문
         await editor.set_title(title)
         blocks = job.get("blocks") or [{"type": "text", "content": job.get("content") or ""}]
-        await editor.insert_body_blocks(blocks, pick_emphasize(job.get("emphasize") or []))
+        # 워드에서 올라온 원고는 서버가 reformat=False 로 내린다 — 글쓴이 줄바꿈을 다시 자르지 않는다.
+        reformat = (job.get("options") or {}).get("reformat", True)
+        await editor.insert_body_blocks(blocks, pick_emphasize(job.get("emphasize") or []), reformat=bool(reformat))
 
         # 4) 임시저장은 발행 레이어를 열지 않는다 — 글만 저장하고 끝낸다.
         opts = job.get("options") or {}
@@ -249,7 +251,7 @@ class BrowserPool:
     async def _launch(self, naver_blog_id: str, proxy: Optional[str] = None):
         user_data_dir = self.profiles_dir / naver_blog_id
         user_data_dir.mkdir(parents=True, exist_ok=True)
-        args = ["--disable-blink-features=AutomationControlled", "--no-first-run", "--no-default-browser-check"]
+        args = ["--disable-blink-features=AutomationControlled", "--no-first-run", "--no-default-browser-check", "--restore-last-session"]
         if self.window_pos:
             args.append(f"--window-position={self.window_pos}")
         kw: Dict[str, Any] = dict(

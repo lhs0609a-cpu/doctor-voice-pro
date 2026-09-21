@@ -788,7 +788,7 @@ def hand_over_to_installed() -> bool:
 
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == '--self-check':
-        import naver_editor, journal
+        import naver_editor, journal, rich_editor, html_clipboard
         interpreter = tk.Tcl()
         Path(sys.argv[2]).write_text(json.dumps({'ok': True, 'tcl': interpreter.eval('info patchlevel'),
                                                'editor': bool(naver_editor), 'journal': bool(journal)}), encoding='utf-8')

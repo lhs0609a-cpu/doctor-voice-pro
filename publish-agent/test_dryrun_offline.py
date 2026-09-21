@@ -309,7 +309,7 @@ class TestServerClient(unittest.TestCase):
     def test_claim_body(self):
         self.c.login("a@b.c", "pw")
         jobs = self.c.claim("b1", limit=3, include_images=False)
-        self.assertEqual(self.state.requests[-1]["body"], {"blog_ref_id": "b1", "limit": 3, "include_images": False, "mode": "live", "protocol_version": 2, "capabilities": ["landing_links_v1"]})
+        self.assertEqual(self.state.requests[-1]["body"], {"blog_ref_id": "b1", "limit": 3, "include_images": False, "mode": "live", "protocol_version": 2, "capabilities": ["landing_links_v1", "point_styles_v1"]})
         self.assertEqual(jobs[0]["lock_token"], "L1")
         self.assertEqual(jobs[0]["blocks"][1]["type"], "image")
 
@@ -406,7 +406,7 @@ class FakeEditor:
     async def dismiss_draft_popup(self): self._rec("dismiss_draft_popup")
     async def read_blog_id(self): self._rec("read_blog_id"); return self.blog_id
     async def set_title(self, t): self._rec("set_title")
-    async def insert_body_blocks(self, b, e): self._rec("insert_body_blocks"); return sum(1 for x in b if x.get("type") == "image")
+    async def insert_body_blocks(self, b, e, *, reformat=True): self._rec("insert_body_blocks"); self.reformat = reformat; return sum(1 for x in b if x.get("type") == "image")
     async def open_publish_layer(self): self._rec("open_publish_layer")
     async def set_open_type(self, t): self._rec("set_open_type")
     async def set_search_allow(self, a): self._rec("set_search_allow")
@@ -560,6 +560,15 @@ class TestRunJob(unittest.TestCase):
         r = self.run_job(FakeEditor(fail_at="insert_body_blocks"), _job())
         self.assertFalse(r.ok)
         self.assertFalse(r.uncertain)
+
+    def test_word_original_is_typed_without_remobile_formatting(self):
+        """서버가 reformat=False 로 내리면(워드 업로드) 글쓴이 줄바꿈을 다시 자르지 않는다."""
+        ed = FakeEditor()
+        self.run_job(ed, _job(options={"openType": "public", "search": True, "category": None, "reformat": False}))
+        self.assertFalse(ed.reformat)
+        plain = FakeEditor()
+        self.run_job(plain, _job())
+        self.assertTrue(plain.reformat)      # 옛 서버·생성 원고는 그대로 재정렬
 
     def test_non_schedule_action_refused(self):
         ed = FakeEditor()

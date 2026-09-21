@@ -1,7 +1,7 @@
 'use client'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { AlertTriangle, CalendarClock, Loader2, Eye } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -35,6 +35,8 @@ export function Step5Schedule({ campaign, client, setCampaign, goStep, draftIds 
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
   const [cancelling, setCancelling] = useState(false)
+
+  useEffect(() => { setPreview(null); setConfirmOpen(false) }, [startDate, days, perDay, blogIds, includeNeedsReview, draftIds])
 
   const buildInput = (): ScheduleInput => ({
     start_date: startDate,
@@ -90,7 +92,7 @@ export function Step5Schedule({ campaign, client, setCampaign, goStep, draftIds 
 
   return (
     <div className="space-y-6">
-      {alreadyScheduled && (
+      {alreadyScheduled && !draftIds && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg bg-accent p-3 text-sm text-accent-foreground">
           <CalendarClock className="h-4 w-4" />
           <span className="flex-1 tabular-nums">이미 예약이 걸려 있습니다. 대기 {fmt(campaign.stats?.queued)} · 발행됨 {fmt(campaign.stats?.published)} · 실패 {fmt(campaign.stats?.failed)}</span>
