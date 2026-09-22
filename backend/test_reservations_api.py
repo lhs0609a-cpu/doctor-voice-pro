@@ -15,7 +15,8 @@ from fastapi import FastAPI
 from test_publish_protocol import DatabaseCase
 
 from app.api import campaign as api
-from app.models.campaign import Blog, Campaign, Client, Draft, PublishJob
+from app.models.background_job import BackgroundJob
+from app.models.campaign import Blog, Campaign, CampaignKeyword, Client, Draft, PublishJob
 from app.models.publish_queue import QueuedPost, ScheduleMark
 from app.models.user import User
 from app.services import schedule_engine as se
@@ -30,7 +31,8 @@ class ReservationTests(DatabaseCase):
         await super().asyncSetUp()
         async with self.engine.begin() as conn:
             for table in (Blog.__table__, Draft.__table__, Campaign.__table__, Client.__table__,
-                          ScheduleMark.__table__, QueuedPost.__table__):
+                          ScheduleMark.__table__, QueuedPost.__table__, BackgroundJob.__table__,
+                          CampaignKeyword.__table__):
                 await conn.run_sync(lambda sync, t=table: t.create(sync))
         # 발행 시각은 '지금'과 견주므로 고정 날짜 대신 현재 기준으로 잡는다.
         self.now = se.kst_now()
@@ -145,6 +147,44 @@ class ReservationTests(DatabaseCase):
         preview = (await self.client.post('/campaigns/c/schedule/preview', json=body)).json()
         self.assertTrue(preview['reservations'][0]['stale'])
         self.assertTrue(any('확인하지 못했습니다' in w for w in preview['warnings']))
+
+    # --------------------------------------- 같은 시각에 두 글이 걸리지 않는가
+    async def commit(self, draft_ids, every=120, start_mode='after_last'):
+        body = {'start_date': self.now.date().isoformat(), 'days': 60, 'draft_ids': draft_ids,
+                'mode': 'interval', 'every_minutes': every, 'start_mode': start_mode}
+        response = await self.client.post('/campaigns/c/schedule/commit', json=body)
+        self.assertEqual(response.status_code, 200, response.text)
+        return [a['scheduled_at'] for a in response.json()['assigned']]
+
+    async def test_two_separate_commits_never_reuse_a_slot(self):
+        """따로 두 번 예약해도 시각이 겹치지 않는다 — 같은 시각 두 글은 저품질로 간다.
+
+        두 번째 예약은 첫 번째가 남긴 자리를 보고 그 뒤로 이어 붙어야 한다."""
+        async with self.sessions() as db:
+            for i in range(6):
+                db.add(Draft(id=f'd{i}', user_id='u', campaign_id='c', title=f'원고 {i}', status='ready'))
+            await db.commit()
+        first = await self.commit(['d0', 'd1', 'd2'])
+        second = await self.commit(['d3', 'd4', 'd5'])
+        every = first + second
+        self.assertEqual(len(set(every)), 6, every)                    # 여섯 시각 모두 다르다
+        stamps = sorted(datetime.fromisoformat(t) for t in every)
+        gaps = [(b - a).total_seconds() / 60 for a, b in zip(stamps, stamps[1:])]
+        self.assertTrue(all(g >= 120 for g in gaps), gaps)             # 그리고 완충만큼 떨어져 있다
+
+    async def test_commit_avoids_slots_naver_already_holds(self):
+        """네이버에서 읽어 온 남의 예약 시각도 절대 다시 쓰지 않는다."""
+        taken = [self.future + timedelta(hours=h) for h in (0, 2, 4)]
+        await self.scan(*taken)
+        async with self.sessions() as db:
+            for i in range(3):
+                db.add(Draft(id=f'n{i}', user_id='u', campaign_id='c', title=f'원고 {i}', status='ready'))
+            await db.commit()
+        placed = [datetime.fromisoformat(t) for t in await self.commit(['n0', 'n1', 'n2'], start_mode='at')]
+        for slot in placed:
+            self.assertNotIn(slot, taken)
+            self.assertTrue(all(abs((slot - t).total_seconds()) >= 120 * 60 for t in taken),
+                            f'{slot} 가 기존 예약 {taken} 에 너무 가깝다')
 
     # ------------------------------------------------------- 발행 직전 방어
     async def test_reschedule_moves_the_job_and_keeps_the_attempt_count(self):
