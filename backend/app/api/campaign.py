@@ -1144,7 +1144,11 @@ async def upload_drafts(campaign_id: str, files: List[UploadFile] = File(...), c
             if k.keyword.replace(" ", "") in hay:
                 matched = k
                 break
+        # 의료광고법 표현은 막지 않고 고친다 — 대안이 있으면 바꾸고, 없으면 그 문장을 덜어낸다.
+        title, body, blocks, fixes = writer.sanitize_blocks(blocks, title, body)
         checks = writer.run_static_checks(title, body, client.forbidden_words if client else [])
+        if fixes:
+            checks["auto_fixed"] = fixes[:30]
         if imported:
             checks["import"] = imported
         d = Draft(

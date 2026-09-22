@@ -52,6 +52,10 @@ async def main():
             if n==2:   # 병원이 등록한 금칙어에 걸린 원고 한 건
                 row=dict(row,status='needs_review',
                          checks={'forbidden':['최고'],'medical_law':[],'ok':False})
+            if n==3:   # 올릴 때 서버가 알아서 고친 원고
+                row=dict(row,checks={'forbidden':[],'medical_law':[],'ok':True,
+                                     'auto_fixed':[{'from':'완치','to':'증상 개선','category':'치료효과_보장'},
+                                                   {'from':'검사비는 30,000원입니다.','to':'','category':'가격_할인'}]})
             state['drafts'].append(row);response=[row]
         elif path.endswith('/drafts'):response=state['drafts']
         elif path.endswith('/formatting-preview'):
@@ -112,6 +116,13 @@ async def main():
         # 그대로 빼 버린다 — 목록에서도 사라지고 예약에도 안 간다.
         await page.get_by_role('button',name='이 원고 빼기',exact=True).click()
         await expect(page.get_by_role('button',name='선택한 2개 원고 예약하기')).to_be_enabled()
+
+        # 자동으로 고친 원고는 무엇을 고쳤는지 알려 준다(막지 않는다).
+        await page.get_by_role('button',name='표현 2곳 고침',exact=True).click()
+        await expect(page.get_by_text('올릴 때 자동으로 고쳤습니다',exact=False).first).to_be_visible()
+        await expect(page.get_by_text('증상 개선',exact=False).first).to_be_visible()
+        await expect(page.get_by_text('(문장 삭제)',exact=False)).to_be_visible()
+
         await page.get_by_text('글자 강조 설정 바꾸기',exact=True).click()
         await page.get_by_label('핵심 문구 자동 강조').check()
         await page.get_by_label('특히 강조할 문구',exact=False).fill('핵심 기준')

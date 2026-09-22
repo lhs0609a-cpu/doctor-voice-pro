@@ -460,17 +460,122 @@ def similarity(a: str, b: str) -> float:
     return len(ga & gb) / len(ga | gb)
 
 
-# 의료광고법 글자 패턴 검사는 걷어냈다(2026-09-23 사용자 결정).
-# '1,000원'·'무료 상담'·'보장' 같은 평범한 문장을 잡아 올린 원고를 전부 막아 세웠고,
-# 정작 진짜 위반은 문맥을 봐야 해서 글자 매칭으로는 잡히지 않는다. 검수는 이제
-# **병원이 직접 등록한 금칙어**만 본다 — 무엇을 막을지는 그 병원이 정한다.
-# (화면에도 "법적 책임은 이용자에게 있습니다"가 그대로 붙어 있다.)
+# 의료광고법 표현은 **막지 않고 고친다**(2026-09-23 사용자 결정).
+# 예전에는 걸리면 원고를 통째로 '검토 필요'로 세워 아무것도 못 올리게 했다. 실제로는
+# 올린 사람이 그 표현을 어떻게 바꿔야 하는지 알고 싶을 뿐이므로, 대안이 있으면 그 자리에서
+# 바꾸고 대안이 없으면(가격·할인 같은 것) 그 문장을 통째로 덜어낸 뒤 무엇을 고쳤는지 알려 준다.
+#
+# (정규식, 분류, 대신 쓸 말). 대신 쓸 말이 None 이면 그 문장을 지운다.
+LAW_FIXES: tuple = (
+    (re.compile(r"완치"), "치료효과_보장", "증상 개선"),
+    (re.compile(r"보장(합니다|해 드립니다|드립니다|됩니다)"), "치료효과_보장", "기대할 수 있습니다"),
+    (re.compile(r"100\s*%"), "치료효과_보장", "많은 경우"),
+    (re.compile(r"부작용(이|은)?\s*(전혀\s*)?없(습니다|어요|다)"), "치료효과_보장", "부작용이 적은 편입니다"),
+    (re.compile(r"(즉시|바로)\s*효과"), "치료효과_보장", "점차 개선"),
+    (re.compile(r"영구(적으로|적|히)"), "치료효과_보장", "장기간"),
+    (re.compile(r"(국내\s*최초|세계\s*최초|유일한)"), "비교_우위", None),
+    (re.compile(r"(치료|시술|환자)\s*후기"), "치료경험담", "치료 안내"),
+    (re.compile(r"(할인|이벤트|무료 시술|공짜)"), "가격_할인", None),
+    (re.compile(r"\d[\d,]*\s*원(에|으로|이면|입니다|부터)?"), "가격_할인", None),
+)
+
+# 문장 끝. 한국어 원고는 마침표 없이 줄만 바꾸는 일이 흔해 줄바꿈도 문장 경계로 본다.
+_SENTENCE = re.compile(r"[^.!?\n]*[.!?\n]|[^.!?\n]+")
+
+# 말을 바꾸면 조사가 어긋난다 — '완치를' 을 '증상 개선' 으로 바꾸면 '증상 개선를' 이 된다.
+# 받침 유무로 조사를 맞춰 준다. 한글 앞에서만 손대므로 'MRI를' 같은 것은 건드리지 않는다.
+_PARTICLE = re.compile(r"([가-힣])(을|를|이|가|은|는|과|와|으로|로)(?![가-힣])")
+_PAIRS = {"을": ("을", "를"), "를": ("을", "를"), "이": ("이", "가"), "가": ("이", "가"),
+          "은": ("은", "는"), "는": ("은", "는"), "과": ("과", "와"), "와": ("과", "와"),
+          "으로": ("으로", "로"), "로": ("으로", "로")}
+
+
+def _agree_particles(text: str) -> str:
+    def fix(m):
+        last, particle = m.group(1), m.group(2)
+        jong = (ord(last) - 0xAC00) % 28
+        with_batchim, without = _PAIRS[particle]
+        if particle in ("으로", "로") and jong == 8:      # ㄹ 받침은 '로' 를 쓴다(서울로)
+            return last + "로"
+        return last + (with_batchim if jong else without)
+    return _PARTICLE.sub(fix, text)
+
+
+def _fix_one(text: str) -> tuple:
+    """한 덩어리의 글을 고친다. 반환 (고친 글, [{from, to, category}])."""
+    if not text:
+        return text, []
+    changes: list = []
+    fixed = text
+    # ① 대안이 있는 표현은 그 자리에서 바꾼다.
+    for pattern, category, alternative in LAW_FIXES:
+        if alternative is None:
+            continue
+        def swap(m, category=category, alternative=alternative):
+            changes.append({"from": m.group(0), "to": alternative, "category": category})
+            return alternative
+        fixed = pattern.sub(swap, fixed)
+    # ② 대안이 없는 표현(가격·할인·최초)은 그 문장을 덜어낸다. 반쪽 문장을 남기지 않는다.
+    drop = [(p, c) for p, c, alt in LAW_FIXES if alt is None]
+    if drop and any(p.search(fixed) for p, _ in drop):
+        kept = []
+        for sentence in _SENTENCE.findall(fixed):
+            hit = next(((p, c) for p, c in drop if p.search(sentence)), None)
+            if hit and sentence.strip():
+                changes.append({"from": sentence.strip(), "to": "", "category": hit[1]})
+                continue
+            kept.append(sentence)
+        fixed = "".join(kept)
+        fixed = re.sub(r"(?m)^[ \t]+", "", re.sub(r"[ \t]{2,}", " ", fixed))
+    if changes:
+        fixed = _agree_particles(fixed)
+    return fixed, changes
+
+
+def sanitize_blocks(blocks: Optional[List[Dict[str, Any]]], title: str, body: str) -> tuple:
+    """원고(제목·본문·서식 블록)에서 의료광고법 표현을 고친다.
+
+    반환 (제목, 본문, 블록, 고친 내역). 서식은 건드리지 않는다 — 글자만 바꾼다.
+    """
+    changes: List[Dict[str, Any]] = []
+
+    def run(text: str) -> str:
+        fixed, got = _fix_one(text)
+        changes.extend(got)
+        return fixed
+
+    title = run(title or "")
+    if not blocks:
+        return title, run(body or ""), blocks, changes
+
+    out: List[Dict[str, Any]] = []
+    for block in blocks:
+        block = dict(block)
+        if block.get("spans"):
+            spans = []
+            for span in block["spans"]:
+                span = dict(span)
+                span["t"] = run(span.get("t") or "")
+                if span["t"]:
+                    spans.append(span)
+            block["spans"] = spans
+            block["content"] = "".join(sp.get("t") or "" for sp in spans)
+            if not block["content"].strip() and block.get("type") != "image":
+                continue                      # 문장을 덜어내 빈 줄만 남았다
+        elif block.get("content") and block.get("type") != "image":
+            block["content"] = run(block["content"])
+            if not block["content"].strip():
+                continue
+        out.append(block)
+    text = "\n\n".join(b.get("content") or "" for b in out if b.get("type") != "image")
+    return title, text.strip() or (body or ""), out, changes
 
 
 def run_static_checks(title: str, body: str, forbidden: Optional[List[str]] = None) -> Dict[str, Any]:
-    """LLM 없이 즉시 도는 검사. 지금은 **병원이 등록한 금칙어**만 본다.
+    """LLM 없이 즉시 도는 검사. 막는 것은 **병원이 등록한 금칙어**뿐이다.
 
-    medical_law 칸은 빈 목록으로 남긴다 — 옛 원고의 checks 와 화면이 같은 모양을 기대한다.
+    의료광고법 표현은 여기서 막지 않는다 — 업로드 때 sanitize_blocks 가 이미 고쳐 놓는다.
+    medical_law 칸은 빈 목록으로 남긴다(옛 원고의 checks 와 화면이 같은 모양을 기대한다).
     """
     text = f"{title}\n{body}"
     hits = [w.strip() for w in (forbidden or []) if w and w.strip() and w.strip() in text]

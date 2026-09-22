@@ -36,6 +36,13 @@ function isWord(file: File) {
 }
 
 type Flag = { text?: string; category?: string; suggestion?: string }
+type Fix = { from?: string; to?: string; category?: string }
+
+/** 올릴 때 서버가 알아서 고친 의료광고 표현. 막지 않고 고치므로 '무엇을 고쳤는지'만 알리면 된다. */
+function fixesOf(draft: Draft): Fix[] {
+  const checks = (draft.checks || {}) as Record<string, unknown>
+  return Array.isArray(checks.auto_fixed) ? (checks.auto_fixed as Fix[]) : []
+}
 
 /** '원고 검토 필요'의 실제 이유. 서버가 글자 패턴으로 잡은 것들이다. */
 function flagsOf(draft: Draft): Flag[] {
@@ -215,6 +222,7 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
         <ul className="divide-y rounded-lg border">
           {drafts.map(d => {
             const flags = flagsOf(d)
+            const fixes = fixesOf(d)
             const review = d.status !== 'ready'
             return (
               <li key={d.id} className="px-3 py-2 text-sm">
@@ -224,10 +232,15 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
                   <label htmlFor={`pick-${d.id}`} className={cn('min-w-0 flex-1 truncate', review ? 'text-muted-foreground' : 'cursor-pointer')}>
                     {d.title}
                   </label>
-                  {review && (
+                  {review ? (
                     <button type="button" onClick={() => setOpen(open === d.id ? '' : d.id)}
                       className="shrink-0 text-xs text-warning underline-offset-2 hover:underline">
                       검토 필요 {flags.length > 0 && `· ${flags.length}곳`}
+                    </button>
+                  ) : fixes.length > 0 && (
+                    <button type="button" onClick={() => setOpen(open === d.id ? '' : d.id)}
+                      className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:underline">
+                      표현 {fixes.length}곳 고침
                     </button>
                   )}
                   <button type="button" aria-label={`${d.title} 빼기`} title="이 원고 빼기"
@@ -237,11 +250,31 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
                   </button>
                 </div>
 
+                {!review && open === d.id && fixes.length > 0 && (
+                  <div className="mt-2 space-y-2 rounded-lg bg-muted/50 p-3">
+                    <p className="text-xs">
+                      의료광고법에 걸릴 수 있는 표현을 <b>올릴 때 자동으로 고쳤습니다.</b>
+                      바꿔 쓸 말이 없는 가격·할인 문장은 그 문장을 덜어냈습니다.
+                    </p>
+                    <ul className="space-y-1 text-xs">
+                      {fixes.slice(0, 8).map((f, i) => (
+                        <li key={i} className="flex flex-wrap items-center gap-1.5">
+                          <s className="text-muted-foreground">{f.from}</s>
+                          <span>→</span>
+                          <b className="rounded bg-card px-1.5 py-0.5">{f.to || '(문장 삭제)'}</b>
+                          <span className="text-muted-foreground">{f.category}</span>
+                        </li>
+                      ))}
+                      {fixes.length > 8 && <li className="text-muted-foreground">… 외 {fixes.length - 8}곳</li>}
+                    </ul>
+                  </div>
+                )}
+
                 {review && open === d.id && (
                   <div className="mt-2 space-y-2 rounded-lg bg-warning-soft p-3">
                     <p className="text-xs">
-                      의료광고법에 걸릴 수 있는 표현을 글자만 보고 잡은 것입니다. 오탐도 많으니
-                      아래를 보고 <b>고칠지, 그대로 올릴지</b> 정하세요. 법적 책임은 올린 사람에게 있습니다.
+                      <b>병원에 등록해 둔 금칙어</b>가 들어 있어 세워 둔 원고입니다.
+                      (의료광고 표현은 올릴 때 자동으로 고치므로 여기서 막지 않습니다.)
                     </p>
                     {flags.length > 0 ? (
                       <ul className="space-y-1 text-xs">
@@ -277,6 +310,11 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
       {drafts.some(d => d.status !== 'ready') && (
         <p className="text-xs text-muted-foreground">
           검토가 필요한 원고는 <b>확인 전까지 예약되지 않습니다</b>. 줄 오른쪽의 &lsquo;검토 필요&rsquo;를 눌러 이유를 보세요.
+        </p>
+      )}
+      {drafts.some(d => d.status === 'ready' && fixesOf(d).length > 0) && (
+        <p className="text-xs text-muted-foreground">
+          의료광고법에 걸릴 수 있는 표현은 <b>올릴 때 자동으로 고쳤습니다</b>. 줄 오른쪽의 &lsquo;표현 N곳 고침&rsquo;에서 확인하세요.
         </p>
       )}
 
