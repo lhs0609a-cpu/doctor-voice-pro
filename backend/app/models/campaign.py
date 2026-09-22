@@ -86,6 +86,12 @@ class Blog(Base):
     # 블로그마다 IP를 고정하는 것이 목적이다 — 매번 바꾸면 같은 계정이 여기저기서 접속하는 꼴이라 더 걸린다.
     proxy_enc = Column(Text, nullable=True)
     last_published_at = Column(DateTime, nullable=True)
+    # 네이버 '예약 글 목록'을 마지막으로 읽어 온 때(서버 시각). 이 목록이 자리 잡기의 기준이 된다.
+    # 오래됐거나 비어 있으면 겹칠 위험이 있다고 보고 완충을 넓힌다.
+    reservations_scanned_at = Column(DateTime, nullable=True)
+    reservations_note = Column(Text, nullable=True)          # 못 읽었을 때의 사유
+    # 웹에서 [예약 목록 새로 읽기]를 누른 시각. 실행기가 다음 차례에 읽고 지운다.
+    reservations_scan_requested_at = Column(DateTime, nullable=True)
     # 블로그 지수(SCORING_VERSION 6) 최근 결과
     index_score = Column(Float, nullable=True)
     index_level = Column(Integer, nullable=True)
@@ -156,6 +162,9 @@ class CampaignKeyword(Base):
     keyword = Column(String(200), nullable=False)
     region = Column(String(100), nullable=True)
     disease = Column(String(100), nullable=True)
+    # 글의 성격: 대표|증상|원인|치료|관리|검사|비용|병원|기타 (keyword_taxonomy.classify)
+    # 발굴 결과를 뽑을 때 카테고리 비율을 맞추는 기준.
+    category = Column(String(20), nullable=True)
     # manual(직접입력) | combo(지역×질환 조합) | related(검색광고 연관어) | seed(원장 제안)
     source = Column(String(20), default="manual")
     scope = Column(String(10), default="region")             # region | national

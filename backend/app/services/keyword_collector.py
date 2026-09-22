@@ -9,6 +9,7 @@ import httpx
 from bs4 import BeautifulSoup
 from datetime import datetime
 from typing import List, Dict, Set, Optional
+from urllib.parse import quote
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
@@ -96,10 +97,15 @@ HEADERS = {
 
 async def get_naver_related_keywords(keyword: str) -> List[str]:
     """
-    네이버 연관검색어 수집
+    네이버 연관검색어 수집 — best-effort.
+
+    주의: 네이버가 연관검색어를 '함께 많이 찾는' JS 모듈로 옮기면서 아래 선택자는
+    현재 대부분의 질의에서 0개를 돌려준다(HTML 에 아예 실리지 않는다).
+    씨앗을 이 함수에만 의존시키지 말 것. 실검색량이 붙는 진짜 연관어는
+    검색광고 API(search_volume_service.fetch_with_related)가 준다.
     """
     related = []
-    search_url = f"https://search.naver.com/search.naver?where=nexearch&query={keyword}"
+    search_url = f"https://search.naver.com/search.naver?where=nexearch&query={quote(keyword)}"
 
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
@@ -133,7 +139,11 @@ async def get_naver_autocomplete(keyword: str) -> List[str]:
     네이버 자동완성 키워드 수집
     """
     suggestions = []
-    autocomplete_url = f"https://ac.search.naver.com/nx/ac?q={keyword}&con=1&frm=nv&ans=2&r_format=json&r_enc=UTF-8&r_unicode=0&t_koreng=1&run=2&rev=4&q_enc=UTF-8"
+    # st=100 이 없으면 네이버가 items 를 빈 배열로 돌려준다(400 도 아니고 200 + 빈 값).
+    autocomplete_url = (
+        f"https://ac.search.naver.com/nx/ac?q={quote(keyword)}&con=1&frm=nv&ans=2"
+        "&r_format=json&r_enc=UTF-8&r_unicode=0&t_koreng=1&run=2&rev=4&q_enc=UTF-8&st=100"
+    )
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -141,7 +151,7 @@ async def get_naver_autocomplete(keyword: str) -> List[str]:
 
             if response.status_code == 200:
                 data = response.json()
-                items = data.get('items', [[]])[0]
+                items = (data.get('items') or [[]])[0]
 
                 for item in items:
                     if isinstance(item, list) and len(item) > 0:

@@ -50,6 +50,12 @@ def floor_slot(dt: datetime) -> datetime:
     return dt.replace(second=0, microsecond=0, minute=(dt.minute // SLOT_MINUTES) * SLOT_MINUTES)
 
 
+def ceil_slot(dt: datetime) -> datetime:
+    """10분 단위로 올림. 사용자가 고른 시각보다 앞당겨 예약하지 않으려고 쓴다."""
+    base = floor_slot(dt)
+    return base if base == dt else base + timedelta(minutes=SLOT_MINUTES)
+
+
 def kst_now() -> datetime:
     """서버 타임존과 무관하게 KST 현재 시각(naive)."""
     return datetime.utcnow() + timedelta(hours=9)
@@ -105,8 +111,9 @@ def _day_slots(day: date, b: BlogPlan, earliest: datetime, rng: random.Random) -
     seg = span / n
     picks: List[datetime] = []
     last: Optional[datetime] = None
-    # 이미 그날 잡힌 자리도 간격 계산에 포함
-    same_day_taken = sorted(t for t in b.taken if t.date() == day)
+    # 이미 잡힌 자리도 간격 계산에 포함. 하루 안쪽만 보면 23:50 과 00:10 이 붙으므로
+    # 앞뒤 하루까지 본다(간격은 아무리 커도 하루를 넘지 않는다).
+    same_day_taken = sorted(t for t in b.taken if abs((t.date() - day).days) <= 1)
     for i in range(n):
         lo = start + timedelta(minutes=seg * i)
         hi = start + timedelta(minutes=seg * (i + 1) - SLOT_MINUTES)
@@ -176,6 +183,87 @@ def allocate(
                     next(b for b in blogs if b.ref_id == ref).taken.add(at)
                     remaining -= 1
                     progress = True
+    assigned.sort(key=lambda x: x[1])
+    return assigned, remaining
+
+
+def _in_window(at: datetime, b: BlogPlan) -> bool:
+    start = _parse_hhmm(b.window_start, time(9, 0))
+    end = _parse_hhmm(b.window_end, time(21, 0))
+    if end <= start:
+        return at.time() >= start
+    return start <= at.time() < end
+
+
+def _into_window(at: datetime, b: BlogPlan) -> datetime:
+    """시간대 밖이면 가장 가까운 다음 시간대 시작으로 민다."""
+    start = _parse_hhmm(b.window_start, time(9, 0))
+    end = _parse_hhmm(b.window_end, time(21, 0))
+    if _in_window(at, b):
+        return at
+    if at.time() < start:
+        return datetime.combine(at.date(), start)
+    if end <= start:                                   # 자정을 넘는 시간대
+        return datetime.combine(at.date(), start)
+    return datetime.combine(at.date() + timedelta(days=1), start)
+
+
+def _slot_free(at: datetime, b: BlogPlan, reserved: List[datetime]) -> bool:
+    """이 칸에 놓아도 되는가. 이미 찬 칸이면 안 되고, 기존 예약과 최소 간격 안쪽이어도 안 된다."""
+    if at in b.taken:
+        return False
+    gap = timedelta(minutes=max(0, b.min_gap_minutes or 0))
+    if not gap:
+        return True
+    return all(abs(at - t) >= gap for t in reserved)
+
+
+def latest_reserved(blogs: Iterable[BlogPlan], after: Optional[datetime] = None) -> Optional[datetime]:
+    """아는 예약 중 가장 늦은 미래 자리. '이미 예약된 글 다음부터'의 기준이 된다."""
+    after = after or kst_now()
+    slots = [t for b in blogs for t in b.taken if t > after]
+    return max(slots) if slots else None
+
+
+def allocate_interval(
+    count: int,
+    blogs: List[BlogPlan],
+    start_at: datetime,
+    every_minutes: int,
+    *,
+    days: int = 60,
+    earliest: Optional[datetime] = None,
+) -> Tuple[List[Tuple[str, datetime]], int]:
+    """첫 글을 start_at 에 두고 every_minutes 간격으로 차례차례 배정한다.
+
+    allocate() 가 '기간 안에 흩뿌리기'라면 이쪽은 '몇 분마다 하나씩' — 초보자가 화면에서 고른
+    간격을 그대로 지키는 것이 목적이라 하루 한도(daily_limit)로 잘라내지 않는다(호출자가 경고만 띄운다).
+    지키는 것은 넷. 발행 시간대 밖으로 나가지 않고, 이미 잡힌 자리를 비켜 가고,
+    기존 예약 앞뒤로 min_gap_minutes 만큼 띄우고, 10분 단위에 맞춘다.
+    블로그가 여러 개면 한 개씩 돌아가며 준다.
+    """
+    if not blogs or count <= 0:
+        return [], max(0, count)
+    step = max(SLOT_MINUTES, (max(1, every_minutes) // SLOT_MINUTES) * SLOT_MINUTES)
+    earliest = earliest or (kst_now() + timedelta(minutes=30))
+    cursor = ceil_slot(max(start_at, earliest))
+    limit = cursor.date() + timedelta(days=max(1, days))
+    # 남이 이미 잡아 둔 자리(완충을 둘 대상)와, 이번에 우리가 놓는 자리를 가른다.
+    # 완충은 기존 예약에만 적용한다 — 우리끼리의 거리는 사용자가 고른 간격이 정한다.
+    reserved = {b.ref_id: sorted(b.taken) for b in blogs}
+    assigned: List[Tuple[str, datetime]] = []
+    remaining = count
+    for i in range(count):
+        b = blogs[i % len(blogs)]
+        at = _into_window(cursor, b)
+        while at.date() <= limit and not _slot_free(at, b, reserved[b.ref_id]):
+            at = _into_window(at + timedelta(minutes=SLOT_MINUTES), b)
+        if at.date() > limit:
+            break
+        b.taken.add(at)
+        assigned.append((b.ref_id, at))
+        remaining -= 1
+        cursor = at + timedelta(minutes=step)
     assigned.sort(key=lambda x: x[1])
     return assigned, remaining
 

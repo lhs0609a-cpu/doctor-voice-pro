@@ -162,6 +162,8 @@ export interface Keyword {
   keyword: string
   region?: string | null
   disease?: string | null
+  /** 글의 성격 — 대표|증상|원인|치료|관리|검사|비용|병원|기타 */
+  category?: string | null
   source: 'manual' | 'combo' | 'related' | 'seed' | string
   scope: 'region' | 'national' | string
   monthly_mobile: number
@@ -276,6 +278,23 @@ export interface ScheduleInput {
   draft_ids?: string[]
   include_needs_review?: boolean
   seed?: number | null
+  /** spread: 기간 안에 흩뿌린다(마법사). interval: 고른 시각부터 고른 간격으로 하나씩(원스톱). */
+  mode?: 'spread' | 'interval'
+  start_at?: string            // interval 전용. 첫 글 시각 YYYY-MM-DDTHH:mm (KST)
+  every_minutes?: number       // interval 전용. 글 사이 간격(분)
+  /** at: start_at 부터 / after_last: 이미 예약된 글 다음부터 */
+  start_mode?: 'at' | 'after_last'
+}
+
+/** 블로그 한 개에 이미 잡혀 있는 자리(우리 예약 + 네이버에서 읽어 온 남의 예약). */
+export interface BlogReservations {
+  blog_ref_id: string
+  label: string
+  count: number
+  last_at?: string | null
+  scanned_at?: string | null
+  stale: boolean
+  note?: string | null
 }
 
 export interface ScheduleItem { draft_id: string; title: string; blog_ref_id: string; blog_label: string; scheduled_at: string }
@@ -285,6 +304,8 @@ export interface SchedulePreview {
   unassigned: number
   calendar: { date: string; total: number; blogs: Record<string, number> }[]
   warnings: string[]
+  starts_after?: string | null        // '이미 예약된 글 다음부터'의 기준이 된 마지막 예약
+  reservations?: BlogReservations[]
 }
 
 export interface PublishJobItem {
@@ -400,13 +421,24 @@ export const campaignAPI = {
   expandKeywords: async (id: string, body: { seeds?: string[]; regions?: string[]; diseases?: string[]; level?: number; min_volume_region?: number; min_volume_national?: number; include_related?: boolean; analyze_after?: boolean }): Promise<Task> =>
     (await api.post(`${C}/campaigns/${id}/keywords/expand`, body)).data,
   // 발굴 — 씨앗 확장 → 통합검색 자리 확인 → 내 블로그로 뚫리는지 판정을 한 작업으로
-  huntKeywords: async (id: string, body: { target: number; blog_id?: string; screen_limit?: number; verdict_limit?: number }): Promise<Task> =>
+  huntKeywords: async (id: string, body: {
+    target: number; blog_id?: string; screen_limit?: number; verdict_limit?: number
+    /** 직접 찾고 싶은 키워드. 주면 진료 항목 대신 이것만 판다. */
+    seeds?: string[]
+    /** 질환별 개수 {"건선": 30} */
+    disease_quota?: Record<string, number>
+    /** 글 성격 비율 {"증상": 20, "치료": 25} */
+    category_ratio?: Record<string, number>
+  }): Promise<Task> =>
     (await api.post(`${C}/campaigns/${id}/keywords/hunt`, body)).data,
+  keywordCategories: async (): Promise<{ categories: { key: string; label: string; default_ratio: number }[] }> =>
+    (await api.get(`${C}/keyword-categories`)).data,
   addKeywords: async (id: string, keywords: string[], fetchVolume = true): Promise<Keyword[]> =>
     (await api.post(`${C}/campaigns/${id}/keywords`, { keywords, fetch_volume: fetchVolume })).data,
   listKeywords: async (id: string): Promise<Keyword[]> => (await api.get(`${C}/campaigns/${id}/keywords`)).data,
   selectKeywords: async (id: string, ids: string[], selected: boolean): Promise<{ success: boolean }> =>
     (await api.patch(`${C}/campaigns/${id}/keywords/select`, { ids, selected })).data,
+  clearKeywords: async (id: string): Promise<{ removed: number }> => (await api.delete(`${C}/campaigns/${id}/keywords`)).data,
   deleteKeyword: async (id: string, keywordId: string): Promise<{ success: boolean }> => (await api.delete(`${C}/campaigns/${id}/keywords/${keywordId}`)).data,
   analyzeKeywords: async (id: string, keywordIds?: string[], limit = 60): Promise<Task> =>
     (await api.post(`${C}/campaigns/${id}/keywords/analyze`, { keyword_ids: keywordIds, limit })).data,
@@ -447,6 +479,8 @@ export const campaignAPI = {
     (await api.put(`${C}/drafts/${draftId}/image-plan`, { slots })).data,
 
   // 5단계 예약
+  listReservations: async (id: string): Promise<BlogReservations[]> => (await api.get(`${C}/campaigns/${id}/reservations`)).data,
+  rescanReservations: async (id: string): Promise<{ requested: number }> => (await api.post(`${C}/campaigns/${id}/reservations/rescan`)).data,
   schedulePreview: async (id: string, body: ScheduleInput): Promise<SchedulePreview> => (await api.post(`${C}/campaigns/${id}/schedule/preview`, body)).data,
   scheduleCommit: async (id: string, body: ScheduleInput): Promise<SchedulePreview> => (await api.post(`${C}/campaigns/${id}/schedule/commit`, body)).data,
   scheduleCancel: async (id: string): Promise<{ success: boolean; cancelled: number }> => (await api.delete(`${C}/campaigns/${id}/schedule`)).data,

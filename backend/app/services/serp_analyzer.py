@@ -609,7 +609,14 @@ def _build_summary(posts: List[Dict[str, Any]], cafe_count: int) -> Dict[str, An
     influencer_count = sum(1 for p in posts if p["blog_type"] == "influencer")
     daily_count = sum(1 for p in posts if p["blog_type"] == "daily")
     experience_count = sum(1 for p in posts if p["blog_type"] == "experience")
+    unknown_count = sum(1 for p in posts if p["blog_type"] == "unknown")
     hospital_ratio = round(hospital_count / exposed_count, 3) if exposed_count else 0.0
+    # 뚫기 난이도용 비중. '약한 점유자' = 일상·육아 / 체험단 / 정체 불명 블로그.
+    # 이들은 대체로 블로그 지수가 낮아 우리 지수로 밀어낼 여지가 있다. 반대로 인플루언서는
+    # 네이버가 별도 가산을 주는 자리라 일반 블로그가 같은 조건으로 경쟁하지 못한다.
+    soft_count = daily_count + experience_count + unknown_count
+    soft_ratio = round(soft_count / exposed_count, 3) if exposed_count else 0.0
+    influencer_ratio = round(influencer_count / exposed_count, 3) if exposed_count else 0.0
 
     avg_kw = _mean([p["kw_count"] for p in analyzed])
     avg_img = _mean([p["image_count"] for p in analyzed])
@@ -625,6 +632,10 @@ def _build_summary(posts: List[Dict[str, Any]], cafe_count: int) -> Dict[str, An
         "influencer_count": influencer_count,
         "daily_count": daily_count,
         "experience_count": experience_count,
+        "unknown_count": unknown_count,
+        "soft_count": soft_count,
+        "soft_ratio": soft_ratio,
+        "influencer_ratio": influencer_ratio,
         "has_influencer": influencer_count > 0,
         "avg_kw_count": round(avg_kw, 1),
         "avg_image_count": round(avg_img, 1),
@@ -636,13 +647,36 @@ def _build_summary(posts: List[Dict[str, Any]], cafe_count: int) -> Dict[str, An
     }
 
 
+# 인플루언서가 1페이지를 이만큼 먹었으면 일반 블로그가 같은 조건으로 경쟁하지 못한다.
+INFLUENCER_LOCK_RATIO = 0.6
+# 이만큼만 돼도 약한 점유자가 과반이든 말든 빡빡한 자리로 본다.
+INFLUENCER_CONTEST_RATIO = 0.3
+# 약한 점유자(일상·체험단·무명)가 이만큼이면 우리 지수로 밀어낼 여지가 큰 자리로 본다.
+SOFT_MAJORITY_RATIO = 0.5
+# 노출 글이 이 이하면 비율이 통계적으로 의미가 없다 — 비어 있다는 사실만 신뢰한다.
+THIN_PAGE_EXPOSED = 3
+
+
 def _decide_verdict(summary: Dict[str, Any], error: Optional[str]) -> tuple[str, str]:
+    """② 단계 판정 — '블로그가 들어갈 자리가 있나'까지만 본다.
+
+    ★ 병원 블로그 유무로 버리지 않는다. 우리가 뚫을 수 있는지는 ③(`keyword_verdict`)이
+      내 블로그 점수와 1페이지 컷라인을 실제로 재서 판단한다. 일반 블로거가 점령한 키워드는
+      오히려 점유자 지수가 낮아 뚫기 쉬운 자리인데, 예전 규칙은 그걸 avoid 로 버렸다.
+      게다가 이 단계는 fetch_post_metrics=False 로 돌아 blog_name 신호가 없어서
+      병원 판별이 가장 부정확한 상태다 — 그 값으로 버리면 안 된다.
+
+    avoid 는 '어떤 블로그도 들어갈 자리가 없다'는 구조적 이유일 때만 낸다.
+    """
     exposed = summary["exposed_count"]
     hospital = summary["hospital_count"]
     ratio = summary["hospital_ratio"]
     influencer = summary["influencer_count"]
     has_influencer = summary["has_influencer"]
     daily = summary["daily_count"]
+    soft = summary["soft_count"]
+    soft_ratio = summary["soft_ratio"]
+    influencer_ratio = summary["influencer_ratio"]
 
     if error == "blocked":
         return "unknown", "네이버가 요청을 차단하여 통검 결과를 확인하지 못했습니다."
@@ -652,20 +686,27 @@ def _decide_verdict(summary: Dict[str, Any], error: Optional[str]) -> tuple[str,
         return "unknown", "통검에 노출된 블로그 글이 없어 판단할 수 없습니다."
 
     influencer_txt = f"인플루언서 {influencer}건" if has_influencer else "인플루언서 없음"
-    base = f"통검 노출 {exposed}건 중 병원 블로그 {hospital}건({ratio * 100:.0f}%), {influencer_txt}"
+    base = f"통검 노출 {exposed}건 중 병원 {hospital}건({ratio * 100:.0f}%), {influencer_txt}"
     if daily:
         base += f", 일상·육아 {daily}건"
 
-    if ratio >= 0.4 or exposed <= 3:
-        if exposed <= 3 and ratio < 0.4:
-            return "possible", f"{base} — 노출 글 수가 {exposed}건으로 적어 병원 블로그 진입 여지가 있습니다."
-        return "possible", f"{base} — 병원 블로그 비중이 높아 진입 가능합니다."
-    if 0.15 <= ratio < 0.4 or (has_influencer and hospital >= 1):
-        return "contested", f"{base} — 병원과 비병원 블로그가 경쟁 중인 키워드입니다."
-    if hospital == 0 and exposed >= 4:
-        return "avoid", f"{base} — 병원 블로그가 전혀 노출되지 않아 진입이 어렵습니다."
-    # 남는 경우: 병원 1건 이상이지만 비중 15% 미만, 인플루언서 없음
-    return "contested", f"{base} — 병원 블로그 비중이 낮지만 노출 사례가 있어 경쟁 가능성이 있습니다."
+    # 노출이 얇으면 비율(2건 중 2건 = 100%)이 아무 뜻도 없다. 자리가 비었다는 것만 확실하다.
+    if exposed <= THIN_PAGE_EXPOSED:
+        return "possible", f"{base} — 노출 글이 {exposed}건뿐이라 비어 있는 자리가 있습니다."
+
+    # ── 자리 자체가 막힌 경우만 버린다 ──
+    if influencer_ratio >= INFLUENCER_LOCK_RATIO:
+        return "avoid", (f"{base} — 1페이지의 {influencer_ratio * 100:.0f}%를 인플루언서가 점유해 "
+                         "일반 블로그가 같은 조건으로 경쟁하기 어렵습니다.")
+
+    # ── 여기부터는 자리가 있다. 난이도로 ③ 판정 순서만 가른다 ──
+    # 인플루언서가 3할을 넘으면 약한 점유자가 과반이어도 남은 자리 싸움이 빡빡하다.
+    if soft_ratio >= SOFT_MAJORITY_RATIO and influencer_ratio < INFLUENCER_CONTEST_RATIO:
+        return "possible", (f"{base} — 1페이지 {exposed}건 중 {soft}건이 일상·체험단·무명 블로그라 "
+                            "지수로 밀어낼 여지가 큽니다.")
+    if has_influencer or ratio >= 0.4:
+        return "contested", f"{base} — 전문 운영 블로그가 우세해 경쟁이 빡빡합니다."
+    return "contested", f"{base} — 점유자 구성이 섞여 있어 내 블로그 점수로 갈립니다."
 
 
 async def analyze_keyword(keyword: str, max_posts: int = 8, fetch_post_metrics: bool = True) -> dict:

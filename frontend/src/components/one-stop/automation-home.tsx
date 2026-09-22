@@ -15,17 +15,13 @@ import { Check, ChevronDown, Loader2, Lock, Plus, Settings2 } from 'lucide-react
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Pill } from '@/components/app-shell/ui-kit'
-import { AutopilotPanel } from '@/components/campaign/autopilot-panel'
 import { LauncherCard } from '@/components/launcher/launcher-card'
 import { useLauncherStatus } from '@/lib/use-launcher-status'
-import { campaignAPI, type Campaign, type Client, type Keyword, type PublishJobItem } from '@/lib/campaign-api'
+import { campaignAPI, type Campaign, type Client, type PublishJobItem } from '@/lib/campaign-api'
 import { errMsg } from '@/components/campaign/common'
 import { cn } from '@/lib/utils'
 import { QuickAutomationSetup } from './quick-automation-setup'
-import { BulkPublishPanel } from './bulk-publish-panel'
-import { PhotoStep } from './photo-step'
 import { BlogStep } from './blog-step'
-import { KeywordStep } from './keyword-step'
 import { WordPublishPanel } from './word-publish-panel'
 
 type Tone = 'ok' | 'warn' | 'danger' | 'accent' | 'muted'
@@ -41,8 +37,10 @@ const JOB_LABEL: Record<string, { label: string; tone: Tone }> = {
   cancelled: { label: '뺀 글', tone: 'muted' },
 }
 
-const TITLES = ['PC 실행기 켜기', '블로그 연결', '키워드 찾기', '사진 올리기', '글 쓰기 시작']
-const LAST = TITLES.length   // 글 쓰기 칸 번호. 준비(1~4)가 끝나면 이 칸만 남는다
+// 키워드는 이 화면에 두지 않는다 — 찾는 일과 올리는 일은 순서가 묶이지 않아 따로 뺐다(/dashboard/keyword-hunt).
+// 여기서는 '원고를 넣고 언제 올릴지 고르는 것'만 한다.
+const TITLES = ['PC 실행기 켜기', '블로그 연결', 'Word 원고 올리기']
+const LAST = TITLES.length   // 발행 칸 번호. 준비(1~2)가 끝나면 이 칸만 남는다
 
 /** 누를 곳을 가리키는 표시. 펼쳐진 칸에 하나만 쓴다. */
 function Here({ children }: { children: React.ReactNode }) {
@@ -110,13 +108,10 @@ export function AutomationHome() {
   const [campaign, setCampaign] = useState<Campaign | null>(null)
   const [client, setClient] = useState<Client | null>(null)
   const [jobs, setJobs] = useState<PublishJobItem[]>([])
-  const [keywords, setKeywords] = useState<Keyword[]>([])
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
   const [readError, setReadError] = useState('')
-  const [mode, setMode] = useState<'bulk' | 'recurring'>('bulk')
-  const [skipPhotos, setSkipPhotos] = useState(false)
   const [acting, setActing] = useState('')
   const [actionMsg, setActionMsg] = useState('')
   const [opened, setOpened] = useState<number | null>(null)   // 사용자가 직접 연 칸(없으면 지금 할 차례가 열린다)
@@ -135,14 +130,14 @@ export function AutomationHome() {
   useEffect(() => {
     if (!selected) return
     let alive = true
-    setCampaign(null); setJobs([]); setKeywords([]); setReadError(''); setActionMsg('')
+    setCampaign(null); setJobs([]); setReadError(''); setActionMsg('')
     const load = async () => {
       try {
         const next = await campaignAPI.getCampaign(selected)
-        const [hospital, rows, found] = await Promise.all([
-          campaignAPI.getClient(next.client_id), campaignAPI.listJobs(selected), campaignAPI.listKeywords(selected),
+        const [hospital, rows] = await Promise.all([
+          campaignAPI.getClient(next.client_id), campaignAPI.listJobs(selected),
         ])
-        if (alive) { setCampaign(next); setClient(hospital); setJobs(rows); setKeywords(found); setReadError('') }
+        if (alive) { setCampaign(next); setClient(hospital); setJobs(rows); setReadError('') }
       } catch (e) { if (alive) setReadError(errMsg(e)) }
     }
     void load()
@@ -155,11 +150,6 @@ export function AutomationHome() {
     try { setClient(await campaignAPI.getClient(campaign.client_id)) } catch { /* 다음 주기에 다시 읽는다 */ }
   }, [campaign])
 
-  const reloadKeywords = useCallback(async () => {
-    if (!selected) return
-    try { setKeywords(await campaignAPI.listKeywords(selected)) } catch { /* 다음 주기에 다시 읽는다 */ }
-  }, [selected])
-
   const act = async (key: string, work: () => Promise<string>) => {
     setActing(key); setActionMsg('')
     try {
@@ -169,23 +159,10 @@ export function AutomationHome() {
     finally { setActing('') }
   }
 
-  // '사진 없이 진행'은 운영마다 기억한다.
-  const skipKey = selected ? `onestop-skip-photos-${selected}` : ''
-  useEffect(() => {
-    if (!skipKey) return
-    try { setSkipPhotos(localStorage.getItem(skipKey) === '1') } catch { /* private mode */ }
-  }, [skipKey])
-  const chooseNoPhotos = () => {
-    setSkipPhotos(true)
-    try { localStorage.setItem(skipKey, '1') } catch { /* private mode */ }
-  }
-
   const hasCampaign = campaigns.length > 0 && !creating
   const ready = hasCampaign && !!campaign && !!client
   const blogs = useMemo(() => client?.blogs.filter(b => campaign?.blog_ids.includes(b.id)) || [], [client, campaign])
   const login = blogs.filter(b => ['captcha', 'login_required'].includes(b.status))
-  const hasPhotos = !!(campaign?.collection_id || client?.default_collection_id)
-  const noImages = skipPhotos && !hasPhotos
   const completed = jobs.filter(j => j.status === 'published').length
   const registered = jobs.filter(j => j.status === 'submitted').length
   const waiting = jobs.filter(j => ['queued', 'assigned', 'publishing'].includes(j.status)).length
@@ -194,12 +171,9 @@ export function AutomationHome() {
 
   // 실행기가 켜져 연결만 된 상태(running=false)에서는 아무것도 올라가지 않는다 → '발행 대기 중'이어야 완료.
   const launcherIdle = launcher.online && !launcher.running
-  const picked = keywords.filter(k => k.selected)
   const done = [
     launcher.online && launcher.running,
     ready && blogs.length > 0 && login.length === 0,
-    ready && picked.length > 0,
-    ready && (hasPhotos || skipPhotos),
     ready && started,
   ]
   const current = done.findIndex(d => !d)                     // -1 이면 전부 끝
@@ -207,22 +181,18 @@ export function AutomationHome() {
   // 지금 펼쳐진 칸. 준비를 접어 둔 동안에는 준비 줄 자체가 없으므로 마지막 칸만 열린다
   // — 안 그러면 사용자가 아까 열어 둔 2번을 따라가다 아무 칸도 안 펼쳐진 빈 화면이 된다.
   const open = setupDone && !showSetup ? LAST : (opened ?? (current === -1 ? LAST : current + 1))
-  const locked = (n: number) => n >= 3 && !ready              // 병원을 만들기 전에는 3번 뒤를 못 연다
+  const locked = (n: number) => n >= LAST && !ready           // 병원을 만들기 전에는 발행 칸을 못 연다
 
   // 접혔을 때 이 한 줄만 읽으면 되게 쓴다.
   const notes = [
     launcher.online
       ? (launcher.running ? `발행 대기 중${launcher.version ? ` · v${launcher.version}` : ''}` : '켜졌지만 쉬는 중 — 시작을 눌러야 합니다')
-      : '실행기가 꺼져 있습니다',
+      : '홈페이지 연결이 확인되지 않았습니다',
     !hasCampaign ? '병원과 블로그를 등록하세요'
       : !ready ? '불러오는 중…'
         : login.length ? `네이버 로그인 필요: ${login.map(b => b.label || b.blog_id).join(', ')}`
           : blogs.length ? `${client?.name} · 블로그 ${blogs.length}개` : '올릴 블로그를 고르세요',
-    !ready ? '블로그를 먼저 연결하세요'
-      : picked.length ? `쓸 키워드 ${picked.length}개 · 후보 ${keywords.length}개`
-        : '우리 블로그로 뚫리는 키워드를 찾습니다',
-    hasPhotos ? '사진 준비됨' : skipPhotos ? '사진 없이 진행' : '안 올려도 됩니다',
-    started ? `글 ${jobs.length}건 진행 중` : '몇 개 쓸지 정하면 시작합니다',
+    started ? `글 ${jobs.length}건 진행 중` : 'Word 원고를 올리면 예약합니다',
   ]
 
   const recent = [...jobs].sort((a, b) => (b.scheduled_at || '').localeCompare(a.scheduled_at || '')).slice(0, 10)
@@ -271,33 +241,11 @@ export function AutomationHome() {
         </div>
       : null
 
-  const step3 = ready
-    ? <KeywordStep key={selected} campaignId={selected} keywords={keywords} onChanged={() => { void reloadKeywords() }} />
-    : null
-
-  const step4 = ready && campaign && client
-    ? <PhotoStep campaign={campaign} client={client} setCampaign={setCampaign} skipped={skipPhotos} onSkip={chooseNoPhotos} />
-    : null
-
-  const step5 = ready ? (
+  // 발행은 Word 원고로만 한다. 올린 파일의 글·표·사진이 그대로 네이버로 간다.
+  const step3 = ready && campaign && client ? (
     <div className="space-y-3">
-      <div className="grid gap-2 sm:grid-cols-2" role="group" aria-label="발행 방식">
-        <button type="button" aria-pressed={mode === 'bulk'} onClick={() => setMode('bulk')}
-          className={cn('rounded-xl border p-3 text-left transition-colors', mode === 'bulk' ? 'border-primary bg-primary/5' : 'hover:bg-muted/40')}>
-          <span className="block text-sm font-medium">한 번에 여러 개</span>
-          <span className="block text-xs text-muted-foreground">지금 30개를 써서 날짜별로 예약</span>
-        </button>
-        <button type="button" aria-pressed={mode === 'recurring'} onClick={() => setMode('recurring')}
-          className={cn('rounded-xl border p-3 text-left transition-colors', mode === 'recurring' ? 'border-primary bg-primary/5' : 'hover:bg-muted/40')}>
-          <span className="block text-sm font-medium">매일 자동으로</span>
-          <span className="block text-xs text-muted-foreground">매일 정한 개수씩 계속</span>
-        </button>
-      </div>
-      {!started && <Here>개수를 정하고 <b>시작</b>을 누르면 끝입니다. 창을 닫아도 서버가 계속 씁니다.</Here>}
-      {mode === 'bulk'
-        ? <BulkPublishPanel key={selected} campaignId={selected} noImages={noImages} huntedCount={picked.length}
-            onRecurring={() => setMode('recurring')} onStarted={() => { void reloadKeywords() }} />
-        : <AutopilotPanel key={selected} campaignId={selected} inline noImages={noImages} onComplete={() => { void loadList() }} />}
+      {!started && <Here>Word 파일(.docx)을 올리고 <b>언제부터 · 몇 시간 간격</b>만 고르면 끝입니다. 창을 닫아도 실행기가 올립니다.</Here>}
+      <WordPublishPanel key={campaign.id} campaign={campaign} client={client} onUpdated={setCampaign} />
     </div>
   ) : null
 
@@ -307,7 +255,7 @@ export function AutomationHome() {
       <header className="rounded-2xl border bg-card p-4">
         <div className="flex items-center justify-between gap-3">
           <h1 className="text-base font-semibold">{current === -1 ? '자동 운영 중입니다' : `${current + 1}번을 하면 됩니다`}</h1>
-          <span className="text-xs tabular-nums text-muted-foreground">{done.filter(Boolean).length} / 4</span>
+          <span className="text-xs tabular-nums text-muted-foreground">{done.filter(Boolean).length} / {TITLES.length}</span>
         </div>
         <ol className="mt-3 flex gap-1.5" aria-label="진행 상황">
           {TITLES.map((title, i) => (
@@ -346,8 +294,6 @@ export function AutomationHome() {
             <>
               {slot(1, step1)}
               {slot(2, step2)}
-              {slot(3, step3)}
-              {slot(4, step4)}
               {showSetup && (
                 <Button variant="outline" size="sm" className="w-full" onClick={() => { setShowSetup(false); setOpened(null) }}>
                   준비 접기
@@ -356,12 +302,7 @@ export function AutomationHome() {
             </>
           )}
 
-          {slot(LAST, step5)}
-
-          {ready && campaign && client && <details className="rounded-2xl border bg-card p-5">
-            <summary className="cursor-pointer font-semibold">Word 원고로 예약 발행</summary>
-            <div className="mt-4"><WordPublishPanel key={campaign.id} campaign={campaign} client={client} onUpdated={setCampaign} /></div>
-          </details>}
+          {slot(LAST, step3)}
 
           {/* 현황 — 단계가 아니라 결과다. 시작한 뒤에만 보인다. */}
           {ready && jobs.length > 0 && (

@@ -222,6 +222,25 @@ class ServerClient:
         body = {"ok": bool(ok), "message": (message or None) and str(message)[:500]}
         return self._request("POST", f"/publish/queue/{quote(str(post_id), safe='')}/result", json=body) or {}
 
+    # ------------------------------------------------- 네이버에 이미 걸린 예약
+    def put_reservations(self, blog_ref_id: str, *, ok: bool = True,
+                         note: Optional[str] = None, items: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """이 블로그의 예약 목록 스냅샷을 서버 장부에 갈아 끼운다.
+
+        ok=False 는 '못 읽었다'는 뜻이다 — 서버는 장부를 손대지 않고 완충만 넓힌다.
+        못 읽은 것을 빈 목록으로 보내면 남의 예약 위에 겹쳐 잡히므로 절대 섞지 않는다."""
+        rows = [{"at": r["at"].strftime("%Y-%m-%dT%H:%M") if hasattr(r["at"], "strftime") else str(r["at"]),
+                 "title": (r.get("title") or None)} for r in (items or [])]
+        body = {"ok": bool(ok), "note": (note or None) and str(note)[:300], "items": rows}
+        return self._request("POST", f"/campaign/agent/blogs/{quote(str(blog_ref_id), safe='')}/reservations", json=body) or {}
+
+    def reschedule(self, job_id: str, lock_token: str, *, reason: Optional[str] = None,
+                   taken_at: Optional[List[Any]] = None) -> Dict[str, Any]:
+        """그 시각에 이미 예약된 글이 있었다 → 올리지 말고 다음 빈 자리로 옮겨 달라."""
+        body = {"lock_token": lock_token, "reason": (reason or None) and str(reason)[:500],
+                "taken_at": [t.strftime("%Y-%m-%dT%H:%M") if hasattr(t, "strftime") else str(t) for t in (taken_at or [])]}
+        return self._request("POST", f"/campaign/agent/jobs/{quote(str(job_id), safe='')}/reschedule", json=body) or {}
+
     def categories(self) -> Dict[str, Any]:
         return self._request("GET", "/publish/categories") or {}
 

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>가짜 예약 글 목록 (테스트용)</title>
+<style>
+  body{font-family:sans-serif;margin:12px}
+  .post_list li{border-bottom:1px solid #ddd;padding:8px 0;list-style:none}
+  .title{font-weight:700}
+  .date{color:#666}
+</style>
+</head>
+<body>
+<!--
+  네이버 '예약 글 목록' 화면을 최소한으로 흉내 낸 페이지.
+  실제 화면의 마크업은 언제든 바뀌므로 read_reservations 는 셀렉터가 아니라
+  '행 안에 날짜+시각이 보이는가'로 읽는다. 이 페이지는 그 규칙을 고정한다.
+
+  ?empty=1  → 예약된 글이 없는 화면(0건 — 실패가 아니다)
+  ?broken=1 → 예약 목록이 아닌 엉뚱한 화면(못 읽음)
+-->
+<h1>글 관리 · 예약</h1>
+<ul class="post_list" id="list">
+  <li>
+    <a class="title" href="/testblog/1">아토피 초기 증상 확인법</a>
+    <span class="date">2026. 9. 23. 14:30</span>
+    <span class="state">예약</span>
+  </li>
+  <li>
+    <a class="title" href="/testblog/2">환절기 피부 관리</a>
+    <span class="date">2026. 9. 25. 오후 6:00</span>
+    <span class="state">예약</span>
+  </li>
+  <li>
+    <a class="title" href="/testblog/3">보습제 고르는 법</a>
+    <span class="date">2026-09-26 09:10</span>
+    <span class="state">예약</span>
+  </li>
+</ul>
+<div id="empty" style="display:none">예약된 글이 없습니다.</div>
+<script>
+  const q = new URLSearchParams(location.search)
+  if (q.get('empty')) {
+    document.getElementById('list').remove()
+    document.getElementById('empty').style.display = ''
+  }
+  if (q.get('broken')) {
+    document.body.innerHTML = '<h1>잠시 후 다시 시도해 주세요</h1>'
+  }
+</script>
+</body>
+</html>

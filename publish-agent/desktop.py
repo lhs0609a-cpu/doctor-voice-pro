@@ -41,19 +41,21 @@ UPDATE_EVERY_BEATS = 360   # 하트비트 360번 = 6시간마다 새 버전을 �
 # ── 화면 색과 모양 ──────────────────────────────────────────────
 # tkinter 기본값은 회색 상자라 낡아 보인다. 흰 카드 + 옅은 바탕 + 파란 단추로 정리한다.
 FONT = 'Malgun Gothic'
-BG = '#F4F6FA'        # 페이지 바탕
+BG = '#F8FAFC'        # 홈페이지와 같은 밝은 바탕
 CARD = '#FFFFFF'      # 카드
 INK = '#0F172A'       # 본문 글자
 MUTED = '#64748B'     # 설명 글자
-BLUE = '#2563EB'      # 주 단추
+BLUE = '#3454EB'      # 홈페이지의 브랜드 블루
 GREEN = '#059669'     # 연결됨
 AMBER = '#D97706'     # 확인 필요
 RED = '#DC2626'
 
-PRIMARY = dict(bg=BLUE, fg='white', activebackground='#1D4ED8', activeforeground='white',
-               relief='flat', bd=0, padx=18, pady=8, font=(FONT, 10, 'bold'), cursor='hand2')
-GHOST = dict(bg='#E2E8F0', fg=INK, activebackground='#CBD5E1', activeforeground=INK,
-             relief='flat', bd=0, padx=14, pady=8, font=(FONT, 10), cursor='hand2')
+PRIMARY = dict(bg=BLUE, fg='white', activebackground='#2843CA', activeforeground='white',
+               disabledforeground='#AFC0FF', relief='flat', bd=0, padx=22, pady=11,
+               font=(FONT, 10, 'bold'), cursor='hand2', highlightthickness=0)
+GHOST = dict(bg='#EEF2F8', fg=INK, activebackground='#E2E8F0', activeforeground=INK,
+             disabledforeground='#94A3B8', relief='flat', bd=0, padx=18, pady=11,
+             font=(FONT, 10), cursor='hand2', highlightthickness=0)
 
 
 def card(parent, **pack):
@@ -62,7 +64,7 @@ def card(parent, **pack):
     내용은 안쪽 틀에 담고, 카드 통째로 숨길 일이 있으면 돌려받은 틀의 .box 를 pack_forget 한다."""
     box = tk.Frame(parent, bg=CARD, highlightbackground='#E2E8F0', highlightthickness=1)
     box.pack(**pack)
-    inner = ttk.Frame(box, padding=16, style='Card.TFrame')
+    inner = ttk.Frame(box, padding=22, style='Card.TFrame')
     inner.pack(fill='both', expand=True)
     inner.box = box
     return inner
@@ -158,11 +160,12 @@ class Desktop:
         # tkinter 변수는 다른 스레드에서 읽으면 안 된다 → 연결 창구가 읽을 사본
         self.server_url = str(saved.get('server') or SERVER)
 
-        root.title('닥터보이스 자동 발행')
-        root.geometry('760x720')
-        root.minsize(720, 660)
+        root.title('닥터보이스 프로 · PC 실행기')
+        root.geometry('840x850')
+        root.minsize(760, 680)
         root.configure(bg=BG)
         style = ttk.Style(root)
+        style.theme_use('clam')
         style.configure('.', font=(FONT, 10), background=CARD, foreground=INK)
         style.configure('Card.TFrame', background=CARD)
         style.configure('Page.TFrame', background=BG)
@@ -171,22 +174,57 @@ class Desktop:
         style.configure('Title.TLabel', background=CARD, foreground=INK, font=(FONT, 19, 'bold'))
         style.configure('Head.TLabel', background=CARD, foreground=INK, font=(FONT, 11, 'bold'))
         style.configure('Status.TLabel', background=CARD, foreground=INK, font=(FONT, 12, 'bold'))
-        style.configure('Ghost.TButton', padding=(10, 5), font=(FONT, 9))
+        style.configure('Ghost.TButton', padding=(12, 8), font=(FONT, 9), background=CARD,
+                        bordercolor='#E2E8F0', lightcolor=CARD, darkcolor=CARD, relief='flat')
+        style.map('Ghost.TButton', background=[('active', '#EEF2FF')], foreground=[('disabled', '#94A3B8')])
+        style.configure('TEntry', padding=8, fieldbackground=BG, bordercolor='#CBD5E1', lightcolor=BG, darkcolor=BG)
         style.configure('TCheckbutton', background=CARD, foreground=INK)
+        style.map('TCheckbutton', background=[('active', CARD)])
+        style.layout('Vertical.TScrollbar', [('Vertical.Scrollbar.trough', {'sticky': 'ns', 'children': [
+            ('Vertical.Scrollbar.thumb', {'expand': '1', 'sticky': 'nswe'})]})])
+        style.configure('Vertical.TScrollbar', background='#CBD5E1', troughcolor=BG,
+                        bordercolor=BG, lightcolor='#CBD5E1', darkcolor='#CBD5E1', width=10,
+                        gripcount=0, borderwidth=0)
+        style.map('Vertical.TScrollbar', background=[('active', '#94A3B8'), ('pressed', '#94A3B8')])
 
-        page = ttk.Frame(root, padding=18, style='Page.TFrame')
-        page.pack(fill='both', expand=True)
+        # 전체 내용이 스크롤되므로 작은 화면에서도 펼친 설정에 접근할 수 있다.
+        surface = tk.Frame(root, bg=BG)
+        surface.pack(fill='both', expand=True)
+        canvas = tk.Canvas(surface, bg=BG, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(surface, orient='vertical', command=canvas.yview)
+        scrollbar.pack(side='right', fill='y')
+        canvas.pack(side='left', fill='both', expand=True)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        page = ttk.Frame(canvas, padding=26, style='Page.TFrame')
+        page_window = canvas.create_window((0, 0), window=page, anchor='nw')
+        page.bind('<Configure>', lambda _e: canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.bind('<Configure>', lambda e: canvas.itemconfigure(page_window, width=e.width))
+        def scroll_page(event):
+            if event.widget is not self.logs and page.winfo_reqheight() > canvas.winfo_height():
+                canvas.yview_scroll(-int(event.delta / 120), 'units')
+        root.bind('<MouseWheel>', scroll_page)
 
         # ── 머리말 ───────────────────────────────────────────────
-        head = card(page, fill='x')
-        ttk.Label(head, text='닥터보이스 자동 발행', style='Title.TLabel').pack(side='left')
-        ttk.Label(head, text=f'v{VERSION}', style='Muted.TLabel').pack(side='left', padx=(8, 0), pady=(8, 0))
-        ttk.Button(head, text='업데이트 확인', style='Ghost.TButton',
-                   command=lambda: self.check_update(manual=True)).pack(side='right')
+        head = tk.Frame(page, bg=BG)
+        head.pack(fill='x', pady=(0, 24))
+        mark = tk.Canvas(head, width=42, height=42, bg=BLUE, highlightthickness=0)
+        mark.pack(side='left', padx=(0, 12))
+        mark.create_line(8, 22, 15, 22, 19, 12, 24, 31, 28, 20, 35, 20,
+                         fill='white', width=3, joinstyle='round', capstyle='round')
+        brand = tk.Frame(head, bg=BG)
+        brand.pack(side='left')
+        tk.Label(brand, text='닥터보이스 프로', bg=BG, fg=INK, font=(FONT, 13, 'bold')).pack(anchor='w')
+        tk.Label(brand, text='by 플라톤마케팅', bg=BG, fg=MUTED, font=(FONT, 8)).pack(anchor='w')
+        tk.Label(head, text=f'PC 실행기  /  v{VERSION}', bg=BG, fg=MUTED, font=(FONT, 9)).pack(side='right')
+        tk.Label(page, text='블로그 운영, 이어서 자동으로', bg=BG, fg=INK,
+                 font=(FONT, 21, 'bold')).pack(anchor='w')
+        tk.Label(page, text='홈페이지에서 준비한 원고를 이 PC가 네이버에 예약 등록합니다.',
+                 bg=BG, fg=MUTED, font=(FONT, 10)).pack(anchor='w', pady=(7, 22))
 
         # ── 상태 ─────────────────────────────────────────────────
         # 이 카드만 보면 지금 무슨 일이 일어나는지 알아야 한다. 점 하나 + 굵은 한 줄 + 설명 한 줄.
-        state = card(page, fill='x', pady=(10, 0))
+        state = card(page, fill='x')
+        ttk.Label(state, text='연결 및 발행 상태', style='Muted.TLabel').pack(anchor='w', pady=(0, 12))
         dot_row = ttk.Frame(state, style='Card.TFrame')
         dot_row.pack(fill='x')
         self.dot = tk.Canvas(dot_row, width=12, height=12, bg=CARD, highlightthickness=0)
@@ -221,14 +259,20 @@ class Desktop:
         tk.Button(self.guide, text='지금 연결하기', command=self.auto_connect_async, **PRIMARY).pack(anchor='w')
 
         # ── 기록 ─────────────────────────────────────────────────
-        logs = card(page, fill='both', expand=True, pady=(10, 0))
+        logs = card(page, fill='both', expand=True, pady=(14, 0))
+        self.activity_card = logs.box
         log_head = ttk.Frame(logs, style='Card.TFrame')
         log_head.pack(fill='x')
-        ttk.Label(log_head, text='기록', style='Head.TLabel').pack(side='left')
+        ttk.Label(log_head, text='활동 기록', style='Head.TLabel').pack(side='left')
         ttk.Button(log_head, text='복사', style='Ghost.TButton', command=self.copy_logs).pack(side='right')
-        self.logs = tk.Text(logs, height=9, state='disabled', wrap='word', relief='flat', bd=0,
-                            bg=BG, fg=MUTED, font=('Consolas', 9), padx=10, pady=8)
-        self.logs.pack(fill='both', expand=True, pady=(8, 0))
+        log_body = tk.Frame(logs, bg=BG)
+        log_body.pack(fill='both', expand=True, pady=(12, 0))
+        self.logs = tk.Text(log_body, height=7, state='disabled', wrap='word', relief='flat', bd=0,
+                            bg=BG, fg=MUTED, font=(FONT, 9), padx=14, pady=12, spacing1=3, spacing3=4)
+        log_scroll = ttk.Scrollbar(log_body, orient='vertical', command=self.logs.yview)
+        log_scroll.pack(side='right', fill='y')
+        self.logs.configure(yscrollcommand=log_scroll.set)
+        self.logs.pack(side='left', fill='both', expand=True)
         ttk.Label(logs, style='Muted.TLabel', justify='left', wraplength=660,
                   text='네이버 로그인·보안문자는 실행기가 연 Chrome 창에서 처리하세요.\n'
                        'PC를 끄면 새 예약 등록만 멈춥니다. 이미 네이버에 걸어둔 예약은 그대로 발행됩니다.'
@@ -241,8 +285,12 @@ class Desktop:
         self.auto_login = tk.BooleanVar(value=bool(saved.get('auto_login')))
         self.auto_start = tk.BooleanVar(value=bool(saved.get('auto_start')))
 
-        toggle = ttk.Button(page, text='직접 로그인 / 서버 설정 펼치기', style='Ghost.TButton')
-        toggle.pack(anchor='w', pady=(10, 0))
+        settings_bar = ttk.Frame(page, style='Page.TFrame')
+        settings_bar.pack(fill='x', pady=(16, 0))
+        toggle = ttk.Button(settings_bar, text='직접 로그인 / 서버 설정 펼치기', style='Ghost.TButton')
+        toggle.pack(side='left')
+        ttk.Button(settings_bar, text='업데이트 확인', style='Ghost.TButton',
+                   command=lambda: self.check_update(manual=True)).pack(side='right')
         self.manual = manual = card(page)
         manual.box.pack_forget()   # 설정은 접어 둔 채로 시작한다
         options = ttk.Frame(manual, style='Card.TFrame')
@@ -355,7 +403,7 @@ class Desktop:
             self.link.set('연결 확인 필요')
             self.paint_dot(AMBER)
             if not self.guide.box.winfo_manager():
-                self.guide.box.pack(fill='x', pady=(10, 0))
+                self.guide.box.pack(fill='x', pady=(14, 0), before=self.activity_card)
         if detail:
             self.status.set(detail)
 

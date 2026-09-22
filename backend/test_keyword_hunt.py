@@ -63,6 +63,7 @@ class HuntCase(unittest.IsolatedAsyncioTestCase):
         ]
         self.verdicts = {'아토피 possible 1': ('likely', 0.81), '아토피 possible 2': ('unlikely', 0.12),
                          '아토피 contested 1': ('contested', 0.44)}
+        self.candidate_disease = None      # _expand 대역이 행에 붙일 질환
 
     async def asyncTearDown(self):
         await self.db.close()
@@ -74,6 +75,7 @@ class HuntCase(unittest.IsolatedAsyncioTestCase):
         for kw, volume in self.candidates:
             self.db.add(CampaignKeyword(user_id='u', campaign_id='c', client_id='client', keyword=kw,
                                         source='related', total_volume=volume, monthly_mobile=volume,
+                                        disease=self.candidate_disease,
                                         passes_filter=True, verdict='unknown'))
         await self.db.commit()
         return {'added': len(self.candidates)}
@@ -145,6 +147,27 @@ class HuntTests(HuntCase):
         # 통검 possible/contested 인 3개만 판정 대상 → 목표 10개여도 3개가 상한
         self.assertEqual(result['selected'], 3)
 
+    async def test_new_hunt_clears_the_previous_keywords(self):
+        """새로 찾으면 지난 목록은 사라진다 — 쌓이면 이번에 판정된 것이 무엇인지 알 수 없다."""
+        self.db.add(CampaignKeyword(user_id='u', campaign_id='c', client_id='client',
+                                    keyword='지난번 키워드', source='related', total_volume=100,
+                                    passes_filter=True, verdict='possible', my_verdict='likely'))
+        await self.db.commit()
+        await self.run_hunt()
+        rows = await self._rows()
+        self.assertNotIn('지난번 키워드', rows)
+        self.assertTrue(rows)                      # 새로 찾은 것들은 남아 있다
+
+    async def test_keeping_the_previous_keywords_is_possible(self):
+        """replace=false 면 이어 붙인다(자동 이어하기·복구용)."""
+        self.db.add(CampaignKeyword(user_id='u', campaign_id='c', client_id='client',
+                                    keyword='지난번 키워드', source='related', total_volume=100,
+                                    passes_filter=True, verdict='possible'))
+        await self.db.commit()
+        self.job.payload = {**self.job.payload, 'replace': False}
+        await self.run_hunt()
+        self.assertIn('지난번 키워드', await self._rows())
+
     async def test_resume_skips_completed_stages(self):
         await self.run_hunt()
         seeded_once = self.topics.await_count
@@ -185,6 +208,123 @@ class WaveTests(HuntCase):
         await self.db.commit()
         await self.run_hunt()
         self.assertEqual([len(w) for w in self.judged_waves], [60, 60, 10])
+
+
+class QuotaHuntTests(HuntCase):
+    """발굴 잡 전체가 씨앗 입력과 비율 설정을 실제로 반영하는지."""
+
+    async def _run(self, payload):
+        self.job.payload = {**self.job.payload, **payload}
+        await self.db.commit()
+        self.judged_waves = []
+        seeds = AsyncMock(return_value=['아토피 증상'])
+        with patch.object(hunt, '_claude_topics', AsyncMock(return_value=[])),              patch.object(hunt, '_naver_seeds', seeds),              patch.object(hunt.jobs, 'keyword_expand', AsyncMock(side_effect=self._expand)) as expand,              patch('app.services.serp_analyzer.analyze_keyword', AsyncMock(side_effect=_fake_serp)),              patch('app.services.blog_index_jobs.blog_verdict_batch', AsyncMock(side_effect=self._verdict_batch)):
+            result = await hunt.keyword_hunt(self.ctx)
+        return result, expand.await_args.args[0].payload, seeds.await_args
+
+    async def test_asked_seeds_replace_the_clinic_subjects(self):
+        _, expand_payload, seed_call = await self._run({'seeds': ['탈모', '원형탈모']})
+        # 연관어 필터가 쓰는 diseases 가 직접 입력한 키워드여야 한다.
+        # 여기에 안 넣으면 '탈모' 연관어가 통째로 버려진다.
+        self.assertEqual(expand_payload['diseases'], ['탈모', '원형탈모'])
+        self.assertIn('탈모', seed_call.args[0])
+        self.assertIn('탈모 치료', seed_call.args[0])
+
+    async def test_without_seeds_the_clinic_subjects_are_used(self):
+        _, expand_payload, _ = await self._run({})
+        self.assertEqual(expand_payload['diseases'], ['아토피'])
+
+    async def test_blank_seeds_are_ignored(self):
+        _, expand_payload, _ = await self._run({'seeds': ['  ', '']})
+        self.assertEqual(expand_payload['diseases'], ['아토피'])
+
+    async def test_every_selected_row_gets_a_category(self):
+        await self._run({})
+        rows = await self._rows()
+        self.assertTrue(all(r.category for r in rows.values()),
+                        '성격이 안 붙으면 비율 추출이 불가능하다')
+
+    async def test_quota_axis_follows_the_asked_seeds(self):
+        """직접 입력이 있으면 질환 할당도 그 키워드 기준이어야 한다.
+
+        병원 진료 항목(아토피)으로 나누면 행이 하나도 없는 칸에 자리를 배정하고,
+        그만큼이 '메우기'로 흘러가 비율 지정이 무의미해진다.
+        """
+        self.candidates = [(f'탈모 possible {i}', 900 - i) for i in range(14)]
+        self.verdicts = {kw: ('likely', 0.8) for kw, _ in self.candidates}
+        self.candidate_disease = '탈모'
+        result, _, _ = await self._run({'seeds': ['탈모'], 'target': 10,
+                                        'disease_quota': {'탈모': 10}})
+        self.assertEqual(result['selected'], 10)
+        # 질환 축이 '탈모' 였다는 증거 — 아토피는 후보가 없어 키 자체가 안 생긴다.
+        self.assertEqual(result['disease_mix'], {'탈모': 10})
+
+    async def test_asked_seed_axis_keeps_the_category_ratio_intact(self):
+        """질환 축이 틀리면 비율이 조용히 무너진다 — 그걸 잡는 시험.
+
+        축을 병원 진료 항목(탈모+아토피)으로 잡으면 목표의 절반이 '아토피' 칸에 배정되는데
+        그 칸에는 행이 없다. 그 절반은 비율을 안 거치고 '메우기'로 채워져,
+        '치료만 뽑아 줘'라고 했는데 증상이 섞여 나온다.
+        """
+        self.candidates = ([(f'탈모치료 possible {i}', 900 - i) for i in range(10)]
+                           + [(f'탈모증상 possible {i}', 800 - i) for i in range(10)])
+        # 증상 쪽 확률을 높게 둬서, 비율을 안 거치면 증상이 먼저 끌려오게 만든다.
+        self.verdicts = {kw: ('likely', 0.9 if '증상' in kw else 0.7)
+                         for kw, _ in self.candidates}
+        self.candidate_disease = '탈모'
+        result, _, _ = await self._run({'seeds': ['탈모'], 'target': 10, 'verdict_limit': 20,
+                                        'category_ratio': {'치료': 100}})
+        self.assertEqual(result['selected'], 10)
+        self.assertEqual(result['category_mix'], {'치료': 10},
+                         "비율을 100% 치료로 줬으면 치료만 나와야 한다")
+
+    async def test_target_floor_is_ten(self):
+        """target 은 10 미만으로 못 내려간다(_clamp). 화면 입력도 min=10 이다."""
+        self.candidates = [(f'아토피 possible {i}', 900 - i) for i in range(14)]
+        self.verdicts = {kw: ('likely', 0.8) for kw, _ in self.candidates}
+        result, _, _ = await self._run({'target': 3})
+        self.assertEqual(result['target'], 10)
+
+    async def test_result_reports_the_category_mix(self):
+        result, _, _ = await self._run({})
+        self.assertIn('category_mix', result)
+        self.assertEqual(sum(result['category_mix'].values()), result['selected'])
+
+
+class SeedTests(HuntCase):
+    """씨앗 단계 — 외부 원천이 죽어도 진료 항목만으로 깔때기가 돌아야 한다."""
+
+    async def _run_with_seeds(self, topics, naver):
+        self.judged_waves = []
+        with patch.object(hunt, '_claude_topics', AsyncMock(return_value=topics)), \
+             patch.object(hunt, '_naver_seeds', AsyncMock(return_value=naver)) as seeds, \
+             patch.object(hunt.jobs, 'keyword_expand', AsyncMock(side_effect=self._expand)) as expand, \
+             patch('app.services.serp_analyzer.analyze_keyword', AsyncMock(side_effect=_fake_serp)), \
+             patch('app.services.blog_index_jobs.blog_verdict_batch', AsyncMock(side_effect=self._verdict_batch)):
+            result = await hunt.keyword_hunt(self.ctx)
+            return result, expand.await_args.args[0].payload['seeds'], seeds.await_args
+
+    async def test_subject_survives_when_every_external_source_is_empty(self):
+        # Claude 키 없음 + 네이버 빈손이어도 '씨앗을 만들지 못했습니다'로 죽으면 안 된다.
+        result, seeds, _ = await self._run_with_seeds([], [])
+        self.assertEqual(seeds, ['아토피'])
+        self.assertEqual(result['seeded'], 1)
+
+    async def test_subject_is_always_included_alongside_found_seeds(self):
+        _, seeds, _ = await self._run_with_seeds(['아토피 밤에 가려움'], ['아토피 증상'])
+        self.assertEqual(seeds[0], '아토피')                 # 진료 항목이 맨 앞
+        self.assertIn('아토피 밤에 가려움', seeds)
+        self.assertIn('아토피 증상', seeds)
+
+    async def test_autocomplete_probes_cover_subject_and_suffixes(self):
+        _, _, seed_call = await self._run_with_seeds([], [])
+        probes = seed_call.args[0]
+        self.assertIn('아토피', probes)
+        for suffix in hunt.SEED_SUFFIXES:
+            if suffix:
+                self.assertIn(f'아토피 {suffix}', probes)
+        # 1.8MB 짜리 통검 스크래핑은 진료 항목에만 건다
+        self.assertEqual(list(seed_call.kwargs['related_terms']), ['아토피'])
 
 
 if __name__ == '__main__':

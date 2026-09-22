@@ -363,6 +363,53 @@ async def sync_categories(client: ServerClient, editor: Any) -> int:
             pass
 
 
+def _job_slot(job: Dict[str, Any]) -> Optional[datetime]:
+    """잡에 적힌 예약 시각(KST). '+09:00' 꼬리를 떼고 10분 단위로 내린다."""
+    raw = ((job.get("schedule") or {}).get("datetime") or "").strip()
+    if not raw:
+        return None
+    try:
+        at = datetime.fromisoformat(raw.replace("+09:00", ""))
+    except ValueError:
+        return None
+    return at.replace(minute=(at.minute // 10) * 10, second=0, microsecond=0)
+
+
+async def sync_reservations(client: ServerClient, editor: Any, blog: Dict[str, Any]) -> Optional[List[datetime]]:
+    """네이버에 이미 걸린 예약 목록을 읽어 서버 장부에 갈아 끼운다.
+
+    서버는 이 목록이 있어야 남의 예약을 피해 자리를 잡는다. 목록은 로그인한 브라우저
+    안에만 있으므로 읽어 오는 것은 실행기 몫이다(카테고리 동기화와 같은 구조).
+    반환은 '지금 네이버에 잡혀 있는 시각들' — 못 읽었으면 None. 발행은 어느 쪽이든 계속한다."""
+    ref = blog["blog_ref_id"]
+    urls = [os.environ["DV_RESERVE_URL"]] if os.environ.get("DV_RESERVE_URL") else None
+    try:
+        items = await editor.read_reservations(blog["naver_blog_id"], urls=urls)
+    except Exception as e:  # noqa: BLE001  목록을 못 본 것뿐이다. 발행을 멈출 이유가 아니다
+        log.info("예약 목록 확인 건너뜀: %s", e)
+        items = None
+        note = str(e)[:300]
+    else:
+        note = "예약 목록 화면을 찾지 못했습니다"
+    finally:
+        try:
+            await editor.open_write_page()       # 목록 화면에 머물지 않는다
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        if items is None:
+            await asyncio.to_thread(client.put_reservations, ref, ok=False, note=note)
+            log.warning("블로그 '%s' 예약 목록을 읽지 못했습니다 → 서버가 간격을 넓혀 잡습니다",
+                        blog.get("label") or blog.get("naver_blog_id"))
+            return None
+        await asyncio.to_thread(client.put_reservations, ref, ok=True, items=items)
+        log.info("네이버 예약 %d건을 서버에 알렸습니다", len(items))
+        return [r["at"] for r in items]
+    except ServerError as e:
+        log.info("예약 목록 보고 실패: %s", e.detail)
+        return [r["at"] for r in items] if items is not None else None
+
+
 async def process_queue_jobs(client: ServerClient, editor: Any, blog: Dict[str, Any],
                              args: argparse.Namespace, *, claim_unassigned: bool) -> int:
     """대량 발행 큐(붙여넣기 대량·저장글)를 처리한다.
@@ -436,6 +483,10 @@ async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, 
         client.set_blog_status(ref, "active", "에이전트가 로그인을 확인했습니다")
 
     await sync_categories(client, editor)
+    # 남의 예약을 피해 잡으려면 서버가 그 목록을 알아야 한다. 매번 열 필요는 없고
+    # 서버가 '읽을 때가 됐다(wants_scan)'고 할 때만 연다 — 자주 여는 것 자체가 계정 위험이다.
+    reserved = await sync_reservations(client, editor, blog) if blog.get("wants_scan", True) else None
+    taken = {r.replace(second=0, microsecond=0) for r in (reserved or [])}
 
     from journal import flush
     journal = args.journal
@@ -476,6 +527,23 @@ async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, 
             await asyncio.to_thread(client.checkpoint, job["id"], token, "finalizing")
 
         log.info("--- 잡 %s '%s' 예약 %s ---", job.get("id"), (job.get("title") or "")[:40], (job.get("schedule") or {}).get("datetime"))
+        # 서버의 장부는 언제나 몇 분 과거다. 방금 눈으로 본 목록과 대조해 그 칸이 차 있으면
+        # 올리지 않고 자리를 옮긴다 — 같은 시각에 두 글이 걸리는 것만은 막아야 한다.
+        slot = _job_slot(job)
+        if slot and slot in taken:
+            log.warning("예약 %s 자리가 이미 차 있습니다 → 발행하지 않고 옮깁니다", slot.strftime("%m/%d %H:%M"))
+            try:
+                moved = await asyncio.to_thread(client.reschedule, job["id"], token,
+                                                reason=f"{slot.strftime('%m/%d %H:%M')} 에 이미 예약된 글이 있습니다",
+                                                taken_at=[slot])
+                log.info("→ %s 으로 옮겼습니다", moved.get("scheduled_at"))
+                journal.acknowledge(token)     # 서버가 잠금을 풀었다 — 복구 대상이 아니다
+            except ServerError as e:
+                # 잠금은 리스 만료로 저절로 풀린다. 다음 주기에 다시 본다.
+                log.error("자리를 옮기지 못했습니다: %s", e.detail)
+                journal.save_result(token, {'ok': False, 'uncertain': False, 'release': True,
+                                            'message': '예약 자리가 차 있어 발행하지 않았습니다'})
+            continue
         await asyncio.to_thread(client.checkpoint, job["id"], token, "editing")
         heartbeat = asyncio.create_task(keep_lease())
         try:

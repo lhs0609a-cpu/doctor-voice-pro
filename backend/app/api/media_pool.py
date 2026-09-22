@@ -127,6 +127,23 @@ def _thumb_from_image(im: Image.Image) -> Optional[str]:
         return None
 
 
+def animated_gif_passthrough(data: bytes) -> Optional[tuple]:
+    """움직이는 GIF 면 원본 바이트를 그대로 돌려준다. (bytes, width, height, phash, thumbnail).
+
+    JPEG 로 바꾸면 첫 장면만 남아 움직임이 사라진다 — 워드에 넣은 GIF 는 움직이는 채로 올라가야 한다.
+    썸네일·유사도 지문은 첫 장면으로 뽑는다. 움직이지 않는 그림이면 None(평소대로 JPEG 로 줄인다).
+    CPU 작업이므로 반드시 threadpool 에서 호출할 것.
+    """
+    try:
+        im = Image.open(io.BytesIO(data))
+        if (im.format or "").upper() != "GIF" or not getattr(im, "is_animated", False):
+            return None
+        first = im.convert("RGB")
+    except Exception:  # noqa: BLE001 — 깨진 파일은 평소 경로에서 다시 판단한다
+        return None
+    return data, first.width, first.height, uniq.to_hex(uniq.phash(first)), _thumb_from_image(first)
+
+
 def _normalize_upload(data: bytes) -> tuple:
     """업로드 원본 → 표시 최대폭 JPEG 로 축소. (bytes, width, height, phash, thumbnail) 반환.
 

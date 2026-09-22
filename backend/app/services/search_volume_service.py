@@ -11,6 +11,7 @@ import base64
 import hashlib
 import hmac
 import logging
+import re
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -123,7 +124,10 @@ async def _call_keywordstool(keywords: List[str]) -> List[Dict]:
 
     path = "/keywordstool"
     url = f"{settings.NAVER_AD_BASE_URL}{path}"
-    unique = list({k.strip() for k in keywords if k and k.strip()})
+    # hintKeywords 는 공백을 못 받는다. '습진 증상' 하나가 섞이면 400 이 나면서
+    # 같은 묶음 5개가 통째로 날아가므로, 보내기 전에 공백을 모두 지운다.
+    # 응답의 relKeyword 도 공백 없는 형태로 오고 _normalize 가 같은 규칙이라 매칭은 그대로 된다.
+    unique = list({re.sub(r"\s+", "", k) for k in keywords if k and k.strip()})
     chunks = [
         unique[i : i + MAX_HINTS_PER_CALL]
         for i in range(0, len(unique), MAX_HINTS_PER_CALL)

@@ -13,13 +13,13 @@ import io
 import re
 import secrets
 from pathlib import Path
-from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import date, datetime, time, timedelta
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
-from sqlalchemy import func, inspect, select, update
+from sqlalchemy import delete, func, inspect, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -713,6 +713,7 @@ class KeywordOut(BaseModel):
     keyword: str
     region: Optional[str] = None
     disease: Optional[str] = None
+    category: Optional[str] = None
     source: str = "manual"
     scope: str = "region"
     monthly_mobile: int = 0
@@ -736,7 +737,8 @@ class KeywordOut(BaseModel):
 
 def _kw_out(k: CampaignKeyword, has_draft: bool = False) -> KeywordOut:
     return KeywordOut(
-        id=k.id, keyword=k.keyword, region=k.region, disease=k.disease, source=k.source or "manual", scope=k.scope or "region",
+        id=k.id, keyword=k.keyword, region=k.region, disease=k.disease, category=k.category,
+        source=k.source or "manual", scope=k.scope or "region",
         monthly_mobile=k.monthly_mobile or 0, monthly_pc=k.monthly_pc or 0, total_volume=k.total_volume or 0,
         competition=k.competition or "mid", verdict=k.verdict or "unknown", verdict_reason=k.verdict_reason,
         serp_summary=k.serp_summary, in_sheet=bool(k.in_sheet), sheet_note=k.sheet_note,
@@ -762,6 +764,22 @@ class HuntIn(BaseModel):
     blog_id: Optional[str] = None                     # 판정 기준 블로그(비우면 캠페인의 정상 블로그)
     screen_limit: Optional[int] = Field(None, ge=10, le=600)    # ② 통검을 볼 최대 개수
     verdict_limit: Optional[int] = Field(None, ge=0, le=300)    # ③ 내 블로그 판정 최대 개수
+    # 직접 찾고 싶은 키워드. 주면 진료 항목 대신 이것만 파고, 연관어도 이 기준으로 살린다.
+    seeds: Optional[List[str]] = Field(None, max_length=20)
+    # 질환별 개수 {"건선": 30, "습진": 20}. 합이 target 을 넘으면 비율로 보고 줄인다.
+    disease_quota: Optional[Dict[str, int]] = None
+    # 글 성격 비율 {"증상": 20, "치료": 25, ...}. 후보가 모자란 칸은 다른 성격으로 메운다.
+    category_ratio: Optional[Dict[str, int]] = None
+    # 새로 찾을 때 이 캠페인의 지난 키워드를 비운다(기본). 이어 붙이려면 false.
+    replace: bool = True
+
+
+@router.get("/keyword-categories")
+async def keyword_categories(current_user: User = Depends(get_current_user)):
+    """화면이 비율 입력칸을 그릴 때 쓰는 카테고리 목록과 기본 비율."""
+    from app.services import keyword_taxonomy as tx
+    return {"categories": [{"key": c, "label": tx.CATEGORY_LABELS[c],
+                            "default_ratio": tx.DEFAULT_RATIO.get(c, 0)} for c in tx.CATEGORIES]}
 
 
 @router.post("/campaigns/{campaign_id}/keywords/hunt", response_model=TaskOut)
@@ -780,14 +798,18 @@ class ManualKeywordsIn(BaseModel):
 @router.post("/campaigns/{campaign_id}/keywords", response_model=List[KeywordOut])
 async def add_keywords(campaign_id: str, body: ManualKeywordsIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
-    from app.services import keyword_expander as ke, search_volume_service as svs
+    from app.services import keyword_expander as ke, keyword_taxonomy as tx, search_volume_service as svs
+    cl = await db.get(Client, c.client_id) if c.client_id else None
+    subjects = list(dict.fromkeys(((cl.diseases if cl else None) or []) + ((cl.treatments if cl else None) or [])))
+    regions = (cl.regions if cl else None) or []
     existing = {ke._norm(k.keyword): k for k in (await db.execute(select(CampaignKeyword).where(CampaignKeyword.campaign_id == c.id))).scalars().all()}
     clean = [k.strip() for k in body.keywords if k and k.strip()]
     new_rows: List[CampaignKeyword] = []
     for kw in clean:
         if ke._norm(kw) in existing:
             continue
-        row = CampaignKeyword(user_id=_uid(current_user), campaign_id=c.id, client_id=c.client_id, keyword=kw, source="manual", selected=True)
+        row = CampaignKeyword(user_id=_uid(current_user), campaign_id=c.id, client_id=c.client_id, keyword=kw,
+                              source="manual", selected=True, category=tx.classify(kw, regions, subjects))
         db.add(row)
         existing[ke._norm(kw)] = row
         new_rows.append(row)
@@ -828,6 +850,19 @@ async def select_keywords(campaign_id: str, body: SelectIn, current_user: User =
     await db.execute(update(CampaignKeyword).where(CampaignKeyword.campaign_id == c.id, CampaignKeyword.id.in_(body.ids)).values(selected=body.selected))
     await db.commit()
     return {"success": True, "count": len(body.ids)}
+
+
+@router.delete("/campaigns/{campaign_id}/keywords")
+async def clear_keywords(campaign_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """이 캠페인의 키워드를 전부 비운다.
+
+    지난 판정은 블로그 지수·경쟁 상황이 바뀌면 더 이상 맞지 않는다. 쌓아 두면 어느 것이
+    이번에 본 것인지 알 수 없으므로, 새로 찾기 전에 싹 지울 수 있어야 한다
+    (발굴 작업의 replace 와 같은 일을 사용자가 직접 하는 것)."""
+    c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
+    removed = (await db.execute(delete(CampaignKeyword).where(CampaignKeyword.campaign_id == c.id))).rowcount or 0
+    await db.commit()
+    return {"removed": removed}
 
 
 @router.delete("/campaigns/{campaign_id}/keywords/{keyword_id}")
@@ -976,7 +1011,7 @@ def _data_url_bytes(raw: str) -> bytes:
 
 async def _store_doc_image(db: AsyncSession, user_id: str, block: Dict[str, Any], warnings: List[str]) -> Optional[str]:
     """문서 안 사진 한 장 → 사진 풀의 행. 바이트를 원고에 담지 않으려고 풀에 넣고 번호만 참조한다."""
-    from app.api.media_pool import _normalize_upload
+    from app.api.media_pool import _normalize_upload, animated_gif_passthrough
 
     name = block.get("name") or "사진"
     raw = _data_url_bytes(block.get("image") or "")
@@ -984,12 +1019,15 @@ async def _store_doc_image(db: AsyncSession, user_id: str, block: Dict[str, Any]
         warnings.append(f"{name}: 사진을 읽지 못해 건너뜁니다")
         return None
     try:
-        data, w, h, ph, thumb = await run_in_threadpool(_normalize_upload, raw)
+        # 움직이는 GIF 는 손대지 않는다. JPEG 로 줄이면 첫 장면만 남아 멈춘 그림이 된다.
+        moving = await run_in_threadpool(animated_gif_passthrough, raw)
+        content_type = "image/gif" if moving else "image/jpeg"
+        data, w, h, ph, thumb = moving or await run_in_threadpool(_normalize_upload, raw)
     except Exception:  # noqa: BLE001
         warnings.append(f"{name}: 사진 형식을 알 수 없어 건너뜁니다")
         return None
     row = PoolImage(
-        user_id=user_id, filename=name, content_type="image/jpeg", data=data, thumbnail=thumb,
+        user_id=user_id, filename=name, content_type=content_type, data=data, thumbnail=thumb,
         original_phash=ph, width=w, height=h, size_bytes=len(data),
     )
     db.add(row)
@@ -1283,6 +1321,12 @@ class ScheduleIn(BaseModel):
     draft_ids: Optional[List[str]] = None    # 비우면 ready 원고 전부
     include_needs_review: bool = False
     seed: Optional[int] = None
+    # spread: 기간 안에 흩뿌린다(기존 마법사). interval: 고른 시각부터 고른 간격으로 하나씩(원스톱).
+    mode: Literal["spread", "interval"] = "spread"
+    start_at: Optional[datetime] = None      # interval 전용. 첫 글 시각(KST naive). 비우면 start_date 09:00
+    every_minutes: Optional[int] = None      # interval 전용. 글 사이 간격(분). 비우면 120
+    # at: start_at 부터 / after_last: 아는 마지막 예약 + 간격 부터(이미 예약된 글 다음에 이어 붙이기)
+    start_mode: Literal["at", "after_last"] = "at"
 
 
 class ScheduleItem(BaseModel):
@@ -1293,12 +1337,25 @@ class ScheduleItem(BaseModel):
     scheduled_at: str
 
 
+class BlogReservations(BaseModel):
+    """블로그 한 개의 '이미 잡혀 있는 자리' 현황. 화면이 이 숫자를 그대로 읽어 준다."""
+    blog_ref_id: str
+    label: str
+    count: int = 0                       # 앞으로 남은 예약 건수(우리 것 + 네이버에서 읽어 온 것)
+    last_at: Optional[str] = None        # 그중 가장 늦은 시각
+    scanned_at: Optional[str] = None     # 네이버 목록을 마지막으로 읽어 온 때
+    stale: bool = True                   # 읽은 적이 없거나 오래됨 → 완충을 넓혀 잡는다
+    note: Optional[str] = None           # 못 읽었을 때의 사유
+
+
 class SchedulePreview(BaseModel):
     total: int
     assigned: List[ScheduleItem]
     unassigned: int
     calendar: List[Dict[str, Any]]
     warnings: List[str] = []
+    starts_after: Optional[str] = None           # '이미 예약된 글 다음부터'의 기준이 된 마지막 예약
+    reservations: List[BlogReservations] = []
 
 
 async def _schedule_inputs(db: AsyncSession, c: Campaign, body: ScheduleIn, user: User):
@@ -1338,35 +1395,117 @@ async def _schedule_inputs(db: AsyncSession, c: Campaign, body: ScheduleIn, user
         for p in plans:
             p.daily_limit = max(1, min(20, body.per_day))
     await se.load_taken_slots(db, _uid(user), plans)
-    return usable, drafts, plans, warnings
+    return usable, drafts, plans, warnings, _reservations_state(usable, plans, warnings)
 
 
-def _preview(drafts: List[Draft], blogs: List[Blog], assigned, remaining, warnings) -> SchedulePreview:
+# 네이버 예약 목록을 이만큼 못 읽었으면 '모르는 상태'로 본다. 모를수록 넉넉히 띄운다 —
+# 겹쳐서 같은 시각에 두 글이 올라가는 것보다 늦게 올라가는 편이 싸다.
+RESERVATION_STALE_HOURS = 12
+STALE_GAP_SCALE = 1.5
+
+
+def _reservations_state(blogs: List[Blog], plans, warnings: List[str]) -> List["BlogReservations"]:
+    """블로그별 '이미 잡혀 있는 자리' 현황. 목록이 오래된 블로그는 여기서 완충을 넓힌다."""
+    now = se.kst_now()
+    by_ref = {p.ref_id: p for p in plans}
+    out: List[BlogReservations] = []
+    for b in blogs:
+        plan = by_ref.get(b.id)
+        future = sorted(t for t in (plan.taken if plan else set())) if plan else []
+        future = [t for t in future if t > now]
+        scanned = b.reservations_scanned_at
+        stale = not scanned or (datetime.utcnow() - scanned) > timedelta(hours=RESERVATION_STALE_HOURS)
+        label = b.label or b.blog_id
+        if stale and plan:
+            plan.min_gap_minutes = int((plan.min_gap_minutes or 0) * STALE_GAP_SCALE)
+            when = scanned.strftime("%m/%d") + "에 확인한 목록입니다" if scanned else "아직 확인하지 못했습니다"
+            warnings.append(f"{label}: 네이버 예약 목록을 {when}. 겹치지 않도록 글 사이를 더 띄워 잡았습니다.")
+        out.append(BlogReservations(
+            blog_ref_id=b.id, label=label, count=len(future),
+            last_at=future[-1].isoformat(timespec="minutes") if future else None,
+            scanned_at=scanned.isoformat(timespec="minutes") if scanned else None,
+            stale=stale, note=b.reservations_note,
+        ))
+    return out
+
+
+def _preview(drafts: List[Draft], blogs: List[Blog], assigned, remaining, warnings, *, interval: bool = False,
+             starts_after: Optional[str] = None, reservations: Optional[List[BlogReservations]] = None) -> SchedulePreview:
     label = {b.id: (b.label or b.blog_id) for b in blogs}
     items = []
     for d, (ref, at) in zip(drafts, assigned):
         items.append(ScheduleItem(draft_id=d.id, title=d.title, blog_ref_id=ref, blog_label=label.get(ref, ref), scheduled_at=at.isoformat(timespec="minutes")))
     if remaining:
-        warnings = warnings + [f"자리가 모자라 {remaining}건을 배정하지 못했습니다. 기간을 늘리거나 하루 건수를 올리세요."]
-    return SchedulePreview(total=len(drafts), assigned=items, unassigned=remaining, calendar=se.calendar_view(assigned, label), warnings=warnings)
+        advice = "간격을 좁히거나 시작을 앞당기세요." if interval else "기간을 늘리거나 하루 건수를 올리세요."
+        warnings = warnings + [f"자리가 모자라 {remaining}건을 배정하지 못했습니다. {advice}"]
+    return SchedulePreview(total=len(drafts), assigned=items, unassigned=remaining,
+                           calendar=se.calendar_view(assigned, label), warnings=warnings,
+                           starts_after=starts_after, reservations=reservations or [])
+
+
+def _allocate(body: ScheduleIn, c: Campaign, drafts: List[Draft], plans) -> Tuple[List[Tuple[str, datetime]], int, List[str], Optional[str]]:
+    """예약 방식에 따라 자리를 잡는다. 반환 (배정, 미배정 건수, 추가 경고, 이어 붙인 기준 예약)."""
+    if body.mode == "interval":
+        every = max(10, min(7 * 24 * 60, body.every_minutes or 120))
+        # '이미 예약된 글 다음부터' — 아는 마지막 예약에서 고른 간격만큼 떨어진 곳이 첫 글이다.
+        last = se.latest_reserved(plans) if body.start_mode == "after_last" else None
+        start_at = (last + timedelta(minutes=every)) if last else (body.start_at or datetime.combine(body.start_date, time(9, 0)))
+        assigned, remaining = se.allocate_interval(len(drafts), plans, start_at, every, days=max(1, body.days))
+        warnings: List[str] = []
+        per_day: Dict[Tuple[str, date], int] = {}
+        for ref, at in assigned:
+            per_day[(ref, at.date())] = per_day.get((ref, at.date()), 0) + 1
+        for p in plans:
+            peak = max((n for (ref, _), n in per_day.items() if ref == p.ref_id), default=0)
+            if peak > p.daily_limit:
+                warnings.append(f"이 간격이면 하루 최대 {peak}건이 올라갑니다(블로그 설정 한도 {p.daily_limit}건). 간격을 넓히면 줄어듭니다.")
+        return assigned, remaining, warnings, (last.isoformat(timespec="minutes") if last else None)
+    seed = body.seed if body.seed is not None else int(c.created_at.timestamp()) if c.created_at else 0
+    assigned, remaining = se.allocate(len(drafts), plans, body.start_date, body.days, seed=seed)
+    return assigned, remaining, [], None
+
+
+@router.get("/campaigns/{campaign_id}/reservations", response_model=List[BlogReservations])
+async def campaign_reservations(campaign_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """이 캠페인 블로그들에 이미 잡혀 있는 자리. 원고를 고르기 전에도 화면이 알려 줄 수 있어야 한다."""
+    c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
+    blogs = (await db.execute(select(Blog).where(
+        Blog.id.in_(c.blog_ids or []), Blog.user_id == _uid(current_user)))).scalars().all() if c.blog_ids else []
+    if not blogs:
+        return []
+    plans = [se.blog_plan_from_model(b) for b in blogs]
+    await se.load_taken_slots(db, _uid(current_user), plans)
+    return _reservations_state(blogs, plans, [])
+
+
+@router.post("/campaigns/{campaign_id}/reservations/rescan")
+async def campaign_reservations_rescan(campaign_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """[예약 목록 새로 읽기]. 실행기가 다음 차례에 이 블로그들의 목록을 읽어 온다."""
+    c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
+    blogs = (await db.execute(select(Blog).where(
+        Blog.id.in_(c.blog_ids or []), Blog.user_id == _uid(current_user)))).scalars().all() if c.blog_ids else []
+    for b in blogs:
+        b.reservations_scan_requested_at = datetime.utcnow()
+    await db.commit()
+    return {"requested": len(blogs)}
 
 
 @router.post("/campaigns/{campaign_id}/schedule/preview", response_model=SchedulePreview)
 async def schedule_preview(campaign_id: str, body: ScheduleIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
-    blogs, drafts, plans, warnings = await _schedule_inputs(db, c, body, current_user)
-    seed = body.seed if body.seed is not None else int(c.created_at.timestamp()) if c.created_at else 0
-    assigned, remaining = se.allocate(len(drafts), plans, body.start_date, body.days, seed=seed)
-    return _preview(drafts, blogs, assigned, remaining, warnings)
+    blogs, drafts, plans, warnings, reservations = await _schedule_inputs(db, c, body, current_user)
+    assigned, remaining, extra, starts_after = _allocate(body, c, drafts, plans)
+    return _preview(drafts, blogs, assigned, remaining, warnings + extra, interval=body.mode == "interval",
+                    starts_after=starts_after, reservations=reservations)
 
 
 @router.post("/campaigns/{campaign_id}/schedule/commit", response_model=SchedulePreview)
 async def schedule_commit(campaign_id: str, body: ScheduleIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
     await db.execute(update(Campaign).where(Campaign.id == c.id).values(updated_at=datetime.utcnow()))
-    blogs, drafts, plans, warnings = await _schedule_inputs(db, c, body, current_user)
-    seed = body.seed if body.seed is not None else int(c.created_at.timestamp()) if c.created_at else 0
-    assigned, remaining = se.allocate(len(drafts), plans, body.start_date, body.days, seed=seed)
+    blogs, drafts, plans, warnings, reservations = await _schedule_inputs(db, c, body, current_user)
+    assigned, remaining, extra, starts_after = _allocate(body, c, drafts, plans)
+    warnings = warnings + extra
     by_ref = {b.id: b for b in blogs}
     for d, (ref, at) in zip(drafts, assigned):
         b = by_ref[ref]
@@ -1380,7 +1519,10 @@ async def schedule_commit(campaign_id: str, body: ScheduleIn, current_user: User
     c.status = "scheduled"
     c.step = 6
     merged = dict(c.settings or {})
-    merged["schedule"] = {"start_date": body.start_date.isoformat(), "days": body.days, "per_day": body.per_day, "blog_ids": [b.id for b in blogs]}
+    merged["schedule"] = {"start_date": body.start_date.isoformat(), "days": body.days, "per_day": body.per_day,
+                          "blog_ids": [b.id for b in blogs], "mode": body.mode,
+                          "start_at": body.start_at.isoformat(timespec="minutes") if body.start_at else None,
+                          "every_minutes": body.every_minutes, "start_mode": body.start_mode}
     c.settings = merged
     try:
         await db.commit()
@@ -1390,7 +1532,8 @@ async def schedule_commit(campaign_id: str, body: ScheduleIn, current_user: User
     # 사진 사전 유니크화
     await job_worker.enqueue(db, "prepare_images", {"campaign_id": c.id}, _uid(current_user), dedupe_key=f"prep:{c.id}")
     await campaign_jobs._bump_stats(job_worker.JobContext(db=db, job=BackgroundJob()), c.id)
-    return _preview(drafts, blogs, assigned, remaining, warnings)
+    return _preview(drafts, blogs, assigned, remaining, warnings, interval=body.mode == "interval",
+                    starts_after=starts_after, reservations=reservations)
 
 
 @router.delete("/campaigns/{campaign_id}/schedule")
@@ -1886,6 +2029,9 @@ class AgentBlogSummary(BaseModel):
     pending: int = 0
     next_at: Optional[str] = None
     login_id: Optional[str] = None
+    # 예약 목록을 다시 읽어야 하는가(웹에서 [새로 읽기]를 눌렀거나 읽은 지 오래됨)
+    wants_scan: bool = True
+    reservations_scanned_at: Optional[str] = None
 
 
 @router.get("/agent/summary", response_model=List[AgentBlogSummary])
@@ -1894,9 +2040,122 @@ async def agent_summary(current_user: User = Depends(get_current_user), db: Asyn
     out = []
     for b in blogs:
         rows = (await db.execute(select(PublishJob.scheduled_at).where(PublishJob.blog_ref_id == b.id, PublishJob.status.in_(["queued", "assigned", "failed"])).order_by(PublishJob.scheduled_at.asc()))).all()
+        scanned = b.reservations_scanned_at
+        stale = not scanned or (datetime.utcnow() - scanned) > timedelta(hours=RESERVATION_STALE_HOURS)
         out.append(AgentBlogSummary(blog_ref_id=b.id, naver_blog_id=b.blog_id, label=b.label or b.blog_id, status=b.status or "active", status_reason=b.status_reason,
-                                    pending=len(rows), next_at=rows[0][0].isoformat(timespec="minutes") if rows else None, login_id=b.login_id))
+                                    pending=len(rows), next_at=rows[0][0].isoformat(timespec="minutes") if rows else None, login_id=b.login_id,
+                                    wants_scan=bool(stale or b.reservations_scan_requested_at),
+                                    reservations_scanned_at=scanned.isoformat(timespec="minutes") if scanned else None))
     return out
+
+
+# ───────────────── 네이버에 이미 걸린 예약(실행기가 읽어 온 목록) ─────────────────
+# 예약 목록은 로그인한 브라우저 안에만 있다. 서버가 직접 볼 방법이 없어 실행기가 읽어다 준다.
+# 받은 목록은 '덧붙이는 기록'이 아니라 '그 시점의 진실 전체'다 — 통째로 갈아 끼워야
+# 네이버에서 지운 예약이 유령 자리로 남지 않는다.
+
+class ReservationItem(BaseModel):
+    at: datetime                          # 네이버 화면에 적힌 그대로의 시각(KST naive)
+    title: Optional[str] = None
+
+
+class ReservationsIn(BaseModel):
+    ok: bool = True                       # False = 목록을 못 읽음. 장부는 손대지 않는다
+    note: Optional[str] = None            # 못 읽은 사유(화면 변경·로그인 등)
+    items: List[ReservationItem] = []
+
+
+@router.post("/agent/blogs/{blog_ref_id}/reservations")
+async def agent_reservations(blog_ref_id: str, body: ReservationsIn,
+                             current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """이 블로그의 네이버 예약 목록 스냅샷. 미래의 'naver' 자리를 통째로 교체한다."""
+    b = await _owned(db, Blog, blog_ref_id, current_user, "블로그")
+    b.reservations_scan_requested_at = None          # 요청은 소화했다(성공이든 실패든)
+    if not body.ok:
+        b.reservations_note = (body.note or "예약 목록을 읽지 못했습니다")[:300]
+        await db.commit()
+        return {"ok": False, "saved": 0}
+
+    now = se.kst_now()
+    slots = {se.floor_slot(i.at): (i.title or "")[:200] or None for i in body.items if i.at > now}
+    uid = _uid(current_user)
+    await db.execute(delete(ScheduleMark).where(
+        ScheduleMark.user_id == uid, ScheduleMark.blog_id == b.blog_id,
+        ScheduleMark.scheduled_at > now, ScheduleMark.source == "naver",
+    ))
+    # 우리가 걸어 둔 자리(source='campaign' 등)는 건드리지 않는다. 같은 시각이면 이미 같은 자리다.
+    kept = {r for (r,) in (await db.execute(select(ScheduleMark.scheduled_at).where(
+        ScheduleMark.user_id == uid, ScheduleMark.blog_id == b.blog_id,
+        ScheduleMark.scheduled_at.in_(list(slots) or [now]),
+    ))).all()}
+    for at, title in slots.items():
+        if at in kept:
+            continue
+        db.add(ScheduleMark(user_id=uid, blog_id=b.blog_id, scheduled_at=at, title=title, source="naver"))
+    b.reservations_scanned_at = datetime.utcnow()
+    b.reservations_note = None
+    await db.commit()
+    return {"ok": True, "saved": len(slots)}
+
+
+class RescheduleIn(BaseModel):
+    lock_token: str = Field(min_length=1, max_length=64)
+    reason: Optional[str] = None
+    taken_at: List[datetime] = []         # 실행기가 현장에서 본 예약 시각(즉시 장부에 반영)
+
+
+@router.post("/agent/jobs/{job_id}/reschedule")
+async def agent_reschedule(job_id: str, body: RescheduleIn,
+                           current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """발행 직전 그 자리가 이미 차 있었다 → 올리지 말고 다음 빈 자리로 옮긴다.
+
+    서버의 장부는 언제나 몇 분 과거다. 마지막 한 겹은 현장에서 본 것으로 막는다."""
+    j = await _owned(db, PublishJob, job_id, current_user, "발행건")
+    uid = _uid(current_user)
+    b = await db.get(Blog, j.blog_ref_id)
+    if not b or b.user_id != uid:
+        raise HTTPException(status_code=404, detail="블로그를 찾을 수 없습니다")
+    # 1) 잠금을 먼저 푼다(queued 로 되돌아가고 시도 횟수는 늘지 않는다)
+    try:
+        await protocol.result(db, job_id, uid, body.lock_token,
+                              {"ok": False, "release": True, "uncertain": False,
+                               "message": (body.reason or "그 시각에 이미 예약된 글이 있어 옮깁니다")[:500],
+                               "url": None, "need_login": False, "captcha": False, "receipt_id": None})
+    except protocol.Conflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    # 2) 현장에서 본 자리를 장부에 남긴다(다음 배정도 이 자리를 피한다)
+    now = se.kst_now()
+    for raw in body.taken_at:
+        at = se.floor_slot(raw)
+        if at <= now:
+            continue
+        db.add(ScheduleMark(user_id=uid, blog_id=b.blog_id, scheduled_at=at, title=None, source="naver"))
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()                      # 이미 아는 자리
+    # 3) 다음 빈 자리로 옮긴다
+    plan = se.blog_plan_from_model(b)
+    await se.load_taken_slots(db, uid, [plan])
+    # 원래 자리는 남겨 둔다 — 그 칸이 차 있어서 옮기는 것이므로 그 앞뒤로도 완충을 둬야 한다.
+    gap = max(se.SLOT_MINUTES, plan.min_gap_minutes or 120)
+    moved, _ = se.allocate_interval(1, [plan], j.scheduled_at + timedelta(minutes=se.SLOT_MINUTES), gap, days=60)
+    if not moved:
+        j.error = "옮길 빈 자리를 찾지 못했습니다. 예약 간격을 다시 잡아 주세요"
+        await db.commit()
+        raise HTTPException(status_code=409, detail=j.error)
+    old, new_at = j.scheduled_at, moved[0][1]
+    await db.execute(delete(ScheduleMark).where(
+        ScheduleMark.user_id == uid, ScheduleMark.blog_id == b.blog_id,
+        ScheduleMark.scheduled_at == old, ScheduleMark.source != "naver"))
+    draft = await db.get(Draft, j.draft_id)
+    db.add(ScheduleMark(user_id=uid, blog_id=b.blog_id, scheduled_at=new_at,
+                        title=((draft.title if draft else "") or "")[:200] or None, source="campaign"))
+    j.scheduled_at = new_at
+    j.error = f"{old.strftime('%m/%d %H:%M')} 자리가 이미 차 있어 {new_at.strftime('%m/%d %H:%M')}으로 옮겼습니다"
+    await db.commit()
+    return {"ok": True, "scheduled_at": new_at.isoformat(timespec="minutes"), "was": old.isoformat(timespec="minutes")}
 
 
 # ─────────────────────── 실행기 하트비트(웹 신호등) ───────────────────────

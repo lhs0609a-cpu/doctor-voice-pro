@@ -17,7 +17,7 @@ export function Sidebar({ onNavigate, className }: Props) {
   const pathname = usePathname() || ''
   const [showAll, setShowAll] = useState(false)
   const focused = pathname === '/dashboard/one-stop'
-  const essentials = new Set(['/dashboard', '/dashboard/one-stop', '/dashboard/campaign', '/dashboard/clients', '/dashboard/media'])
+  const essentials = new Set(['/dashboard', '/dashboard/one-stop', '/dashboard/keyword-hunt', '/dashboard/campaign', '/dashboard/clients', '/dashboard/media'])
   const groups = focused && !showAll ? NAV_GROUPS.map(group => ({ ...group, items: group.items.filter(item => essentials.has(item.href)) })).filter(group => group.items.length) : NAV_GROUPS
   return (
     <aside className={cn('flex h-full w-[236px] flex-col border-r bg-sidebar', className)}>

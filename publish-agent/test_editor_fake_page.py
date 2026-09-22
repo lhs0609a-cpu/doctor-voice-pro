@@ -89,6 +89,38 @@ class TestEditorOnFakePage(unittest.TestCase):
         f = await ed.frame()
         return await f.evaluate("() => window.__state")
 
+    # ------------------------------------------------------- 예약 글 목록 읽기
+    def test_reads_the_reservation_list(self):
+        """예약 목록에서 (시각, 제목)을 읽는다. 날짜 표기가 섞여 있어도 읽혀야 한다."""
+        async def body(ed: NaverEditor, page):
+            return await ed.read_reservations("testblog", urls=[f"{self.base}/reserve.html"])
+
+        rows = self._run(self._with_editor("", body))
+        self.assertEqual([r["at"] for r in rows], [
+            datetime(2026, 9, 23, 14, 30), datetime(2026, 9, 25, 18, 0), datetime(2026, 9, 26, 9, 10)])
+        self.assertEqual(rows[0]["title"], "아토피 초기 증상 확인법")
+
+    def test_empty_list_is_zero_not_a_failure(self):
+        """'예약된 글이 없습니다' 는 0건이다. 못 읽음(None)과 섞이면 남의 자리에 겹쳐 잡는다."""
+        async def body(ed: NaverEditor, page):
+            return await ed.read_reservations("testblog", urls=[f"{self.base}/reserve.html?empty=1"])
+
+        self.assertEqual(self._run(self._with_editor("", body)), [])
+
+    def test_unreadable_screen_returns_none(self):
+        async def body(ed: NaverEditor, page):
+            return await ed.read_reservations("testblog", urls=[f"{self.base}/reserve.html?broken=1"])
+
+        self.assertIsNone(self._run(self._with_editor("", body)))
+
+    def test_falls_back_to_the_next_candidate_url(self):
+        """첫 주소가 죽어 있어도 다음 후보에서 읽으면 된다(네이버가 주소를 바꿔도 버틴다)."""
+        async def body(ed: NaverEditor, page):
+            return await ed.read_reservations("testblog", urls=[
+                f"{self.base}/no-such-page.html", f"{self.base}/reserve.html"])
+
+        self.assertEqual(len(self._run(self._with_editor("", body))), 3)
+
     # ------------------------------------------------------------ 발행 뒤 글 주소
     def test_publish_harvests_post_url_from_completion_toast(self):
         # 완료 안내창에 글 링크가 뜨면 그 번호를 가져온다 → 서버가 '주소로 확인된 예약'으로 처리
@@ -103,6 +135,33 @@ class TestEditorOnFakePage(unittest.TestCase):
         out = self._run(self._with_editor("?postlink=1", body))
         self.assertTrue(out.ok, out.message)
         self.assertEqual(out.url, "https://blog.naver.com/testblog/223456789012")
+
+    def test_publish_waits_for_the_photo_to_finish_uploading(self):
+        """사진이 '전송중'인 동안에는 발행 레이어로 넘어가지 않는다.
+
+        컴포넌트가 생긴 것만 보고 넘어가면 전송이 끝나기 전에 발행돼 사진이 빠진 글이 나간다
+        (2026-09-21 실측: 실제 네이버에서 움짤이 0/1 인 채로 발행 단계로 넘어갔다)."""
+        async def body(ed: NaverEditor, page):
+            await ed.open_write_page()
+            await ed.dismiss_draft_popup()
+            await page.evaluate("() => { window.__uploadDelayMs = 2500; }")
+            f = await ed.frame()
+            await f.evaluate("() => { window.__uploadDelayMs = 2500; }")
+            await ed.set_title("전송 중 발행 금지")
+            await ed.insert_body_blocks(BLOCKS, [])
+            during = await f.evaluate(
+                "() => document.querySelectorAll('.se-component.se-image .se-image-uploading').length")
+            await ed.open_publish_layer()
+            after = await f.evaluate(
+                "() => document.querySelectorAll('.se-component.se-image .se-image-uploading').length")
+            settled = await f.evaluate(
+                "() => [...document.querySelectorAll('.se-component.se-image img')].length")
+            return during, after, settled
+
+        during, after, settled = self._run(self._with_editor("", body))
+        self.assertEqual(during, 0, "본문 삽입이 끝났는데 아직 '전송중'인 사진이 남아 있다")
+        self.assertEqual(after, 0, "'전송중'인 사진이 남은 채 발행 레이어를 열었다")
+        self.assertEqual(settled, 1)
 
     def test_normalize_post_url(self):
         from naver_editor import normalize_post_url

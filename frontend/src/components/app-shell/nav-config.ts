@@ -2,7 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   BarChart3, Building2, Calendar, CircleDollarSign, Coffee, Database, FileBarChart, FileSpreadsheet,
   HelpCircle, Image as ImagesIcon, Layers, LayoutDashboard, Mail, MapPin, PenTool, Rocket, Save,
-  Settings, Share2, Shield, Sparkles, TrendingUp, User, CreditCard,
+  Search, Settings, Share2, Shield, Sparkles, TrendingUp, User, CreditCard,
 } from 'lucide-react'
 
 export interface NavItem {
@@ -29,6 +29,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/dashboard', label: '홈', icon: LayoutDashboard, exact: true },
       { href: '/dashboard/one-stop', label: '원스톱 자동화', icon: Sparkles, badge: '자동' },
+      { href: '/dashboard/keyword-hunt', label: '키워드 찾기', icon: Search },
       { href: '/dashboard/campaign', label: '운영 목록', icon: Rocket },
       { href: '/dashboard/clients', label: '병원 관리', icon: Building2 },
     ],

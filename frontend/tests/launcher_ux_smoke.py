@@ -1,9 +1,10 @@
 """Connection states are mocked; no account login or publication occurs."""
 import asyncio
+import os
 from pathlib import Path
 from playwright.async_api import async_playwright, expect
 
-BASE = 'http://127.0.0.1:8318'
+BASE = os.environ.get('UX_BASE_URL', 'http://127.0.0.1:8318').rstrip('/')
 OUT = Path(__file__).resolve().parents[2] / 'docs' / 'ux-preview'
 
 
@@ -31,12 +32,15 @@ async def main():
         page.set_default_navigation_timeout(180000)
         errors = []
         page.on('pageerror', lambda e: errors.append(str(e)))
-        for mode, text in [('offline', '이미 실행기 창을 열었다면'), ('error', '연결 상태를 확인하지 못했어요'), ('idle', '연결 완료! 실행기에서 시작 버튼을 눌러 주세요'), ('running', '실행기가 자동 발행을 처리하고 있어요')]:
+        for mode, text in [('offline', '실행기 창이 열려 있어도 계정 연결이 필요해요'), ('error', '연결 상태를 확인하지 못했어요'), ('idle', '연결 완료! 실행기에서 시작 버튼을 눌러 주세요'), ('running', '실행기가 자동 발행을 처리하고 있어요')]:
             state['mode'] = mode
             await page.goto(BASE + '/dashboard/launcher')
             await expect(page.get_by_text(text, exact=True)).to_be_visible(timeout=60000)
             await expect(page.get_by_text('실행기 꺼짐', exact=True)).to_have_count(0)
             if mode == 'offline':
+                await page.get_by_role('button', name='지금 이 계정과 연결하기', exact=True).click()
+                await expect(page.get_by_role('alert').filter(has_text='옛 ZIP 실행기를 닫고')).to_be_visible()
+                await page.get_by_text('이미 실행기를 켰는데 연결이 안 돼요', exact=True).click()
                 await expect(page.get_by_text('demo@example.invalid', exact=False).last).to_be_visible()
                 OUT.mkdir(parents=True, exist_ok=True)
                 await page.screenshot(path=str(OUT / 'launcher-connection-guide.png'), full_page=True)

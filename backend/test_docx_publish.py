@@ -5,6 +5,7 @@ parse 자체는 test_docx_import.py 가 본다. 여기서는 붙인 자리만 �
 그리고 클레임이 실행기 능력(rich_text_v1)에 따라 서식을 붙이거나 눌러서 보내는지.
 """
 import copy
+import io
 import unittest
 
 import httpx
@@ -18,6 +19,25 @@ from app.models.campaign import AutopilotPolicy, Blog, Campaign, CampaignKeyword
 from app.models.media_pool import PoolImage
 from app.models.publish_queue import QueuedPost, ScheduleMark
 from app.models.user import User
+
+
+def _moving_gif() -> bytes:
+    """두 장면짜리 GIF. 한 장면짜리는 평소대로 JPEG 로 줄여도 잃는 것이 없다."""
+    from PIL import Image
+    frames = [Image.new('RGB', (40, 30), tone) for tone in ('red', 'blue')]
+    buffer = io.BytesIO()
+    frames[0].save(buffer, 'GIF', save_all=True, append_images=frames[1:], duration=120, loop=0)
+    return buffer.getvalue()
+
+
+def _doc_with_gif(gif: bytes) -> bytes:
+    from docx import Document
+    from test_docx_import import _save
+    document = Document()
+    document.add_paragraph('움직이는 설명 그림', style='Heading 1')
+    document.add_paragraph('아래 그림처럼 발라 주세요.')
+    document.add_paragraph().add_run().add_picture(io.BytesIO(gif))
+    return _save(document)
 
 
 class DocxUploadTests(DatabaseCase):
@@ -88,6 +108,25 @@ class DocxUploadTests(DatabaseCase):
         self.assertIsNotNone(pool)
         self.assertEqual(pool.content_type, 'image/jpeg')
         self.assertTrue(pool.data)
+
+    async def test_moving_gif_stays_moving(self):
+        """움직이는 GIF 는 JPEG 로 줄이지 않는다 — 줄이면 첫 장면만 남아 멈춘 그림이 된다."""
+        gif = _moving_gif()
+        response = await self.client.post(
+            '/campaigns/c/drafts/upload',
+            files={'files': ('움짤.docx', _doc_with_gif(gif),
+                             'application/vnd.openxmlformats-officedocument.wordprocessingml.document')})
+        self.assertEqual(response.status_code, 200, response.text)
+        draft = response.json()[0]
+        async with self.sessions() as db:
+            row = await db.get(Draft, draft['id'])
+            block = next(b for b in row.blocks if b['type'] == 'image')
+            pool = await db.get(PoolImage, block['pool_image_id'])
+        self.assertEqual(pool.content_type, 'image/gif')
+        self.assertEqual(pool.data, gif)                    # 원본 그대로
+        claimed = await self.claim(draft['id'], capabilities=['rich_text_v1'])
+        image = next(b for b in claimed['blocks'] if b['type'] == 'image')
+        self.assertTrue(image['image'].startswith('data:image/gif;base64,'))
 
     async def test_upload_reports_what_it_read(self):
         draft = await self.upload()

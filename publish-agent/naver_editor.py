@@ -26,6 +26,60 @@ log = logging.getLogger("editor")
 
 WRITE_URL = "https://blog.naver.com/GoBlogWrite.naver"
 
+# 예약 글 목록 — 로그인한 브라우저 안에서만 보이는 화면이다. 서버는 이 목록을 볼 길이 없어
+# 실행기가 읽어다 준다. 주소는 네이버가 언제든 바꾸므로 후보를 차례로 열어 보고, 예약 행이
+# 읽히는 첫 화면을 쓴다. 현장에서 주소가 바뀌면 DV_RESERVE_URL 로 덮어쓸 수 있다(재배포 없이).
+# {blog} 자리에 블로그 ID 가 들어간다.
+RESERVE_URLS = (
+    "https://admin.blog.naver.com/{blog}/post/reserve",
+    "https://blog.naver.com/PostWriteList.naver?blogId={blog}&reserveYn=Y",
+)
+
+
+# 예약 행에 적힌 시각. "2026. 9. 23. 14:30", "9월 23일 오후 2:30", "2026-09-23 14:30" 모두 받는다.
+RESERVE_AT_RE = re.compile(
+    r"(?:(?P<y>20\d{2})\s*[.\-/년]\s*)?(?P<m>\d{1,2})\s*[.\-/월]\s*(?P<d>\d{1,2})\s*일?"
+    r"[^\d]{0,10}?(?P<ampm>오전|오후)?\s*(?P<h>\d{1,2})\s*[:시]\s*(?P<min>\d{2})"
+)
+
+
+def parse_reservation_rows(rows, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """예약 목록 행 텍스트에서 (예약 시각, 제목)을 뽑는다.
+
+    네이버는 올해 글의 연도를 생략한다. 연도가 없으면 앞으로 다가올 날짜로 읽는다
+    — 예약 목록에 과거만 남는 일은 없으므로, 12월에 본 '1월 3일'은 내년이다."""
+    now = now or datetime.now()
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for row in rows:
+        text = re.sub(r"\s+", " ", str(row.get("text") or "")).strip()
+        m = RESERVE_AT_RE.search(text)
+        if not m:
+            continue
+        hour, minute = int(m.group("h")), int(m.group("min"))
+        if m.group("ampm") == "오후" and hour < 12:
+            hour += 12
+        elif m.group("ampm") == "오전" and hour == 12:
+            hour = 0
+        if hour > 23 or minute > 59:
+            continue
+        year = int(m.group("y")) if m.group("y") else now.year
+        try:
+            at = datetime(year, int(m.group("m")), int(m.group("d")), hour, minute)
+        except ValueError:
+            continue
+        if not m.group("y") and (now - at).days > 30:
+            at = at.replace(year=year + 1)        # 연말에 본 내년 예약
+        title = re.sub(r"\s+", " ", str(row.get("title") or "")).strip()
+        if not title:
+            title = RESERVE_AT_RE.sub("", text).strip(" ·|-")[:200]
+        key = at.replace(second=0, microsecond=0)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"at": key, "title": title or None})
+    return sorted(out, key=lambda r: r["at"])
+
 
 # ---------------------------------------------------------------- 예외
 class EditorError(RuntimeError):
@@ -102,6 +156,25 @@ JS_IMAGE_COUNT = r"""
   document.querySelectorAll('.se-component[class*="image" i]').length,
   document.querySelectorAll('.se-content img, .se-components-wrap img').length
 )
+"""
+
+# 사진이 아직 네이버로 올라가는 중인지. 컴포넌트가 생긴 것만 보고 넘어가면 '전송중…' 상태로
+# 발행돼 사진이 빠진 글이 나간다(2026-09-21 실측: 움짤이 0/1 인 채 발행 레이어로 넘어감).
+JS_UPLOAD_STATE = r"""
+() => {
+  const comps = [...document.querySelectorAll('.se-component.se-image')];
+  const pending = comps.filter(c => {
+    const el = c.querySelector('img, video');
+    const src = el ? (el.getAttribute('src') || el.currentSrc || '') : '';
+    return !src || src.startsWith('blob:');
+  }).length;
+  const text = document.body ? (document.body.innerText || '') : '';
+  return {total: comps.length, pending, busy: /전송중|업로드 준비|업로드 중/.test(text)};
+}
+"""
+
+JS_UPLOAD_BUSY_TEXT = r"""
+() => !!document.body && /전송중|업로드 준비|업로드 중/.test(document.body.innerText || '')
 """
 
 # 폴백: 합성 DragEvent 드롭 (naver-poster dropImage). File 은 base64 로 만든다.
@@ -228,6 +301,32 @@ async (category) => {
   return { ok: true, categories, current: after };
 }
 """
+
+JS_READ_RESERVATIONS = r"""
+() => {
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const AT = /(?:20\d{2}\s*[.\-\/년]\s*)?\d{1,2}\s*[.\-\/월]\s*\d{1,2}\s*일?[^\d]{0,10}?(?:오전|오후)?\s*\d{1,2}\s*[:시]\s*\d{2}/;
+  const body = norm(document.body ? document.body.innerText : '');
+  if (!body) return { ok: false, rows: [], empty: false, error: '화면이 비어 있습니다' };
+  const nodes = [...document.querySelectorAll('li, tr, article, [class*="item"], [class*="post"], [class*="list"] > div')];
+  const rows = [];
+  const seen = new Set();
+  for (const el of nodes) {
+    if (el.querySelector('li, tr, article')) continue;          // 바깥 컨테이너는 건너뛴다
+    const text = norm(el.innerText);
+    if (!text || text.length > 300 || !AT.test(text)) continue;
+    if (seen.has(text)) continue;
+    seen.add(text);
+    const t = el.querySelector('a, strong, [class*="title"]');
+    rows.push({ text, title: norm(t && t.innerText) });
+  }
+  // '예약된 글이 없습니다' 는 실패가 아니라 0건이다. 이 둘을 섞으면 자리를 영영 못 푼다.
+  const empty = /예약[^.]{0,16}(없습니다|없음|0건)/.test(body);
+  return { ok: rows.length > 0 || empty, rows, empty,
+           error: (rows.length || empty) ? null : '예약 목록에서 읽을 행을 찾지 못했습니다' };
+}
+"""
+
 
 JS_READ_CATEGORIES = r"""
 async () => {
@@ -737,6 +836,26 @@ class NaverEditor:
         log.info("이미지: 합성 DragEvent 드롭 전송")
         return await self._wait_image_increase(before)
 
+    async def wait_upload_settled(self, timeout_sec: float = 90.0) -> bool:
+        """사진 바이트가 다 올라갈 때까지 기다린다. 못 기다리면 경고만 남기고 진행(발행은 사람이 판단)."""
+        deadline = time.monotonic() + timeout_sec
+        state = None
+        while time.monotonic() < deadline:
+            try:
+                frame = await self.frame()
+                state = await frame.evaluate(JS_UPLOAD_STATE)
+                busy = bool(state.get("pending")) or bool(state.get("busy"))
+                if not busy:
+                    busy = bool(await self.page.evaluate(JS_UPLOAD_BUSY_TEXT))
+                if not busy:
+                    return True
+            except Exception as e:  # noqa: BLE001 — 읽지 못하면 예전처럼 그냥 진행한다
+                log.debug("업로드 상태 확인 실패(계속 진행): %s", e)
+                return True
+            await asyncio.sleep(0.5)
+        log.warning("사진 업로드가 %d초 안에 끝나지 않았습니다(%s) — 그대로 진행합니다", int(timeout_sec), state)
+        return False
+
     async def _insert_image_verified(self, data_url: str, *, index: int) -> None:
         mime, raw = decode_data_url(data_url)
         # 매번 같은 틀(image_타임스탬프)의 이름은 그 자체가 흔적이 된다 → 사진 EXIF 기종·촬영시각에 맞춘 카메라식 이름.
@@ -746,6 +865,7 @@ class NaverEditor:
         for attempt in range(1, 4):
             try:
                 if await self._insert_image_once(data_url, name):
+                    await self.wait_upload_settled()
                     return
                 last_err = "업로드 확인 실패(시간 초과)"
             except Exception as e:  # noqa: BLE001
@@ -757,6 +877,8 @@ class NaverEditor:
 
     # ------------------------------------------------------------ 발행 레이어
     async def open_publish_layer(self, timeout_ms: int = 8000) -> None:
+        # 사진이 아직 전송 중이면 발행 레이어로 넘어가지 않는다.
+        await self.wait_upload_settled()
         f = await self.frame()
         btn = f.locator(S["publish_open"]).first
         if not await btn.count():
@@ -817,6 +939,43 @@ class NaverEditor:
         log.info("카테고리 %d개 확인", len(items))
         return items
 
+    async def read_reservations(self, naver_blog_id: str, urls: Optional[Sequence[str]] = None,
+                                timeout_ms: int = 20000) -> Optional[List[Dict[str, Any]]]:
+        """네이버에 걸려 있는 예약 글 목록을 읽는다.
+
+        반환은 셋 중 하나다. 목록(비어 있을 수 있다) / None(못 읽었다).
+        **빈 목록과 못 읽음을 절대 같은 값으로 돌려주지 않는다** — 못 읽은 것을 0건으로 치면
+        서버가 '자리가 다 비었다'고 믿고 남의 예약 위에 겹쳐 잡는다.
+
+        목록 화면은 발행과 무관하므로 실패해도 예외를 올리지 않는다(로그인 문제만 올린다)."""
+        for raw in (urls or RESERVE_URLS):
+            url = raw.format(blog=naver_blog_id) if "{blog}" in raw else raw
+            try:
+                await self.page.goto(url, wait_until="commit", timeout=timeout_ms)
+                await self.page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
+                await asyncio.sleep(0.6)
+            except PWTimeout:
+                log.info("예약 목록 열기 시간 초과: %s", url)
+                continue
+            except Exception as e:  # noqa: BLE001
+                log.info("예약 목록을 열지 못했습니다(%s): %s", url, e)
+                continue
+            if "nid.naver.com" in (self.page.url or ""):
+                raise LoginRequired("예약 목록을 보려면 로그인이 필요합니다")
+            try:
+                r = await self.page.evaluate(JS_READ_RESERVATIONS)
+            except Exception as e:  # noqa: BLE001
+                log.info("예약 목록을 읽지 못했습니다(%s): %s", url, e)
+                continue
+            if not r or not r.get("ok"):
+                log.info("예약 목록 아님(%s): %s", url, (r or {}).get("error", "?"))
+                continue
+            items = parse_reservation_rows(r.get("rows") or [])
+            log.info("예약 %d건 확인 (%s)", len(items), url)
+            return items
+        log.warning("예약 목록 화면을 찾지 못했습니다. 주소가 바뀌었다면 DV_RESERVE_URL 로 알려 주세요")
+        return None
+
     async def set_publish_now(self) -> None:
         """즉시 발행: '현재' 라디오를 확실히 켠다. 예약이 남아 있으면 엉뚱한 시각에 나간다."""
         f = await self.frame()
@@ -827,6 +986,7 @@ class NaverEditor:
 
     async def save_draft(self, *, dry_run: bool = False) -> Optional[PublishOutcome]:
         """임시저장 버튼 클릭. 발행 레이어를 열지 않는다."""
+        await self.wait_upload_settled()
         f = await self.frame()
         btn = f.locator(S["save_draft"]).first
         if not await btn.count():

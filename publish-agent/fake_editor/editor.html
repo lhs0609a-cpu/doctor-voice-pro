@@ -119,8 +119,12 @@
     const wrap = document.querySelector('.se-components-wrap');
     const c = document.createElement('div');
     c.className = 'se-component se-image';
-    c.innerHTML = '<img alt="' + name + '" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">';
+    // 진짜 SE ONE 처럼 먼저 '전송중' 자리만 잡고, 바이트가 다 올라간 뒤에 그림이 들어온다.
+    c.innerHTML = '<div class="se-image-uploading">전송중...</div>';
     wrap.appendChild(c);
+    setTimeout(() => {
+      c.innerHTML = '<img alt="' + name + '" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">';
+    }, Number(window.__uploadDelayMs || 700));
     const t = document.createElement('div');
     t.className = 'se-component se-text';
     t.innerHTML = '<div class="se-section-text"><p class="se-text-paragraph" contenteditable="true"></p></div>';

@@ -106,7 +106,8 @@ export function LauncherCard({ className, compact = false, inline = false }: { c
         <details className="rounded-xl border p-3 text-sm">
           <summary className="cursor-pointer font-medium">이미 실행기를 켰는데 연결이 안 돼요</summary>
           <ol className="mt-2 list-decimal space-y-1.5 pl-5 text-xs leading-6 text-muted-foreground">
-            <li>실행기 창의 <b>[지금 연결하기]</b>를 누르세요. 브라우저가 열리며 <b>{email || '이 계정'}</b>에 저절로 연결됩니다.</li>
+            <li>다운로드 폴더에서 ZIP을 풀어 실행했다면 그 창을 닫고, Windows 시작 메뉴의 <b>닥터보이스 프로 자동 발행</b>을 여세요. 설치본과 옛 복사본은 서로 다른 프로그램입니다.</li>
+            <li>설치된 실행기 창의 <b>[지금 연결하기]</b>를 누르세요. 브라우저가 열리며 <b>{email || '이 계정'}</b>에 연결됩니다.</li>
             <li>로그인 화면이 뜨면 한 번만 로그인하세요.</li>
             <li>그 버튼이 없으면 옛 버전입니다 — 아래에서 다시 설치하세요.</li>
           </ol>
@@ -121,7 +122,7 @@ export function LauncherCard({ className, compact = false, inline = false }: { c
         </p>
       ) : (
         <p className="text-xs leading-relaxed text-muted-foreground">
-          설치하고 켜기만 하면 이 계정에 저절로 연결됩니다. 입력할 것은 없습니다.
+          설치된 실행기를 열면 홈페이지 계정 연결을 시작합니다. 다운로드 폴더의 옛 ZIP 복사본은 자동 연결을 지원하지 않습니다.
           {status.latest && <> · 최신 v<span className="tabular-nums">{status.latest}</span></>}
         </p>
       )}
@@ -143,6 +144,10 @@ export function LauncherCard({ className, compact = false, inline = false }: { c
             : status.light === 'other' ? '지금 로그인한 계정으로 바꾸기'
               : '지금 이 계정과 연결하기'}
         </Button>
+      )}
+
+      {!status.online && !status.local && status.pairError && (
+        <p role="alert" className="rounded-lg border border-warning/30 bg-warning-soft p-3 text-xs leading-6">{status.pairError}</p>
       )}
 
       {status.updateAvailable && (

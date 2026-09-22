@@ -208,7 +208,7 @@ export function useLauncherStatus(pollMs: number = POLL_MS): LauncherStatus {
     void (async () => {
       const local = state.local || await probeLocal()
       if (!local) {
-        setState((s) => ({ ...s, pairError: '이 PC에서 실행기를 찾지 못했습니다. 실행기 창의 [지금 연결하기]를 누르면 반대쪽에서 연결됩니다' }))
+        setState((s) => ({ ...s, pairError: '홈페이지에서 연결 가능한 실행기를 찾지 못했습니다. 다운로드 폴더의 옛 ZIP 실행기를 닫고 Windows 시작 메뉴의 [닥터보이스 프로 자동 발행]을 여세요. 설치본의 [지금 연결하기]를 누르면 연결을 시작합니다.' }))
         return
       }
       await runPair(local)
