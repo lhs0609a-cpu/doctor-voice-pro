@@ -130,3 +130,100 @@ def split_by_subject(total: int, subjects: Sequence[str],
                 return asked
             return allocate(total, asked)      # 넘치면 비율로 보고 줄인다
     return allocate(total, {s: 1 for s in subjects})
+
+
+# ── 간절함(내원 의도) ────────────────────────────────────────────────────────
+# 검색량이 큰 키워드가 곧 환자가 되는 키워드는 아니다. '아토피에좋은음식'은 한 달에
+# 수천 번 검색되지만 그 사람들은 병원을 찾는 중이 아니고, '강남역아토피피부과'는
+# 검색량이 20이어도 지금 갈 곳을 고르는 중이다. 글은 뒤쪽부터 써야 한다.
+#
+# 그래서 검색량과 따로, **얼마나 간절한가**를 글자에서 읽어 0~100 으로 매긴다.
+# AI 를 쓰지 않는 이유는 분류기와 같다 — 한국어 검색어의 간절함은 어미와 낱말에 그대로 드러난다.
+
+# 카테고리가 정하는 밑점. 글의 성격이 곧 검색한 사람의 처지다.
+_INTENT_BASE: Dict[str, int] = {
+    "병원": 78,    # 지금 갈 곳을 고르는 중
+    "비용": 72,    # 돈을 계산하는 중 — 갈 마음은 이미 먹었다
+    "치료": 58,    # 해결책을 찾는 중
+    "검사": 46,
+    "증상": 40,
+    "대표": 34,
+    "기타": 24,
+    "원인": 26,
+    "관리": 22,    # 집에서 해보려는 중
+}
+
+# 더하는 신호. (점수, 이름표, 낱말들) — 맞은 것 중 점수가 가장 큰 것이 이름표가 된다.
+_INTENT_UP: tuple[tuple[int, str, tuple[str, ...]], ...] = (
+    (20, "지금 아파서 급함",
+     ("안낫", "안없어", "낫지않", "안나아", "심해", "심함", "악화", "번져", "퍼져",
+      "재발", "계속", "지긋지긋", "못참", "미치겠", "밤에", "잠못", "잠을못",
+      "응급", "급성", "빨리", "당장", "바로")),
+    (14, "지역을 찍어 찾는 중", ("근처", "가까운", "우리동네", "동네")),
+    (12, "고를 준비가 된 검색",
+     ("추천", "후기", "잘하는", "잘보는", "유명한", "예약", "상담", "문의", "전문의")),
+    (10, "가족 때문에 급함", ("아기", "신생아", "소아", "어린이", "아이", "임산부", "임신", "수유")),
+)
+
+# 빼는 신호. 같은 질환이라도 '뜻'을 찾는 사람과 '병원'을 찾는 사람은 다르다.
+_INTENT_DOWN: tuple[tuple[int, str, tuple[str, ...]], ...] = (
+    (14, "뜻·정보만 확인", ("뜻", "이란", "무엇", "영어", "사진", "이미지", "연예인", "유래", "역사")),
+    (8, "집에서 해결하려는 중", ("음식", "식단", "먹으면", "민간요법", "집에서", "자연치유", "예방법")),
+)
+
+# '3주째', '한달 넘게' — 참다 참다 검색한 사람이다.
+_DURATION = re.compile(r"(\d+\s*(일|주|주일|개월|달|년))|((한|두|세|네|몇)\s*(달|주|해))")
+
+
+def intent(keyword: str, regions: Sequence[str] = (), subjects: Sequence[str] = (),
+           category: Optional[str] = None) -> tuple[int, str]:
+    """이 키워드를 검색한 사람이 얼마나 간절한가. (0~100 점수, 한 줄 이름표).
+
+    검색량과는 독립이다 — 많이 검색되는 것과 병원을 찾는 것은 다른 일이다.
+    """
+    k = _norm(keyword)
+    if not k:
+        return 0, "알 수 없음"
+    category = category or classify(keyword, regions, subjects)
+    score = _INTENT_BASE.get(category, 24)
+    reason, weight = "", 0
+
+    # 우리 진료 지역이 박힌 키워드 — 이 사람은 그 동네에서 갈 곳을 찾고 있다.
+    if any(_norm(r) and _norm(r) in k for r in regions if r):
+        score += 16
+        reason, weight = "우리 지역을 찍어 찾는 중", 16
+
+    for up, label, terms in _INTENT_UP:
+        if any(t in k for t in terms):
+            score += up
+            if up > weight:
+                reason, weight = label, up
+
+    if _DURATION.search(keyword or ""):
+        score += 12
+        if 12 > weight:
+            reason, weight = "오래 참다 검색", 12
+
+    for down, label, terms in _INTENT_DOWN:
+        if any(t in k for t in terms):
+            score -= down
+            if not reason:
+                reason = label
+
+    if not reason:
+        reason = {
+            "병원": "갈 곳을 고르는 중", "비용": "비용을 따져 보는 중", "치료": "치료법을 찾는 중",
+            "검사": "내 상태를 확인하는 중", "증상": "증상을 확인하는 중", "대표": "질환을 알아보는 중",
+            "원인": "원인을 알아보는 중", "관리": "집에서 관리하는 중",
+        }.get(category, "정보를 찾는 중")
+    return max(5, min(100, score)), reason
+
+
+def intent_level(score: Optional[int]) -> str:
+    """점수를 사람 말로. 화면에는 숫자보다 이 말이 먼저 읽힌다."""
+    value = int(score or 0)
+    if value >= 75:
+        return "높음"
+    if value >= 50:
+        return "보통"
+    return "낮음"

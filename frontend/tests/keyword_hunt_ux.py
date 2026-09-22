@@ -12,10 +12,11 @@ BASE = os.environ.get('UX_BASE_URL', 'http://127.0.0.1:8317').rstrip('/')
 OUTPUT = Path(__file__).resolve().parents[2] / 'output/ux'
 
 
-def keyword(kid, word, prob=0.5):
-    return dict(id=kid, keyword=word, source='hunt', scope='region', monthly_mobile=120, monthly_pc=20,
-                total_volume=140, competition='mid', verdict='possible', selected=True,
-                my_verdict='likely', my_probability=prob, category='대표', in_sheet=False)
+def keyword(kid, word, prob=0.5, intent=30, why='정보를 찾는 중', volume=120):
+    return dict(id=kid, keyword=word, source='hunt', scope='region', monthly_mobile=volume, monthly_pc=20,
+                total_volume=volume + 20, competition='mid', verdict='possible', selected=True,
+                my_verdict='likely', my_probability=prob, category='대표', in_sheet=False,
+                intent_score=intent, intent_reason=why)
 
 
 async def main():
@@ -24,8 +25,11 @@ async def main():
     campaign = dict(id='c', name='키워드', client_id='h', client_name='테스트 병원', blog_ids=['b'],
                     settings={}, stats={}, step=2, status='draft')
     # 검색칸은 후보가 20개를 넘을 때만 나온다 — 실제 목록처럼 채워 둔다.
-    rows = [keyword('k1', '서초아토피', 0.9), keyword('k2', '강남아토피', 0.9)]
-    rows += [keyword(f'f{i}', f'아토피후보{i}') for i in range(23)]
+    # 검색량은 '아토피에좋은음식'이 제일 큰데, 목록은 간절한 순이라 '서초아토피'가 위여야 한다.
+    rows = [keyword('k1', '서초아토피', 0.9, intent=92, why='우리 지역을 찍어 찾는 중', volume=20),
+            keyword('k2', '강남아토피', 0.9, intent=88, why='우리 지역을 찍어 찾는 중', volume=20),
+            keyword('k3', '아토피에좋은음식', 0.9, intent=14, why='집에서 해결하려는 중', volume=9000)]
+    rows += [keyword(f'f{i}', f'아토피후보{i}') for i in range(22)]
     state = {'deleted': [], 'cleared': 0}
 
     async def route(r):
@@ -82,6 +86,11 @@ async def main():
 
         found = page.get_by_role('region', name='찾은 키워드')
         await expect(found).to_contain_text('서초아토피')
+        # 검색량 9,000짜리 정보 키워드가 아니라, 간절한 검색이 맨 위여야 한다.
+        first = found.get_by_role('listitem').first
+        await expect(first).to_contain_text('서초아토피')
+        await expect(first).to_contain_text('지금 찾는 중')
+        await expect(found).to_contain_text('집에서 해결하려는 중')
         await page.get_by_role('button', name='서초아토피 지우기').click()
         await expect(found).not_to_contain_text('서초아토피')
         assert state['deleted'] == ['k1'], state['deleted']
@@ -104,6 +113,6 @@ async def main():
 
         assert not errors, errors
         await browser.close()
-    print('PASS: keyword list search, single delete, filtered bulk delete and clear-all; API fixtures only')
+    print('PASS: urgency ordering, keyword search, single delete, filtered bulk delete and clear-all; API fixtures only')
 
 asyncio.run(main())

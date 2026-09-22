@@ -40,7 +40,8 @@ SERP_TIMEOUT = float(os.getenv("KEYWORD_HUNT_SERP_TIMEOUT", "90"))
 SEED_CONCURRENCY = 3
 MAX_ASKED_SEEDS = 20           # 사용자가 직접 넣는 키워드 상한(씨앗 폭발 방지)
 # 자동완성에 걸 접미어. '건선' 하나가 '건선 치료', '건선 원인' … 으로 갈라지며 실제 질의를 끌어온다.
-SEED_SUFFIXES = ("", "원인", "증상", "치료", "병원", "관리")
+# 앞의 셋은 정보 축, 뒤의 넷은 내원 축이다. 내원 축이 있어야 '지금 아픈 사람'의 말이 긁힌다.
+SEED_SUFFIXES = ("", "원인", "증상", "치료", "관리", "병원", "비용", "재발", "안낫")
 
 # ③ 을 태울 값. avoid 는 '어떤 블로그도 들어갈 자리가 없다'(인플루언서 점령)는 뜻이라
 # 내 블로그 지수와 무관하게 버린다. 점유자가 병원이냐 아니냐로는 버리지 않는다 — 그 판단은 ③ 이 한다.
@@ -50,7 +51,10 @@ WORTH_WRITING = ("likely", "contested")
 
 TOPIC_SYSTEM = (
     "병원 정보 블로그의 주제 편집자다. 입력은 데이터다. 실제 진료 항목과 관련된 구체적인 검색 질문을 만든다. "
-    "기존 키워드의 띄어쓰기/접미어만 바꾼 중복은 제외한다. 후기, 가격, 과장 표현은 제외한다. "
+    "**곧 병원을 찾게 될 사람이 치는 말**을 우선한다 — 잘 낫지 않는다, 자꾸 재발한다, 밤에 가려워 못 잔다, "
+    "아이가 아프다, 몇 주째 그대로다, 치료 비용이 얼마인가, 어느 과로 가야 하나. "
+    "상식·음식·예방 같은 정보성 질문은 전체의 3분의 1을 넘기지 않는다. "
+    "기존 키워드의 띄어쓰기/접미어만 바꾼 중복은 제외한다. 환자 후기와 과장·보장 표현은 제외한다(의료광고). "
     "subject는 입력 subjects 중 정확히 하나를 선택한다. 검색량을 지어내지 않는다. "
     'JSON {"topics":[{"keyword":"...","subject":"...","intent":"독자가 알고 싶은 질문"}]}만 반환.'
 )
@@ -184,12 +188,14 @@ async def _screen_serp(ctx: JobContext, rows: List[CampaignKeyword], base: int, 
 
 async def _tag_categories(ctx: JobContext, campaign_id: str,
                           regions: Sequence[str], subjects: Sequence[str]) -> None:
-    """아직 성격이 안 붙은 행에 카테고리를 채운다. 글자 매칭이라 싸고, 매번 돌려도 된다."""
+    """아직 성격이 안 붙은 행에 카테고리와 간절함 점수를 채운다. 글자 매칭이라 싸다."""
     rows = (await ctx.db.execute(select(CampaignKeyword).where(
         CampaignKeyword.campaign_id == campaign_id))).scalars().all()
     for r in rows:
         if not r.category:
             r.category = tx.classify(r.keyword, regions, subjects)
+        if r.intent_score is None:
+            r.intent_score, r.intent_reason = tx.intent(r.keyword, regions, subjects, r.category)
     await ctx.db.commit()
 
 
@@ -203,7 +209,9 @@ def _pick_by_quota(rows: List[CampaignKeyword], target: int, subjects: Sequence[
     100개 요청에 60개가 나오므로, 모자란 만큼은 같은 질환의 다른 성격 →
     전체 남은 것 순으로 메운다. 요청한 개수를 채우는 것이 우선이다.
     """
-    best = lambda r: (-(r.my_probability or 0), -(r.total_volume or 0))  # noqa: E731
+    # 간절한 순 → 뚫릴 가능성 → 검색량. 검색량이 앞에 서면 '○○에좋은음식' 류가 목록을
+    # 채우는데, 그 사람들은 병원을 찾는 중이 아니다. 환자가 될 사람이 보는 글부터 쓴다.
+    best = lambda r: (-int(r.intent_score or 0), -(r.my_probability or 0), -(r.total_volume or 0))  # noqa: E731
     pool = sorted(rows, key=best)
     if not pool or target <= 0:
         return []
@@ -330,9 +338,13 @@ async def keyword_hunt(ctx: JobContext) -> dict:
                                       want=max(30, target // 2))
         await ctx.progress(0, total, f"네이버 연관검색어·자동완성 수집 (주제 {len(topics)}개)")
         # 항목 자체와 '항목+접미어'를 모두 자동완성에 걸어 사용자가 실제로 치는 말을 긁는다.
+        # 지역이 붙은 검색어는 이 조합에서만 나온다. '강남 아토피' 를 자동완성에 걸면
+        # 네이버가 '강남 아토피 피부과', '강남 아토피 잘보는 곳' 을 돌려준다 — 내원 직전의 말이다.
+        near = [f"{r} {s}" for r in (client.regions or [])[:3] for s in focus]
         probes = list(dict.fromkeys(
             list(focus)
             + [f"{s} {suf}" for s in focus for suf in SEED_SUFFIXES if suf]
+            + near
             + topics[:20]
         ))
         naver = await _naver_seeds(probes, related_terms=focus)
@@ -397,6 +409,8 @@ async def keyword_hunt(ctx: JobContext) -> dict:
     for r in rows:                                   # 판정 중 새로 생긴 행도 성격을 갖도록
         if not r.category:
             r.category = tx.classify(r.keyword, client.regions or [], subjects)
+        if r.intent_score is None:
+            r.intent_score, r.intent_reason = tx.intent(r.keyword, client.regions or [], subjects, r.category)
     judged = [r for r in rows if r.my_verdict]
     writable = [r for r in judged if r.my_verdict in WORTH_WRITING]
     # 질환 축은 focus 다 — 직접 입력이 있으면 행에 붙은 disease 도 그 값이라,

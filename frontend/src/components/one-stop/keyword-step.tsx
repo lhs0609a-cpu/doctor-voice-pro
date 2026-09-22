@@ -56,6 +56,10 @@ export function KeywordStep({ campaignId, keywords, subjects = [], onChanged }: 
   const [loaded, setLoaded] = useState(false)
   const [confirming, setConfirming] = useState(false)   // 지난 키워드를 지운다는 확인
   const [askClear, setAskClear] = useState(false)       // 찾지 않고 그냥 비우겠다는 확인
+  // 간절함 점수 → 사람 말. 목록의 순서도 이 값이 정한다.
+  const urgency = (score?: number) => (score || 0) >= 75 ? { label: '지금 찾는 중', tone: 'ok' as const }
+    : (score || 0) >= 50 ? { label: '알아보는 중', tone: 'warn' as const }
+    : { label: '정보만 보는 중', tone: 'muted' as const }
   const [clearing, setClearing] = useState(false)
   const running = task?.status === 'pending' || task?.status === 'running'
   const changed = useRef(onChanged)
@@ -212,7 +216,7 @@ export function KeywordStep({ campaignId, keywords, subjects = [], onChanged }: 
         {judged.length > 0 && top.length > 0 && (
           <details open>
             <summary className="cursor-pointer text-sm text-muted-foreground">
-              쓸 키워드 {picked.length}개 중 위에서 {top.length}개 보기
+              쓸 키워드 {picked.length}개 중 간절한 순으로 {top.length}개 보기
             </summary>
             <ul className="mt-2 divide-y rounded-lg border">
               {top.map(k => {
@@ -225,12 +229,15 @@ export function KeywordStep({ campaignId, keywords, subjects = [], onChanged }: 
                         {k.category}
                       </span>
                     )}
+                    <span className="hidden shrink-0 text-xs text-muted-foreground md:inline">
+                      {k.intent_reason || ''}
+                    </span>
                     <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                       월 {(k.monthly_mobile || 0).toLocaleString()}
                     </span>
-                    <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
-                      {SPOT[k.verdict] || SPOT.unknown}
-                    </span>
+                    <Pill tone={urgency(k.intent_score).tone} className="shrink-0">
+                      {urgency(k.intent_score).label}
+                    </Pill>
                     <Pill tone={mine.tone} className="shrink-0">{mine.label} {pct(k.my_probability)}</Pill>
                   </li>
                 )

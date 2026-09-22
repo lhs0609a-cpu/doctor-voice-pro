@@ -714,6 +714,8 @@ class KeywordOut(BaseModel):
     region: Optional[str] = None
     disease: Optional[str] = None
     category: Optional[str] = None
+    intent_score: int = 0              # 간절함(내원 의도) 0~100
+    intent_reason: Optional[str] = None
     source: str = "manual"
     scope: str = "region"
     monthly_mobile: int = 0
@@ -738,6 +740,7 @@ class KeywordOut(BaseModel):
 def _kw_out(k: CampaignKeyword, has_draft: bool = False) -> KeywordOut:
     return KeywordOut(
         id=k.id, keyword=k.keyword, region=k.region, disease=k.disease, category=k.category,
+        intent_score=int(k.intent_score or 0), intent_reason=k.intent_reason,
         source=k.source or "manual", scope=k.scope or "region",
         monthly_mobile=k.monthly_mobile or 0, monthly_pc=k.monthly_pc or 0, total_volume=k.total_volume or 0,
         competition=k.competition or "mid", verdict=k.verdict or "unknown", verdict_reason=k.verdict_reason,
@@ -808,8 +811,11 @@ async def add_keywords(campaign_id: str, body: ManualKeywordsIn, current_user: U
     for kw in clean:
         if ke._norm(kw) in existing:
             continue
+        category = tx.classify(kw, regions, subjects)
+        score, why = tx.intent(kw, regions, subjects, category)
         row = CampaignKeyword(user_id=_uid(current_user), campaign_id=c.id, client_id=c.client_id, keyword=kw,
-                              source="manual", selected=True, category=tx.classify(kw, regions, subjects))
+                              source="manual", selected=True, category=category,
+                              intent_score=score, intent_reason=why)
         db.add(row)
         existing[ke._norm(kw)] = row
         new_rows.append(row)
@@ -830,12 +836,30 @@ async def add_keywords(campaign_id: str, body: ManualKeywordsIn, current_user: U
     return [_kw_out(r) for r in new_rows]
 
 
+async def _fill_intent(db: AsyncSession, c: Campaign, rows: List[CampaignKeyword]) -> None:
+    """간절함 점수가 없는 행을 채운다. 글자만 보고 매기므로 읽을 때 채워도 값이 싸다."""
+    missing = [k for k in rows if k.intent_score is None]
+    if not missing:
+        return
+    from app.services import keyword_taxonomy as tx
+    cl = await db.get(Client, c.client_id) if c.client_id else None
+    regions = (cl.regions if cl else None) or []
+    subjects = list(dict.fromkeys(((cl.diseases if cl else None) or []) + ((cl.treatments if cl else None) or [])))
+    for k in missing:
+        k.intent_score, k.intent_reason = tx.intent(k.keyword, regions, subjects, k.category)
+    await db.commit()
+
+
 @router.get("/campaigns/{campaign_id}/keywords", response_model=List[KeywordOut])
 async def list_keywords(campaign_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
     rows = (await db.execute(select(CampaignKeyword).where(CampaignKeyword.campaign_id == c.id))).scalars().all()
     drafted = {r for (r,) in (await db.execute(select(Draft.keyword_id).where(Draft.campaign_id == c.id, Draft.keyword_id.isnot(None)))).all()}
-    rows.sort(key=lambda k: (not k.selected, not k.passes_filter, -(k.monthly_mobile or 0), k.keyword))
+    await _fill_intent(db, c, rows)
+    # 쓸 키워드 먼저, 그다음 **간절한 순**. 검색량은 마지막 저울이다 —
+    # 많이 검색되는 글이 아니라 환자가 될 사람이 보는 글부터 쓰라는 뜻이다.
+    rows.sort(key=lambda k: (not k.selected, not k.passes_filter,
+                             -int(k.intent_score or 0), -(k.monthly_mobile or 0), k.keyword))
     return [_kw_out(k, k.id in drafted) for k in rows]
 
 

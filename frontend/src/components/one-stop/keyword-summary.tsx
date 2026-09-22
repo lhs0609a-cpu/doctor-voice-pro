@@ -22,6 +22,14 @@ const MINE: Record<string, { label: string; tone: 'ok' | 'warn' | 'muted' | 'acc
   unknown: { label: '판정 불가', tone: 'muted' },
 }
 
+/** 간절함 점수 → 사람 말. 숫자보다 이 말이 먼저 읽힌다. */
+function urgency(score?: number): { label: string; tone: 'ok' | 'warn' | 'muted' } {
+  const value = score || 0
+  if (value >= 75) return { label: '지금 찾는 중', tone: 'ok' }
+  if (value >= 50) return { label: '알아보는 중', tone: 'warn' }
+  return { label: '정보만 보는 중', tone: 'muted' }
+}
+
 const SPOT: Record<string, string> = {
   possible: '자리 있음',
   contested: '경쟁 중',
@@ -75,9 +83,11 @@ export function KeywordSummary({ keywords, campaignId, onChanged, huntHref }: {
   const [askAll, setAskAll] = useState(false)
   const [error, setError] = useState('')
 
-  // 쓸 키워드(판정 통과)를 먼저, 그 다음 나머지 후보. 각각 가능성 높은 순.
+  // 쓸 키워드(판정 통과)를 먼저, 그 다음 나머지 후보.
+  // 각각 **간절한 순** — 검색량이 큰 글이 아니라 환자가 될 사람이 보는 글부터 쓴다.
   const rows = useMemo(() => {
     const by = (a: Keyword, b: Keyword) =>
+      (b.intent_score || 0) - (a.intent_score || 0) ||
       (b.my_probability || 0) - (a.my_probability || 0) || (b.monthly_mobile || 0) - (a.monthly_mobile || 0)
     const live = keywords.filter(k => !gone.includes(k.id))
     const picked = live.filter(k => k.selected).sort(by)
@@ -92,11 +102,13 @@ export function KeywordSummary({ keywords, campaignId, onChanged, huntHref }: {
 
   // 내려받기는 화면에 보이는 것과 같은 순서로(쓸 키워드 먼저). 검색 중이면 걸러진 것만.
   const downloadExcel = () => {
-    const head = ['키워드', '글 성격', '월 검색량(모바일)', '월 검색량(PC)', '통합검색 자리',
-                  '우리 블로그 판정', '가능성(%)', '쓸 키워드']
+    const head = ['키워드', '글 성격', '간절함(100점)', '왜 간절한가', '월 검색량(모바일)', '월 검색량(PC)',
+                  '통합검색 자리', '우리 블로그 판정', '가능성(%)', '쓸 키워드']
     const body = found.map(k => [
       k.keyword,
       k.category || '',
+      k.intent_score || 0,
+      k.intent_reason || '',
       k.monthly_mobile || 0,
       k.monthly_pc || 0,
       SPOT[k.verdict] || SPOT.unknown,
@@ -161,7 +173,7 @@ export function KeywordSummary({ keywords, campaignId, onChanged, huntHref }: {
             <span className="ml-2 text-xs font-normal text-muted-foreground">후보 {keywords.length}개</span>
           </h2>
           <p className="text-xs text-muted-foreground">
-            이 키워드로 원고를 쓰세요. 제목에 그대로 넣으면 됩니다.
+            위에서부터 쓰세요 — 검색량이 아니라 <b>얼마나 간절한 검색인지</b> 순서입니다.
             {query.trim() && <> · 내려받기는 지금 검색된 {found.length}개만 담깁니다.</>}
           </p>
         </div>
@@ -236,9 +248,15 @@ export function KeywordSummary({ keywords, campaignId, onChanged, huntHref }: {
                     {k.category}
                   </span>
                 )}
+                <span className="hidden shrink-0 text-xs text-muted-foreground md:inline">
+                  {k.intent_reason || ''}
+                </span>
                 <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                   월 {(k.monthly_mobile || 0).toLocaleString()}
                 </span>
+                <Pill tone={urgency(k.intent_score).tone} className="shrink-0">
+                  {urgency(k.intent_score).label}
+                </Pill>
                 <Pill tone={mine.tone} className="shrink-0">{mine.label}</Pill>
                 {campaignId && (
                   <button type="button" aria-label={`${k.keyword} 지우기`} title="이 키워드 지우기"

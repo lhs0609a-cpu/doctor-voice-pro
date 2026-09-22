@@ -164,6 +164,9 @@ export interface Keyword {
   disease?: string | null
   /** 글의 성격 — 대표|증상|원인|치료|관리|검사|비용|병원|기타 */
   category?: string | null
+  /** 간절함(내원 의도) 0~100. 검색량과 다른 축이다. */
+  intent_score?: number
+  intent_reason?: string | null
   source: 'manual' | 'combo' | 'related' | 'seed' | string
   scope: 'region' | 'national' | string
   monthly_mobile: number

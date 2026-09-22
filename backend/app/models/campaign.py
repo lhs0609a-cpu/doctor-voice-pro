@@ -185,6 +185,10 @@ class CampaignKeyword(Base):
     my_blog_id = Column(String(100), nullable=True)
     my_verdict = Column(String(20), nullable=True)           # likely|contested|unlikely|unknown|already_ranked
     my_probability = Column(Float, nullable=True)
+    # 이 키워드를 검색한 사람이 얼마나 간절한가(0~100)와 그 한 줄 이유.
+    # 검색량과는 다른 축이다 — 많이 검색되는 것과 병원을 찾는 것은 다른 일이다.
+    intent_score = Column(Integer, nullable=True)
+    intent_reason = Column(String(60), nullable=True)
     my_verdict_result = Column(JSON, nullable=True)
     my_verdict_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
