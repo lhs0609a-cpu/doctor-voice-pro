@@ -115,7 +115,11 @@ export function KeywordStep({ campaignId, keywords, subjects = [], onChanged }: 
   const judged = keywords.filter(k => k.my_verdict)
   const picked = keywords.filter(k => k.selected)
   const spots = keywords.filter(k => k.verdict === 'possible' || k.verdict === 'contested')
-  const top = [...picked].sort((a, b) => (b.my_probability || 0) - (a.my_probability || 0)).slice(0, 8)
+  // 간절한 순 — 목록 머리글에 적은 순서와 실제 순서가 같아야 한다.
+  const top = [...picked].sort((a, b) =>
+    (b.intent_score || 0) - (a.intent_score || 0) ||
+    (b.my_probability || 0) - (a.my_probability || 0) ||
+    (b.monthly_mobile || 0) - (a.monthly_mobile || 0)).slice(0, 8)
   // 실제로 뽑힌 글 성격 구성 — 비율을 지정했든 안 했든, 결과가 어떻게 섞였는지 보여 준다.
   const mixOut = picked.reduce<Record<string, number>>((acc, k) => {
     if (k.category) acc[k.category] = (acc[k.category] || 0) + 1
@@ -218,7 +222,7 @@ export function KeywordStep({ campaignId, keywords, subjects = [], onChanged }: 
             <summary className="cursor-pointer text-sm text-muted-foreground">
               쓸 키워드 {picked.length}개 중 간절한 순으로 {top.length}개 보기
             </summary>
-            <ul className="mt-2 divide-y rounded-lg border">
+            <ul aria-label="간절한 순 미리보기" className="mt-2 divide-y rounded-lg border">
               {top.map(k => {
                 const mine = MINE[k.my_verdict || 'unknown'] || MINE.unknown
                 return (

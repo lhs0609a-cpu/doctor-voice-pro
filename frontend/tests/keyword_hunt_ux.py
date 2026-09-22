@@ -90,7 +90,12 @@ async def main():
         first = found.get_by_role('listitem').first
         await expect(first).to_contain_text('서초아토피')
         await expect(first).to_contain_text('지금 찾는 중')
+        # 발굴 결과 미리보기도 같은 순서여야 한다(머리글에 '간절한 순'이라고 적어 두었다).
+        await expect(page.get_by_label('간절한 순 미리보기').get_by_role('listitem').first).to_contain_text('서초아토피')
+        # 검색량 9,000짜리 정보 키워드는 맨 뒤로 밀려 첫 화면에 없다 — 찾아보면 이유가 적혀 있다.
+        await page.get_by_label('키워드 검색').fill('음식')
         await expect(found).to_contain_text('집에서 해결하려는 중')
+        await page.get_by_label('키워드 검색').fill('')
         await page.get_by_role('button', name='서초아토피 지우기').click()
         await expect(found).not_to_contain_text('서초아토피')
         assert state['deleted'] == ['k1'], state['deleted']
