@@ -189,7 +189,7 @@ export function QuickSchedule({ campaign, client, draftIds, onScheduled, onBack,
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
           {stale
-            ? `네이버 예약 목록을 ${scannedAt ? `${human(scannedAt)}에 확인했습니다` : '아직 확인하지 못했습니다'}. 겹치지 않도록 글 사이를 더 띄워 잡습니다.`
+            ? `여기서 잡은 예약끼리는 겹치지 않습니다. 네이버 예약 목록은 ${scannedAt ? `${human(scannedAt)}에 확인했습니다` : '아직 확인하지 못했습니다'} — 손으로 따로 예약한 글이 있다면 새로 읽어 주세요.`
             : `네이버 예약 목록을 ${human(scannedAt)}에 확인했습니다. 그 시간대는 피해서 잡습니다.`}
         </p>
         {rescanMsg && <p role="status" className="mt-1 text-xs text-primary">{rescanMsg}</p>}

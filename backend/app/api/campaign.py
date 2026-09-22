@@ -1398,14 +1398,18 @@ async def _schedule_inputs(db: AsyncSession, c: Campaign, body: ScheduleIn, user
     return usable, drafts, plans, warnings, _reservations_state(usable, plans, warnings)
 
 
-# 네이버 예약 목록을 이만큼 못 읽었으면 '모르는 상태'로 본다. 모를수록 넉넉히 띄운다 —
-# 겹쳐서 같은 시각에 두 글이 올라가는 것보다 늦게 올라가는 편이 싸다.
+# 네이버 예약 목록을 이만큼 못 읽었으면 '모르는 상태'로 본다.
+# 모른다고 간격을 넓히지는 않는다 — 넓혀도 모르는 자리를 피하는 데는 도움이 안 되고,
+# 사용자가 고른 간격("2시간마다")과 화면에 적힌 시각만 어긋난다. 대신 화면에 그대로 알린다.
 RESERVATION_STALE_HOURS = 12
-STALE_GAP_SCALE = 1.5
 
 
 def _reservations_state(blogs: List[Blog], plans, warnings: List[str]) -> List["BlogReservations"]:
-    """블로그별 '이미 잡혀 있는 자리' 현황. 목록이 오래된 블로그는 여기서 완충을 넓힌다."""
+    """블로그별 '이미 잡혀 있는 자리' 현황.
+
+    우리가 걸어 둔 예약은 자리 기록(ScheduleMark·PublishJob)에 그대로 남아 있으므로
+    네이버 목록을 못 읽어도 우리끼리는 절대 겹치지 않는다. 목록이 필요한 경우는 하나뿐이다
+    — 이 화면 밖에서(손으로·다른 도구로) 잡아 둔 예약."""
     now = se.kst_now()
     by_ref = {p.ref_id: p for p in plans}
     out: List[BlogReservations] = []
@@ -1416,10 +1420,10 @@ def _reservations_state(blogs: List[Blog], plans, warnings: List[str]) -> List["
         scanned = b.reservations_scanned_at
         stale = not scanned or (datetime.utcnow() - scanned) > timedelta(hours=RESERVATION_STALE_HOURS)
         label = b.label or b.blog_id
-        if stale and plan:
-            plan.min_gap_minutes = int((plan.min_gap_minutes or 0) * STALE_GAP_SCALE)
-            when = scanned.strftime("%m/%d") + "에 확인한 목록입니다" if scanned else "아직 확인하지 못했습니다"
-            warnings.append(f"{label}: 네이버 예약 목록을 {when}. 겹치지 않도록 글 사이를 더 띄워 잡았습니다.")
+        if stale:
+            when = scanned.strftime("%m/%d") + "에 확인한 목록 기준입니다" if scanned else "아직 확인하지 못했습니다"
+            warnings.append(f"{label}: 네이버 예약 목록을 {when}. 이 화면에서 잡은 예약끼리는 겹치지 않습니다. "
+                            "손으로 따로 예약한 글이 있으면 [예약 목록 새로 읽기]를 눌러 주세요.")
         out.append(BlogReservations(
             blog_ref_id=b.id, label=label, count=len(future),
             last_at=future[-1].isoformat(timespec="minutes") if future else None,
@@ -1447,6 +1451,10 @@ def _allocate(body: ScheduleIn, c: Campaign, drafts: List[Draft], plans) -> Tupl
     """예약 방식에 따라 자리를 잡는다. 반환 (배정, 미배정 건수, 추가 경고, 이어 붙인 기준 예약)."""
     if body.mode == "interval":
         every = max(10, min(7 * 24 * 60, body.every_minutes or 120))
+        # 이미 잡힌 자리와도 '고른 간격'만큼만 띄운다. 블로그 설정의 최소 간격으로 더 밀면
+        # 화면에는 "마지막 예약 다음 2시간"이라 적고 실제로는 3시간 뒤에 올라간다.
+        for p in plans:
+            p.min_gap_minutes = every
         # '이미 예약된 글 다음부터' — 아는 마지막 예약에서 고른 간격만큼 떨어진 곳이 첫 글이다.
         last = se.latest_reserved(plans) if body.start_mode == "after_last" else None
         start_at = (last + timedelta(minutes=every)) if last else (body.start_at or datetime.combine(body.start_date, time(9, 0)))

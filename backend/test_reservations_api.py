@@ -148,6 +148,19 @@ class ReservationTests(DatabaseCase):
         self.assertTrue(preview['reservations'][0]['stale'])
         self.assertTrue(any('확인하지 못했습니다' in w for w in preview['warnings']))
 
+    async def test_the_chosen_gap_is_what_actually_happens(self):
+        """'마지막 예약 다음 2시간'이라고 적었으면 정확히 2시간 뒤여야 한다.
+
+        블로그 설정의 최소 간격(여기서는 120분)이나 '목록이 오래됨' 같은 사정으로 더 밀면
+        화면에 적힌 시각과 실제가 어긋난다. 30분을 골랐으면 30분 뒤다."""
+        last = self.future + timedelta(hours=5)
+        await self.scan(last)
+        body = {'start_date': self.now.date().isoformat(), 'days': 30, 'draft_ids': ['d'],
+                'mode': 'interval', 'every_minutes': 30, 'start_mode': 'after_last'}
+        preview = (await self.client.post('/campaigns/c/schedule/preview', json=body)).json()
+        self.assertEqual(preview['assigned'][0]['scheduled_at'],
+                         (last + timedelta(minutes=30)).isoformat(timespec='minutes'))
+
     # --------------------------------------- 같은 시각에 두 글이 걸리지 않는가
     async def commit(self, draft_ids, every=120, start_mode='after_last'):
         body = {'start_date': self.now.date().isoformat(), 'days': 60, 'draft_ids': draft_ids,
