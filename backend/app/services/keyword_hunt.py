@@ -30,7 +30,7 @@ from app.services.keyword_expander import _norm
 
 logger = logging.getLogger(__name__)
 
-MAX_TARGET = 300
+MAX_TARGET = 500                  # 한 번에 찾을 수 있는 최대 개수(화면의 '500개' 단추와 같은 값)
 TOPIC_ROUND = 30                  # Claude 한 번에 받을 주제 수
 MAX_TOPIC_ROUNDS = 6
 VERDICT_WAVE = 60                 # blog_verdict_batch 1회 상한(그쪽에서 [:60] 으로 자른다)
@@ -302,8 +302,8 @@ async def keyword_hunt(ctx: JobContext) -> dict:
     blog_id = _resolve_blog_id(campaign, blogs, p.get("blog_id"))
 
     target = _clamp(p.get("target", 100), 10, MAX_TARGET, 100)
-    screen_limit = _clamp(p.get("screen_limit", target * 2), target, 600, target * 2)
-    verdict_limit = _clamp(p.get("verdict_limit", min(target, DEFAULT_VERDICT_LIMIT)), 0, 300,
+    screen_limit = _clamp(p.get("screen_limit", target * 2), target, 1000, target * 2)
+    verdict_limit = _clamp(p.get("verdict_limit", min(target, DEFAULT_VERDICT_LIMIT)), 0, 500,
                            min(target, DEFAULT_VERDICT_LIMIT))
     # 진행률 총량: 씨앗 1 + 통검 screen_limit + 판정 verdict_limit + 마무리 1
     total = 2 + screen_limit + verdict_limit

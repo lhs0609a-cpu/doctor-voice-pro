@@ -165,6 +165,11 @@ class BlogOut(BaseModel):
     status_reason: Optional[str] = None
     last_published_at: Optional[datetime] = None
     proxy_label: Optional[str] = None         # 화면 표시용. 비밀번호는 지운 주소만 보낸다.
+    # 이 아이디로 올리는 글 끝에 늘 붙는 것들
+    footer_link_url: Optional[str] = None
+    footer_link_label: Optional[str] = None
+    place_url: Optional[str] = None
+    place_label: Optional[str] = None
 
 
 class BriefOut(BaseModel):
@@ -213,6 +218,8 @@ def _blog_out(b: Blog) -> BlogOut:
         min_gap_minutes=b.min_gap_minutes or 120, default_category=b.default_category,
         open_type=b.open_type or "public", status=b.status or "active", status_reason=b.status_reason,
         last_published_at=b.last_published_at, proxy_label=_proxy_label(b.proxy_enc),
+        footer_link_url=b.footer_link_url, footer_link_label=b.footer_link_label,
+        place_url=b.place_url, place_label=b.place_label,
     )
 
 
@@ -325,6 +332,26 @@ class BlogIn(BaseModel):
     min_gap_minutes: int = 120
     default_category: Optional[str] = None
     open_type: str = "public"
+    # 이 아이디로 올리는 글 끝에 늘 붙일 것들. 한 번 저장해 두면 매번 안 넣어도 된다.
+    footer_link_url: Optional[str] = None
+    footer_link_label: Optional[str] = None
+    place_url: Optional[str] = None
+    place_label: Optional[str] = None
+
+
+def _clean_footer_url(raw: Optional[str]) -> Optional[str]:
+    """글 끝에 붙일 주소. 빈 값이면 지우고, 모양이 틀리면 거절한다.
+
+    네이버는 한 줄짜리 https 주소를 링크 카드(플레이스면 지도 카드)로 바꿔 준다.
+    그래서 저장해 두는 것도, 글에 넣는 것도 '주소 한 줄'이면 충분하다."""
+    value = (raw or "").strip()
+    if not value or value == "-":
+        return None
+    from app.services import landing_links
+    try:
+        return landing_links.validate_url(value)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 def _clean_proxy(raw: Optional[str]) -> Optional[str]:
@@ -373,6 +400,10 @@ async def add_blog(client_id: str, body: BlogIn, current_user: User = Depends(ge
         window_start=body.window_start, window_end=body.window_end, min_gap_minutes=body.min_gap_minutes,
         default_category=body.default_category, open_type=body.open_type,
         proxy_enc=crypto.encrypt(_clean_proxy(body.proxy_url)),
+        footer_link_url=_clean_footer_url(body.footer_link_url),
+        footer_link_label=(body.footer_link_label or "").strip()[:100] or None,
+        place_url=_clean_footer_url(body.place_url),
+        place_label=(body.place_label or "").strip()[:100] or None,
     )
     db.add(b)
     await db.commit()
@@ -390,6 +421,10 @@ async def update_blog(blog_ref_id: str, body: BlogIn, current_user: User = Depen
         b.proxy_enc = None if body.proxy_url.strip() == "-" else crypto.encrypt(_clean_proxy(body.proxy_url))
     b.daily_limit, b.window_start, b.window_end = body.daily_limit, body.window_start, body.window_end
     b.min_gap_minutes, b.default_category, b.open_type = body.min_gap_minutes, body.default_category, body.open_type
+    b.footer_link_url = _clean_footer_url(body.footer_link_url)
+    b.footer_link_label = (body.footer_link_label or "").strip()[:100] or None
+    b.place_url = _clean_footer_url(body.place_url)
+    b.place_label = (body.place_label or "").strip()[:100] or None
     await db.commit()
     return _blog_out(b)
 
@@ -763,10 +798,10 @@ async def expand_keywords(campaign_id: str, body: ExpandIn, current_user: User =
 
 class HuntIn(BaseModel):
     """키워드 발굴: 씨앗 확장 → 통합검색 자리 확인 → 내 블로그로 뚫리는지 판정."""
-    target: int = Field(100, ge=10, le=300)          # 최종으로 쓰고 싶은 키워드 수
+    target: int = Field(100, ge=10, le=500)          # 최종으로 쓰고 싶은 키워드 수
     blog_id: Optional[str] = None                     # 판정 기준 블로그(비우면 캠페인의 정상 블로그)
-    screen_limit: Optional[int] = Field(None, ge=10, le=600)    # ② 통검을 볼 최대 개수
-    verdict_limit: Optional[int] = Field(None, ge=0, le=300)    # ③ 내 블로그 판정 최대 개수
+    screen_limit: Optional[int] = Field(None, ge=10, le=1000)   # ② 통검을 볼 최대 개수
+    verdict_limit: Optional[int] = Field(None, ge=0, le=500)    # ③ 내 블로그 판정 최대 개수
     # 직접 찾고 싶은 키워드. 주면 진료 항목 대신 이것만 파고, 연관어도 이 기준으로 살린다.
     seeds: Optional[List[str]] = Field(None, max_length=20)
     # 질환별 개수 {"건선": 30, "습진": 20}. 합이 target 을 넘으면 비율로 보고 줄인다.
@@ -1076,6 +1111,7 @@ async def _parse_docx_upload(db: AsyncSession, user_id: str, name: str, data: by
             blocks.append({"type": "image", "content": "", "pool_image_id": pool_image_id, "name": block.get("name")})
     summary = {
         "source": "docx",
+        "links": parsed.links[:20],          # 원고에 걸려 있던 링크(본문에 그대로 살려 넣었다)
         "images": sum(1 for b in blocks if b["type"] == "image"),
         "tables": sum(1 for b in blocks if b["type"] == "table"),
         "headings": sum(1 for b in blocks if b["type"] == "heading"),
@@ -1858,6 +1894,22 @@ async def _assemble_blocks(db: AsyncSession, draft: Draft, variants: List[Dict[s
     return blocks
 
 
+def _with_footer(blocks: List[JobBlock], b: Blog) -> List[JobBlock]:
+    """이 아이디에 저장해 둔 링크·플레이스를 글 끝에 붙인다.
+
+    주소를 한 줄로 두면 네이버가 알아서 링크 카드(플레이스면 지도 카드)로 만든다.
+    원고 안에 이미 그 주소가 있으면 두 번 넣지 않는다."""
+    body = "\n".join(x.content or "" for x in blocks)
+    out = list(blocks)
+    for label, url in ((b.footer_link_label, b.footer_link_url), (b.place_label, b.place_url)):
+        if not url or url in body:
+            continue
+        if (label or "").strip():
+            out.append(JobBlock(type="text", content=label.strip()))
+        out.append(JobBlock(type="text", content=url))
+    return out
+
+
 @router.post("/agent/claim", response_model=List[ClaimedJob])
 async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if body.protocol_version != 2:
@@ -1922,6 +1974,8 @@ async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_us
                 blocks = [JobBlock(**b) for b in apply_points(
                     [b.model_dump(exclude_none=True) for b in blocks], point_settings,
                     [draft.keyword or '', *(draft.emphasize or [])])]
+            # 저장해 둔 링크·플레이스는 강조를 입힌 뒤에 붙인다 — 적어 둔 그대로 나가야 한다.
+            blocks = _with_footer(blocks, blog)
             if "rich_text_v1" not in body.capabilities and 'point_styles_v1' not in body.capabilities:
                 # 서식을 모르는 실행기 — 굵게·표·목록을 평문으로 눌러서 보낸다(사진은 그대로).
                 blocks = [JobBlock(**b) for b in

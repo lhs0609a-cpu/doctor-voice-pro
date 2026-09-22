@@ -82,6 +82,12 @@ class Blog(Base):
     status_reason = Column(Text, nullable=True)
     status_changed_at = Column(DateTime, nullable=True)
     device_profile = Column(String(100), nullable=True)      # 에이전트 브라우저 프로필 키
+    # 이 아이디로 올리는 글 끝에 늘 붙는 것들. 한 번 저장해 두면 매번 안 넣어도 된다.
+    # 주소를 한 줄로 넣으면 네이버가 링크 카드(플레이스는 지도 카드)로 만들어 준다.
+    footer_link_url = Column(String(500), nullable=True)     # 예약·홈페이지 링크
+    footer_link_label = Column(String(100), nullable=True)   # 그 앞에 붙일 한 줄 ("예약은 여기서")
+    place_url = Column(String(500), nullable=True)           # 네이버 플레이스(지도) 주소
+    place_label = Column(String(100), nullable=True)         # ("오시는 길")
     # 이 블로그만 쓰는 고정 프록시(http://user:pw@host:port). 계정 비밀번호가 들어갈 수 있어 암호화해 둔다.
     # 블로그마다 IP를 고정하는 것이 목적이다 — 매번 바꾸면 같은 계정이 여기저기서 접속하는 꼴이라 더 걸린다.
     proxy_enc = Column(Text, nullable=True)

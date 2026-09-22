@@ -32,7 +32,15 @@ export interface AutopilotState {
 }
 
 // ───────────────────────── 타입 ─────────────────────────
-export interface BlogAccount {
+/** 이 아이디로 올리는 글 끝에 늘 붙는 것들(예약 링크·플레이스 지도). */
+export interface BlogFooter {
+  footer_link_url?: string | null
+  footer_link_label?: string | null
+  place_url?: string | null
+  place_label?: string | null
+}
+
+export interface BlogAccount extends BlogFooter {
   id: string
   client_id: string
   blog_id: string
@@ -68,6 +76,10 @@ export interface BlogInput {
   min_gap_minutes: number
   default_category?: string | null
   open_type: string
+  footer_link_url?: string | null
+  footer_link_label?: string | null
+  place_url?: string | null
+  place_label?: string | null
 }
 
 export interface BriefFlowStep { title: string; goal?: string; min_chars?: number }

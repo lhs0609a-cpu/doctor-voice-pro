@@ -131,7 +131,8 @@ class DocxUploadTests(DatabaseCase):
     async def test_upload_reports_what_it_read(self):
         draft = await self.upload()
         self.assertEqual(draft['checks']['import'],
-                         {'source': 'docx', 'images': 1, 'tables': 1, 'headings': 1, 'warnings': []})
+                         {'source': 'docx', 'links': [], 'images': 1, 'tables': 1,
+                          'headings': 1, 'warnings': []})
 
     async def test_table_survives_in_the_plain_text_too(self):
         draft = await self.upload()

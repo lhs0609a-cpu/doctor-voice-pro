@@ -47,6 +47,10 @@ const EMPTY_BLOG: BlogInput = {
   min_gap_minutes: 120,
   default_category: '',
   open_type: 'public',
+  footer_link_url: '',
+  footer_link_label: '',
+  place_url: '',
+  place_label: '',
 }
 
 function toInput(b: BlogAccount): BlogInput {
@@ -61,6 +65,10 @@ function toInput(b: BlogAccount): BlogInput {
     min_gap_minutes: b.min_gap_minutes,
     default_category: b.default_category ?? '',
     open_type: b.open_type,
+    footer_link_url: b.footer_link_url ?? '',
+    footer_link_label: b.footer_link_label ?? '',
+    place_url: b.place_url ?? '',
+    place_label: b.place_label ?? '',
   }
 }
 
@@ -93,6 +101,11 @@ export function BlogAccounts({ clientId, blogs, onChanged }: BlogAccountsProps) 
         // 비워두면 기존 비밀번호 유지
         login_pw: form.login_pw ? form.login_pw : null,
         default_category: form.default_category?.trim() || null,
+        // 비우면 지운다는 뜻이다(서버가 '-' 와 빈 값을 같게 본다).
+        footer_link_url: form.footer_link_url?.trim() || null,
+        footer_link_label: form.footer_link_label?.trim() || null,
+        place_url: form.place_url?.trim() || null,
+        place_label: form.place_label?.trim() || null,
       }
       if (editing) {
         await campaignAPI.updateBlog(editing.id, body)
@@ -295,6 +308,36 @@ export function BlogAccounts({ clientId, blogs, onChanged }: BlogAccountsProps) 
                 <Label htmlFor="b-we">종료 시각</Label>
                 <Input id="b-we" type="time" value={form.window_end} onChange={(e) => set('window_end', e.target.value)} />
               </div>
+            </div>
+            {/* 글 끝에 늘 붙는 것들 — 한 번 저장해 두면 원고마다 넣지 않아도 된다.
+                네이버는 한 줄짜리 주소를 링크 카드·지도 카드로 바꿔 준다. */}
+            <div className="space-y-3 rounded-lg border p-3">
+              <p className="text-sm font-medium">글 끝에 늘 넣을 것 <span className="font-normal text-muted-foreground">(이 아이디 전용)</span></p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label htmlFor="b-link">예약·홈페이지 링크</Label>
+                  <Input id="b-link" value={form.footer_link_url ?? ''} onChange={(e) => set('footer_link_url', e.target.value)}
+                    placeholder="https://..." />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="b-link-label">링크 앞에 쓸 한 줄</Label>
+                  <Input id="b-link-label" value={form.footer_link_label ?? ''} onChange={(e) => set('footer_link_label', e.target.value)}
+                    placeholder="예약은 여기서" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="b-place">플레이스(지도) 주소</Label>
+                  <Input id="b-place" value={form.place_url ?? ''} onChange={(e) => set('place_url', e.target.value)}
+                    placeholder="https://naver.me/..." />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="b-place-label">지도 앞에 쓸 한 줄</Label>
+                  <Input id="b-place-label" value={form.place_label ?? ''} onChange={(e) => set('place_label', e.target.value)}
+                    placeholder="오시는 길" />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                원고에 이미 같은 주소가 있으면 두 번 넣지 않습니다. 비우고 저장하면 지워집니다.
+              </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="space-y-1">

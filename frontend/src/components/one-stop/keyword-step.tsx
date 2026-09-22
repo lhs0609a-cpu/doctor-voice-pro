@@ -19,7 +19,7 @@ import { KeywordMix, EMPTY_MIX, type MixValue } from './keyword-mix'
 import { errMsg } from '@/components/campaign/common'
 import { cn } from '@/lib/utils'
 
-const PRESETS = [100, 200, 300]
+const PRESETS = [100, 200, 300, 500]
 
 /** 내 블로그 판정 → 화면 라벨. 통검 판정(verdict)과 다른 값이므로 섞지 않는다. */
 const MINE: Record<string, { label: string; tone: 'ok' | 'warn' | 'muted' | 'accent' }> = {
@@ -138,7 +138,7 @@ export function KeywordStep({ campaignId, keywords, subjects = [], onChanged }: 
         <p className="text-sm">{task?.message || '진료 항목에서 후보를 모으고 있습니다.'}</p>
         <p className="text-xs text-muted-foreground">
           통합검색을 키워드마다 한 번씩 읽고, 살아남은 것만 우리 블로그로 뚫리는지 봅니다.
-          300개 기준 30분~1시간이 걸립니다. 창을 닫아도 서버에서 계속합니다.
+          300개 기준 30분~1시간, 500개면 1시간 안팎입니다. 창을 닫아도 서버에서 계속합니다.
         </p>
         <Button variant="outline" disabled={busy} onClick={stop}>발굴 중단</Button>
       </div>
@@ -152,7 +152,7 @@ export function KeywordStep({ campaignId, keywords, subjects = [], onChanged }: 
                 disabled={busy} onClick={() => setTarget(n)}>{n}개</Button>
             ))}
           </div>
-          <Input id="hunt-target" type="number" min={10} max={300} value={target} disabled={busy}
+          <Input id="hunt-target" type="number" min={10} max={500} value={target} disabled={busy}
             onChange={e => setTarget(Number(e.target.value))} />
           <p className="mt-1 text-xs text-muted-foreground">
             새로 찾으면 <b>지금 목록은 지워지고</b> 새로 찾은 것으로 바뀝니다.
@@ -167,7 +167,7 @@ export function KeywordStep({ campaignId, keywords, subjects = [], onChanged }: 
         )}
         <Button className="h-12 w-full text-base"
           variant={confirming ? 'destructive' : 'default'}
-          disabled={busy || !loaded || !Number.isInteger(target) || target < 10 || target > 300}
+          disabled={busy || !loaded || !Number.isInteger(target) || target < 10 || target > 500}
           onClick={() => {
             // 지난 목록을 지우는 일이라 한 번 물어본다(처음 찾을 때는 바로 시작).
             if (keywords.length > 0 && !confirming) { setConfirming(true); return }

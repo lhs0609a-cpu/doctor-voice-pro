@@ -50,6 +50,8 @@ class ParsedDoc:
     title: str
     blocks: List[Dict[str, Any]]
     warnings: List[str] = field(default_factory=list)
+    # 원고 안에 걸려 있던 링크들 [{"text": 보이는 글자, "url": 주소}]. 본문에 그대로 살려 넣는다.
+    links: List[Dict[str, str]] = field(default_factory=list)
 
     @property
     def text(self) -> str:
@@ -229,18 +231,53 @@ def _ordered_list(paragraph) -> bool:
     return False
 
 
-def _paragraph_spans(paragraph, part, warnings: List[str], taken: List[int]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """문단 → (글자 span 들, 그 문단에 들어 있던 사진 블록들)."""
+def _hyperlink_url(node, paragraph) -> str:
+    """w:hyperlink 가 가리키는 바깥 주소. 문서 안 책갈피(anchor)면 빈 문자열."""
+    rid = node.get(f"{R}id")
+    if not rid:
+        return ""
+    try:
+        rel = paragraph.part.rels[rid]
+    except (KeyError, AttributeError):
+        return ""
+    return rel.target_ref if getattr(rel, "is_external", False) else ""
+
+
+def _paragraph_spans(paragraph, part, warnings: List[str], taken: List[int],
+                     links: Optional[List[Dict[str, str]]] = None) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """문단 → (글자 span 들, 그 문단에 들어 있던 사진 블록들).
+
+    python-docx 의 paragraph.runs 는 **w:hyperlink 안의 글자를 돌려주지 않는다**.
+    그것만 보고 읽으면 '여기서 예약하세요'의 '여기서'가 통째로 사라진다(2026-09-22 실측).
+    그래서 문단의 자식을 순서대로 훑어 링크 안쪽 글자도 함께 읽고, 주소는 따로 모은다.
+    """
+    from docx.text.run import Run
+
     spans: List[Dict[str, Any]] = []
     images: List[Dict[str, Any]] = []
-    for run in paragraph.runs:
+
+    def add(run, href: str = "") -> None:
         images.extend(_images_in(run, part, warnings, taken))
         text = _clean(run.text)
         if not text:
-            continue
-        spans.append(_span(text, bold=bool(run.bold), italic=bool(run.italic),
-                           underline=bool(run.underline), color=_color_of(run),
-                           size=_size_of(run, paragraph), background=_background_of(run)))
+            return
+        span = _span(text, bold=bool(run.bold), italic=bool(run.italic),
+                     underline=bool(run.underline), color=_color_of(run),
+                     size=_size_of(run, paragraph), background=_background_of(run))
+        if href:
+            span["href"] = href
+            if links is not None and not any(l["url"] == href for l in links):
+                links.append({"text": text, "url": href})
+        spans.append(span)
+
+    for node in paragraph._p:
+        tag = node.tag
+        if tag == f"{W}r":
+            add(Run(node, paragraph))
+        elif tag == f"{W}hyperlink":
+            href = _hyperlink_url(node, paragraph)
+            for child in node.findall(f"{W}r"):
+                add(Run(child, paragraph), href)
     return _merge(spans), images
 
 
@@ -293,6 +330,7 @@ def parse_docx(data: bytes, *, name: str = "") -> ParsedDoc:
 
     part = document.part
     warnings: List[str] = []
+    links: List[Dict[str, str]] = []
     taken = [0]
     blocks: List[Dict[str, Any]] = []
     pending_list: List[List[Dict[str, Any]]] = []
@@ -315,7 +353,7 @@ def parse_docx(data: bytes, *, name: str = "") -> ParsedDoc:
                 blocks.append(table)
             continue
         kind, level = _paragraph_kind(node)
-        spans, images = _paragraph_spans(node, part, warnings, taken)
+        spans, images = _paragraph_spans(node, part, warnings, taken, links)
         if kind == "list" and spans:
             if not pending_list:
                 pending_ordered = _ordered_list(node)
@@ -329,6 +367,12 @@ def parse_docx(data: bytes, *, name: str = "") -> ParsedDoc:
                 block["level"] = level
             block["content"] = block_text(block)
             blocks.append(block)
+            # 글자에 링크만 걸려 있고 주소가 화면에 안 보이면, 주소를 한 줄로 덧붙인다.
+            # 네이버 에디터는 한 줄짜리 주소를 링크 카드로 만들어 준다 — 그래야 눌린다.
+            shown = block["content"]
+            for url in dict.fromkeys(sp.get("href") for sp in spans if sp.get("href")):
+                if url and url not in shown:
+                    blocks.append({"type": "text", "spans": [_span(url)], "content": url, "link": url})
         blocks.extend(images)
     flush_list()
 
@@ -337,7 +381,7 @@ def parse_docx(data: bytes, *, name: str = "") -> ParsedDoc:
     title, blocks = _split_title(blocks, name)
     if not any(b["type"] != "image" for b in blocks):
         raise ValueError("사진만 있고 글이 없습니다")
-    return ParsedDoc(title=title, blocks=blocks, warnings=warnings)
+    return ParsedDoc(title=title, blocks=blocks, warnings=warnings, links=links)
 
 
 def _split_title(blocks: List[Dict[str, Any]], name: str) -> Tuple[str, List[Dict[str, Any]]]:
