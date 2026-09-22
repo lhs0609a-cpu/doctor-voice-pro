@@ -10,7 +10,7 @@
 // 물린다. 스무 개를 한 번에 보내면 깨진 파일 하나 때문에 열아홉 개가 같이 사라진다.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Check, Loader2, Upload, X } from 'lucide-react'
+import { AlertTriangle, Check, Loader2, Trash2, Upload, X } from 'lucide-react'
 import { campaignAPI, type Campaign, type Client, type Draft } from '@/lib/campaign-api'
 import { PointFormattingPanel } from '@/components/campaign/point-formatting'
 import { Button } from '@/components/ui/button'
@@ -35,6 +35,16 @@ function isWord(file: File) {
   return file.name.toLowerCase().endsWith('.docx')
 }
 
+type Flag = { text?: string; category?: string; suggestion?: string }
+
+/** '원고 검토 필요'의 실제 이유. 서버가 글자 패턴으로 잡은 것들이다. */
+function flagsOf(draft: Draft): Flag[] {
+  const checks = (draft.checks || {}) as Record<string, unknown>
+  const law = Array.isArray(checks.medical_law) ? (checks.medical_law as Flag[]) : []
+  const words = Array.isArray(checks.forbidden) ? (checks.forbidden as string[]) : []
+  return [...law, ...words.map(w => ({ text: w, category: '병원 금칙어' }))]
+}
+
 export function WordPublishPanel({ campaign, client, onUpdated }: {
   campaign: Campaign; client: Client; onUpdated: (value: Campaign) => void
 }) {
@@ -45,6 +55,8 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
   const [uploading, setUploading] = useState(false)
   const [dropping, setDropping] = useState(false)
   const [error, setError] = useState('')
+  const [open, setOpen] = useState('')        // 검수 이유를 펴 둔 원고
+  const [busy, setBusy] = useState('')        // 확인/지우기 중인 원고
   const [step, setStep] = useState<'upload' | 'schedule' | 'done'>('upload')
   const depth = useRef(0)          // dragenter/leave 는 자식 위를 지날 때도 울린다 — 세어야 한다
 
@@ -96,6 +108,26 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
     await Promise.all(Array.from({ length: Math.min(AT_ONCE, words.length) }, worker))
     setUploading(false)
   }, [campaign.id, jobs.length])
+
+  // 검수는 글자 패턴이라 오탐이 많다. 올린 사람이 보고 판단하면 그대로 쓴다.
+  const approve = async (d: Draft) => {
+    setBusy(d.id); setError('')
+    try {
+      const next = await campaignAPI.approveDraft(d.id)
+      setDrafts(previous => previous.map(x => (x.id === d.id ? next : x)))
+      setSelected(previous => (previous.includes(d.id) ? previous : [...previous, d.id]))
+      setOpen('')
+    } catch (e) { setError(errMsg(e)) } finally { setBusy('') }
+  }
+
+  const remove = async (d: Draft) => {
+    setBusy(d.id); setError('')
+    try {
+      await campaignAPI.deleteDraft(d.id)
+      setDrafts(previous => previous.filter(x => x.id !== d.id))
+      setSelected(previous => previous.filter(id => id !== d.id))
+    } catch (e) { setError(errMsg(e)) } finally { setBusy('') }
+  }
 
   if (step === 'done') return (
     <div className="space-y-3">
@@ -181,17 +213,71 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
 
       {drafts.length > 0 && (
         <ul className="divide-y rounded-lg border">
-          {drafts.map(d => (
-            <li key={d.id}>
-              <label className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm">
-                <input type="checkbox" checked={selected.includes(d.id)} disabled={d.status !== 'ready'}
-                  onChange={e => setSelected(value => e.target.checked ? [...value, d.id] : value.filter(id => id !== d.id))} />
-                <span className="min-w-0 flex-1 truncate">{d.title}</span>
-                {d.status !== 'ready' && <span className="shrink-0 text-xs text-warning">원고 검토 필요</span>}
-              </label>
-            </li>
-          ))}
+          {drafts.map(d => {
+            const flags = flagsOf(d)
+            const review = d.status !== 'ready'
+            return (
+              <li key={d.id} className="px-3 py-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <input type="checkbox" id={`pick-${d.id}`} checked={selected.includes(d.id)} disabled={review}
+                    onChange={e => setSelected(value => e.target.checked ? [...value, d.id] : value.filter(id => id !== d.id))} />
+                  <label htmlFor={`pick-${d.id}`} className={cn('min-w-0 flex-1 truncate', review ? 'text-muted-foreground' : 'cursor-pointer')}>
+                    {d.title}
+                  </label>
+                  {review && (
+                    <button type="button" onClick={() => setOpen(open === d.id ? '' : d.id)}
+                      className="shrink-0 text-xs text-warning underline-offset-2 hover:underline">
+                      검토 필요 {flags.length > 0 && `· ${flags.length}곳`}
+                    </button>
+                  )}
+                  <button type="button" aria-label={`${d.title} 빼기`} title="이 원고 빼기"
+                    disabled={!!busy} onClick={() => void remove(d)}
+                    className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40">
+                    {busy === d.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  </button>
+                </div>
+
+                {review && open === d.id && (
+                  <div className="mt-2 space-y-2 rounded-lg bg-warning-soft p-3">
+                    <p className="text-xs">
+                      의료광고법에 걸릴 수 있는 표현을 글자만 보고 잡은 것입니다. 오탐도 많으니
+                      아래를 보고 <b>고칠지, 그대로 올릴지</b> 정하세요. 법적 책임은 올린 사람에게 있습니다.
+                    </p>
+                    {flags.length > 0 ? (
+                      <ul className="space-y-1 text-xs">
+                        {flags.slice(0, 8).map((f, i) => (
+                          <li key={i} className="flex flex-wrap items-center gap-1.5">
+                            <b className="rounded bg-card px-1.5 py-0.5">{f.text || '(표현)'}</b>
+                            <span className="text-muted-foreground">{f.category}</span>
+                            {f.suggestion && <span className="text-muted-foreground">→ {f.suggestion}</span>}
+                          </li>
+                        ))}
+                        {flags.length > 8 && <li className="text-muted-foreground">… 외 {flags.length - 8}곳</li>}
+                      </ul>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">걸린 표현을 따로 적어 두지 않았습니다. 원고를 한 번 훑어보세요.</p>
+                    )}
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" disabled={busy === d.id} onClick={() => void approve(d)}>
+                        {busy === d.id ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Check className="mr-1 h-4 w-4" />}
+                        확인했습니다 · 이대로 올리기
+                      </Button>
+                      <Button size="sm" variant="ghost" disabled={!!busy} onClick={() => void remove(d)}>
+                        이 원고 빼기
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </li>
+            )
+          })}
         </ul>
+      )}
+
+      {drafts.some(d => d.status !== 'ready') && (
+        <p className="text-xs text-muted-foreground">
+          검토가 필요한 원고는 <b>확인 전까지 예약되지 않습니다</b>. 줄 오른쪽의 &lsquo;검토 필요&rsquo;를 눌러 이유를 보세요.
+        </p>
       )}
 
       <details className="rounded-lg border px-3 py-2">

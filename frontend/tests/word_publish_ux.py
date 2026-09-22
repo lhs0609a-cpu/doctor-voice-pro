@@ -23,7 +23,7 @@ async def main():
     # 이 블로그에는 이미 예약 한 건이 걸려 있다 — 화면은 그 다음부터를 기본으로 골라야 한다.
     booked=dict(blog_ref_id='b',label='테스트 블로그',count=1,last_at='2026-09-23T10:00',
                 scanned_at='2026-09-22T12:00',stale=False,note=None)
-    state={'drafts':[],'saves':0,'scheduled':False,'rescan':0,'modes':[]}
+    state={'drafts':[],'saves':0,'scheduled':False,'rescan':0,'modes':[],'deleted':[]}
     async def route(r):
         req=r.request; path=urlparse(req.url).path
         if '/api/' not in path:
@@ -31,7 +31,12 @@ async def main():
             else:await r.abort()
             return
         response={}
-        if path.endswith('/campaigns'):response=[campaign]
+        if req.method=='DELETE' and '/drafts/' in path:
+            did=path.rsplit('/',1)[-1]
+            state['deleted'].append(did)
+            state['drafts']=[d for d in state['drafts'] if d['id']!=did]
+            response={'success':True}
+        elif path.endswith('/campaigns'):response=[campaign]
         elif path.endswith('/clients'):response=[client]
         elif path.endswith('/clients/h'):response=client
         elif path.endswith('/campaigns/c'):response=campaign
@@ -44,6 +49,9 @@ async def main():
             assert b'word/document.xml' in req.post_data_buffer or b'PK' in req.post_data_buffer
             n=len(state['drafts'])+1
             row=dict(draft,id=f'd{n}',title=f'{draft["title"]} {n}')
+            if n==2:   # 병원이 등록한 금칙어에 걸린 원고 한 건
+                row=dict(row,status='needs_review',
+                         checks={'forbidden':['최고'],'medical_law':[],'ok':False})
             state['drafts'].append(row);response=[row]
         elif path.endswith('/drafts'):response=state['drafts']
         elif path.endswith('/formatting-preview'):
@@ -55,7 +63,7 @@ async def main():
             response=[booked]
         elif path.endswith('/schedule/preview') or path.endswith('/schedule/commit'):
             body=req.post_data_json
-            assert body['draft_ids']==[d['id'] for d in state['drafts']],body['draft_ids']
+            assert 'd2' not in body['draft_ids'],body['draft_ids']   # 뺀 원고는 예약에 안 간다
             assert body['mode']=='interval' and body['every_minutes']==120
             assert body['start_at'][:10]==body['start_date']
             state['modes'].append(body['start_mode'])
@@ -96,7 +104,14 @@ async def main():
         await drop.dispatch_event('drop',{'dataTransfer':transfer})
         await expect(page.get_by_text('올린 파일 3개',exact=False)).to_be_visible()
         await expect(page.get_by_text('밀양성장클리닉 - 스트레스.docx',exact=False)).to_be_visible()
-        await expect(page.get_by_role('button',name='선택한 3개 원고 예약하기')).to_be_enabled()
+        # 검토 필요 한 건은 고를 수 없고, 이유를 펴면 무엇이 걸렸는지 적혀 있다.
+        await expect(page.get_by_role('button',name='선택한 2개 원고 예약하기')).to_be_enabled()
+        await page.get_by_role('button',name='검토 필요',exact=False).click()
+        await expect(page.get_by_text('병원 금칙어',exact=False)).to_be_visible()
+        await expect(page.get_by_text('최고',exact=False).first).to_be_visible()
+        # 그대로 빼 버린다 — 목록에서도 사라지고 예약에도 안 간다.
+        await page.get_by_role('button',name='이 원고 빼기',exact=True).click()
+        await expect(page.get_by_role('button',name='선택한 2개 원고 예약하기')).to_be_enabled()
         await page.get_by_text('글자 강조 설정 바꾸기',exact=True).click()
         await page.get_by_label('핵심 문구 자동 강조').check()
         await page.get_by_label('특히 강조할 문구',exact=False).fill('핵심 기준')
@@ -111,9 +126,9 @@ async def main():
         await page.get_by_text('글자 강조 설정 바꾸기',exact=True).click()
         await expect(page.get_by_label('핵심 문구 자동 강조')).to_be_checked()
         await expect(page.get_by_label('특히 강조할 문구',exact=False)).to_have_value('핵심 기준')
-        for n in (1, 2, 3):
-            await page.get_by_label(f'중요 포인트 테스트 {n}',exact=False).check()
-        await page.get_by_role('button',name='선택한 3개 원고 예약하기').click()
+        for did in ('d1', 'd3'):
+            await page.locator(f'#pick-{did}').check()
+        await page.get_by_role('button',name='선택한 2개 원고 예약하기').click()
         # 이미 걸린 예약을 세어 보여 주고, 그 다음부터가 기본으로 골라져 있어야 한다.
         await expect(page.get_by_label('이미 예약된 글')).to_contain_text('이미 예약된 글 1건')
         await expect(page.get_by_label('이미 예약된 글')).to_contain_text('마지막 9/23(수) 10:00')
@@ -129,8 +144,9 @@ async def main():
         await page.get_by_role('button',name='1건 예약하기',exact=True).click()
         await expect(page.get_by_text('예약을 걸었습니다.',exact=False)).to_be_visible()
         assert state['scheduled'],'Confirmation must submit the selected manuscript'
+        assert state['deleted']==['d2'],state['deleted']
         assert not errors,errors
         await browser.close()
-    print('PASS: Word upload by picker and drag-and-drop, automatic save, reload persistence, styled preview, interval schedule and confirmation; API fixtures only')
+    print('PASS: Word upload by picker and drag-and-drop, review reason and removal, formatting, interval schedule and confirmation; API fixtures only')
 
 asyncio.run(main())

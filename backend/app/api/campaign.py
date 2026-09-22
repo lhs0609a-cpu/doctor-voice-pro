@@ -1254,6 +1254,29 @@ async def update_draft(draft_id: str, body: DraftPatch, current_user: User = Dep
     return _draft_out(d)
 
 
+@router.post("/drafts/{draft_id}/approve", response_model=DraftOut)
+async def approve_draft(draft_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """'원고 검토 필요'를 사람이 보고 그대로 쓰겠다고 확인한다.
+
+    검수는 글자 패턴 매칭이라 오탐이 많다('1,000원'·'무료 상담'·'보장'이 들어간 평범한 문장).
+    올린 사람이 자기 원고를 보고 판단하는 것이 맞고, 확인하지 않으면 발행 단계에서 막혀
+    아무것도 못 하게 된다. 무엇을 보고 승인했는지는 원고에 남긴다."""
+    d = await _owned(db, Draft, draft_id, current_user, "원고")
+    if d.status not in ("needs_review", "ready"):
+        raise HTTPException(status_code=400, detail="검토를 기다리는 원고만 확인할 수 있습니다")
+    checks = dict(d.checks or {})
+    checks["review"] = {
+        "approved_at": datetime.utcnow().isoformat(timespec="seconds"),
+        "by": "user",
+        "flags": len(checks.get("medical_law") or []) + len(checks.get("forbidden") or []),
+    }
+    checks["ok"] = True
+    d.checks = checks
+    d.status = "ready"
+    await db.commit()
+    return _draft_out(d)
+
+
 @router.delete("/drafts/{draft_id}")
 async def delete_draft(draft_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     d = await _owned(db, Draft, draft_id, current_user, "원고")

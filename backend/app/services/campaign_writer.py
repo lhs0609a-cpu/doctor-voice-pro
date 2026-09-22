@@ -460,49 +460,18 @@ def similarity(a: str, b: str) -> float:
     return len(ga & gb) / len(ga | gb)
 
 
-# 기존 검사기(medical_law_checker)가 놓치는 흔한 위반 표현. (정규식, 분류, 대안)
-EXTRA_LAW_PATTERNS = [
-    (r"완치", "치료효과_보장", "증상 개선"),
-    (r"보장(합니다|해 드립니다|드립니다|됩니다)?", "치료효과_보장", "기대할 수 있습니다"),
-    (r"100\s*%", "치료효과_보장", "많은 경우"),
-    (r"부작용(이|은)?\s*(전혀\s*)?없", "치료효과_보장", "부작용이 적은 편"),
-    (r"(즉시|바로)\s*효과", "치료효과_보장", "점차 개선"),
-    (r"영구(적|히)", "치료효과_보장", "장기간"),
-    (r"(유일|국내\s*최초|세계\s*최초)", "비교_우위", "(삭제)"),
-    (r"\d[\d,]*\s*원", "가격_할인", "(가격 표기 삭제)"),
-    (r"(할인|이벤트|무료|공짜)", "가격_할인", "(삭제)"),
-    (r"(치료\s*후기|시술\s*후기|환자\s*후기)", "치료경험담", "치료 안내"),
-]
+# 의료광고법 글자 패턴 검사는 걷어냈다(2026-09-23 사용자 결정).
+# '1,000원'·'무료 상담'·'보장' 같은 평범한 문장을 잡아 올린 원고를 전부 막아 세웠고,
+# 정작 진짜 위반은 문맥을 봐야 해서 글자 매칭으로는 잡히지 않는다. 검수는 이제
+# **병원이 직접 등록한 금칙어**만 본다 — 무엇을 막을지는 그 병원이 정한다.
+# (화면에도 "법적 책임은 이용자에게 있습니다"가 그대로 붙어 있다.)
 
 
 def run_static_checks(title: str, body: str, forbidden: Optional[List[str]] = None) -> Dict[str, Any]:
-    """LLM 없이 즉시 도는 검사: 의료광고법(기존 검사기 + 보강 패턴) + 병원 금칙어."""
-    result: Dict[str, Any] = {"medical_law": [], "forbidden": [], "ok": True}
-    try:
-        from app.services.medical_law_checker import medical_law_checker  # type: ignore
-        r = medical_law_checker.check(title + chr(10) + body)
-        viol = r.get("violations") if isinstance(r, dict) else None
-        if viol:
-            result["medical_law"] = [
-                {"text": v.get("text") or v.get("matched") or "", "category": v.get("category") or v.get("type") or "", "suggestion": v.get("suggestion") or v.get("replacement") or ""}
-                for v in viol[:20]
-            ]
-    except Exception as e:  # noqa: BLE001
-        logger.debug("[검수] 의료광고법 검사기 사용 불가: %s", e)
+    """LLM 없이 즉시 도는 검사. 지금은 **병원이 등록한 금칙어**만 본다.
+
+    medical_law 칸은 빈 목록으로 남긴다 — 옛 원고의 checks 와 화면이 같은 모양을 기대한다.
+    """
     text = f"{title}\n{body}"
-    seen = {(v["text"], v["category"]) for v in result["medical_law"]}
-    for pat, cat, alt in EXTRA_LAW_PATTERNS:
-        for m in re.finditer(pat, text):
-            key = (m.group(0), cat)
-            if key in seen:
-                continue
-            seen.add(key)
-            result["medical_law"].append({"text": m.group(0), "category": cat, "suggestion": alt})
-        if len(result["medical_law"]) >= 30:
-            break
-    for w in forbidden or []:
-        w = (w or "").strip()
-        if w and w in text:
-            result["forbidden"].append(w)
-    result["ok"] = not result["medical_law"] and not result["forbidden"]
-    return result
+    hits = [w.strip() for w in (forbidden or []) if w and w.strip() and w.strip() in text]
+    return {"medical_law": [], "forbidden": hits, "ok": not hits}

@@ -480,6 +480,7 @@ export const campaignAPI = {
   getDraft: async (draftId: string): Promise<Draft> => (await api.get(`${C}/drafts/${draftId}`)).data,
   updateDraft: async (draftId: string, body: { title?: string; body?: string; keyword?: string; status?: string; tags?: string[] }): Promise<Draft> =>
     (await api.put(`${C}/drafts/${draftId}`, body)).data,
+  approveDraft: async (draftId: string): Promise<Draft> => (await api.post(`${C}/drafts/${draftId}/approve`)).data,
   deleteDraft: async (draftId: string): Promise<{ success: boolean }> => (await api.delete(`${C}/drafts/${draftId}`)).data,
 
   // 4단계 사진
