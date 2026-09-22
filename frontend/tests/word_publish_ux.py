@@ -1,8 +1,9 @@
-"""Browser check of Word upload, persisted formatting, and interval scheduling.
+"""Browser check of Word upload (picker and drag-and-drop), formatting, and interval scheduling.
 
 API responses are isolated fixtures. Real Naver editing is verified separately.
 """
 import asyncio
+import base64
 import io
 import os
 from pathlib import Path
@@ -39,8 +40,11 @@ async def main():
             if req.method=='PUT':config.update(req.post_data_json);state['saves']+=1
             response=config
         elif path.endswith('/drafts/upload'):
+            # 이제 한 건씩 따로 올라온다 — 파일 하나가 깨져도 나머지는 살아야 하기 때문이다.
             assert b'word/document.xml' in req.post_data_buffer or b'PK' in req.post_data_buffer
-            state['drafts']=[draft];response=[draft]
+            n=len(state['drafts'])+1
+            row=dict(draft,id=f'd{n}',title=f'{draft["title"]} {n}')
+            state['drafts'].append(row);response=[row]
         elif path.endswith('/drafts'):response=state['drafts']
         elif path.endswith('/formatting-preview'):
             assert req.post_data_json['enabled']
@@ -51,11 +55,11 @@ async def main():
             response=[booked]
         elif path.endswith('/schedule/preview') or path.endswith('/schedule/commit'):
             body=req.post_data_json
-            assert body['draft_ids']==['d']
+            assert body['draft_ids']==[d['id'] for d in state['drafts']],body['draft_ids']
             assert body['mode']=='interval' and body['every_minutes']==120
             assert body['start_at'][:10]==body['start_date']
             state['modes'].append(body['start_mode'])
-            response={'total':1,'assigned':[{'draft_id':'d','title':draft['title'],'blog_ref_id':'b','blog_label':'테스트 블로그','scheduled_at':'2026-09-23T12:00:00'}],
+            response={'total':1,'assigned':[{'draft_id':'d1','title':draft['title'],'blog_ref_id':'b','blog_label':'테스트 블로그','scheduled_at':'2026-09-23T12:00:00'}],
                       'unassigned':0,'calendar':[],'warnings':[],'starts_after':booked['last_at'],'reservations':[booked]}
             if path.endswith('/commit'):state['scheduled']=True
         elif path.endswith('/autopilot'):
@@ -76,6 +80,23 @@ async def main():
         data=io.BytesIO();doc.save(data)
         await page.get_by_label('예약할 Word 파일').set_input_files({'name':'서식.docx','mimeType':'application/vnd.openxmlformats-officedocument.wordprocessingml.document','buffer':data.getvalue()})
         await expect(page.get_by_role('button',name='선택한 1개 원고 예약하기')).to_be_enabled()
+        await expect(page.get_by_text('올린 파일 1개',exact=False)).to_be_visible()
+
+        # 끌어다 놓기 — 두 개를 한 번에. 브라우저가 파일을 열어 버리지 않고 앱이 받아야 한다.
+        payload=base64.b64encode(data.getvalue()).decode()
+        drop=page.get_by_label('예약할 Word 파일').locator('xpath=..')
+        transfer=await page.evaluate_handle('''([b64,names])=>{
+            const bin=atob(b64), bytes=new Uint8Array(bin.length);
+            for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+            const dt=new DataTransfer();
+            for(const name of names) dt.items.add(new File([bytes],name,
+                {type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}));
+            return dt;
+        }''',[payload,['밀양성장클리닉 - 스트레스.docx','거제성장클리닉 - 스트레스.docx']])
+        await drop.dispatch_event('drop',{'dataTransfer':transfer})
+        await expect(page.get_by_text('올린 파일 3개',exact=False)).to_be_visible()
+        await expect(page.get_by_text('밀양성장클리닉 - 스트레스.docx',exact=False)).to_be_visible()
+        await expect(page.get_by_role('button',name='선택한 3개 원고 예약하기')).to_be_enabled()
         await page.get_by_text('글자 강조 설정 바꾸기',exact=True).click()
         await page.get_by_label('핵심 문구 자동 강조').check()
         await page.get_by_label('특히 강조할 문구',exact=False).fill('핵심 기준')
@@ -90,8 +111,9 @@ async def main():
         await page.get_by_text('글자 강조 설정 바꾸기',exact=True).click()
         await expect(page.get_by_label('핵심 문구 자동 강조')).to_be_checked()
         await expect(page.get_by_label('특히 강조할 문구',exact=False)).to_have_value('핵심 기준')
-        await page.get_by_label('중요 포인트 테스트',exact=False).check()
-        await page.get_by_role('button',name='선택한 1개 원고 예약하기').click()
+        for n in (1, 2, 3):
+            await page.get_by_label(f'중요 포인트 테스트 {n}',exact=False).check()
+        await page.get_by_role('button',name='선택한 3개 원고 예약하기').click()
         # 이미 걸린 예약을 세어 보여 주고, 그 다음부터가 기본으로 골라져 있어야 한다.
         await expect(page.get_by_label('이미 예약된 글')).to_contain_text('이미 예약된 글 1건')
         await expect(page.get_by_label('이미 예약된 글')).to_contain_text('마지막 9/23(수) 10:00')
@@ -109,6 +131,6 @@ async def main():
         assert state['scheduled'],'Confirmation must submit the selected manuscript'
         assert not errors,errors
         await browser.close()
-    print('PASS: Word upload, automatic save, reload persistence, styled preview, interval schedule preview and confirmation; API fixtures only, no real publication')
+    print('PASS: Word upload by picker and drag-and-drop, automatic save, reload persistence, styled preview, interval schedule and confirmation; API fixtures only')
 
 asyncio.run(main())
