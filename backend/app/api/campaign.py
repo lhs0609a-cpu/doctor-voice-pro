@@ -2176,9 +2176,12 @@ async def agent_summary(current_user: User = Depends(get_current_user), db: Asyn
         rows = (await db.execute(select(PublishJob.scheduled_at).where(PublishJob.blog_ref_id == b.id, PublishJob.status.in_(["queued", "assigned", "failed"])).order_by(PublishJob.scheduled_at.asc()))).all()
         scanned = b.reservations_scanned_at
         stale = not scanned or (datetime.utcnow() - scanned) > timedelta(hours=RESERVATION_STALE_HOURS)
+        # 한 번 못 읽은 블로그는 계속 못 읽는다(주소를 모르는 것이지 일시적인 실패가 아니다).
+        # 매 주기 헛되이 두드리면 그만큼 발행이 늦어진다 — 사용자가 [새로 읽기]를 누를 때만 다시 청한다.
+        give_up = bool(b.reservations_note) and not b.reservations_scan_requested_at
         out.append(AgentBlogSummary(blog_ref_id=b.id, naver_blog_id=b.blog_id, label=b.label or b.blog_id, status=b.status or "active", status_reason=b.status_reason,
                                     pending=len(rows), next_at=rows[0][0].isoformat(timespec="minutes") if rows else None, login_id=b.login_id,
-                                    wants_scan=bool(stale or b.reservations_scan_requested_at),
+                                    wants_scan=bool(b.reservations_scan_requested_at or (stale and not give_up)),
                                     reservations_scanned_at=scanned.isoformat(timespec="minutes") if scanned else None))
     return out
 

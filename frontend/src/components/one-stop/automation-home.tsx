@@ -97,6 +97,15 @@ function shortTime(iso?: string | null) {
   return iso ? iso.replace('T', ' ').slice(5, 16) : ''
 }
 
+/** 9/24(목) 09:00 — 며칠 뒤인지 한눈에 보이게 요일을 붙인다. */
+function fmtWhen(iso?: string | null) {
+  if (!iso) return ''
+  const [day, clock] = iso.split('T')
+  const [, m, d] = day.split('-')
+  const week = ['일', '월', '화', '수', '목', '금', '토'][new Date(`${day}T00:00:00`).getDay()]
+  return `${Number(m)}/${Number(d)}(${week}) ${clock?.slice(0, 5) || ''}`
+}
+
 const CONFIRMED = '원스톱 화면에서 사용자가 네이버 예약 목록에 이 글이 있다고 확인'
 const NOT_FOUND = '원스톱 화면에서 사용자가 네이버 예약 목록에 이 글이 없다고 확인'
 
@@ -196,6 +205,9 @@ export function AutomationHome() {
   ]
 
   const recent = [...jobs].sort((a, b) => (b.scheduled_at || '').localeCompare(a.scheduled_at || '')).slice(0, 10)
+  // 아직 네이버에 등록되지 않은 것 중 가장 이른 글. '대기'만 보여 주면 왜 아무 일도 안 나는지 알 수 없다.
+  const nextUp = jobs.filter(j => ['queued', 'assigned'].includes(j.status))
+    .map(j => j.scheduled_at || '').filter(Boolean).sort()[0] || ''
   const step = (n: number) => ({ n, title: TITLES[n - 1], note: notes[n - 1] })
 
   /** 열려 있으면 펼친 칸, 아니면 한 줄. */
@@ -316,6 +328,18 @@ export function AutomationHome() {
                   </div>
                 ))}
               </div>
+
+              {/* 왜 아직 아무 일도 안 나는지 — 기다리는 이유를 한 줄로 적는다.
+                  실행기는 5분마다 훑고, 예약 시각보다 **미리** 네이버에 등록해 둔다. */}
+              {waiting > 0 && registered === 0 && (
+                <p className="rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground">
+                  {nextUp
+                    ? <>첫 글은 <b className="text-foreground">{fmtWhen(nextUp)}</b>에 올라갑니다. </>
+                    : null}
+                  PC 실행기가 <b>5분마다</b> 확인해서 그 시각 전에 네이버 예약을 걸어 둡니다 — 걸리면 &lsquo;예약됨&rsquo;으로 바뀝니다.
+                  {!launcher.running && ' 지금은 실행기가 쉬고 있어 진행되지 않습니다.'}
+                </p>
+              )}
 
               {attention.length > 0 && (
                 <div className="space-y-2 rounded-lg bg-warning-soft p-3">

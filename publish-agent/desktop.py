@@ -701,7 +701,12 @@ class Desktop:
         def run():
             try:
                 result = asyncio.run(agent.main_async(args))
-                self.output.put('실행 종료' if result == 0 else '연결 실패 — 위 오류를 확인하세요')
+                if result == 3:
+                    # 인증이 끊긴 것뿐이다. 새 열쇠를 받아 스스로 이어서 시작한다.
+                    self.output.put('서버 연결이 끊어져 다시 연결합니다 — 연결되면 발행을 이어서 합니다')
+                    self.ui.put(('reconnect', None))
+                else:
+                    self.output.put('실행 종료' if result == 0 else '연결 실패 — 위 오류를 확인하세요')
             except Exception as error:  # noqa: BLE001
                 self.output.put(f'실행 오류: {error}')
             finally:

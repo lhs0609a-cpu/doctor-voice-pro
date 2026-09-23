@@ -483,10 +483,9 @@ async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, 
         client.set_blog_status(ref, "active", "에이전트가 로그인을 확인했습니다")
 
     await sync_categories(client, editor)
-    # 남의 예약을 피해 잡으려면 서버가 그 목록을 알아야 한다. 매번 열 필요는 없고
-    # 서버가 '읽을 때가 됐다(wants_scan)'고 할 때만 연다 — 자주 여는 것 자체가 계정 위험이다.
-    reserved = await sync_reservations(client, editor, blog) if blog.get("wants_scan", True) else None
-    taken = {r.replace(second=0, microsecond=0) for r in (reserved or [])}
+    # 예약 목록 훑기는 **발행 뒤**로 미룬다. 사용자가 예약을 걸면 그 글이 네이버에 등록되는 것이
+    # 먼저다 — 목록을 먼저 열다 로그인·화면 변경으로 시간을 쓰면 그만큼 등록이 늦어진다.
+    taken: set = set()
 
     from journal import flush
     journal = args.journal
@@ -563,6 +562,10 @@ async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, 
         if queued:
             log.info("발행 큐 %d건 처리", queued)
 
+    # 올릴 것을 다 올린 뒤에 네이버 예약 목록을 훑어 서버 장부를 맞춘다(서버가 청하면).
+    if blog.get("wants_scan") and not stopping(args):
+        await sync_reservations(client, editor, blog)
+
 
 # ---------------------------------------------------------------- 메인 루프
 async def run_once(client: ServerClient, pool: BrowserPool, args: argparse.Namespace) -> int:
@@ -619,6 +622,12 @@ async def main_async(args: argparse.Namespace) -> int:
                 try:
                     await run_once(client, pool, args)
                 except ServerError as e:
+                    # 인증이 끊기면(토큰 만료·다른 PC에서 재연결) 이 루프는 아무것도 할 수 없다.
+                    # 그런데도 계속 돌면 화면에는 '자동 발행 실행 중' 초록불이 켜진 채
+                    # 발행 요청은 한 번도 가지 않는다(2026-09-23 실측). 멈추고 알린다.
+                    if e.status in (401, 403):
+                        log.error("서버 인증이 끊어졌습니다 — 다시 연결한 뒤 이어서 발행합니다")
+                        return 3
                     log.error("서버 오류: %s", e)
                 except Exception as e:  # noqa: BLE001
                     log.error("주기 실행 오류: %s\n%s", e, traceback.format_exc())
