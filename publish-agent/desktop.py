@@ -674,8 +674,9 @@ class Desktop:
         while not self.closing:
             self.beat_once()
             beats += 1
-            # 켜 둔 채 며칠 쓰는 PC가 많다. 켤 때 한 번만 보면 새 버전을 영영 못 받는다.
-            if beats % UPDATE_EVERY_BEATS == 0:
+            # 처음 한 번은 바로 본다 — 사람이 실행기를 껐다 켜는 이유가 보통 '최신으로 맞추려고'다.
+            # 그 뒤로는 주기적으로. 켜 둔 채 며칠 쓰는 PC 가 많아서 한 번만 보면 영영 못 받는다.
+            if beats == 1 or beats % UPDATE_EVERY_BEATS == 0:
                 self.check_update()
             if self.beat_wake.wait(BEAT_SECONDS):   # 종료 요청이면 바로 빠진다
                 return
@@ -705,15 +706,43 @@ class Desktop:
         self.ui.put(('update', (update['version'], installer)))
 
     def offer_update(self, version, installer):
-        """새 버전은 묻지 않고 설치한다.
+        """새 버전은 묻지 않고 설치하되, 무슨 일이 벌어지는지는 팝업으로 알린다.
 
-        병원에서 이 창을 띄워 두고 다른 일을 한다. '지금 설치할까요?'를 띄워 두면 아무도 누르지
-        않아 고친 것이 영영 닿지 않는다(2026-09-23 사용자 요청). 설치 프로그램이 알아서 실행기를
-        닫고 다시 켜 주므로, 진행 중인 발행은 결과를 남긴 뒤 이어서 돈다."""
+        '지금 설치할까요?'를 띄워 두면 아무도 누르지 않아 고친 것이 영영 닿지 않는다. 그렇다고
+        말없이 창이 닫혔다 열리면 사람은 프로그램이 꺼진 줄 안다 — 실제로 오늘 그랬다.
+        그래서 묻지는 않고 **알리기만** 한다(2026-09-23 사용자 요청: "자동업데이트 되게끔해
+        팝업창뜨면서"). 팝업은 답을 기다리지 않는다 — 3초 뒤 설치가 알아서 시작된다."""
         if self.closing:
             return
         self.status.set(f'새 버전 {version} 을 설치합니다. 잠시 뒤 실행기가 다시 열립니다.')
-        release_single_instance()
+        self.update_popup(version)
+        # 사람이 팝업을 읽을 시간을 준 뒤 설치한다. 답을 기다리지는 않는다.
+        self.root.after(3000, self.install_update, version, installer)
+
+    def update_popup(self, version) -> None:
+        """'새 버전을 설치합니다' 알림. 답을 기다리지 않는 창이라 자동 설치를 막지 않는다."""
+        try:
+            top = tk.Toplevel(self.root)
+            top.title('닥터보이스 프로 업데이트')
+            top.configure(bg=BG)
+            top.resizable(False, False)
+            top.attributes('-topmost', True)
+            tk.Label(top, text=f'새 버전 {version} 을 설치합니다', bg=BG, fg=INK,
+                     font=(FONT, 12, 'bold')).pack(padx=24, pady=(20, 6))
+            tk.Label(top, text=('설치가 끝나면 실행기가 자동으로 다시 열립니다.'
+                                ' 그대로 두셔도 됩니다.'),
+                     bg=BG, fg=MUTED, font=(FONT, 10), justify='center').pack(padx=24, pady=(0, 18))
+            top.update_idletasks()
+            x = self.root.winfo_rootx() + (self.root.winfo_width() - top.winfo_width()) // 2
+            y = self.root.winfo_rooty() + 120
+            top.geometry(f'+{max(0, x)}+{max(0, y)}')
+        except Exception as error:  # noqa: BLE001  알림을 못 띄웠다고 업데이트를 멈출 이유는 없다
+            logging.getLogger().info('업데이트 알림 창을 띄우지 못했습니다: %s', error)
+
+    def install_update(self, version, installer) -> None:
+        if self.closing:
+            return
+        release_single_instance()      # 설치 프로그램이 '실행 중'이라고 묻지 않게 이름표를 먼저 놓는다
         try:
             updater.install(installer)
         except Exception as error:  # noqa: BLE001

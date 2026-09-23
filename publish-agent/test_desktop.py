@@ -103,6 +103,59 @@ class DesktopGuideTests(unittest.TestCase):
 
 
 @unittest.skipUnless(credential_store.available(), 'DPAPI 는 Windows 에서만 쓴다')
+class UpdateNoticeTests(unittest.TestCase):
+    """새 버전은 묻지 않고 설치하되, 무슨 일인지는 알린다.
+
+    말없이 창이 닫혔다 열리면 사람은 프로그램이 꺼진 줄 안다(2026-09-23 실측: 실행기가
+    사라져 '왜 안 보이냐'가 됐다). 반대로 '설치할까요?'를 물으면 아무도 안 눌러서 고친 것이
+    영영 닿지 않는다. 그래서 알림 창은 뜨되 **답을 기다리지 않아야** 한다.
+    """
+
+    def setUp(self):
+        # Tk 는 임시 폴더 수명과 얽히지 않게 패치 바깥에서 먼저 만든다.
+        self.root = tk.Tk()
+        self.root.withdraw()
+
+    def tearDown(self):
+        self.root.destroy()
+
+    def test_the_notice_appears_and_the_install_still_runs_without_an_answer(self):
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.dict('os.environ', {'LOCALAPPDATA': folder}),
+            patch('desktop.LocalBridge.start'),
+            patch('desktop.threading.Thread.start'),
+            patch('desktop.updater.installed_build', return_value=False),
+            patch('desktop.updater.install') as install,
+            patch('desktop.messagebox.askyesno') as asked,
+        ):
+            app = Desktop(self.root)
+            app.offer_update('9.9.9', 'setup.exe')
+            tops = [w for w in self.root.winfo_children() if isinstance(w, tk.Toplevel)]
+            self.assertEqual(len(tops), 1, '알림 창이 떠야 한다')
+            text = ' '.join(w.cget('text') for w in tops[0].winfo_children() if 'text' in w.keys())
+            self.assertIn('9.9.9', text)
+            asked.assert_not_called()       # 묻지 않는다
+            install.assert_not_called()     # 읽을 시간을 준 뒤에 설치한다
+            app.install_update('9.9.9', 'setup.exe')
+            install.assert_called_once_with('setup.exe')
+
+    def test_a_failed_install_leaves_the_launcher_running_on_the_old_version(self):
+        """설치가 막혀도(서명 없는 파일 차단 등) 실행기를 죽이지 않는다."""
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.dict('os.environ', {'LOCALAPPDATA': folder}),
+            patch('desktop.LocalBridge.start'),
+            patch('desktop.threading.Thread.start'),
+            patch('desktop.updater.installed_build', return_value=False),
+            patch('desktop.updater.install', side_effect=OSError('앱 제어가 막았습니다')),
+        ):
+            app = Desktop(self.root)
+            app.install_update('9.9.9', 'setup.exe')
+            self.assertIn('설치하지 못했습니다', app.status.get())
+            self.assertFalse(app.stop_event.is_set())
+
+
 class CredentialStoreTests(unittest.TestCase):
     """자동 로그인용 비밀번호는 이 PC에서만 풀린다."""
 

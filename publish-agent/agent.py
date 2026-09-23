@@ -243,9 +243,38 @@ class BrowserPool:
     def __init__(self, pw, profiles_dir: Path, headless: bool, window_pos: Optional[str]):
         self.pw = pw
         self.profiles_dir = profiles_dir
+        self.legacy: Dict[str, List[str]] = {}    # 프로필 키 → 예전에 쓰던 폴더 이름들
         self.headless = headless
         self.window_pos = window_pos
         self._ctx: Dict[str, Any] = {}
+
+    def profile_dir(self, key: str) -> Path:
+        """로그인 세션이 사는 폴더. 옛 이름으로 남아 있으면 옮겨 와서 다시 로그인하지 않게 한다.
+
+        예전에는 블로그 주소로 폴더를 잡았다. 그런데 네이버는 로그인 아이디와 블로그 주소가
+        다를 수 있어서(lhs0609c 로 로그인, 블로그는 platonmarketing), 주소를 맞추는 순간
+        빈 프로필로 갈아타 로그인이 통째로 날아갔다(2026-09-23 실측).
+        로그인 세션은 **계정**의 것이므로 계정으로 잡고, 옛 폴더는 한 번 옮겨 온다."""
+        target = self.profiles_dir / key
+        if target.exists():
+            return target
+        for old in self.legacy.get(key, ()):
+            source = self.profiles_dir / old
+            if source != target and source.is_dir():
+                try:
+                    source.rename(target)
+                    log.info("브라우저 프로필을 '%s' 에서 '%s' 로 옮겼습니다 — 다시 로그인하지 않아도 됩니다", old, key)
+                    return target
+                except OSError as e:
+                    log.info("프로필을 옮기지 못했습니다(%s → %s): %s", old, key, e)
+        return target
+
+    def remember_profile(self, key: str, *aliases: str) -> None:
+        """이 계정이 예전에 어떤 이름으로 저장됐을 수 있는지 알려 둔다."""
+        seen = self.legacy.setdefault(key, [])
+        for alias in aliases:
+            if alias and alias != key and alias not in seen:
+                seen.append(alias)
 
     async def page_for(self, naver_blog_id: str, proxy: Optional[str] = None):
         ctx = self._ctx.get(naver_blog_id)
@@ -262,7 +291,7 @@ class BrowserPool:
         return ctx.pages[0] if ctx.pages else await ctx.new_page()
 
     async def _launch(self, naver_blog_id: str, proxy: Optional[str] = None):
-        user_data_dir = self.profiles_dir / naver_blog_id
+        user_data_dir = self.profile_dir(naver_blog_id)
         user_data_dir.mkdir(parents=True, exist_ok=True)
         args = ["--disable-blink-features=AutomationControlled", "--no-first-run", "--no-default-browser-check", "--restore-last-session"]
         if self.window_pos:
@@ -476,7 +505,10 @@ async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, 
     except Exception as e:  # noqa: BLE001  프록시를 못 읽었다고 발행을 멈추지는 않는다
         log.warning("블로그 '%s' 프록시 설정을 읽지 못했습니다(%s) → PC 회선으로 진행", label, e)
         proxy = None
-    page = await pool.page_for(naver_id, proxy)
+    # 프로필은 계정 단위다. 주소가 바뀌어도 로그인이 유지되도록 로그인 아이디를 먼저 쓴다.
+    profile = (blog.get("login_id") or "").strip() or naver_id
+    pool.remember_profile(profile, naver_id, (blog.get("naver_blog_id") or "").strip())
+    page = await pool.page_for(profile, proxy)
     # DV_WRITE_URL: 테스트용(가짜 에디터 페이지). 평소엔 비워 두면 네이버 글쓰기 URL.
     editor = NaverEditor(page, captcha_wait_sec=args.captcha_wait, write_url=os.environ.get("DV_WRITE_URL") or WRITE_URL)
 
@@ -616,7 +648,7 @@ async def run_once(client: ServerClient, pool: BrowserPool, args: argparse.Names
             await process_blog(client, pool, b, args, claim_unassigned=len(summary) <= 1)
         except Exception as e:  # noqa: BLE001
             log.error("블로그 '%s' 처리 중 오류: %s\n%s", b.get("label"), e, traceback.format_exc())
-            await pool.close(b["naver_blog_id"])
+            await pool.close((b.get("login_id") or "").strip() or b["naver_blog_id"])
     return len(blogs)
 
 
