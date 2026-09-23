@@ -278,6 +278,10 @@ class PublishJob(Base):
     images_ready = Column(Boolean, default=False)            # 유니크화 사전 처리 완료
     image_variants = Column(JSON, default=list)              # [{slot, pool_image_id, variant_id, path}]
     published_at = Column(DateTime, nullable=True)
+    # 발행 뒤 검색으로 확인한 흔적 {rank, searched_at, screenshot_path, search_url}.
+    # 마이그레이션(20260918_job_verification)은 이 칸을 만들었는데 모델에만 빠져 있었다 —
+    # 발행건 목록과 예약 취소가 모두 이 칸을 읽어서 AttributeError 로 죽었다.
+    verification = Column(JSON, default=dict)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
