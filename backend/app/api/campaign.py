@@ -2324,6 +2324,11 @@ class AgentStatusOut(BaseModel):
     running: bool = False
     version: Optional[str] = None          # 살아 있는 기기 중 가장 최근 것
     devices: List[AgentDeviceOut] = []
+    # 켜져 있다고 신호는 보내는데 정작 발행을 한 번도 청하지 않는 상태.
+    # 실행기 안에서 신호를 보내는 쪽과 글을 올리는 쪽이 따로 돌기 때문에 생긴다
+    # (2026-09-23 실측: 토큰이 죽은 채 60초마다 헛돌고 초록불만 켜져 있었다).
+    stalled: bool = False
+    stalled_hint: Optional[str] = None
 
 
 @router.post("/agent/heartbeat", response_model=AgentStatusOut)
@@ -2353,6 +2358,22 @@ async def agent_status(current_user: User = Depends(get_current_user), db: Async
     return await _agent_status(db, _uid(current_user))
 
 
+# 대기 중인 글이 이만큼 오래 그대로면 실행기가 '켜져 있기만 한' 것으로 본다.
+STALL_MINUTES = 12
+
+
+async def _stalled(db: AsyncSession, user_id: str) -> bool:
+    """올릴 글이 밀려 있는데 실행기가 한참째 아무것도 청하지 않았는가."""
+    now = datetime.utcnow()
+    oldest = (await db.execute(select(func.min(PublishJob.created_at)).where(
+        PublishJob.user_id == user_id, PublishJob.status == "queued"))).scalar()
+    if not oldest or (now - oldest) < timedelta(minutes=STALL_MINUTES):
+        return False
+    last_try = (await db.execute(select(func.max(PublishAttempt.created_at)).where(
+        PublishAttempt.user_id == user_id))).scalar()
+    return not last_try or (now - last_try) > timedelta(minutes=STALL_MINUTES)
+
+
 async def _agent_status(db: AsyncSession, user_id: str) -> AgentStatusOut:
     rows = (await db.execute(select(AgentSession).where(AgentSession.user_id == user_id)
                              .order_by(AgentSession.last_seen_at.desc()))).scalars().all()
@@ -2365,8 +2386,17 @@ async def _agent_status(db: AsyncSession, user_id: str) -> AgentStatusOut:
                                       last_seen_at=(r.last_seen_at or now).isoformat(timespec="seconds"),
                                       seconds_ago=seconds))
     live = [d for d in devices if d.seconds_ago <= ONLINE_SECONDS]
-    return AgentStatusOut(online=bool(live), running=any(d.running for d in live),
-                          version=live[0].version if live else None, devices=devices[:5])
+    running = any(d.running for d in live)
+    try:
+        stalled = bool(live and running) and await _stalled(db, user_id)
+    except Exception:  # noqa: BLE001  신호등이 곁다리 질의 때문에 꺼지면 안 된다
+        stalled = False
+    return AgentStatusOut(
+        online=bool(live), running=running,
+        version=live[0].version if live else None, devices=devices[:5],
+        stalled=stalled,
+        stalled_hint=("실행기가 켜져 있다고는 하는데 올릴 글을 한참째 가져가지 않습니다. "
+                      "실행기 창에서 [실행 중단]을 누른 뒤 [자동 발행 시작]을 다시 눌러 주세요.") if stalled else None)
 
 
 # ─────────────────────── 홈페이지 ↔ 실행기 자동 연결 ───────────────────────

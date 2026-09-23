@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import campaign as api
-from app.models.campaign import AgentSession
+from app.models.campaign import AgentSession, PublishAttempt, PublishJob
 from app.models.user import User
 
 
@@ -19,6 +19,8 @@ class AgentStatusTests(unittest.IsolatedAsyncioTestCase):
         self.engine = create_async_engine('sqlite+aiosqlite:///' + str(Path(self.tmp.name) / 'agent.db'))
         async with self.engine.begin() as conn:
             await conn.run_sync(lambda sync: AgentSession.__table__.create(sync))
+            for table in (PublishJob.__table__, PublishAttempt.__table__):
+                await conn.run_sync(lambda sync, t=table: t.create(sync))
         self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
         app = FastAPI()
         app.include_router(api.router)
@@ -39,6 +41,34 @@ class AgentStatusTests(unittest.IsolatedAsyncioTestCase):
         body = {'device_id': 'pc-1', 'version': '1.2.0', 'running': True, 'label': '원장님 PC', 'note': '대기 3건'}
         body.update(overrides)
         return body
+
+    async def test_a_launcher_that_never_takes_the_work_is_called_out(self):
+        """켜져 있다는 신호만 보내고 글은 한 번도 가져가지 않는 상태를 짚어 준다.
+
+        실행기 안에서 신호를 보내는 쪽과 글을 올리는 쪽이 따로 돈다. 올리는 쪽의 인증이
+        끊기면 초록불은 켜진 채 발행만 영영 시작되지 않는다(2026-09-23 실측)."""
+        await self.client.post('/agent/heartbeat', json=self.beat())
+        status = (await self.client.get('/agent/status')).json()
+        self.assertFalse(status['stalled'])            # 올릴 글이 없으면 멀쩡한 것이다
+
+        async with self.sessions() as db:
+            db.add(PublishJob(id='stuck', user_id='u', campaign_id='c', draft_id='d', blog_ref_id='b',
+                              scheduled_at=datetime.utcnow() + timedelta(days=1), status='queued',
+                              created_at=datetime.utcnow() - timedelta(minutes=30)))
+            await db.commit()
+        status = (await self.client.get('/agent/status')).json()
+        self.assertTrue(status['stalled'])
+        self.assertIn('실행 중단', status['stalled_hint'])
+
+    async def test_a_launcher_that_just_took_a_job_is_not_called_out(self):
+        await self.client.post('/agent/heartbeat', json=self.beat())
+        async with self.sessions() as db:
+            db.add(PublishJob(id='stuck2', user_id='u', campaign_id='c', draft_id='d', blog_ref_id='b',
+                              scheduled_at=datetime.utcnow() + timedelta(days=1), status='queued',
+                              created_at=datetime.utcnow() - timedelta(minutes=30)))
+            db.add(PublishAttempt(token='t1', job_id='stuck2', user_id='u', stage='claimed'))
+            await db.commit()
+        self.assertFalse((await self.client.get('/agent/status')).json()['stalled'])
 
     async def test_light_turns_on_with_the_first_heartbeat(self):
         before = await self.client.get('/agent/status')

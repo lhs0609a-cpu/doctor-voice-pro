@@ -293,6 +293,15 @@ export function AutomationHome() {
           )}
           {readError && <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">현황을 갱신하지 못했습니다. {readError}</p>}
 
+          {/* 초록불인데 일을 안 하는 상태. 실행기 안에서 신호를 보내는 쪽과 글을 올리는 쪽이
+              따로 돌기 때문에 생긴다 — 사용자는 '켜져 있는데 왜 안 올라가지'만 보인다. */}
+          {launcher.stalled && (
+            <p role="alert" className="rounded-xl bg-warning-soft p-4 text-sm text-warning">
+              <b className="block">실행기가 켜져 있는데 글을 가져가지 않습니다.</b>
+              {launcher.stalled}
+            </p>
+          )}
+
           {/* 준비(1~3)는 끝나면 한 줄로 사라진다. 바꿀 때만 다시 연다. */}
           {setupDone && !showSetup ? (
             <div className="flex items-center gap-3 rounded-xl border bg-success-soft px-4 py-3">

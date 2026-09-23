@@ -386,6 +386,9 @@ export interface AgentStatus {
   running: boolean
   version?: string | null
   devices: AgentDevice[]
+  /** 켜져 있다고는 하는데 올릴 글을 한참째 가져가지 않는 상태 */
+  stalled?: boolean
+  stalled_hint?: string | null
 }
 
 // ───────────────────────── API ─────────────────────────

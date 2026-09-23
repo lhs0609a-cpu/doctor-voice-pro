@@ -33,6 +33,8 @@ export interface LauncherStatus {
   latest: string | null
   updateAvailable: boolean
   note: string | null
+  /** 켜져 있다는 신호는 오는데 정작 글을 가져가지 않을 때의 안내(없으면 null) */
+  stalled: string | null
   devices: AgentDevice[]
   lastSeenAt: string | null
   local: LocalLauncher | null      // 이 PC에서 찾은 실행기(없으면 null)
@@ -131,7 +133,7 @@ export function useLauncherStatus(pollMs: number = POLL_MS): LauncherStatus {
   const myEmail = useAuthStore((s) => s.user?.email) || null
   const [state, setState] = useState<Omit<LauncherStatus, 'refresh' | 'pairNow'>>({
     light: 'checking', label: LIGHT_LABEL.checking, online: false, running: false,
-    version: null, latest: null, updateAvailable: false, note: null, devices: [], lastSeenAt: null,
+    version: null, latest: null, updateAvailable: false, note: null, stalled: null, devices: [], lastSeenAt: null,
     local: null, pairing: false, pairError: null,
   })
   const latestRef = useRef<string | null>(null)
@@ -163,7 +165,7 @@ export function useLauncherStatus(pollMs: number = POLL_MS): LauncherStatus {
       status = await campaignAPI.agentStatus()
     } catch {
       // 서버를 못 읽는 것과 실행기가 꺼진 것은 다르다 — 마지막으로 알던 값을 유지한다.
-      setState((s) => ({ ...s, light: 'error', label: LIGHT_LABEL.error, online: false, running: false,
+      setState((s) => ({ ...s, light: 'error', label: LIGHT_LABEL.error, online: false, running: false, stalled: null,
         note: '서버에서 연결 상태를 확인하지 못했습니다. 인터넷 연결을 확인하고 다시 확인해 주세요. 실행기가 꺼졌다는 뜻은 아닙니다.' }))
       return
     }
@@ -181,6 +183,7 @@ export function useLauncherStatus(pollMs: number = POLL_MS): LauncherStatus {
     setState((s) => ({
       ...s, light, label: LIGHT_LABEL[light], online: status.online, running: status.running,
       version: status.version || local?.version || null, latest, updateAvailable, note,
+      stalled: status.stalled ? (status.stalled_hint || '실행기가 켜져 있지만 글을 가져가지 않습니다') : null,
       devices: status.devices, lastSeenAt: status.devices[0]?.last_seen_at || null, local,
       pairError: status.online ? null : s.pairError,
     }))
