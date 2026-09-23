@@ -990,11 +990,14 @@ class DraftOut(BaseModel):
     updated_at: Optional[datetime] = None
     # 이미 예약이 걸린 원고인가. 걸려 있으면 다시 고를 수 없어야 한다.
     booked_at: Optional[str] = None           # 잡혀 있는 예약 시각(KST)
+    booked_job_id: Optional[str] = None       # 그 예약(발행건) 번호 — 화면에서 바로 취소할 수 있게
+    booked_status: Optional[str] = None       # queued=아직 네이버에 안 올림 / submitted=이미 등록됨
 
 
-def _draft_out(d: Draft, with_body: bool = True, booked_at: Optional[str] = None) -> DraftOut:
+def _draft_out(d: Draft, with_body: bool = True, booked_at: Optional[str] = None,
+               booked_job_id: Optional[str] = None, booked_status: Optional[str] = None) -> DraftOut:
     return DraftOut(
-        booked_at=booked_at,
+        booked_at=booked_at, booked_job_id=booked_job_id, booked_status=booked_status,
         id=d.id, campaign_id=d.campaign_id, keyword_id=d.keyword_id, keyword=d.keyword, source=d.source or "manual",
         parent_draft_id=d.parent_draft_id, title=d.title or "", body=(d.body if with_body else None),
         char_count=d.char_count or 0, status=d.status or "ready", checks=d.checks or {}, image_plan=d.image_plan or [],
@@ -1217,11 +1220,16 @@ async def list_drafts(campaign_id: str, with_body: bool = False, current_user: U
     c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
     rows = (await db.execute(select(Draft).where(Draft.campaign_id == c.id).order_by(Draft.created_at.asc()))).scalars().all()
     await _heal_law_holds(db, rows)
-    booked = {r: at for r, at in (await db.execute(select(PublishJob.draft_id, PublishJob.scheduled_at).where(
-        PublishJob.campaign_id == c.id, PublishJob.status.in_(list(JOB_ACTIVE))))).all()}
-    return [_draft_out(d, with_body=with_body,
-                       booked_at=booked[d.id].isoformat(timespec="minutes") if d.id in booked and booked[d.id] else None)
-            for d in rows]
+    booked = {r: (jid, at, st) for r, jid, at, st in (await db.execute(
+        select(PublishJob.draft_id, PublishJob.id, PublishJob.scheduled_at, PublishJob.status).where(
+            PublishJob.campaign_id == c.id, PublishJob.status.in_(list(JOB_ACTIVE))))).all()}
+    out = []
+    for d in rows:
+        jid, at, st = booked.get(d.id, (None, None, None))
+        out.append(_draft_out(d, with_body=with_body,
+                              booked_at=at.isoformat(timespec="minutes") if at else None,
+                              booked_job_id=jid, booked_status=st))
+    return out
 
 
 @router.get("/drafts/{draft_id}", response_model=DraftOut)
@@ -1319,7 +1327,8 @@ async def delete_draft(draft_id: str, current_user: User = Depends(get_current_u
     d = await _owned(db, Draft, draft_id, current_user, "원고")
     active = (await db.execute(select(func.count()).select_from(PublishJob).where(PublishJob.draft_id == d.id, PublishJob.status.in_(list(JOB_ACTIVE))))).scalar() or 0
     if active:
-        raise HTTPException(status_code=400, detail="예약이 걸린 원고는 삭제할 수 없습니다. 예약을 먼저 취소하세요.")
+        raise HTTPException(status_code=400, detail=(
+            "이 원고에는 예약이 걸려 있습니다. 줄 오른쪽의 [예약 취소]를 누른 뒤 지우세요."))
     await db.delete(d)
     await db.commit()
     return {"success": True}
@@ -1678,7 +1687,10 @@ async def schedule_cancel(campaign_id: str, current_user: User = Depends(get_cur
             continue
         b = await db.get(Blog, j.blog_ref_id)
         if b:
-            mark = (await db.execute(select(ScheduleMark).where(ScheduleMark.user_id == _uid(current_user), ScheduleMark.blog_id == b.blog_id, ScheduleMark.scheduled_at == j.scheduled_at))).scalar_one_or_none()
+            # 네이버에서 읽어 온 자리는 남의 예약이다 — 우리 예약을 취소한다고 지우면 안 된다.
+            mark = (await db.execute(select(ScheduleMark).where(
+                ScheduleMark.user_id == _uid(current_user), ScheduleMark.blog_id == b.blog_id,
+                ScheduleMark.scheduled_at == j.scheduled_at, ScheduleMark.source != "naver"))).scalars().first()
             if mark:
                 await db.delete(mark)
         n += 1
@@ -1757,7 +1769,21 @@ async def cancel_job(job_id: str, current_user: User = Depends(get_current_user)
     if changed.rowcount != 1:
         await db.rollback()
         raise HTTPException(status_code=409, detail="실행이 시작되어 취소할 수 없습니다")
-    await db.commit()
+    await db.commit()                      # 취소는 여기서 확정한다
+    # 잡아 둔 자리도 비운다. 안 그러면 취소한 시각이 영영 '찬 자리'로 남아 다음 예약이
+    # 그 시간대를 피해 가고, 사용자는 왜 비는지 알 수 없다.
+    # 자리 비우기가 실패해도 취소 자체는 유효하다 — 따로 커밋해 서로를 물고 늘어지지 않게 한다.
+    try:
+        b = await db.get(Blog, j.blog_ref_id)
+        if b:
+            mark = (await db.execute(select(ScheduleMark).where(
+                ScheduleMark.user_id == _uid(current_user), ScheduleMark.blog_id == b.blog_id,
+                ScheduleMark.scheduled_at == j.scheduled_at, ScheduleMark.source != "naver"))).scalars().first()
+            if mark:
+                await db.delete(mark)
+                await db.commit()
+    except Exception:  # noqa: BLE001
+        await db.rollback()
     return (await _jobs_out(db, [j]))[0]
 
 

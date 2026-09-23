@@ -220,6 +220,37 @@ class ReservationTests(DatabaseCase):
             self.assertTrue(all(abs((slot - t).total_seconds()) >= 120 * 60 for t in taken),
                             f'{slot} 가 기존 예약 {taken} 에 너무 가깝다')
 
+    # ------------------------------------------------------------ 예약 취소
+    async def test_cancelling_one_job_frees_its_slot(self):
+        """한 건만 취소해도 그 시각이 다시 비어야 한다.
+
+        예전에는 묶음 취소만 자리를 비우고 한 건 취소는 표시를 남겨, 취소한 시간대가
+        영영 '찬 자리'로 남았다. 사용자는 왜 그 시각을 못 쓰는지 알 수 없다."""
+        async with self.sessions() as db:
+            job = await db.get(PublishJob, 'j0')
+            db.add(ScheduleMark(user_id='u', blog_id='testblog', scheduled_at=job.scheduled_at,
+                                title='원고', source='campaign'))
+            await db.commit()
+            slot = job.scheduled_at
+        self.assertIn((slot, 'campaign'), await self.marks())
+
+        response = await self.client.post('/jobs/j0/cancel')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertNotIn((slot, 'campaign'), await self.marks())
+        async with self.sessions() as db:
+            self.assertEqual((await db.get(PublishJob, 'j0')).status, 'cancelled')
+
+    async def test_cancelling_ours_never_frees_someone_elses_slot(self):
+        """같은 시각에 네이버에서 읽어 온 남의 예약이 있으면 그것은 그대로 둔다."""
+        async with self.sessions() as db:
+            job = await db.get(PublishJob, 'j0')
+            db.add(ScheduleMark(user_id='u', blog_id='testblog', scheduled_at=job.scheduled_at,
+                                title='남의 글', source='naver'))
+            await db.commit()
+            slot = job.scheduled_at
+        await self.client.post('/jobs/j0/cancel')
+        self.assertIn((slot, 'naver'), await self.marks())
+
     # ------------------------------------------------------- 발행 직전 방어
     async def test_reschedule_moves_the_job_and_keeps_the_attempt_count(self):
         async with self.sessions() as db:

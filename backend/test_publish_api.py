@@ -7,6 +7,7 @@ from test_publish_protocol import DatabaseCase
 from app.api import campaign as api
 from app.models.campaign import Blog, Draft, Campaign, AutopilotPolicy, AutomationRun, Client
 from app.models.background_job import BackgroundJob
+from app.models.publish_queue import ScheduleMark
 from app.models.user import User
 
 
@@ -62,7 +63,8 @@ class ApiTests(DatabaseCase):
     async def asyncSetUp(self):
         await super().asyncSetUp()
         async with self.engine.begin() as conn:
-            for t in (Blog.__table__, Draft.__table__, Campaign.__table__, AutopilotPolicy.__table__, AutomationRun.__table__, BackgroundJob.__table__, Client.__table__):
+            for t in (Blog.__table__, Draft.__table__, Campaign.__table__, AutopilotPolicy.__table__, AutomationRun.__table__, BackgroundJob.__table__, Client.__table__,
+                      ScheduleMark.__table__):
                 await conn.run_sync(lambda c, table=t: table.create(c))
         async with self.sessions() as db:
             db.add(Campaign(id='c', user_id='u', client_id='client', name='test', blog_ids=['b']))

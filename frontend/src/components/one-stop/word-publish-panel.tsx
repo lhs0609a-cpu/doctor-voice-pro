@@ -141,6 +141,17 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
     } catch (e) { setError(errMsg(e)) } finally { setBusy('') }
   }
 
+  // 예약 취소 — 아직 네이버에 올리지 않았으면 자리까지 비워 준다.
+  const unbook = async (d: Draft) => {
+    if (!d.booked_job_id) return
+    setBusy(d.id); setError('')
+    try {
+      await campaignAPI.cancelJob(d.booked_job_id)
+      const rows = await campaignAPI.listDrafts(campaign.id)
+      setDrafts(rows.filter(x => x.source === 'upload'))
+    } catch (e) { setError(errMsg(e)) } finally { setBusy('') }
+  }
+
   const remove = async (d: Draft) => {
     setBusy(d.id); setError('')
     try {
@@ -248,7 +259,17 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
                     {d.title}
                   </label>
                   {booked && (
-                    <span className="shrink-0 text-xs text-success">예약됨 · {whenLabel(d.booked_at)}</span>
+                    <>
+                      <span className="shrink-0 text-xs text-success">예약됨 · {whenLabel(d.booked_at)}</span>
+                      {d.booked_status === 'queued' ? (
+                        <button type="button" disabled={!!busy} onClick={() => void unbook(d)}
+                          className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-destructive hover:underline disabled:opacity-40">
+                          {busy === d.id ? '취소하는 중…' : '예약 취소'}
+                        </button>
+                      ) : (
+                        <span className="shrink-0 text-xs text-muted-foreground">네이버에 등록됨</span>
+                      )}
+                    </>
                   )}
                   {booked ? null : review ? (
                     <button type="button" onClick={() => setOpen(open === d.id ? '' : d.id)}
@@ -261,8 +282,9 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
                       표현 {fixes.length}곳 고침
                     </button>
                   )}
-                  <button type="button" aria-label={`${d.title} 빼기`} title="이 원고 빼기"
-                    disabled={!!busy} onClick={() => void remove(d)}
+                  <button type="button" aria-label={`${d.title} 빼기`}
+                    title={booked ? '예약을 먼저 취소하세요' : '이 원고 빼기'}
+                    disabled={!!busy || booked} onClick={() => void remove(d)}
                     className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40">
                     {busy === d.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                   </button>
@@ -333,7 +355,7 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
       {drafts.length > 0 && drafts.every(d => d.booked_at) && (
         <p className="text-sm text-muted-foreground">
           올린 원고가 모두 예약되어 있습니다. 더 올리려면 <b>새 Word 파일</b>을 놓으시고,
-          시간을 바꾸려면 아래 발행 현황에서 기존 예약을 취소한 뒤 다시 잡으세요.
+          시간을 바꾸려면 줄 오른쪽의 <b>[예약 취소]</b>를 누른 뒤 다시 잡으세요.
         </p>
       )}
       {drafts.some(d => d.status === 'ready' && fixesOf(d).length > 0) && (

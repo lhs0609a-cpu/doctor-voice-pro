@@ -273,6 +273,9 @@ export interface Draft {
   updated_at?: string
   /** 이미 예약이 걸린 원고의 예약 시각(KST). 있으면 다시 고를 수 없다. */
   booked_at?: string | null
+  booked_job_id?: string | null
+  /** queued = 아직 네이버에 안 올림 / submitted = 네이버에 이미 등록됨 */
+  booked_status?: string | null
 }
 
 export interface PhotoMeta {
