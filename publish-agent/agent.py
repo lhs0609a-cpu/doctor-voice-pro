@@ -101,9 +101,12 @@ def select_blogs(summary: List[Dict[str, Any]], want: Optional[str]) -> List[Dic
         return hit[:1]
     # 대기 글이 있거나, 상태가 막혀 있는 블로그(로그인·보안확인)는 한 번 들여다본다.
     # 막힌 블로그를 대기 글이 있을 때만 보면, 예약이 없는 동안에는 로그인해도 영영 안 풀린다.
+    # 예약 목록을 봐 달라고 청한 블로그도 본다 — 사람이 네이버에서 지운 예약은 그렇게만 알 수 있다.
+    # 올릴 글이 다 예약된 뒤(pending=0)가 바로 그 상황이라, 이걸 빼면 지운 예약을 영영 모른다.
     return [b for b in summary
             if (b.get("status") or "active") in RETRYABLE_BLOG_STATUS
-            and ((b.get("pending") or 0) > 0 or (b.get("status") or "active") != "active")]
+            and ((b.get("pending") or 0) > 0 or (b.get("status") or "active") != "active"
+                 or b.get("wants_scan"))]
 
 
 # ---------------------------------------------------------------- 잡 1건

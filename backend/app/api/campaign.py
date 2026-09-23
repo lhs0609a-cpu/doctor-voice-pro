@@ -36,7 +36,8 @@ from app.services import campaign_crypto as crypto
 from app.services import campaign_jobs
 from app.services import campaign_writer as writer
 from app.services import docx_import
-from app.services.point_formatting import PointFormatting, apply_points
+from app.services.image_widen import widen as widen_image
+from app.services.point_formatting import PointFormatting, apply_points, trim_stray_emphasis
 from app.services import image_uniquifier as uniq
 from app.services import job_worker
 from app.services import schedule_engine as se
@@ -1466,6 +1467,13 @@ class ScheduleItem(BaseModel):
     scheduled_at: str
 
 
+class ReservedSlot(BaseModel):
+    """앞으로 남은 예약 자리 한 칸. 사람이 이걸 보고 손으로 지운다."""
+    at: str
+    title: Optional[str] = None
+    source: str = "campaign"             # campaign=우리가 건 것 / naver=목록에서 읽어 온 것
+
+
 class BlogReservations(BaseModel):
     """블로그 한 개의 '이미 잡혀 있는 자리' 현황. 화면이 이 숫자를 그대로 읽어 준다."""
     blog_ref_id: str
@@ -1475,6 +1483,7 @@ class BlogReservations(BaseModel):
     scanned_at: Optional[str] = None     # 네이버 목록을 마지막으로 읽어 온 때
     stale: bool = True                   # 읽은 적이 없거나 오래됨 → 완충을 넓혀 잡는다
     note: Optional[str] = None           # 못 읽었을 때의 사유
+    slots: List[ReservedSlot] = []       # 앞으로 남은 자리(손으로 비울 수 있게 하나씩 내려 준다)
 
 
 class SchedulePreview(BaseModel):
@@ -1549,10 +1558,11 @@ async def _schedule_inputs(db: AsyncSession, c: Campaign, body: ScheduleIn, user
 # 네이버 예약 목록을 이만큼 못 읽었으면 '모르는 상태'로 본다.
 # 모른다고 간격을 넓히지는 않는다 — 넓혀도 모르는 자리를 피하는 데는 도움이 안 되고,
 # 사용자가 고른 간격("2시간마다")과 화면에 적힌 시각만 어긋난다. 대신 화면에 그대로 알린다.
-RESERVATION_STALE_HOURS = 12
+RESERVATION_STALE_HOURS = 2
 
 
-def _reservations_state(blogs: List[Blog], plans, warnings: List[str]) -> List["BlogReservations"]:
+def _reservations_state(blogs: List[Blog], plans, warnings: List[str],
+                        detail: Optional[Dict[str, Dict[datetime, Tuple[str, Optional[str]]]]] = None) -> List["BlogReservations"]:
     """블로그별 '이미 잡혀 있는 자리' 현황.
 
     우리가 걸어 둔 예약은 자리 기록(ScheduleMark·PublishJob)에 그대로 남아 있으므로
@@ -1575,7 +1585,28 @@ def _reservations_state(blogs: List[Blog], plans, warnings: List[str]) -> List["
             last_at=future[-1].isoformat(timespec="minutes") if future else None,
             scanned_at=scanned.isoformat(timespec="minutes") if scanned else None,
             stale=stale, note=b.reservations_note,
+            slots=[ReservedSlot(at=t.isoformat(timespec="minutes"),
+                                source=(detail or {}).get(b.id, {}).get(t, ("campaign", None))[0],
+                                title=(detail or {}).get(b.id, {}).get(t, ("campaign", None))[1])
+                   for t in future[:60]],
         ))
+    return out
+
+
+async def _slot_detail(db: AsyncSession, user_id: str, blogs: List[Blog]) -> Dict[str, Dict[datetime, Tuple[str, Optional[str]]]]:
+    """자리마다 '어디서 온 것인지·제목'을 붙인다. 화면에서 무엇을 지우는지 보이게."""
+    out: Dict[str, Dict[datetime, Tuple[str, Optional[str]]]] = {}
+    ids = [b.blog_id for b in blogs if b.blog_id]
+    if not ids:
+        return out
+    rows = (await db.execute(select(ScheduleMark).where(
+        ScheduleMark.user_id == user_id, ScheduleMark.blog_id.in_(ids)))).scalars().all()
+    by_blog_id: Dict[str, List[Blog]] = {}
+    for b in blogs:
+        by_blog_id.setdefault(b.blog_id or "", []).append(b)
+    for mark in rows:
+        for b in by_blog_id.get(mark.blog_id, []):
+            out.setdefault(b.id, {})[mark.scheduled_at] = (mark.source or "campaign", mark.title)
     return out
 
 
@@ -1626,7 +1657,41 @@ async def campaign_reservations(campaign_id: str, current_user: User = Depends(g
         return []
     plans = [se.blog_plan_from_model(b) for b in blogs]
     await se.load_taken_slots(db, _uid(current_user), plans)
-    return _reservations_state(blogs, plans, [])
+    return _reservations_state(blogs, plans, [], await _slot_detail(db, _uid(current_user), blogs))
+
+
+class FreeSlotIn(BaseModel):
+    blog_ref_id: str
+    at: datetime
+
+
+@router.post("/campaigns/{campaign_id}/reservations/free", response_model=List[BlogReservations])
+async def free_reservation_slot(campaign_id: str, body: FreeSlotIn,
+                                current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """예약 한 칸을 손으로 비운다 — '네이버에서 직접 지웠습니다'.
+
+    네이버는 사람이 예약 목록에서 글을 지워도 우리에게 알려 오지 않는다. 그 자리가 장부에
+    남아 있으면 다음 글들이 없는 예약을 피해 계속 뒤로 밀린다(2026-09-23 사용자 지적).
+    읽어 오기가 막혔을 때 사람이 직접 풀 수 있는 유일한 길이므로, 네이버에서 읽어 온 자리
+    (source='naver')까지 지운다. 다음 스캔이 진실을 다시 가져온다.
+
+    같은 시각에 걸린 우리 일감도 함께 취소한다 — 자리만 비우면 실행기가 그 시각에 또 올린다."""
+    c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
+    uid = _uid(current_user)
+    b = await _owned(db, Blog, body.blog_ref_id, current_user, "블로그")
+    at = se.floor_slot(body.at.replace(tzinfo=None))
+    await db.execute(update(PublishJob).where(
+        PublishJob.user_id == uid, PublishJob.blog_ref_id == b.id,
+        PublishJob.scheduled_at == at, PublishJob.status != "cancelled").values(status="cancelled"))
+    await db.execute(delete(ScheduleMark).where(
+        ScheduleMark.user_id == uid, ScheduleMark.blog_id == b.blog_id, ScheduleMark.scheduled_at == at))
+    b.reservations_scan_requested_at = datetime.utcnow()      # 진짜 목록을 다시 확인한다
+    await db.commit()
+    blogs = (await db.execute(select(Blog).where(
+        Blog.id.in_(c.blog_ids or []), Blog.user_id == uid))).scalars().all() if c.blog_ids else []
+    plans = [se.blog_plan_from_model(x) for x in blogs]
+    await se.load_taken_slots(db, uid, plans)
+    return _reservations_state(blogs, plans, [], await _slot_detail(db, uid, blogs))
 
 
 @router.post("/campaigns/{campaign_id}/reservations/rescan")
@@ -1667,6 +1732,8 @@ async def schedule_commit(campaign_id: str, body: ScheduleIn, current_user: User
         ))
         # 예약 자리 기록(다른 경로의 간격 예약과 공유)
         db.add(ScheduleMark(user_id=_uid(current_user), blog_id=b.blog_id, scheduled_at=at, title=d.title[:200], source="campaign"))
+    for b in blogs:
+        b.reservations_scan_requested_at = datetime.utcnow()   # 지운 예약이 있는지 다시 확인
     c.status = "scheduled"
     c.step = 6
     merged = dict(c.settings or {})
@@ -1795,6 +1862,35 @@ async def cancel_job(job_id: str, current_user: User = Depends(get_current_user)
                 await db.delete(mark)
                 await db.commit()
     except Exception:  # noqa: BLE001
+        await db.rollback()
+    return (await _jobs_out(db, [j]))[0]
+
+
+@router.post("/jobs/{job_id}/release", response_model=JobOut)
+async def release_job(job_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """'네이버에서 직접 예약을 지웠습니다' — 그 시각을 다시 쓸 수 있게 비워 준다.
+
+    네이버 예약 목록에서 사람이 지운 것은 우리에게 알려 오지 않는다. 우리 장부에는 그 자리가
+    그대로 차 있어서, 다음에 올릴 글들이 없는 예약을 피해 뒤로 밀린다 — 화면에는 이유 없는
+    빈 시간대로 보인다(2026-09-23 사용자 지적).
+
+    그래서 그 자리에 걸린 기록을 통째로 비운다. 네이버가 만든 자리(source='naver')까지 지우는
+    유일한 곳이다 — 사람이 '거기 이제 없다'고 알려 준 것이기 때문이다. 다음 스캔이 진실을
+    다시 가져오므로, 착각이었더라도 곧 제자리로 돌아온다."""
+    j = await _owned(db, PublishJob, job_id, current_user, "발행건")
+    if j.status == "cancelled":
+        return (await _jobs_out(db, [j]))[0]
+    await db.execute(update(PublishJob).where(PublishJob.id == j.id).values(status="cancelled"))
+    await db.commit()
+    try:
+        b = await db.get(Blog, j.blog_ref_id)
+        if b and j.scheduled_at:
+            await db.execute(delete(ScheduleMark).where(
+                ScheduleMark.user_id == _uid(current_user), ScheduleMark.blog_id == b.blog_id,
+                ScheduleMark.scheduled_at == j.scheduled_at))
+            b.reservations_scan_requested_at = datetime.utcnow()   # 진짜 목록을 다시 확인한다
+            await db.commit()
+    except Exception:  # noqa: BLE001  자리 비우기가 실패해도 취소 자체는 유효하다
         await db.rollback()
     return (await _jobs_out(db, [j]))[0]
 
@@ -1961,9 +2057,11 @@ async def _doc_blocks(db: AsyncSession, draft: Draft, include_images: bool) -> L
             image = await db.get(PoolImage, block.get("pool_image_id") or "")
             if not image or not image.data:
                 raise ValueError("문서 안 사진을 찾지 못했습니다. 원고를 다시 올려 주세요")
+            data, kind = await run_in_threadpool(
+                widen_image, image.data, image.content_type or "image/jpeg")
             out.append(JobBlock(type="image", content="",
-                                image=f"data:{image.content_type or 'image/jpeg'};base64,"
-                                      + base64.b64encode(image.data).decode()))
+                                image=f"data:{kind or 'image/jpeg'};base64,"
+                                      + base64.b64encode(data).decode()))
             continue
         out.append(JobBlock(**{k: v for k, v in block.items() if k in JobBlock.model_fields}))
     return out
@@ -2070,6 +2168,8 @@ async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_us
             blocks = await _assemble_blocks(db, draft, j.image_variants or [], body.include_images)
             if body.include_images and draft.image_plan and sum(b.type == "image" for b in blocks) != len(draft.image_plan):
                 raise ValueError("필수 이미지가 누락되었습니다")
+            blocks = [JobBlock(**b) for b in
+                      trim_stray_emphasis([b.model_dump(exclude_none=True) for b in blocks])]
             if 'point_styles_v1' in body.capabilities:
                 blocks = [JobBlock(**b) for b in apply_points(
                     [b.model_dump(exclude_none=True) for b in blocks], point_settings,
@@ -2281,10 +2381,26 @@ async def agent_reservations(blog_ref_id: str, body: ReservationsIn,
         if at in kept:
             continue
         db.add(ScheduleMark(user_id=uid, blog_id=b.blog_id, scheduled_at=at, title=title, source="naver"))
+
+    # 네이버에서 직접 지운 예약. 목록에 없는데 우리 기록에만 남아 있으면 그 시간이 영영 막혀
+    # 다음 글들이 그 뒤로 밀린다(2026-09-23 사용자 지적: "예약 삭제하고 다시 올리면 공백 생기는거 아냐").
+    # 아직 네이버에 걸지 않은 일감(대기 중)은 그대로 둔다 — 그건 우리가 곧 채울 자리다.
+    stale = (await db.execute(select(ScheduleMark).where(
+        ScheduleMark.user_id == uid, ScheduleMark.blog_id == b.blog_id,
+        ScheduleMark.scheduled_at > now, ScheduleMark.source != "naver",
+    ))).scalars().all()
+    waiting = {r for (r,) in (await db.execute(select(PublishJob.scheduled_at).where(
+        PublishJob.blog_ref_id == b.id, PublishJob.status.in_(list(JOB_ACTIVE))))).all()}
+    freed = 0
+    for mark in stale:
+        if mark.scheduled_at in slots or mark.scheduled_at in waiting:
+            continue
+        await db.delete(mark)
+        freed += 1
     b.reservations_scanned_at = datetime.utcnow()
     b.reservations_note = None
     await db.commit()
-    return {"ok": True, "saved": len(slots)}
+    return {"ok": True, "saved": len(slots), "freed": freed}
 
 
 class BlogIdentityIn(BaseModel):

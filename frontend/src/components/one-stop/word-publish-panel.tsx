@@ -155,6 +155,9 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
   const remove = async (d: Draft) => {
     setBusy(d.id); setError('')
     try {
+      // 네이버에 이미 걸린 예약이면 그 시각부터 비운다 — 네이버에서 직접 지운 예약은
+      // 우리에게 알려 오지 않아서, 그냥 빼면 없는 예약을 피하느라 다음 글들이 뒤로 밀린다.
+      if (d.booked_job_id) await campaignAPI.releaseJob(d.booked_job_id)
       await campaignAPI.deleteDraft(d.id)
       setDrafts(previous => previous.filter(x => x.id !== d.id))
       setSelected(previous => previous.filter(id => id !== d.id))
@@ -284,7 +287,10 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
                           {busy === d.id ? '취소하는 중…' : '예약 취소'}
                         </button>
                       ) : (
-                        <span className="shrink-0 text-xs text-muted-foreground">네이버에 등록됨</span>
+                        <span className="shrink-0 text-xs text-muted-foreground"
+                          title="네이버에서 직접 취소했다면 오른쪽 휴지통을 누르세요. 그 시각이 다시 비워집니다.">
+                          네이버에 등록됨
+                        </span>
                       )}
                     </>
                   )}
@@ -300,8 +306,8 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
                     </button>
                   )}
                   <button type="button" aria-label={`${d.title} 빼기`}
-                    title={booked ? '예약을 먼저 취소하세요' : '이 원고 빼기'}
-                    disabled={!!busy || booked} onClick={() => void remove(d)}
+                    title={booked ? '이 예약을 빼고 그 시각을 비웁니다 (네이버에서 직접 취소한 경우)' : '이 원고 빼기'}
+                    disabled={!!busy} onClick={() => void remove(d)}
                     className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40">
                     {busy === d.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                   </button>
@@ -371,10 +377,16 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
         </p>
       )}
       {drafts.length > 0 && drafts.every(d => d.booked_at) && (
-        <p className="text-sm text-muted-foreground">
-          올린 원고가 모두 예약되어 있습니다. 더 올리려면 <b>새 Word 파일</b>을 놓으시고,
-          시간을 바꾸려면 줄 오른쪽의 <b>[예약 취소]</b>를 누른 뒤 다시 잡으세요.
-        </p>
+        <div className="space-y-1 text-xs text-muted-foreground">
+          <p>
+            올린 원고가 모두 예약되어 있습니다. 더 올리려면 <b>새 Word 파일</b>을 놓으시고,
+            시간을 바꾸려면 줄 오른쪽의 <b>[예약 취소]</b>를 누른 뒤 다시 잡으세요.
+          </p>
+          <p>
+            네이버 예약 목록에서 <b>직접 취소</b>한 글은 줄 오른쪽 <b>휴지통</b>으로 빼 주세요 —
+            그 시각이 다시 비어서, 없는 예약을 피하느라 다음 글이 뒤로 밀리지 않습니다.
+          </p>
+        </div>
       )}
       {drafts.some(d => d.status === 'ready' && fixesOf(d).length > 0) && (
         <p className="text-xs text-muted-foreground">

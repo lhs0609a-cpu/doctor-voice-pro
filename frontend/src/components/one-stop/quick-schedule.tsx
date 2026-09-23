@@ -14,7 +14,7 @@
 // 실제로는 30분 뒤 예약이다 — 화면에 그 시각을 그대로 적어 헷갈리지 않게 한다.
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CalendarClock, Loader2, RefreshCw } from 'lucide-react'
+import { CalendarClock, Loader2, RefreshCw, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { campaignAPI, type BlogReservations, type Campaign, type Client, type SchedulePreview } from '@/lib/campaign-api'
@@ -91,6 +91,7 @@ export function QuickSchedule({ campaign, client, draftIds, onScheduled, onBack,
   const [booked, setBooked] = useState<BlogReservations[]>([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [freeing, setFreeing] = useState('')
   const [rescanning, setRescanning] = useState(false)
   const [rescanMsg, setRescanMsg] = useState('')
   const [error, setError] = useState('')
@@ -170,6 +171,17 @@ export function QuickSchedule({ campaign, client, draftIds, onScheduled, onBack,
     finally { setRescanning(false) }
   }
 
+  /** 네이버에서 직접 지운 예약을 장부에서도 뺀다. 안 그러면 없는 예약을 피해 계속 뒤로 밀린다. */
+  const freeSlot = async (blogRefId: string, at: string) => {
+    setFreeing(at); setRescanMsg('')
+    try {
+      setBooked(await campaignAPI.freeReservationSlot(campaign.id, blogRefId, at))
+      setRescanMsg('그 시각을 비웠습니다. 다음 글이 그 자리에 들어갑니다.')
+      try { onUpdated(await campaignAPI.getCampaign(campaign.id)) } catch { /* 현황은 다음 주기에 읽힌다 */ }
+    } catch (e) { setRescanMsg(errMsg(e)) }
+    finally { setFreeing('') }
+  }
+
   const blogs = client.blogs.filter(b => campaign.blog_ids.includes(b.id) && b.status === 'active')
   const times = preview?.assigned || []
   const last = times[times.length - 1]
@@ -195,7 +207,28 @@ export function QuickSchedule({ campaign, client, draftIds, onScheduled, onBack,
             ? `여기서 잡은 예약끼리는 겹치지 않습니다. 네이버 예약 목록은 ${scannedAt ? `${human(scannedAt)}에 확인했습니다` : '아직 확인하지 못했습니다'} — 손으로 따로 예약한 글이 있다면 새로 읽어 주세요.`
             : `네이버 예약 목록을 ${human(scannedAt)}에 확인했습니다. 그 시간대는 피해서 잡습니다.`}
         </p>
+        {/* 자리 하나하나를 보여 주고 손으로 뺄 수 있게 한다. 네이버에서 직접 지운 예약은
+            우리에게 알려 오지 않아서, 이 길이 없으면 없는 예약을 피해 계속 뒤로 밀린다. */}
+        {booked.flatMap(r => (r.slots || []).map(slot => (
+          <div key={`${r.blog_ref_id}-${slot.at}`} className="mt-1 flex items-center gap-2 text-xs">
+            <span className="tabular-nums text-muted-foreground">{human(slot.at)}</span>
+            <span className="min-w-0 flex-1 truncate">{slot.title || (slot.source === 'naver' ? '네이버에 걸린 예약' : '예약된 글')}</span>
+            <button type="button" aria-label={`${human(slot.at)} 예약 빼기`}
+              title="네이버에서 직접 취소했다면 눌러 주세요. 이 시각이 다시 비워집니다."
+              disabled={freeing === slot.at}
+              onClick={() => void freeSlot(r.blog_ref_id, slot.at)}
+              className="shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40">
+              {freeing === slot.at ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+            </button>
+          </div>
+        )))}
         {rescanMsg && <p role="status" className="mt-1 text-xs text-primary">{rescanMsg}</p>}
+        {/* 목록을 못 읽었으면 숨기지 않는다. 조용히 넘어가면 '없는 예약'을 피해 계속 뒤로 밀린다. */}
+        {booked.filter(r => r.note).map(r => (
+          <p key={`note-${r.blog_ref_id}`} className="mt-1 text-xs text-warning">
+            {r.label}: {r.note} — 네이버에서 직접 취소한 글은 위 목록에서 <b>휴지통</b>으로 빼 주시면 그 시각이 비워집니다.
+          </p>
+        ))}
       </section>
 
       <fieldset className="space-y-2">

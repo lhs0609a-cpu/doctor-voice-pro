@@ -100,6 +100,34 @@ class TestEditorOnFakePage(unittest.TestCase):
             datetime(2026, 9, 23, 14, 30), datetime(2026, 9, 25, 18, 0), datetime(2026, 9, 26, 9, 10)])
         self.assertEqual(rows[0]["title"], "아토피 초기 증상 확인법")
 
+    def test_reads_the_reservation_list_from_the_write_screen(self):
+        """관리자 주소를 몰라도 읽는다 — 글쓰기 화면의 '예약 발행 N건' 칩이 진짜 목록이다.
+
+        추측한 관리자 주소는 실제로 한 번도 열리지 않았다(2026-09-23 실측). 칩은 우리가 이미
+        열어 둔 화면에 있으니 주소를 맞힐 필요가 없다."""
+        async def body(ed: NaverEditor, page):
+            return await ed.read_reservations("testblog")
+
+        rows = self._run(self._with_editor("", body))
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[0]["title"], "예약 글 1")
+
+    def test_a_write_screen_saying_zero_is_zero_not_unknown(self):
+        async def body(ed: NaverEditor, page):
+            return await ed.read_reservations("testblog")
+
+        self.assertEqual(self._run(self._with_editor("?reserve=0", body)), [])
+
+    def test_reading_fewer_rows_than_the_chip_claims_is_treated_as_unread(self):
+        """3건이라는데 2줄만 읽혔다면 '다 읽었다'고 하면 안 된다.
+
+        못 읽은 자리를 빈 자리로 알면 같은 시각에 또 걸린다 — 저품질의 지름길이다.
+        여기서는 관리자 주소로도 못 읽게 두었으므로 결과는 None(못 읽음)이어야 한다."""
+        async def body(ed: NaverEditor, page):
+            return await ed.read_reservations("testblog")
+
+        self.assertIsNone(self._run(self._with_editor("?reserve=3&reservebad=1", body)))
+
     def test_empty_list_is_zero_not_a_failure(self):
         """'예약된 글이 없습니다' 는 0건이다. 못 읽음(None)과 섞이면 남의 자리에 겹쳐 잡는다."""
         async def body(ed: NaverEditor, page):

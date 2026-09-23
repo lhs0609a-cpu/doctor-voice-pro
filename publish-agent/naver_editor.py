@@ -328,6 +328,50 @@ JS_READ_RESERVATIONS = r"""
 """
 
 
+JS_RESERVE_CHIP = r"""
+() => {
+  // 글쓰기 화면 오른쪽 위의 '예약 발행 3건'. 이 숫자가 '네이버가 말하는 진짜 건수'다.
+  const RE = /예약\s*발행\s*(\d+)\s*건/;
+  for (const el of document.querySelectorAll('button, a, span, div, li')) {
+    if (el.children.length > 2) continue;                 // 바깥 상자 말고 글자를 가진 것
+    const text = (el.innerText || '').replace(/\s+/g, ' ').trim();
+    if (text.length > 24) continue;
+    const hit = RE.exec(text);
+    if (!hit) continue;
+    el.setAttribute('data-dv-reserve-chip', '1');
+    return { found: true, count: parseInt(hit[1], 10) };
+  }
+  return { found: false, count: 0 };
+}
+"""
+
+
+JS_READ_RESERVE_LAYER = r"""
+() => {
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const AT = /(?:20\d{2}\s*[.\-\/년]\s*)?\d{1,2}\s*[.\-\/월]\s*\d{1,2}\s*일?[^\d]{0,10}?(?:오전|오후)?\s*\d{1,2}\s*[:시]\s*\d{2}/;
+  // 칩을 누르면 뜨는 레이어. 본문에도 날짜가 있을 수 있으므로 **레이어 안만** 읽는다.
+  const boxes = [...document.querySelectorAll(
+    '[role="dialog"], [class*="layer"], [class*="popup"], [class*="modal"], [class*="reserve"]')]
+    .filter((el) => el.offsetParent !== null && AT.test(norm(el.innerText)));
+  if (!boxes.length) return { ok: false, rows: [], error: '예약 목록이 열리지 않았습니다' };
+  boxes.sort((a, b) => norm(a.innerText).length - norm(b.innerText).length);
+  const box = boxes[0];
+  const rows = [];
+  const seen = new Set();
+  for (const el of box.querySelectorAll('li, tr, [class*="item"], [class*="post"]')) {
+    if (el.querySelector('li, tr')) continue;
+    const text = norm(el.innerText);
+    if (!text || text.length > 300 || !AT.test(text) || seen.has(text)) continue;
+    seen.add(text);
+    const t = el.querySelector('a, strong, [class*="title"]');
+    rows.push({ text, title: norm(t && t.innerText) });
+  }
+  return { ok: rows.length > 0, rows, error: rows.length ? null : '레이어에서 예약 행을 찾지 못했습니다' };
+}
+"""
+
+
 JS_READ_CATEGORIES = r"""
 async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -948,6 +992,10 @@ class NaverEditor:
         서버가 '자리가 다 비었다'고 믿고 남의 예약 위에 겹쳐 잡는다.
 
         목록 화면은 발행과 무관하므로 실패해도 예외를 올리지 않는다(로그인 문제만 올린다)."""
+        if not urls:
+            items = await self.read_reservations_in_editor()
+            if items is not None:
+                return items
         for raw in (urls or RESERVE_URLS):
             url = raw.format(blog=naver_blog_id) if "{blog}" in raw else raw
             try:
@@ -974,6 +1022,43 @@ class NaverEditor:
             log.info("예약 %d건 확인 (%s)", len(items), url)
             return items
         log.warning("예약 목록 화면을 찾지 못했습니다. 주소가 바뀌었다면 DV_RESERVE_URL 로 알려 주세요")
+        return None
+
+    async def read_reservations_in_editor(self) -> Optional[List[Dict[str, Any]]]:
+        """글쓰기 화면의 '예약 발행 N건' 칩을 눌러 목록을 읽는다.
+
+        관리자 주소는 추측이었고 실제로 한 번도 열리지 않았다(2026-09-23 실측:
+        reservations_scanned_at 이 비어 있고 사유는 '예약 목록 화면을 찾지 못했습니다').
+        칩은 우리가 이미 열어 둔 화면에 있으므로 주소를 맞힐 필요가 없다.
+
+        칩에 적힌 숫자가 네이버가 말하는 건수다. **읽어 낸 행 수가 그 숫자와 같을 때만**
+        목록을 돌려준다. 하나라도 덜 읽었는데 '이게 전부'라고 하면 서버가 빈 자리로 알고
+        같은 시각에 또 걸어 저품질을 먹는다 — 그럴 바엔 못 읽었다고 하는 편이 낫다."""
+        try:
+            await self.open_write_page()
+            for scope in (await self.frame(), self.page):
+                chip = await scope.evaluate(JS_RESERVE_CHIP)
+                if not chip or not chip.get("found"):
+                    continue
+                declared = int(chip.get("count") or 0)
+                if declared == 0:
+                    log.info("예약 0건(글쓰기 화면 표시)")
+                    return []
+                await scope.locator('[data-dv-reserve-chip="1"]').first.click()
+                await asyncio.sleep(1.2)
+                answer = await scope.evaluate(JS_READ_RESERVE_LAYER)
+                await self.page.keyboard.press("Escape")
+                rows = parse_reservation_rows((answer or {}).get("rows") or [])
+                if len(rows) != declared:
+                    log.warning("예약 목록을 %d건 읽었는데 화면은 %d건이라고 합니다 — 못 읽은 것으로 둡니다",
+                                len(rows), declared)
+                    return None
+                log.info("예약 %d건 확인 (글쓰기 화면 목록)", len(rows))
+                return rows
+        except LoginRequired:
+            raise
+        except Exception as e:  # noqa: BLE001  목록을 못 본 것뿐이다
+            log.info("글쓰기 화면에서 예약 목록을 읽지 못했습니다: %s", e)
         return None
 
     async def set_publish_now(self) -> None:

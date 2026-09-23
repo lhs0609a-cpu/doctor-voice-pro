@@ -19,7 +19,8 @@ from version import VERSION
 
 MANIFEST_URL = 'https://doctor-voice-pro-ghwi.vercel.app/downloads/launcher-version.json'
 TRUSTED_HOSTS = ('doctor-voice-pro-ghwi.vercel.app',)
-INSTALL_FLAGS = ('/SILENT', '/CLOSEAPPLICATIONS', '/RESTARTAPPLICATIONS', '/NORESTART', '/SUPPRESSMSGBOXES')
+INSTALL_FLAGS = ('/VERYSILENT', '/CLOSEAPPLICATIONS', '/FORCECLOSEAPPLICATIONS',
+                 '/RESTARTAPPLICATIONS', '/NORESTART', '/SUPPRESSMSGBOXES')
 MAX_BYTES = 400 * 1024 * 1024
 
 

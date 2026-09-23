@@ -244,7 +244,8 @@
       "Bash(xxd:*)",
       "Bash(git diff:*)",
       "Bash(find:*)",
-      "Bash(tsc:*)"
+      "Bash(tsc:*)",
+      "Bash(git *)"
     ],
     "deny": [],
     "ask": []

@@ -3,7 +3,9 @@
 여기서 지키는 약속 셋.
 1) 실행기가 읽어 온 목록은 '그 시점의 진실 전체'다 — 미래의 naver 자리를 통째로 갈아 끼운다.
    그래야 네이버에서 지운 예약이 유령 자리로 남아 영영 그 시간대를 막는 일이 없다.
-2) 우리가 걸어 둔 자리(campaign)는 스캔이 건드리지 않는다. 아직 실행기가 못 올렸을 뿐이다.
+2) 아직 올리지 못한 일감의 자리(campaign)는 스캔이 건드리지 않는다 — 곧 우리가 채울 자리다.
+   반대로 올려 둔 예약을 사람이 네이버에서 지웠다면 그 자리는 비워 준다. 안 그러면 유령 자리가
+   남아 다음 글들이 그 뒤로 밀린다(2026-09-23 사용자 지적).
 3) 발행 직전 그 칸이 차 있으면 올리지 않고 다음 빈 자리로 옮긴다(시도 횟수는 늘지 않는다).
 """
 import unittest
@@ -89,13 +91,70 @@ class ReservationTests(DatabaseCase):
         await self.scan(second, third)
         self.assertEqual(await self.marks(), [(second, 'naver'), (third, 'naver')])
 
-    async def test_scan_keeps_our_own_marks(self):
-        ours = self.future + timedelta(hours=1)
+    async def test_scan_keeps_the_slot_of_a_job_we_have_not_uploaded_yet(self):
+        """대기 중인 일감의 자리는 네이버 목록에 없어도 지키다 — 아직 우리가 올리기 전이다."""
+        ours = self.future          # j0 이 이 자리를 기다리고 있다
         async with self.sessions() as db:
             db.add(ScheduleMark(user_id='u', blog_id='testblog', scheduled_at=ours, source='campaign'))
             await db.commit()
         await self.scan(self.future + timedelta(hours=4))
         self.assertIn((ours, 'campaign'), await self.marks())
+
+    async def test_a_reservation_deleted_on_naver_frees_its_slot(self):
+        """네이버에서 직접 지운 예약. 기다리는 일감도 없으면 그 시간은 다시 쓸 수 있어야 한다."""
+        ghost = self.future + timedelta(hours=1)
+        async with self.sessions() as db:
+            db.add(ScheduleMark(user_id='u', blog_id='testblog', scheduled_at=ghost, source='campaign'))
+            await db.commit()
+        self.assertEqual((await self.scan(self.future + timedelta(hours=4)))['freed'], 1)
+        self.assertNotIn(ghost, [at for at, _ in await self.marks()])
+
+    async def test_a_post_cancelled_on_naver_by_hand_gives_its_slot_back(self):
+        """네이버에서 직접 지운 뒤 화면에서 빼면, 그 시각이 곧바로 다시 쓰인다.
+
+        네이버는 우리에게 알려 오지 않는다. 사람이 알려 주는 이 길이 막히면 없는 예약을 피하느라
+        다음 글들이 계속 뒤로 밀린다."""
+        async with self.sessions() as db:
+            job = await db.get(PublishJob, 'j0')
+            job.status = 'published'
+            db.add(ScheduleMark(user_id='u', blog_id='testblog', scheduled_at=job.scheduled_at, source='naver'))
+            await db.commit()
+        response = await self.client.post('/jobs/j0/release')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['status'], 'cancelled')
+        self.assertNotIn(self.future, [at for at, _ in await self.marks()])
+        async with self.sessions() as db:
+            self.assertIsNotNone((await db.get(Blog, 'b')).reservations_scan_requested_at)
+
+    async def test_a_slot_can_be_freed_by_hand_when_naver_cannot_be_read(self):
+        """목록 읽기가 막혔을 때 사람이 직접 자리를 비운다 — 유일한 탈출구다.
+
+        네이버에서 읽어 온 자리(source='naver')까지 지운다. 사람이 '거기 이제 없다'고
+        알려 준 것이기 때문이다. 같은 시각의 일감도 함께 취소해야 그 시각에 또 올리지 않는다."""
+        async with self.sessions() as db:
+            db.add(ScheduleMark(user_id='u', blog_id='testblog', scheduled_at=self.future, source='naver'))
+            await db.commit()
+        response = await self.client.post('/campaigns/c/reservations/free',
+                                          json={'blog_ref_id': 'b', 'at': self.future.isoformat()})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertNotIn(self.future, [at for at, _ in await self.marks()])
+        async with self.sessions() as db:
+            self.assertEqual((await db.get(PublishJob, 'j0')).status, 'cancelled')
+
+    async def test_the_reservation_list_names_each_slot_so_it_can_be_removed(self):
+        await self.scan(self.future + timedelta(hours=4))
+        rows = (await self.client.get('/campaigns/c/reservations')).json()
+        slots = {s['at']: s['source'] for s in rows[0]['slots']}
+        self.assertIn((self.future + timedelta(hours=4)).isoformat(timespec='minutes'), slots)
+
+    async def test_a_failed_scan_frees_nothing(self):
+        """목록을 못 읽었을 때 자리를 비우면 같은 시각에 두 번 올라간다 — 저품질의 지름길."""
+        ghost = self.future + timedelta(hours=1)
+        async with self.sessions() as db:
+            db.add(ScheduleMark(user_id='u', blog_id='testblog', scheduled_at=ghost, source='campaign'))
+            await db.commit()
+        await self.scan(ok=False, note='목록을 못 읽음')
+        self.assertIn((ghost, 'campaign'), await self.marks())
 
     async def test_failed_scan_leaves_the_ledger_alone(self):
         await self.scan(self.future + timedelta(hours=2))

@@ -70,6 +70,9 @@ def card(parent, **pack):
     return inner
 
 
+WINDOW_TITLE = '닥터보이스 프로 · PC 실행기'
+
+
 def hold_single_instance():
     """설치 프로그램(AppMutex)이 실행 중인 실행기를 알아보게 이름 있는 뮤텍스를 잡습니다.
 
@@ -82,6 +85,38 @@ def hold_single_instance():
     if not handle or kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
         return False
     hold_single_instance.handle = handle  # 프로세스가 끝날 때까지 유지
+    return True
+
+
+def release_single_instance():
+    """설치 프로그램을 부르기 직전에 이름표를 놓는다.
+
+    설치 프로그램은 켜지자마자 이 이름표(AppMutex)를 본다. 우리가 잠시 뒤에 창을 닫아도
+    그 사이에 이미 보고 나서 '실행 중임을 감지했습니다 — 모두 닫고 확인을 누르세요' 창을
+    띄운다. 아무도 안 눌러서 업데이트가 영영 안 됐다(2026-09-23 실측).
+    이름표를 먼저 놓으면 그 창이 뜨지 않고, 파일을 붙잡고 있는 문제는 설치 프로그램이
+    /FORCECLOSEAPPLICATIONS 로 알아서 닫는다."""
+    handle = getattr(hold_single_instance, 'handle', None)
+    if handle and sys.platform == 'win32':
+        import ctypes
+        ctypes.windll.kernel32.CloseHandle(handle)
+        hold_single_instance.handle = None
+
+
+def raise_existing_window() -> bool:
+    """이미 열려 있는 실행기 창을 화면 앞으로 끌어온다. 찾았으면 True.
+
+    창이 다른 창에 가려져 있으면 사람은 '앱이 안 보인다'고 느끼고 아이콘을 다시 누른다.
+    그때 '이미 실행 중입니다' 쪽지만 띄우면 창은 끝내 안 보인다 — 찾아서 띄워 준다."""
+    if sys.platform != 'win32':
+        return False
+    import ctypes
+    user32 = ctypes.windll.user32
+    window = user32.FindWindowW(None, WINDOW_TITLE)
+    if not window:
+        return False
+    user32.ShowWindow(window, 9)        # SW_RESTORE — 최소화돼 있으면 되돌린다
+    user32.SetForegroundWindow(window)
     return True
 
 
@@ -162,7 +197,7 @@ class Desktop:
         # tkinter 변수는 다른 스레드에서 읽으면 안 된다 → 연결 창구가 읽을 사본
         self.server_url = str(saved.get('server') or SERVER)
 
-        root.title('닥터보이스 프로 · PC 실행기')
+        root.title(WINDOW_TITLE)
         root.geometry('840x850')
         root.minsize(760, 680)
         root.configure(bg=BG)
@@ -678,6 +713,7 @@ class Desktop:
         if self.closing:
             return
         self.status.set(f'새 버전 {version} 을 설치합니다. 잠시 뒤 실행기가 다시 열립니다.')
+        release_single_instance()
         try:
             updater.install(installer)
         except Exception as error:  # noqa: BLE001
@@ -688,7 +724,8 @@ class Desktop:
             return
         self.status.set('업데이트를 설치합니다. 설치가 끝나면 실행기가 다시 열립니다.')
         self.stop_event.set()
-        self.root.after(1500, self.root.destroy)
+        # 오래 붙잡고 있을수록 설치 프로그램이 파일을 못 덮어쓴다 — 바로 비켜 준다.
+        self.root.after(200, self.root.destroy)
 
     # ------------------------------------------------------------ 실행
     def start(self):
@@ -872,6 +909,9 @@ def main():
     if hand_over_to_installed():
         return
     if not hold_single_instance():
+        # 사람이 아이콘을 다시 누른 이유는 창이 안 보여서다. 쪽지가 아니라 그 창을 띄워 준다.
+        if raise_existing_window():
+            return
         root = tk.Tk()
         root.withdraw()
         messagebox.showinfo('닥터보이스 자동 발행', '이미 실행 중입니다. 작업 표시줄에서 열려 있는 창을 확인하세요.')

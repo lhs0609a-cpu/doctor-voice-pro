@@ -307,6 +307,13 @@ export interface ScheduleInput {
 }
 
 /** 블로그 한 개에 이미 잡혀 있는 자리(우리 예약 + 네이버에서 읽어 온 남의 예약). */
+export interface ReservedSlot {
+  at: string
+  title?: string | null
+  /** campaign = 이 화면에서 건 것 / naver = 네이버 목록에서 읽어 온 것 */
+  source: string
+}
+
 export interface BlogReservations {
   blog_ref_id: string
   label: string
@@ -315,6 +322,7 @@ export interface BlogReservations {
   scanned_at?: string | null
   stale: boolean
   note?: string | null
+  slots?: ReservedSlot[]
 }
 
 export interface ScheduleItem { draft_id: string; title: string; blog_ref_id: string; blog_label: string; scheduled_at: string }
@@ -504,6 +512,9 @@ export const campaignAPI = {
 
   // 5단계 예약
   listReservations: async (id: string): Promise<BlogReservations[]> => (await api.get(`${C}/campaigns/${id}/reservations`)).data,
+  /** 예약 한 칸을 손으로 비운다 — 네이버에서 직접 지운 예약을 알릴 방법이 이것뿐이다. */
+  freeReservationSlot: async (id: string, blogRefId: string, at: string): Promise<BlogReservations[]> =>
+    (await api.post(`${C}/campaigns/${id}/reservations/free`, { blog_ref_id: blogRefId, at })).data,
   rescanReservations: async (id: string): Promise<{ requested: number }> => (await api.post(`${C}/campaigns/${id}/reservations/rescan`)).data,
   schedulePreview: async (id: string, body: ScheduleInput): Promise<SchedulePreview> => (await api.post(`${C}/campaigns/${id}/schedule/preview`, body)).data,
   scheduleCommit: async (id: string, body: ScheduleInput): Promise<SchedulePreview> => (await api.post(`${C}/campaigns/${id}/schedule/commit`, body)).data,
@@ -513,6 +524,8 @@ export const campaignAPI = {
   listJobs: async (id: string): Promise<PublishJobItem[]> => (await api.get(`${C}/campaigns/${id}/jobs`)).data,
   retryJob: async (jobId: string): Promise<PublishJobItem> => (await api.post(`${C}/jobs/${jobId}/retry`)).data,
   cancelJob: async (jobId: string): Promise<PublishJobItem> => (await api.post(`${C}/jobs/${jobId}/cancel`)).data,
+  /** 네이버에서 직접 지운 예약 — 그 시각을 다시 쓸 수 있게 비운다. */
+  releaseJob: async (jobId: string): Promise<PublishJobItem> => (await api.post(`${C}/jobs/${jobId}/release`)).data,
   markPublished: async (jobId: string, resultUrl?: string): Promise<PublishJobItem> => (await api.post(`${C}/jobs/${jobId}/mark-published`, { result_url: resultUrl })).data,
 
   // 발행 실행기(확장) 연동
