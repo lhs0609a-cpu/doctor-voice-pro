@@ -1533,10 +1533,8 @@ def _reservations_state(blogs: List[Blog], plans, warnings: List[str]) -> List["
         scanned = b.reservations_scanned_at
         stale = not scanned or (datetime.utcnow() - scanned) > timedelta(hours=RESERVATION_STALE_HOURS)
         label = b.label or b.blog_id
-        if stale:
-            when = scanned.strftime("%m/%d") + "에 확인한 목록 기준입니다" if scanned else "아직 확인하지 못했습니다"
-            warnings.append(f"{label}: 네이버 예약 목록을 {when}. 이 화면에서 잡은 예약끼리는 겹치지 않습니다. "
-                            "손으로 따로 예약한 글이 있으면 [예약 목록 새로 읽기]를 눌러 주세요.")
+        # '목록을 아직 못 읽었다'는 화면 위 상자가 이미 말한다(stale 값을 그대로 내려 준다).
+        # 여기서 또 경고로 적으면 같은 말이 두 번 나온다.
         out.append(BlogReservations(
             blog_ref_id=b.id, label=label, count=len(future),
             last_at=future[-1].isoformat(timespec="minutes") if future else None,
@@ -1560,8 +1558,10 @@ def _preview(drafts: List[Draft], blogs: List[Blog], assigned, remaining, warnin
                            starts_after=starts_after, reservations=reservations or [])
 
 
-def _allocate(body: ScheduleIn, c: Campaign, drafts: List[Draft], plans) -> Tuple[List[Tuple[str, datetime]], int, List[str], Optional[str]]:
+def _allocate(body: ScheduleIn, c: Campaign, drafts: List[Draft], plans,
+              blogs: Optional[List[Blog]] = None) -> Tuple[List[Tuple[str, datetime]], int, List[str], Optional[str]]:
     """예약 방식에 따라 자리를 잡는다. 반환 (배정, 미배정 건수, 추가 경고, 이어 붙인 기준 예약)."""
+    blogs = blogs or []
     if body.mode == "interval":
         every = max(10, min(7 * 24 * 60, body.every_minutes or 120))
         # 이미 잡힌 자리와도 '고른 간격'만큼만 띄운다. 블로그 설정의 최소 간격으로 더 밀면
@@ -1579,7 +1579,12 @@ def _allocate(body: ScheduleIn, c: Campaign, drafts: List[Draft], plans) -> Tupl
         for p in plans:
             peak = max((n for (ref, _), n in per_day.items() if ref == p.ref_id), default=0)
             if peak > p.daily_limit:
-                warnings.append(f"이 간격이면 하루 최대 {peak}건이 올라갑니다(블로그 설정 한도 {p.daily_limit}건). 간격을 넓히면 줄어듭니다.")
+                label = next((b.label or b.blog_id for b in blogs if b.id == p.ref_id), "블로그")
+                wider = next((m for m in (60, 120, 180, 360, 1440) if m > every), 1440)
+                hours = f"{wider // 60}시간" if wider < 1440 else "하루 1개"
+                warnings.append(
+                    f"{label}: 이 간격이면 하루 {peak}건이 올라갑니다. 이 블로그에 정해 둔 하루 한도는 {p.daily_limit}건입니다. "
+                    f"한도를 지키려면 간격을 {hours}로 넓히거나, 병원 관리에서 이 블로그의 하루 한도를 올리세요.")
         return assigned, remaining, warnings, (last.isoformat(timespec="minutes") if last else None)
     seed = body.seed if body.seed is not None else int(c.created_at.timestamp()) if c.created_at else 0
     assigned, remaining = se.allocate(len(drafts), plans, body.start_date, body.days, seed=seed)
@@ -1615,7 +1620,7 @@ async def campaign_reservations_rescan(campaign_id: str, current_user: User = De
 async def schedule_preview(campaign_id: str, body: ScheduleIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
     blogs, drafts, plans, warnings, reservations = await _schedule_inputs(db, c, body, current_user)
-    assigned, remaining, extra, starts_after = _allocate(body, c, drafts, plans)
+    assigned, remaining, extra, starts_after = _allocate(body, c, drafts, plans, blogs)
     return _preview(drafts, blogs, assigned, remaining, warnings + extra, interval=body.mode == "interval",
                     starts_after=starts_after, reservations=reservations)
 
@@ -1625,7 +1630,7 @@ async def schedule_commit(campaign_id: str, body: ScheduleIn, current_user: User
     c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
     await db.execute(update(Campaign).where(Campaign.id == c.id).values(updated_at=datetime.utcnow()))
     blogs, drafts, plans, warnings, reservations = await _schedule_inputs(db, c, body, current_user)
-    assigned, remaining, extra, starts_after = _allocate(body, c, drafts, plans)
+    assigned, remaining, extra, starts_after = _allocate(body, c, drafts, plans, blogs)
     warnings = warnings + extra
     by_ref = {b.id: b for b in blogs}
     for d, (ref, at) in zip(drafts, assigned):

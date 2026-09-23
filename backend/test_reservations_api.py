@@ -142,11 +142,28 @@ class ReservationTests(DatabaseCase):
         self.assertEqual(preview['starts_after'], far.isoformat(timespec='minutes'))
 
     async def test_never_scanned_blog_is_reported_stale(self):
+        """'목록을 못 읽었다'는 stale 한 값으로만 알린다 — 화면 위 상자가 이미 말하므로
+        경고로 또 적으면 같은 말이 두 번 나온다."""
         body = {'start_date': self.now.date().isoformat(), 'days': 30, 'draft_ids': ['d'],
                 'mode': 'interval', 'every_minutes': 120}
         preview = (await self.client.post('/campaigns/c/schedule/preview', json=body)).json()
         self.assertTrue(preview['reservations'][0]['stale'])
-        self.assertTrue(any('확인하지 못했습니다' in w for w in preview['warnings']))
+        self.assertFalse([w for w in preview['warnings'] if '예약 목록' in w], preview['warnings'])
+
+    async def test_going_over_the_daily_limit_says_how_to_fix_it(self):
+        """하루 한도를 넘기면 그냥 알리고 끝내지 않는다 — 어떻게 지킬 수 있는지까지 적는다."""
+        async with self.sessions() as db:
+            (await db.get(Blog, 'b')).daily_limit = 1
+            for i in range(3):
+                db.add(Draft(id=f'many{i}', user_id='u', campaign_id='c', title=f'원고 {i}', status='ready'))
+            await db.commit()
+        body = {'start_date': self.now.date().isoformat(), 'days': 30,
+                'draft_ids': ['many0', 'many1', 'many2'], 'mode': 'interval', 'every_minutes': 60}
+        preview = (await self.client.post('/campaigns/c/schedule/preview', json=body)).json()
+        warning = next(w for w in preview['warnings'] if '하루' in w)
+        self.assertIn('하루 한도는 1건', warning)
+        self.assertIn('2시간', warning)          # 바로 다음으로 넓힐 간격을 짚어 준다
+        self.assertIn('하루 한도를 올리세요', warning)
 
     async def test_the_chosen_gap_is_what_actually_happens(self):
         """'마지막 예약 다음 2시간'이라고 적었으면 정확히 2시간 뒤여야 한다.
