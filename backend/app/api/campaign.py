@@ -1572,20 +1572,10 @@ def _allocate(body: ScheduleIn, c: Campaign, drafts: List[Draft], plans,
         last = se.latest_reserved(plans) if body.start_mode == "after_last" else None
         start_at = (last + timedelta(minutes=every)) if last else (body.start_at or datetime.combine(body.start_date, time(9, 0)))
         assigned, remaining = se.allocate_interval(len(drafts), plans, start_at, every, days=max(1, body.days))
-        warnings: List[str] = []
-        per_day: Dict[Tuple[str, date], int] = {}
-        for ref, at in assigned:
-            per_day[(ref, at.date())] = per_day.get((ref, at.date()), 0) + 1
-        for p in plans:
-            peak = max((n for (ref, _), n in per_day.items() if ref == p.ref_id), default=0)
-            if peak > p.daily_limit:
-                label = next((b.label or b.blog_id for b in blogs if b.id == p.ref_id), "블로그")
-                wider = next((m for m in (60, 120, 180, 360, 1440) if m > every), 1440)
-                hours = f"{wider // 60}시간" if wider < 1440 else "하루 1개"
-                warnings.append(
-                    f"{label}: 이 간격이면 하루 {peak}건이 올라갑니다. 이 블로그에 정해 둔 하루 한도는 {p.daily_limit}건입니다. "
-                    f"한도를 지키려면 간격을 {hours}로 넓히거나, 병원 관리에서 이 블로그의 하루 한도를 올리세요.")
-        return assigned, remaining, warnings, (last.isoformat(timespec="minutes") if last else None)
+        # 하루 몇 건이 되는지는 **간격이 정한다**. 블로그 설정의 하루 한도로 잔소리하지 않는다
+        # — 손잡이가 하나뿐이어야 한다. 촘촘하면 많이, 넓히면 적게 올라가고 그 결과는
+        # 바로 아래 미리보기에 실제 시각으로 다 적혀 있다(2026-09-23 사용자 결정).
+        return assigned, remaining, [], (last.isoformat(timespec="minutes") if last else None)
     seed = body.seed if body.seed is not None else int(c.created_at.timestamp()) if c.created_at else 0
     assigned, remaining = se.allocate(len(drafts), plans, body.start_date, body.days, seed=seed)
     return assigned, remaining, [], None

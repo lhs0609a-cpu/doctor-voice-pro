@@ -150,8 +150,11 @@ class ReservationTests(DatabaseCase):
         self.assertTrue(preview['reservations'][0]['stale'])
         self.assertFalse([w for w in preview['warnings'] if '예약 목록' in w], preview['warnings'])
 
-    async def test_going_over_the_daily_limit_says_how_to_fix_it(self):
-        """하루 한도를 넘기면 그냥 알리고 끝내지 않는다 — 어떻게 지킬 수 있는지까지 적는다."""
+    async def test_the_interval_alone_decides_how_many_go_up_in_a_day(self):
+        """하루 몇 건인지는 간격이 정한다 — 블로그 설정의 하루 한도로 잔소리하지 않는다.
+
+        손잡이가 하나여야 한다. 촘촘하면 많이, 넓히면 적게 올라가고 그 결과는 미리보기에
+        실제 시각으로 다 적혀 있다."""
         async with self.sessions() as db:
             (await db.get(Blog, 'b')).daily_limit = 1
             for i in range(3):
@@ -160,10 +163,11 @@ class ReservationTests(DatabaseCase):
         body = {'start_date': self.now.date().isoformat(), 'days': 30,
                 'draft_ids': ['many0', 'many1', 'many2'], 'mode': 'interval', 'every_minutes': 60}
         preview = (await self.client.post('/campaigns/c/schedule/preview', json=body)).json()
-        warning = next(w for w in preview['warnings'] if '하루' in w)
-        self.assertIn('하루 한도는 1건', warning)
-        self.assertIn('2시간', warning)          # 바로 다음으로 넓힐 간격을 짚어 준다
-        self.assertIn('하루 한도를 올리세요', warning)
+        self.assertEqual(preview['warnings'], [], preview['warnings'])
+        times = [datetime.fromisoformat(a['scheduled_at']) for a in preview['assigned']]
+        self.assertEqual(len(times), 3)
+        self.assertEqual({t.date() for t in times}, {times[0].date()})     # 한도 1건이어도 하루에 셋
+        self.assertEqual([(b - a).total_seconds() / 60 for a, b in zip(times, times[1:])], [60, 60])
 
     async def test_the_chosen_gap_is_what_actually_happens(self):
         """'마지막 예약 다음 2시간'이라고 적었으면 정확히 2시간 뒤여야 한다.
