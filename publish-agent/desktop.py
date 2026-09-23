@@ -35,7 +35,7 @@ CONNECT_PAGE = SITE + '/launcher/connect'   # 실행기가 열면 로그인된 �
 BEAT_SECONDS = 60          # 서버가 150초 침묵을 '꺼짐'으로 본다 → 그보다 짧게
 CONNECT_POLL_SECONDS = 2   # 승인됐는지 묻는 간격
 CONNECT_WAIT_SECONDS = 600 # 요청이 살아 있는 동안만 기다린다(서버와 같은 값)
-UPDATE_EVERY_BEATS = 360   # 하트비트 360번 = 6시간마다 새 버전을 다시 본다
+UPDATE_EVERY_BEATS = 60    # 하트비트 60번 = 1시간마다 새 버전을 다시 본다
 
 
 # ── 화면 색과 모양 ──────────────────────────────────────────────
@@ -670,17 +670,21 @@ class Desktop:
         self.ui.put(('update', (update['version'], installer)))
 
     def offer_update(self, version, installer):
+        """새 버전은 묻지 않고 설치한다.
+
+        병원에서 이 창을 띄워 두고 다른 일을 한다. '지금 설치할까요?'를 띄워 두면 아무도 누르지
+        않아 고친 것이 영영 닿지 않는다(2026-09-23 사용자 요청). 설치 프로그램이 알아서 실행기를
+        닫고 다시 켜 주므로, 진행 중인 발행은 결과를 남긴 뒤 이어서 돈다."""
         if self.closing:
             return
-        running = bool(self.worker and self.worker.is_alive())
-        note = '\n설치하는 동안 진행 중인 발행은 멈췄다가 설치 후 이어서 실행됩니다.' if running else ''
-        if not messagebox.askyesno('업데이트', f'새 버전 {version} 이 준비됐습니다. 지금 설치할까요?{note}', parent=self.root):
-            self.status.set(f'새 버전 {version} 은 다음에 켤 때 설치할 수 있습니다')
-            return
+        self.status.set(f'새 버전 {version} 을 설치합니다. 잠시 뒤 실행기가 다시 열립니다.')
         try:
             updater.install(installer)
         except Exception as error:  # noqa: BLE001
-            self.status.set(f'업데이트를 실행하지 못했습니다: {error}')
+            # 여기서 막히는 흔한 이유는 서명 없는 파일을 막는 Windows 앱 제어(Smart App Control)다.
+            # 다음 확인 때 다시 해 본다 — 실행기는 옛 버전으로 계속 돈다.
+            logging.getLogger().warning('업데이트 설치 실패: %s', error)
+            self.status.set(f'업데이트를 설치하지 못했습니다({error}). 옛 버전으로 계속 실행합니다.')
             return
         self.status.set('업데이트를 설치합니다. 설치가 끝나면 실행기가 다시 열립니다.')
         self.stop_event.set()
