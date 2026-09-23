@@ -93,7 +93,11 @@ def select_blogs(summary: List[Dict[str, Any]], want: Optional[str]) -> List[Dic
         w = want.strip().lower()
         hit = [b for b in summary if w in {str(b.get("label", "")).lower(), str(b.get("naver_blog_id", "")).lower(), str(b.get("blog_ref_id", "")).lower()}]
         return hit[:1]
-    return [b for b in summary if (b.get("pending") or 0) > 0 and (b.get("status") or "active") in RETRYABLE_BLOG_STATUS]
+    # 대기 글이 있거나, 상태가 막혀 있는 블로그(로그인·보안확인)는 한 번 들여다본다.
+    # 막힌 블로그를 대기 글이 있을 때만 보면, 예약이 없는 동안에는 로그인해도 영영 안 풀린다.
+    return [b for b in summary
+            if (b.get("status") or "active") in RETRYABLE_BLOG_STATUS
+            and ((b.get("pending") or 0) > 0 or (b.get("status") or "active") != "active")]
 
 
 # ---------------------------------------------------------------- 잡 1건

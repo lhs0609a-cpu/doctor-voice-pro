@@ -111,9 +111,25 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
         })}</ul>}
     </div>
 
-    {troubled.length > 0 && <div className="flex items-start gap-2 rounded-lg bg-warning-soft p-3 text-sm">
-      <span aria-hidden className="shrink-0 font-bold text-warning motion-safe:animate-bounce">▶</span>
-      <p>실행기가 띄운 <b>크롬 창</b>에서 네이버에 로그인하세요(<b>로그인 상태 유지</b> 체크). 1분 안에 &lsquo;정상&rsquo;으로 바뀝니다.</p>
+    {troubled.length > 0 && <div className="space-y-2 rounded-lg bg-warning-soft p-3 text-sm">
+      <div className="flex items-start gap-2">
+        <span aria-hidden className="shrink-0 font-bold text-warning motion-safe:animate-bounce">▶</span>
+        <p>실행기가 띄운 <b>크롬 창</b>에서 네이버에 로그인하세요(<b>로그인 상태 유지</b> 체크). 보통 1분 안에 &lsquo;정상&rsquo;으로 바뀝니다.</p>
+      </div>
+      {/* 실행기가 다시 확인할 때까지 기다리지 않아도 되게 — 이미 로그인한 사람이 직접 푼다.
+          잘못 눌러도 다음 발행 때 실행기가 다시 판정하므로 되돌릴 수 없는 일이 아니다. */}
+      <div className="flex flex-wrap items-center gap-2">
+        {troubled.map(b => (
+          <Button key={b.id} size="sm" variant="outline" disabled={busy === `ok-${b.id}`}
+            onClick={() => run(`ok-${b.id}`, async () => {
+              await campaignAPI.setBlogStatus(b.id, 'active', '사용자가 네이버 로그인을 확인')
+              onChanged()
+              return `${b.label || b.blog_id}: 정상으로 바꿨습니다. 이제 예약한 글이 올라갑니다.`
+            })}>
+            {busy === `ok-${b.id}` ? '바꾸는 중…' : `${b.label || b.blog_id} — 로그인했어요`}
+          </Button>
+        ))}
+      </div>
     </div>}
 
     {/* ② 네이버 계정 */}

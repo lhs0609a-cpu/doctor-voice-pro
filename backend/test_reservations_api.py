@@ -220,6 +220,34 @@ class ReservationTests(DatabaseCase):
             self.assertTrue(all(abs((slot - t).total_seconds()) >= 120 * 60 for t in taken),
                             f'{slot} 가 기존 예약 {taken} 에 너무 가깝다')
 
+    # ------------------------------------------------- 로그인이 필요한 블로그
+    async def test_a_blog_waiting_for_naver_login_can_still_be_scheduled(self):
+        """로그인은 '올릴 때' 푸는 문제다 — 예약까지 막으면 빠져나올 수 없다.
+
+        막아 두면 교착이다: 예약을 못 하니 대기 글이 없고, 대기 글이 없으니 실행기가
+        그 블로그를 들여다보지 않아 로그인해도 영영 '로그인 필요'로 남는다(2026-09-23 실측)."""
+        async with self.sessions() as db:
+            (await db.get(Blog, 'b')).status = 'login_required'
+            await db.commit()
+        body = {'start_date': self.now.date().isoformat(), 'days': 30, 'draft_ids': ['d'],
+                'mode': 'interval', 'every_minutes': 120}
+        response = await self.client.post('/campaigns/c/schedule/preview', json=body)
+        self.assertEqual(response.status_code, 200, response.text)
+        preview = response.json()
+        self.assertEqual(len(preview['assigned']), 1)
+        self.assertTrue(any('네이버 로그인이 필요' in w for w in preview['warnings']), preview['warnings'])
+
+    async def test_a_blog_turned_off_is_still_refused_with_its_name(self):
+        """꺼 둔 블로그는 사람이 정한 것이다 — 막되, 어느 블로그가 왜인지 말해 준다."""
+        async with self.sessions() as db:
+            (await db.get(Blog, 'b')).status = 'disabled'
+            await db.commit()
+        body = {'start_date': self.now.date().isoformat(), 'days': 30, 'draft_ids': ['d'],
+                'mode': 'interval', 'every_minutes': 120}
+        response = await self.client.post('/campaigns/c/schedule/preview', json=body)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('testblog(disabled)', response.json()['detail'])
+
     # ------------------------------------------------------------ 예약 취소
     async def test_cancelling_one_job_frees_its_slot(self):
         """한 건만 취소해도 그 시각이 다시 비어야 한다.

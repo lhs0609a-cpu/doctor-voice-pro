@@ -1492,13 +1492,25 @@ async def _schedule_inputs(db: AsyncSession, c: Campaign, body: ScheduleIn, user
     blogs = (await db.execute(select(Blog).where(Blog.id.in_(blog_ids), Blog.user_id == _uid(user)))).scalars().all() if blog_ids else []
     warnings: List[str] = []
     usable = []
+    # 로그인·보안확인은 '올릴 때' 풀면 되는 문제다 — 예약 자체를 막지 않는다.
+    LATER = {"login_required": "네이버 로그인이 필요합니다. 실행기가 띄운 크롬 창에서 로그인하면 그대로 올라갑니다.",
+             "captcha": "네이버 보안 확인이 떴습니다. 실행기 창에서 풀어 주면 그대로 올라갑니다."}
     for b in blogs:
+        name = b.label or b.blog_id
+        if b.status in LATER:
+            warnings.append(f"{name}: {LATER[b.status]}")
+            usable.append(b)
+            continue
         if b.status != "active":
-            warnings.append(f"{b.label or b.blog_id}: 상태가 '{b.status}'라 제외했습니다. {b.status_reason or ''}".strip())
+            warnings.append(f"{name}: 상태가 '{b.status}'라 제외했습니다. {b.status_reason or ''}".strip())
             continue
         usable.append(b)
     if not usable:
-        raise HTTPException(status_code=400, detail="발행할 수 있는 블로그가 없습니다. 병원 설정에서 블로그를 추가하거나 상태를 '정상'으로 바꾸세요.")
+        if blogs:
+            trouble = ", ".join(f"{b.label or b.blog_id}({b.status})" for b in blogs)
+            raise HTTPException(status_code=400, detail=(
+                f"올릴 수 있는 블로그가 없습니다 — {trouble}. 병원 관리에서 이 블로그를 '정상'으로 바꾸거나 다른 블로그를 고르세요."))
+        raise HTTPException(status_code=400, detail="올릴 블로그가 없습니다. 2번 칸에서 블로그를 골라 주세요.")
     q = select(Draft).where(Draft.campaign_id == c.id)
     statuses = ["ready"] + (["needs_review"] if body.include_needs_review else [])
     q = q.where(Draft.status.in_(statuses))
