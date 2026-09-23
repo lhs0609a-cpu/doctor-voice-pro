@@ -61,9 +61,12 @@ def allowed_origin(origin: Optional[str]) -> Optional[str]:
 class LocalBridge:
     """status() → dict 를 돌려주고, pair(code) → (ok, message, extra) 를 처리한다."""
 
-    def __init__(self, status: Callable[[], Dict], pair: Callable[[str], Tuple[bool, str, Dict]]):
+    def __init__(self, status: Callable[[], Dict], pair: Callable[[str], Tuple[bool, str, Dict]],
+                 wake: Optional[Callable[[], Tuple[bool, str]]] = None):
         self.status = status
         self.pair = pair
+        # 홈페이지에서 예약을 걸자마자 '지금 가져가라'고 두드리는 창구.
+        self.wake = wake
         self.server: Optional[ThreadingHTTPServer] = None
         self.port: Optional[int] = None
 
@@ -156,7 +159,16 @@ def _handler_for(bridge: LocalBridge):
         def do_POST(self):
             if self._refuse():
                 return
-            if self.path.split('?')[0] != '/pair':
+            path = self.path.split('?')[0]
+            if path == '/wake':
+                if not bridge.wake:
+                    return self._send(404, {'error': 'not found'})
+                try:
+                    ok, message = bridge.wake()
+                except Exception as error:  # noqa: BLE001
+                    return self._send(500, {'ok': False, 'error': str(error)})
+                return self._send(200, {'ok': ok, 'message': message})
+            if path != '/pair':
                 return self._send(404, {'error': 'not found'})
             size = int(self.headers.get('Content-Length') or 0)
             if size <= 0 or size > MAX_BODY:

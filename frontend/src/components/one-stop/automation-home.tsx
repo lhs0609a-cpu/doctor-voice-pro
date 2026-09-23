@@ -345,7 +345,8 @@ export function AutomationHome() {
                   {nextUp
                     ? <>첫 글은 <b className="text-foreground">{fmtWhen(nextUp)}</b>에 올라갑니다. </>
                     : null}
-                  PC 실행기가 <b>5분마다</b> 확인해서 그 시각 전에 네이버 예약을 걸어 둡니다 — 걸리면 &lsquo;예약됨&rsquo;으로 바뀝니다.
+                  예약을 건 순간 PC 실행기가 <b>바로</b> 네이버 예약을 걸러 갑니다(늦어도 1분 안).
+                  걸리면 &lsquo;예약됨&rsquo;으로 바뀝니다.
                   {!launcher.running && ' 지금은 실행기가 쉬고 있어 진행되지 않습니다.'}
                 </p>
               )}

@@ -95,14 +95,14 @@ def valid_server(value):
         return False
 
 
-def make_args(server, email, password, folder, stop_event):
+def make_args(server, email, password, folder, stop_event, wake_event=None):
     if not valid_server(server):
         raise ValueError('서버 주소는 HTTPS 주소 또는 로컬 서버여야 합니다')
     return argparse.Namespace(server=server.rstrip('/'), email=email, password=password,
         profiles_dir=str(folder / 'profiles'), log_dir=str(folder / 'logs'), blog=None,
         once=False, dry_run=False, headless=False, window_pos=None, interval=60,
         max_per_blog=5, min_gap=20, max_gap=60, captcha_wait=180, no_images=False,
-        verbose=False, stop_event=stop_event)
+        verbose=False, stop_event=stop_event, wake_event=wake_event)
 
 
 def summary_note(blogs) -> str:
@@ -138,6 +138,8 @@ class Desktop:
         self.root = root
         self.worker = None
         self.stop_event = threading.Event()
+        # 예약이 새로 걸리면 기다리지 않고 바로 한 바퀴 돌게 하는 신호.
+        self.wake_event = threading.Event()
         self.output = queue.Queue(maxsize=500)
         self.ui = queue.Queue(maxsize=100)      # 백그라운드 스레드 → 화면 갱신
         self.closing = False
@@ -329,7 +331,7 @@ class Desktop:
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(300, self.poll)
 
-        self.bridge = LocalBridge(status=self.bridge_status, pair=self.bridge_pair)
+        self.bridge = LocalBridge(status=self.bridge_status, pair=self.bridge_pair, wake=self.bridge_wake)
         self.bridge.start()
         threading.Thread(target=self.beat_loop, daemon=True).start()
         if updater.installed_build():
@@ -489,6 +491,16 @@ class Desktop:
         return True
 
     # ------------------------------------------------------------ 홈페이지 연결 창구(127.0.0.1)
+    def bridge_wake(self):
+        """홈페이지에서 예약을 걸자마자 부른다. 기다리지 말고 지금 가져가라는 뜻이다."""
+        if self.worker and self.worker.is_alive():
+            self.wake_event.set()
+            self.ui.put(('status', '새 예약을 확인하러 갑니다'))
+            return True, '바로 확인하러 갑니다'
+        # 꺼져 있으면 시작이 곧 '지금 하라'이다.
+        self.ui.put(('autostart', None))
+        return True, '자동 발행을 시작합니다'
+
     def bridge_status(self):
         """홈페이지가 '이 PC에 실행기가 있나, 누구로 연결돼 있나'를 묻는다."""
         with self.client_lock:
@@ -609,6 +621,9 @@ class Desktop:
             blogs = client.summary()
             note = summary_note(blogs)
             self.ui.put(('summary', ('발행 중 · ' if running else '') + note))
+            # 올릴 글이 있으면 다음 주기를 기다리지 않는다 — 예약은 걸리는 즉시 네이버에 등록해야 한다.
+            if running and any((b.get('pending') or 0) > 0 for b in blogs):
+                self.wake_event.set()
         except Exception:  # noqa: BLE001
             pass
         try:
@@ -683,7 +698,8 @@ class Desktop:
         self.stop_event.clear()
         try:
             account = self.paired_email if use_device else self.email.get().strip()
-            args = make_args(self.server.get().strip(), account, self.password.get(), self.folder, self.stop_event)
+            args = make_args(self.server.get().strip(), account, self.password.get(), self.folder,
+                             self.stop_event, self.wake_event)
             if use_device:
                 args.device_id, args.device_secret = self.device_id, self.device_secret
         except (ValueError, OSError) as error:

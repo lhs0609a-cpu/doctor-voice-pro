@@ -43,9 +43,15 @@ def stopping(args):
     return bool(event and event.is_set())
 
 
+def waking(args):
+    """'지금 할 일이 생겼다'는 신호. 예약을 걸자마자 네이버 예약을 등록하러 가야 한다."""
+    event = getattr(args, 'wake_event', None)
+    return bool(event and event.is_set())
+
+
 async def interruptible_pause(seconds, args):
     deadline = time.monotonic() + seconds
-    while not stopping(args) and time.monotonic() < deadline:
+    while not stopping(args) and not waking(args) and time.monotonic() < deadline:
         await asyncio.sleep(min(1, max(0, deadline - time.monotonic())))
 
 
@@ -637,9 +643,14 @@ async def main_async(args: argparse.Namespace) -> int:
                     log.error("주기 실행 오류: %s\n%s", e, traceback.format_exc())
                 if args.once:
                     break
+                event = getattr(args, 'wake_event', None)
+                if event:
+                    event.clear()          # 이번 바퀴가 그 신호를 처리했다
                 wait = max(5.0, args.interval - (time.monotonic() - started))
-                log.info("다음 확인까지 %.0f초 대기 (Ctrl+C 로 종료)", wait)
+                log.info("다음 확인까지 %.0f초 대기 (예약을 새로 걸면 바로 깨어납니다)", wait)
                 await interruptible_pause(wait, args)
+                if waking(args):
+                    log.info("새 예약 신호 — 기다리지 않고 바로 확인합니다")
         finally:
             await pool.close()
             client.close()

@@ -125,6 +125,21 @@ function pairWith(local: LocalLauncher): Promise<{ ok: boolean; error?: string }
   return pairInFlight
 }
 
+/** 예약을 걸자마자 이 PC의 실행기에게 '지금 가져가라'고 알린다.
+ *  실행기가 없거나 브라우저가 로컬 접근을 막으면 조용히 넘어간다 — 그래도 다음 주기에 가져간다. */
+export async function wakeLauncher(): Promise<boolean> {
+  for (const port of LOCAL_PORTS) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/wake`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+        signal: AbortSignal.timeout(1500),
+      })
+      if (res.ok) return true
+    } catch { /* 이 포트에는 실행기가 없다 */ }
+  }
+  return false
+}
+
 function sameAccount(a?: string | null, b?: string | null): boolean {
   return !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase()
 }

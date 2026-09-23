@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { campaignAPI, type BlogReservations, type Campaign, type Client, type SchedulePreview } from '@/lib/campaign-api'
 import { errMsg } from '@/components/campaign/common'
+import { wakeLauncher } from '@/lib/use-launcher-status'
 import { cn } from '@/lib/utils'
 
 /** 실행기가 예약을 걸 수 있는 가장 이른 시각(서버도 30분을 요구한다). */
@@ -152,6 +153,8 @@ export function QuickSchedule({ campaign, client, draftIds, onScheduled, onBack,
     setSaving(true); setError('')
     try {
       await campaignAPI.scheduleCommit(campaign.id, input)
+      // 예약을 걸었으면 네이버 등록도 지금 시작해야 한다 — 실행기의 다음 주기를 기다리지 않는다.
+      void wakeLauncher()
       try { onUpdated(await campaignAPI.getCampaign(campaign.id)) } catch { /* 현황은 다음 주기에 읽힌다 */ }
       onScheduled()
     } catch (e) { setError(errMsg(e)) }
