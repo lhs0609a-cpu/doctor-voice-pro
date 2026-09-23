@@ -60,6 +60,7 @@ interface Profile {
   sample_posts: string[]
   target_audience: TargetAudience | null
   preferred_structure: string
+  client_rules?: string[]
   learned_at: string | null
   profile_version: number
   created_at: string
@@ -85,6 +86,7 @@ export default function ProfilePage() {
   const [technicalDepth, setTechnicalDepth] = useState(5)
   const [storytelling, setStorytelling] = useState(5)
   const [emotion, setEmotion] = useState(5)
+  const [clientRules, setClientRules] = useState('')
 
   // Signature Phrases State
   const [signaturePhrases, setSignaturePhrases] = useState<string[]>([])
@@ -181,6 +183,7 @@ export default function ProfilePage() {
       })
       setSamplePosts(data.sample_posts || [])
       setPreferredStructure(data.preferred_structure || 'story_problem_solution')
+      setClientRules((data.client_rules || []).join('\n'))
 
       // Load target audience
       if (data.target_audience) {
@@ -223,6 +226,7 @@ export default function ProfilePage() {
           concerns,
         },
         preferred_structure: preferredStructure,
+        client_rules: clientRules.split('\n').map((v) => v.trim()).filter(Boolean),
       })
 
       toast.success('프로필이 저장되었습니다.')
@@ -547,6 +551,16 @@ export default function ProfilePage() {
         </CardHeader>
         <CardContent>
           <DifferentiatorsEditor value={differentiators} onChange={setDifferentiators} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>고객사별 필수 작성 규칙</CardTitle>
+          <CardDescription>한 줄에 하나씩 입력하면 글 작성 명령어에 자동 반영됩니다.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Textarea value={clientRules} onChange={(e) => setClientRules(e.target.value)} rows={5} placeholder="예: 요체 금지, 합니다체 유지\n예: 검사 시행으로 오해되는 표현 금지" />
         </CardContent>
       </Card>
 

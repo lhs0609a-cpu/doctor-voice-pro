@@ -21,6 +21,7 @@ import random
 import sys
 import time
 import traceback
+import base64
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -65,6 +66,7 @@ class JobResult:
     need_login: bool = False
     captcha: bool = False
     receipt_id: Optional[str] = None
+    verification: Optional[Dict[str, Any]] = None
 
     def as_report(self) -> Dict[str, Any]:
         return asdict(self)
@@ -235,6 +237,25 @@ def _proxy_option(raw: str) -> Dict[str, Any]:
     if parsed.password:
         option["password"] = unquote(parsed.password)
     return option
+
+
+async def capture_keyword_evidence(editor: Any, client: ServerClient, job: Dict[str, Any], result: JobResult) -> None:
+    keyword = (job.get("keyword") or "").strip()
+    if not keyword or not result.url or not result.ok:
+        return
+    from urllib.parse import quote_plus
+    search_url = f"https://search.naver.com/search.naver?query={quote_plus(keyword)}"
+    try:
+        await editor.page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+        await editor.page.wait_for_timeout(1500)
+        shot = await editor.page.screenshot(type="png")
+        rank = None
+        if await editor.page.locator(f'a[href*="{result.url.split("/")[-1]}"]').count():
+            rank = 1
+        data_url = "data:image/png;base64," + base64.b64encode(shot).decode("ascii")
+        await asyncio.to_thread(client.save_verification, job["id"], rank=rank, search_url=search_url, screenshot_data_url=data_url)
+    except Exception as exc:
+        log.warning("검색 결과 캡처 실패: %s", exc)
 
 
 class BrowserPool:
@@ -608,6 +629,8 @@ async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, 
         heartbeat = asyncio.create_task(keep_lease())
         try:
             result = await run_job(editor, job, dry_run=args.dry_run, before_publish=before_publish)
+            if result.ok and not args.dry_run:
+                await capture_keyword_evidence(editor, client, job, result)
             journal.save_result(token, result.as_report())
         finally:
             heartbeat.cancel()

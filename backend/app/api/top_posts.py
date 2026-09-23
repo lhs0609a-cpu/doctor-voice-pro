@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -26,6 +27,7 @@ from app.services.keyword_collector import (
     get_category_keyword_stats,
     CATEGORY_SEEDS
 )
+from app.services.keyword_expander import expand_keyword
 from app.services.bulk_analysis_service import (
     BulkAnalysisService,
     run_bulk_analysis,
@@ -33,6 +35,10 @@ from app.services.bulk_analysis_service import (
     get_category_rules
 )
 from app.services import rank_feasibility_service
+from app.services import serp_research_service
+from app.services.writing_spec_builder import build_writing_package
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -1142,3 +1148,198 @@ async def get_categories_with_stats(db: AsyncSession = Depends(get_db)):
         })
 
     return {"categories": categories}
+
+
+# ============================================================
+# 연관 키워드 확장 (키워드 리서치)
+# ============================================================
+
+class KeywordResearchRequest(BaseModel):
+    """연관 키워드 확장 요청 스키마"""
+    keyword: str
+    target_count: int = 300          # 100 ~ 1000
+    max_depth: int = 2               # 1=시드 확장, 2=허브 재확장, 3=손자까지
+    use_google: bool = True          # 구글 자동완성 병행
+    use_regions: bool = True         # 지역명 조합 포함
+
+
+@router.post("/keyword-research")
+async def keyword_research(request: KeywordResearchRequest):
+    """
+    시드 키워드 하나로 연관검색어를 대량 수집
+
+    - 예) "임플란트" -> 임플란트 후기 / 임플란트 가격 / 강남 임플란트 ...
+    - 허브 키워드 아래에 서브로 연결된 연관검색어까지 트리로 묶어서 반환
+    - target_count 만큼 수집 (300 선택 시 300개, 400 선택 시 400개)
+    """
+    keyword = (request.keyword or "").strip()
+    if not keyword:
+        raise HTTPException(status_code=400, detail="키워드를 입력해주세요")
+    if len(keyword) > 30:
+        raise HTTPException(status_code=400, detail="키워드가 너무 깁니다 (30자 이내)")
+
+    target_count = request.target_count
+    if not 10 <= target_count <= 1000:
+        raise HTTPException(status_code=400, detail="target_count는 10 ~ 1000 사이여야 합니다")
+
+    max_depth = max(1, min(request.max_depth, 3))
+
+    # 목표 개수가 클수록 시간 예산을 늘리되, 프론트 타임아웃(180초) 안쪽으로 제한
+    time_budget = min(160.0, 45.0 + target_count * 0.12)
+
+    try:
+        result = await expand_keyword(
+            seed=keyword,
+            target_count=target_count,
+            max_depth=max_depth,
+            use_google=request.use_google,
+            use_regions=request.use_regions,
+            time_budget=time_budget,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"키워드 수집 실패: {e}")
+
+
+class SaveResearchKeywordsRequest(BaseModel):
+    """수집한 연관 키워드를 분석용 풀에 저장"""
+    category: str
+    keywords: List[str]
+
+
+@router.post("/keyword-research/save")
+async def save_research_keywords(
+    request: SaveResearchKeywordsRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    연관 키워드 확장 결과를 카테고리 키워드 풀에 저장
+
+    저장된 키워드는 상위노출 대량 분석(bulk-analyze)에서 그대로 사용된다.
+    """
+    if request.category not in CATEGORY_SEEDS:
+        raise HTTPException(status_code=400, detail=f"Invalid category: {request.category}")
+
+    keywords = [k.strip() for k in (request.keywords or []) if k and k.strip()]
+    if not keywords:
+        raise HTTPException(status_code=400, detail="저장할 키워드가 없습니다")
+
+    # 이미 저장된 키워드 조회 (SQLite 바인딩 변수 한도를 고려해 나눠서 조회)
+    existing: set = set()
+    chunk_size = 400
+    for start in range(0, len(keywords), chunk_size):
+        chunk = keywords[start:start + chunk_size]
+        existing_result = await db.execute(
+            select(CollectedKeyword.keyword).where(
+                CollectedKeyword.category == request.category,
+                CollectedKeyword.keyword.in_(chunk)
+            )
+        )
+        existing.update(existing_result.scalars().all())
+
+    saved = 0
+    for keyword in keywords:
+        if keyword in existing:
+            continue
+        db.add(CollectedKeyword(
+            category=request.category,
+            keyword=keyword,
+            source="keyword_research"
+        ))
+        existing.add(keyword)
+        saved += 1
+
+    await db.commit()
+
+    return {
+        "category": request.category,
+        "requested": len(keywords),
+        "saved": saved,
+        "skipped": len(keywords) - saved,
+    }
+
+
+# ============================================================
+# 글쓰기 설계 (딥리서치 -> Gemini 프롬프트)
+# ============================================================
+
+class BrandInfo(BaseModel):
+    """
+    글에 반영할 업체 정보
+
+    differentiators / proof_points 가 차별화의 재료다.
+    비어 있으면 프롬프트는 장점을 지어내는 대신 '판단 기준을 주는' 방향으로 전환한다.
+    """
+    name: Optional[str] = None
+    region: Optional[str] = None
+    specialty: Optional[str] = None
+    tone: Optional[str] = None
+    # 우리만 할 수 있는 것 (진료 방식, 장비, 사후관리, 보증 등)
+    differentiators: Optional[List[str]] = None
+    # 숫자로 말할 수 있는 근거 (연차, 케이스 수, 보유 자격 등)
+    proof_points: Optional[List[str]] = None
+    # 주로 찾아오는 환자층
+    target_patient: Optional[str] = None
+
+
+class WritingSpecRequest(BaseModel):
+    """글쓰기 설계 요청"""
+    keywords: List[str]
+    top_n: int = 5                     # 분석할 상위글 수
+    include_research: bool = False     # 리서치 원본까지 받을지
+    brand: Optional[BrandInfo] = None
+
+
+@router.post("/writing-spec")
+async def create_writing_spec(
+    request: WritingSpecRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    키워드별 글쓰기 설계서 + Gemini 프롬프트 생성
+
+    1) 그 키워드로 지금 네이버 1페이지에 있는 글들을 실제로 읽고
+    2) 실측 분량/이미지/소제목 규격과 경쟁글이 빠뜨린 주제를 뽑아
+    3) 전환 설계·체류시간·의료법 금지어까지 합쳐 하나의 프롬프트로 컴파일한다.
+
+    반환된 prompt 를 그대로 Gemini 에 넣으면 된다.
+    """
+    keywords = [k.strip() for k in (request.keywords or []) if k and k.strip()]
+    if not keywords:
+        raise HTTPException(status_code=400, detail="키워드를 입력해주세요")
+    if len(keywords) > 20:
+        raise HTTPException(status_code=400, detail="한 번에 최대 20개까지 설계할 수 있습니다")
+
+    top_n = max(3, min(request.top_n, 10))
+    brand = request.brand.model_dump() if request.brand else None
+
+    try:
+        researches = await serp_research_service.research_keywords(keywords, top_n=top_n)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"딥리서치 실패: {e}")
+
+    # 검색량은 있으면 프롬프트에 넣고, 검색광고 키가 없으면 조용히 생략한다
+    volumes = {}
+    try:
+        from app.services import search_volume_service
+        metrics = await search_volume_service.get_keyword_metrics(db, keywords)
+        for row in metrics or []:
+            volumes[row.get("keyword")] = row.get("total_volume", 0) or 0
+    except Exception as e:
+        logger.warning("[글쓰기설계] 검색량 조회 생략: %s", e)
+
+    results = []
+    for keyword, research in zip(keywords, researches):
+        if research.get("error"):
+            results.append({"keyword": keyword, "error": research["error"]})
+            continue
+        package = build_writing_package(
+            research,
+            search_volume=volumes.get(keyword, 0),
+            brand=brand,
+        )
+        if request.include_research:
+            package["research"] = research
+        results.append(package)
+
+    return {"results": results}

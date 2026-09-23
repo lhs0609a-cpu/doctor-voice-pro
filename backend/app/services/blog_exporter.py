@@ -37,6 +37,8 @@ class BlogExporter:
         images: Optional[List[Dict]] = None,
         keywords: Optional[List[str]] = None,
         emphasis_phrases: Optional[List[str]] = None,
+        place_url: Optional[str] = None,
+        place_name: Optional[str] = None,
     ) -> io.BytesIO:
         """
         워드 문서 생성 (네이버 블로그 복붙용)
@@ -74,14 +76,15 @@ class BlogExporter:
         # 이미지 삽입 위치 계산: 문단을 균등하게 나눔
         if images_list and total_paras > 0:
             # 예: 10개 문단, 4개 이미지 -> 2, 4, 6, 8번째 문단 뒤에 삽입
-            insert_interval = max(2, total_paras // (len(images_list) + 1))
-            image_positions = []
-            for i in range(len(images_list)):
-                pos = (i + 1) * insert_interval
-                if pos < total_paras:
-                    image_positions.append(pos)
-                else:
-                    image_positions.append(total_paras)
+            # Keep at least one text paragraph between images and avoid placing
+            # a run of images at the beginning or end of the article.
+            usable = max(1, total_paras - 1)
+            image_count = min(len(images_list), max(1, usable // 2))
+            image_positions = [
+                max(1, min(total_paras - 1, round((i + 1) * total_paras / (image_count + 1))))
+                for i in range(image_count)
+            ]
+            image_positions = sorted(set(image_positions))
         else:
             image_positions = []
 
@@ -115,6 +118,9 @@ class BlogExporter:
             self._add_image_to_doc(doc, images_list[img_index])
             img_index += 1
 
+        if place_url:
+            self._add_place_link(doc, place_url, place_name or "네이버 플레이스에서 위치 확인")
+
         # 파일을 메모리에 저장
         file_stream = io.BytesIO()
         doc.save(file_stream)
@@ -132,6 +138,33 @@ class BlogExporter:
             print(f"✅ 파일 크기 OK: 네이버 블로그 업로드 가능")
 
         return file_stream
+
+    def _add_place_link(self, doc: Document, url: str, label: str) -> None:
+        """Append a clickable place link at the end of the document."""
+        paragraph = doc.add_paragraph()
+        paragraph.alignment = WD_PARAGRAPH_ALIGNMENT.CENTER
+        run = paragraph.add_run("📍 ")
+        run.font.size = Pt(10)
+        hyperlink = OxmlElement("w:hyperlink")
+        hyperlink.set(qn("r:id"), self._add_hyperlink_relationship(doc, url))
+        link_run = OxmlElement("w:r")
+        properties = OxmlElement("w:rPr")
+        color = OxmlElement("w:color")
+        color.set(qn("w:val"), "0563C1")
+        properties.append(color)
+        underline = OxmlElement("w:u")
+        underline.set(qn("w:val"), "single")
+        properties.append(underline)
+        link_run.append(properties)
+        text = OxmlElement("w:t")
+        text.text = label
+        link_run.append(text)
+        hyperlink.append(link_run)
+        paragraph._p.append(hyperlink)
+
+    @staticmethod
+    def _add_hyperlink_relationship(doc: Document, url: str) -> str:
+        return doc.part.relate_to(url, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink", is_external=True)
 
     def _add_styled_paragraph(
         self,
@@ -324,7 +357,7 @@ class BlogExporter:
                 img_base64 = url.split(',')[1]
                 img_bytes = base64.b64decode(img_base64)
                 # PNG로 변환
-                img_stream = self._convert_to_png(io.BytesIO(img_bytes))
+                img_stream = io.BytesIO(img_bytes) if url.lower().startswith('data:image/gif') else self._convert_to_png(io.BytesIO(img_bytes))
 
             # P3 Fix: HTTP/HTTPS URL 이미지 다운로드
             elif url.startswith(('http://', 'https://')):
@@ -335,7 +368,9 @@ class BlogExporter:
                     })
                     if response.status_code == 200:
                         img_bytes = response.content
-                        img_stream = self._convert_to_png(io.BytesIO(img_bytes))
+                        content_type = response.headers.get('content-type', '').lower()
+                        is_gif = 'gif' in content_type or url.lower().split('?')[0].endswith('.gif')
+                        img_stream = io.BytesIO(img_bytes) if is_gif else self._convert_to_png(io.BytesIO(img_bytes))
                     else:
                         print(f"⚠️ 이미지 다운로드 실패 (HTTP {response.status_code}): {url}")
                 except Exception as e:
@@ -343,7 +378,11 @@ class BlogExporter:
 
             elif img_data.get('path'):
                 # 로컬 파일 경로 - PNG로 변환
-                img_stream = self._convert_to_png(img_data['path'])
+                if str(img_data['path']).lower().endswith('.gif'):
+                    with open(img_data['path'], 'rb') as gif_file:
+                        img_stream = io.BytesIO(gif_file.read())
+                else:
+                    img_stream = self._convert_to_png(img_data['path'])
 
             if img_stream:
                 width = img_data.get('width', 5)

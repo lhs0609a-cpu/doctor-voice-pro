@@ -214,6 +214,7 @@ class SerpSnapshot(Base):
     verdict = Column(String(20), default="unknown")
     verdict_reason = Column(Text, nullable=True)
     error = Column(Text, nullable=True)
+    verification = Column(JSON, default=dict)  # {rank, searched_at, screenshot_path, search_url}
 
 
 class Draft(Base):

@@ -780,7 +780,119 @@ export interface FeasibilityDTO {
   top_summary?: Record<string, unknown> | null
 }
 
+// 연관 키워드 확장 결과
+export interface ResearchKeyword {
+  keyword: string
+  source: string
+  depth: number
+  parent: string | null
+  type: string
+  contains_seed: boolean
+  word_count: number
+}
+
+export interface ResearchGroup {
+  token: string
+  hub: string
+  type: string
+  count: number
+  children: ResearchKeyword[]
+}
+
+export interface KeywordResearchResult {
+  seed: string
+  target_count: number
+  collected_count: number
+  keywords: ResearchKeyword[]
+  groups: ResearchGroup[]
+  hubs: { keyword: string; count: number; type: string }[]
+  stats: {
+    by_source: Record<string, number>
+    by_type: Record<string, number>
+    total_discovered: number
+    group_count: number
+    max_depth_reached: number
+  }
+  truncated: boolean
+  elapsed_seconds: number
+}
+
+// 글쓰기 설계서 (딥리서치 -> Gemini 프롬프트)
+export interface WritingSpec {
+  keyword: string
+  search_volume: number
+  sample_count: number
+  evidence: 'measured' | 'fallback'
+  title: {
+    min_length: number
+    max_length: number
+    keyword_required: boolean
+    keyword_position: string
+    competitor_keyword_rate: number
+  }
+  content: {
+    target_length: number
+    min_length: number
+    heading_count: number
+    keyword_count: number
+    competitor_avg_length: number
+    competitor_max_length: number
+  }
+  media: {
+    image_count: number
+    competitor_avg_images: number
+  }
+}
+
+export interface WritingPackage {
+  keyword: string
+  spec?: WritingSpec
+  prompt?: string
+  prompt_length?: number
+  research_summary?: {
+    analyzed_count: number
+    competitor_titles: string[]
+    common_topics: string[]
+    content_gaps: string[]
+    questions: string[]
+    intent: string
+    pain_points?: { label: string; evidence: string[] }[]
+  }
+  differentiation?: {
+    primary_pain?: { label: string; worry: string; evidence: string[] } | null
+    secondary_pain?: { label: string } | null
+    wedge?: { topic: string; from_keyword: string } | null
+    opening_style?: string
+    has_brand_material?: boolean
+  }
+  error?: string
+}
+
+export interface BrandInfo {
+  name?: string
+  region?: string
+  specialty?: string
+  tone?: string
+  /** 우리만 할 수 있는 것 - 차별화의 핵심 재료 */
+  differentiators?: string[]
+  /** 숫자로 말할 수 있는 근거 (연차, 케이스 수 등) */
+  proof_points?: string[]
+  /** 주로 찾아오는 환자층 */
+  target_patient?: string
+}
+
 export const topPostsAPI = {
+  // 글쓰기 설계서 + Gemini 프롬프트 생성 (딥리서치 기반)
+  createWritingSpec: async (data: {
+    keywords: string[]
+    top_n?: number
+    include_research?: boolean
+    brand?: BrandInfo
+  }): Promise<{ results: WritingPackage[] }> => {
+    const response = await api.post('/api/v1/top-posts/writing-spec', data)
+    return response.data
+  },
+
   // 상위노출 가능성 판정 (실측 신호 기반)
   getFeasibility: async (keywords: string[], topN = 3): Promise<{ results: FeasibilityDTO[] }> => {
     const response = await api.post('/api/v1/top-posts/feasibility', { keywords, top_n: topN })
@@ -848,6 +960,27 @@ export const topPostsAPI = {
   // 단일 키워드 분석
   analyzeKeyword: async (keyword: string, topN: number = 3) => {
     const response = await api.post('/api/v1/top-posts/analyze', { keyword, top_n: topN })
+    return response.data
+  },
+
+  // 연관 키워드 대량 확장 (키워드 리서치)
+  researchKeywords: async (data: {
+    keyword: string
+    target_count?: number
+    max_depth?: number
+    use_google?: boolean
+    use_regions?: boolean
+  }): Promise<KeywordResearchResult> => {
+    const response = await api.post('/api/v1/top-posts/keyword-research', data)
+    return response.data
+  },
+
+  // 확장한 연관 키워드를 카테고리 키워드 풀에 저장
+  saveResearchKeywords: async (category: string, keywords: string[]) => {
+    const response = await api.post('/api/v1/top-posts/keyword-research/save', {
+      category,
+      keywords,
+    })
     return response.data
   },
 

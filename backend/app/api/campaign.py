@@ -1796,6 +1796,7 @@ class JobOut(BaseModel):
     images_ready: bool = False
     image_count: int = 0
     published_at: Optional[datetime] = None
+    verification: Dict[str, Any] = {}
 
 
 async def _jobs_out(db: AsyncSession, jobs: List[PublishJob]) -> List[JobOut]:
@@ -1813,6 +1814,7 @@ async def _jobs_out(db: AsyncSession, jobs: List[PublishJob]) -> List[JobOut]:
             scheduled_at=j.scheduled_at.isoformat(timespec="minutes"), status=j.status, attempts=j.attempts or 0,
             result_url=j.result_url, error=j.error, images_ready=bool(j.images_ready),
             image_count=len(d.image_plan or []) if d else 0, published_at=j.published_at,
+            verification=j.verification or {},
         ))
     return out
 
@@ -1921,8 +1923,35 @@ async def mark_published(job_id: str, body: MarkPublishedIn, current_user: User 
     return (await _jobs_out(db, [j]))[0]
 
 
+class VerificationIn(BaseModel):
+    rank: Optional[int] = None
+    search_url: Optional[str] = None
+    screenshot_data_url: Optional[str] = None
+    searched_at: Optional[datetime] = None
+
+
+@router.post("/jobs/{job_id}/verification", response_model=JobOut)
+async def save_verification(job_id: str, body: VerificationIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Store post-publication keyword search evidence sent by the desktop agent."""
+    import base64, os, re
+    j = await _owned(db, PublishJob, job_id, current_user, "검증 증거")
+    evidence = {"rank": body.rank, "search_url": body.search_url, "searched_at": (body.searched_at or datetime.utcnow()).isoformat()}
+    data = body.screenshot_data_url or ""
+    match = re.match(r"^data:image/(png|jpeg|jpg);base64,(.+)$", data, re.S)
+    if match:
+        folder = "/data/verification"
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, f"{j.id}.{match.group(1).replace('jpg','jpeg')}")
+        with open(path, "wb") as fh:
+            fh.write(base64.b64decode(match.group(2)))
+        evidence["screenshot_path"] = path
+    j.verification = evidence
+    await db.commit()
+    return (await _jobs_out(db, [j]))[0]
+
+
 class AutomationIn(BaseModel):
-    max_keywords: int = Field(default=10, ge=1, le=50)
+    max_keywords: int = Field(default=10, ge=1, le=300)
     image_count: int = Field(default=5, ge=0, le=20)
     auto_schedule: bool = False
     start_date: date

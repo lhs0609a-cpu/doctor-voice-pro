@@ -278,6 +278,9 @@ async def update_my_profile(
     if profile_update.preferred_structure is not None:
         profile.preferred_structure = profile_update.preferred_structure
 
+    if profile_update.client_rules is not None:
+        profile.client_rules = profile_update.client_rules
+
     await db.commit()
     await db.refresh(profile)
 

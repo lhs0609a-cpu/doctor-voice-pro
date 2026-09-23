@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from typing import List
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.db.database import get_db
 from app.models import User
@@ -44,7 +44,7 @@ class TemplateItem(BaseModel):
 class VolumeRequest(BaseModel):
     keywords: List[str]
     include_related: bool = True       # 검색광고가 함께 주는 연관검색어도 돌려준다
-    related_limit: int = 80            # 연관어 상한(모바일 검색량 순)
+    related_limit: int = Field(default=80, ge=0, le=300)            # 연관어 상한(모바일 검색량 순)
     related_min_volume: int = 0        # 이 값 미만의 연관어는 버린다(월 모바일 검색량 기준)
 
 
@@ -72,7 +72,7 @@ async def get_keyword_volumes(
     검색량과 함께 돌려준다. 연관어는 요청한 키워드 다음에, 모바일 검색량 순으로 붙는다.
     자격증명 미설정 시 전 항목 0으로 반환(프론트가 '미설정' 안내 가능).
     """
-    keywords = [k.strip() for k in req.keywords if k and k.strip()][:100]
+    keywords = [k.strip() for k in req.keywords if k and k.strip()][:300]
     if not keywords:
         return []
 

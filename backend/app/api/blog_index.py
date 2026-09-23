@@ -120,7 +120,7 @@ async def verdict_batch(body: VerdictBatchIn, current_user: User = Depends(get_c
         raise HTTPException(status_code=400, detail="키워드가 없습니다")
     bid = normalize_blog_id(body.blog_id)
     job = await job_worker.enqueue(
-        db, "blog_verdict_batch", {"blog_id": bid, "keywords": kws[:60], "campaign_id": body.campaign_id},
+        db, "blog_verdict_batch", {"blog_id": bid, "keywords": kws[:300], "campaign_id": body.campaign_id},
         _uid(current_user), dedupe_key=f"verdict:{_uid(current_user)}:{bid}:{body.campaign_id or 'adhoc'}", total=len(kws) + 1,
     )
     return _task_out(job)

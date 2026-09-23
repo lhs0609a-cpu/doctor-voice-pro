@@ -130,6 +130,7 @@ export interface Post {
   quality_score?: number | null
   quality_grade?: string | null
   quality_report?: any | null
+  usage_info?: { model?: string; input_tokens?: number; output_tokens?: number; total_tokens?: number; estimated_cost_usd?: number } | null
 }
 
 // 로컬 저장 글 타입 (localStorage에 저장되는 글)
@@ -277,6 +278,7 @@ export interface DoctorProfile {
   sample_posts: string[]
   target_audience: TargetAudience | null
   preferred_structure: string
+  client_rules?: string[]
   learned_at: string | null
   profile_version: number
   created_at: string

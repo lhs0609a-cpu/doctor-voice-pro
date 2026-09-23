@@ -618,6 +618,11 @@ class AIRewriteEngine:
 </쓰기 전에 정할 것>{differentiator_text}{requirements_text}{seo_text}{top_post_rules_text}"""
 
         system_prompt += UNIVERSAL_REWRITE_RULES
+        client_rules = doctor_profile.get("client_rules") or doctor_profile.get("brand_rules") or []
+        if isinstance(client_rules, dict):
+            client_rules = [f"{k}: {v}" for k, v in client_rules.items()]
+        if client_rules:
+            system_prompt += "\n\n<고객사별 필수 반영사항>\n- " + "\n- ".join(str(rule) for rule in client_rules) + "\n</고객사별 필수 반영사항>"
         profile_name = str(doctor_profile.get("name") or doctor_profile.get("clinic_name") or "")
         if "키네스" in profile_name or "키네스" in str(specialty):
             system_prompt += KINES_REWRITE_RULES

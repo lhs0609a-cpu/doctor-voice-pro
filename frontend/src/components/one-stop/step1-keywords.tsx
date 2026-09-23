@@ -32,6 +32,7 @@ export function Step1Keywords({ state, onCandidates, onNext }: Props) {
   // 연관검색어 일괄 선택 기준(월 모바일 검색량). 마케팅팀 기준: 지역 20 / 전국 100, 인근 지역 탐색은 50.
   const [bulkMin, setBulkMin] = useState(50)
   const [relatedFilter, setRelatedFilter] = useState('')
+  const [resultLimit, setResultLimit] = useState<100 | 200 | 300>(100)
 
   useEffect(() => {
     keywordBatchAPI
@@ -48,14 +49,14 @@ export function Step1Keywords({ state, onCandidates, onNext }: Props) {
           .map((k) => k.trim())
           .filter(Boolean),
       ),
-    ).slice(0, 100)
+    ).slice(0, resultLimit)
     if (!keywords.length) {
       toast.error('키워드를 한 줄에 하나씩 입력하세요.')
       return
     }
     setLoading(true)
     try {
-      const rows = await keywordBatchAPI.getVolumes(keywords, { includeRelated, relatedLimit: 100 })
+      const rows = await keywordBatchAPI.getVolumes(keywords, { includeRelated, relatedLimit: resultLimit })
       // 입력 키워드는 검색량 내림차순, 연관어는 서버가 모바일 검색량 순으로 준다
       const own = rows.filter((r) => !r.is_related).sort((a, b) => b.total_volume - a.total_volume)
       const rel = rows.filter((r) => r.is_related)
@@ -152,6 +153,11 @@ export function Step1Keywords({ state, onCandidates, onNext }: Props) {
             rows={6}
           />
           <div className="flex flex-wrap items-center justify-between gap-4">
+            <label className="flex items-center gap-2 text-sm">키워드 수
+              <select className="h-9 rounded-md border bg-background px-2" value={resultLimit} onChange={(e) => setResultLimit(Number(e.target.value) as 100 | 200 | 300)}>
+                <option value={100}>100개</option><option value={200}>200개</option><option value={300}>300개</option>
+              </select>
+            </label>
             <label className="flex items-center gap-2 text-sm">
               <Checkbox checked={includeRelated} onCheckedChange={(v) => setIncludeRelated(!!v)} />
               연관검색어도 함께 조회 (예: 임플란트 → 임플란트가격, 강남임플란트 …)

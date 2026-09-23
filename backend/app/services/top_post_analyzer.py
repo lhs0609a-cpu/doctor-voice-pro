@@ -102,6 +102,111 @@ SELECTORS = {
 }
 
 
+# 스마트에디터 ONE 폰트 크기 클래스 (se-fs-fs24 -> 24px)
+_FONT_SIZE_CLASS = re.compile(r"se-fs-fs(\d+)$")
+_DEFAULT_FONT_SIZE = 16
+
+
+# 문장 중간을 굵게 강조한 것과 진짜 소제목을 가르는 기준.
+# 조사/연결어미로 끝나면 문장이 이어지는 중이므로 소제목이 아니다.
+_DANGLING_ENDING = re.compile(
+    r"(?:은|는|이|가|을|를|의|에|로|와|과|도|만|며|고|서|면|야|랑|한|할|된|되는|하는|있는|없는)$"
+)
+
+
+# 평서형 종결 - 이렇게 끝나면 소제목이 아니라 그냥 굵게 강조한 본문 문장이다
+_DECLARATIVE_ENDING = re.compile(
+    r"(?:습니다|합니다|입니다|됩니다|어요|에요|예요|해요|있어요|드려요)[.!]?$"
+)
+
+
+def _looks_like_heading(text: str) -> bool:
+    """굵게 처리된 줄이 소제목처럼 '끝맺는' 형태인지 본다"""
+    text = text.strip()
+    if not text:
+        return False
+    if text.endswith("?"):                       # "~할까요?" 형 소제목
+        return True
+    if re.match(r"^\d+\s*[.)]", text):           # "1. ~", "2) ~"
+        return True
+    if _DECLARATIVE_ENDING.search(text):         # 굵게 강조한 본문 문장
+        return False
+    if _DANGLING_ENDING.search(text):            # 문장이 이어지는 중
+        return False
+    return len(text) <= 25                       # 짧은 명사구는 소제목으로 본다
+
+
+def extract_headings(soup, title: str = "") -> List[str]:
+    """
+    본문에서 소제목 텍스트를 뽑는다.
+
+    네이버 블로그(스마트에디터 ONE)는 h2/h3 를 거의 쓰지 않는다.
+    대신 문단 안의 span 에 폰트 크기 클래스(se-fs-fs24)를 얹거나 굵게 처리해
+    소제목을 표현한다. 그래서 본문 문단의 '본문 크기'를 먼저 구하고,
+    그보다 큰 문단이나 통째로 굵은 짧은 문단을 소제목으로 본다.
+    """
+    headings: List[str] = []
+    seen = set()
+
+    def add(text: str):
+        text = re.sub(r"\s+", " ", text or "").strip()
+        if not (3 <= len(text) <= 60):
+            return
+        if title and text == title.strip():
+            return
+        if text in seen:
+            return
+        seen.add(text)
+        headings.append(text)
+
+    # 1) 명시적 소제목 (쓰는 블로그는 이게 가장 정확하다)
+    for selector in (".se-section-title", "h2", "h3"):
+        for node in soup.select(selector):
+            add(node.get_text(strip=True))
+
+    container = soup.select_one(".se-main-container")
+    if container is None:
+        return headings[:15]
+
+    # 2) 폰트 크기 기반 - 본문보다 큰 문단
+    paragraphs = container.select(".se-text-paragraph")
+    sized = []
+    for para in paragraphs:
+        text = para.get_text(strip=True)
+        if not text:
+            continue
+        size = 0
+        for node in para.select("[class]"):
+            for cls in node.get("class", []):
+                match = _FONT_SIZE_CLASS.match(cls)
+                if match:
+                    size = max(size, int(match.group(1)))
+        sized.append((size or _DEFAULT_FONT_SIZE, text, para))
+
+    if sized:
+        counts = {}
+        for size, _, _ in sized:
+            counts[size] = counts.get(size, 0) + 1
+        # 가장 많이 쓰인 크기가 본문 크기다
+        body_size = max(counts.items(), key=lambda kv: (kv[1], -kv[0]))[0]
+
+        for size, text, para in sized:
+            if size >= body_size + 2:
+                add(text)
+            elif size == body_size:
+                # 3) 문단 전체가 굵게 처리된 짧은 줄도 소제목으로 쓰인다.
+                #    단 문장 중간 강조와 구분해야 해서 끝맺음 형태를 함께 본다.
+                bold = para.select_one("b, strong")
+                if (
+                    bold
+                    and len(bold.get_text(strip=True)) >= len(text) - 1
+                    and _looks_like_heading(text)
+                ):
+                    add(text)
+
+    return headings[:15]
+
+
 def detect_category(keyword: str) -> str:
     """키워드에서 카테고리 자동 감지"""
     keyword_lower = keyword.lower()
@@ -187,7 +292,11 @@ async def search_naver_blog(keyword: str, top_n: int = 3) -> List[Dict]:
     """
     results = []
     encoded_keyword = urllib.parse.quote(keyword)
-    search_url = f"https://search.naver.com/search.naver?where=blog&query={encoded_keyword}&sm=tab_opt"
+    # 네이버가 블로그탭 마크업을 자주 바꾼다. 현재 탭 주소를 먼저 쓰고 구주소를 예비로 둔다.
+    search_urls = [
+        f"https://search.naver.com/search.naver?ssc=tab.blog.all&query={encoded_keyword}",
+        f"https://search.naver.com/search.naver?where=blog&query={encoded_keyword}&sm=tab_opt",
+    ]
 
     # 더 완전한 브라우저 헤더로 봇 감지 우회
     user_agents = [
@@ -200,7 +309,8 @@ async def search_naver_blog(keyword: str, top_n: int = 3) -> List[Dict]:
         "User-Agent": random.choice(user_agents),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Accept-Encoding": "gzip, deflate, br",
+        # Accept-Encoding 은 httpx 가 디코딩 가능한 것만 붙이도록 맡긴다.
+        # br(brotli) 을 직접 광고하면 brotli 미설치 환경에서 본문이 깨져 들어온다.
         "Connection": "keep-alive",
         "Upgrade-Insecure-Requests": "1",
         "Sec-Fetch-Dest": "document",
@@ -212,38 +322,54 @@ async def search_naver_blog(keyword: str, top_n: int = 3) -> List[Dict]:
 
     try:
         async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-            response = await client.get(search_url, headers=headers)
-            
-            print(f"[상위글 분석] 검색 응답 상태: {response.status_code}, 키워드: {keyword}")
+            for search_url in search_urls:
+                response = await client.get(search_url, headers=headers)
+                print(f"[상위글 분석] 검색 응답 상태: {response.status_code}, 키워드: {keyword}")
 
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
+                if response.status_code != 200:
+                    continue
 
-                # 블로그 검색 결과 파싱
-                blog_items = soup.select('.api_txt_lines.total_tit') or soup.select('.title_link')
-
-                for idx, item in enumerate(blog_items[:top_n]):
-                    href = item.get('href', '')
-
-                    # 블로그 URL 추출
-                    if 'blog.naver.com' in href:
-                        # URL에서 blog_id와 post_no 추출
-                        match = re.search(r'blog\.naver\.com/([^/\?]+)/?(\d+)?', href)
-                        if match:
-                            blog_id = match.group(1)
-                            post_no = match.group(2) if match.group(2) else ''
-
-                            results.append({
-                                "rank": idx + 1,
-                                "blog_id": blog_id,
-                                "post_url": href,
-                                "title": item.get_text(strip=True)
-                            })
+                results = extract_blog_posts(response.text, top_n)
+                if results:
+                    break
 
     except Exception as e:
         print(f"[상위글 분석] 검색 오류: {e}")
 
     return results
+
+
+def extract_blog_posts(html: str, top_n: int) -> List[Dict]:
+    """
+    검색 결과 HTML에서 블로그 포스트 URL을 등장 순서대로 뽑는다.
+
+    CSS 클래스는 네이버가 개편할 때마다 갈아엎기 때문에(구 .api_txt_lines 는 이미 죽었다)
+    바뀌지 않는 URL 형태 자체를 기준으로 잡는다. 문서 등장 순서가 곧 노출 순위다.
+    """
+    posts: List[Dict] = []
+    seen: set = set()
+
+    # blog.naver.com/{블로그ID}/{포스트번호} - m. 서브도메인도 함께 받는다
+    pattern = re.compile(r"https?://(?:m\.)?blog\.naver\.com/([A-Za-z0-9_-]+)/(\d{6,})")
+
+    for match in pattern.finditer(html or ""):
+        blog_id, post_no = match.group(1), match.group(2)
+        key = f"{blog_id}/{post_no}"
+        if key in seen:
+            continue
+        seen.add(key)
+
+        posts.append({
+            "rank": len(posts) + 1,
+            "blog_id": blog_id,
+            # 제목은 검색 결과 마크업에 기대지 않고 포스트를 열어 og:title 로 가져온다
+            "post_url": f"https://blog.naver.com/{blog_id}/{post_no}",
+            "title": ""
+        })
+        if len(posts) >= top_n:
+            break
+
+    return posts
 
 
 async def analyze_post(post_url: str, keyword: str) -> Dict:
@@ -272,7 +398,11 @@ async def analyze_post(post_url: str, keyword: str) -> Dict:
         "comment_count": 0,
         "post_date": None,
         "post_age_days": None,
-        "data_fetched": False
+        "data_fetched": False,
+        # 딥리서치용 원문 조각 (DB 저장은 하지 않고 프롬프트 설계에만 쓴다)
+        "headings": [],       # 소제목 텍스트 목록
+        "intro": "",          # 도입부 (첫 문단들)
+        "content_sample": ""  # 본문 앞부분 샘플
     }
 
     # URL에서 blog_id, post_no 추출
@@ -338,6 +468,10 @@ async def analyze_post(post_url: str, keyword: str) -> Dict:
                     paragraphs = [p for p in content.split('\n') if p.strip() and len(p.strip()) > 20]
                     result["paragraph_count"] = len(paragraphs)
 
+                    # 도입부/본문 샘플 (검색자 의도와 논조 파악용)
+                    result["intro"] = " ".join(paragraphs[:3])[:500]
+                    result["content_sample"] = content[:3000]
+
                 # 이미지 개수
                 images = []
                 for selector in SELECTORS["images"]:
@@ -350,11 +484,10 @@ async def analyze_post(post_url: str, keyword: str) -> Dict:
                     videos.extend(soup.select(selector))
                 result["video_count"] = len(videos)
 
-                # 소제목 개수
-                headings = []
-                for selector in SELECTORS["headings"]:
-                    headings.extend(soup.select(selector))
-                result["heading_count"] = len(headings)
+                # 소제목 (텍스트 + 개수)
+                heading_texts = extract_headings(soup, result["title"])
+                result["headings"] = heading_texts
+                result["heading_count"] = len(heading_texts)
 
                 # 지도 여부
                 maps = []

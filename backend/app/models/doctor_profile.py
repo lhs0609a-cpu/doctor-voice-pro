@@ -38,6 +38,8 @@ class DoctorProfile(Base):
 
     # 이 병원만의 것 (차별점). 글에서 "여기는 다르네" 를 만드는 유일한 재료다.
     differentiators = Column(JSON, nullable=True)
+    # Client-specific writing and compliance rules
+    client_rules = Column(JSON, nullable=True)
     # {
     #   "philosophy": "진료 원칙 한 문장",
     #   "items": [

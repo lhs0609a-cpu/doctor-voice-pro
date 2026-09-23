@@ -4,7 +4,11 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from app.core.config import settings
 
 # SQLite와 PostgreSQL에 따라 엔진 설정 분리
-if settings.DATABASE_URL.startswith("sqlite"):
+async_database_url = settings.DATABASE_URL
+if async_database_url.startswith("sqlite://") and "+aiosqlite" not in async_database_url:
+    async_database_url = async_database_url.replace("sqlite://", "sqlite+aiosqlite://", 1)
+
+if async_database_url.startswith("sqlite"):
     # 예전엔 StaticPool(연결 1개)을 썼는데, 앱 안에서 도는 작업 워커와 HTTP 요청이
     # 같은 연결을 놓고 서로 기다리며 멈췄다(캠페인 키워드 확장 중 폴링 요청이 걸리면 영구 대기).
     # 세션마다 연결을 갖는 기본 풀 + WAL 모드로 바꿔 읽기/쓰기가 섞여도 진행되게 한다.
@@ -12,7 +16,7 @@ if settings.DATABASE_URL.startswith("sqlite"):
     from sqlalchemy.pool import AsyncAdaptedQueuePool
 
     engine = create_async_engine(
-        settings.DATABASE_URL,
+        async_database_url,
         echo=settings.SQL_ECHO,
         future=True,
         connect_args={

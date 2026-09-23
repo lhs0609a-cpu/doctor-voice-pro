@@ -29,6 +29,7 @@ except Exception:  # noqa: BLE001  (모듈이 아직 없을 때도 앱은 떠야
 
 
 DEFAULT_SUFFIXES = ["", "한의원", "병원", "치료", "잘하는곳"]
+MODIFIER_SUFFIXES = DEFAULT_SUFFIXES + ["원인", "증상", "방법", "후기", "비용"]
 
 
 def _norm(k: str) -> str:
@@ -95,6 +96,34 @@ def guess_scope(keyword: str, regions: Iterable[str]) -> str:
         except Exception:  # noqa: BLE001
             pass
     return "national"
+
+
+async def expand_keyword(
+    seed: str,
+    target_count: int = 20,
+    max_depth: int = 1,
+    use_google: bool = True,
+    use_regions: bool = False,
+    time_budget: float = 10.0,
+) -> Dict:
+    """Backward-compatible lightweight expansion used by SERP research routes."""
+    seed = (seed or "").strip()
+    if not seed:
+        return {"keywords": [], "groups": [], "hubs": []}
+    candidates = [seed]
+    suffixes = ["", "방법", "원인", "관리", "증상", "병원"]
+    for suffix in suffixes:
+        if len(candidates) >= max(1, target_count):
+            break
+        value = f"{seed} {suffix}".strip()
+        if value not in candidates:
+            candidates.append(value)
+    candidates = candidates[: max(1, target_count)]
+    return {
+        "keywords": candidates,
+        "groups": [{"seed": seed, "keywords": candidates}],
+        "hubs": [seed],
+    }
 
 
 def _match_region_disease(keyword: str, regions: Sequence[str], diseases: Sequence[str]) -> tuple[Optional[str], Optional[str]]:
