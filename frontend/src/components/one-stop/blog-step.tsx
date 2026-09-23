@@ -16,6 +16,13 @@ const STATUS: Record<string, { label: string; tone: 'ok' | 'warn' | 'muted' }> =
   login_required: { label: '로그인 필요', tone: 'warn' },
 }
 
+/** 실행기가 남긴 사유에서 '지금 로그인된 블로그' 아이디를 뽑는다.
+ *  예: "로그인된 블로그가 다릅니다(예상 'lhs0609c', 현재 'platonmarketing')." → platonmarketing */
+function loggedInBlogId(reason?: string | null): string {
+  const hit = /현재\s*'([A-Za-z0-9_-]{2,50})'/.exec(reason || '')
+  return hit ? hit[1] : ''
+}
+
 /** 블로그 수정은 전체 값을 보낸다. 비밀번호를 비우면 서버가 기존 값을 유지한다. */
 function blogBody(blog: BlogAccount, extra: Partial<BlogInput> = {}): BlogInput {
   return {
@@ -116,6 +123,24 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
         <span aria-hidden className="shrink-0 font-bold text-warning motion-safe:animate-bounce">▶</span>
         <p>실행기가 띄운 <b>크롬 창</b>에서 네이버에 로그인하세요(<b>로그인 상태 유지</b> 체크). 보통 1분 안에 &lsquo;정상&rsquo;으로 바뀝니다.</p>
       </div>
+
+      {/* 실행기가 남긴 진짜 사유. 감추면 '로그인했는데 왜 안 풀리지'가 된다 —
+          아이디가 어긋난 경우가 특히 그렇다(로그인 문제가 아니다). */}
+      {troubled.filter(b => b.status_reason).map(b => {
+        const now = loggedInBlogId(b.status_reason)
+        return <div key={`why-${b.id}`} className="space-y-2 rounded-lg bg-card p-2 text-xs">
+          <p className="text-muted-foreground">{b.status_reason}</p>
+          {!!now && now !== b.blog_id && <Button size="sm" variant="outline" disabled={busy === `swap-${b.id}`}
+            onClick={() => run(`swap-${b.id}`, async () => {
+              await campaignAPI.updateBlog(b.id, blogBody(b, { blog_id: now }))
+              await campaignAPI.setBlogStatus(b.id, 'active', '사용자가 로그인된 블로그로 바꿨습니다')
+              onChanged()
+              return `이 블로그를 ${now} 로 바꿨습니다. 예약한 글이 그리로 올라갑니다.`
+            })}>
+            {busy === `swap-${b.id}` ? '바꾸는 중…' : `지금 로그인된 ${now} 로 바꾸기`}
+          </Button>}
+        </div>
+      })}
       {/* 실행기가 다시 확인할 때까지 기다리지 않아도 되게 — 이미 로그인한 사람이 직접 푼다.
           잘못 눌러도 다음 발행 때 실행기가 다시 판정하므로 되돌릴 수 없는 일이 아니다. */}
       <div className="flex flex-wrap items-center gap-2">

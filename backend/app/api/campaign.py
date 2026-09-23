@@ -2287,6 +2287,44 @@ async def agent_reservations(blog_ref_id: str, body: ReservationsIn,
     return {"ok": True, "saved": len(slots)}
 
 
+class BlogIdentityIn(BaseModel):
+    blog_id: str = Field(min_length=2, max_length=50)
+
+
+@router.post("/agent/blogs/{blog_ref_id}/identity")
+async def agent_blog_identity(blog_ref_id: str, body: BlogIdentityIn,
+                              current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """실행기가 '로그인해 보니 이 블로그입니다'라고 알려 온다.
+
+    네이버는 **로그인 아이디와 블로그 주소가 다를 수 있다**(lhs0609c 로 로그인했는데 블로그는
+    blog.naver.com/platonmarketing). 등록 칸에 로그인 아이디를 적어 둔 사람은 아무 잘못이 없는데
+    발행이 영영 막힌다 — 사람이 알아채기 어려운 어긋남이다.
+
+    그래서 **저장된 값이 로그인 아이디와 같을 때만**(= 주소가 아니라 아이디를 적어 둔 것이 분명할 때)
+    로그인된 블로그 주소로 맞춘다. 그 밖에는 손대지 않는다 — 남의 블로그에 쏘는 것이 제일 나쁘다."""
+    b = await _owned(db, Blog, blog_ref_id, current_user, "블로그")
+    seen = _clean_blog_id(body.blog_id)
+    old = b.blog_id
+    if seen == old:
+        return {"adopted": False, "blog_id": old, "reason": "같은 블로그입니다"}
+    if (b.login_id or "").strip().lower() != (old or "").lower():
+        return {"adopted": False, "blog_id": old, "reason": "저장된 주소가 로그인 아이디와 달라 손대지 않았습니다"}
+    taken = (await db.execute(select(Blog).where(
+        Blog.user_id == _uid(current_user), Blog.blog_id == seen, Blog.id != b.id))).scalars().first()
+    if taken:
+        return {"adopted": False, "blog_id": old, "reason": "같은 주소의 블로그가 이미 등록돼 있습니다"}
+
+    b.blog_id = seen
+    b.status, b.status_reason = "active", f"로그인 아이디({old})로 적혀 있던 것을 블로그 주소({seen})로 맞췄습니다"
+    # 잡아 둔 예약과 자리 표시도 새 주소를 보게 한다 — 안 그러면 발행 직전에 또 어긋난다.
+    await db.execute(update(PublishJob).where(
+        PublishJob.blog_ref_id == b.id, PublishJob.status.in_(list(JOB_ACTIVE))).values(naver_blog_id=seen))
+    await db.execute(update(ScheduleMark).where(
+        ScheduleMark.user_id == _uid(current_user), ScheduleMark.blog_id == old).values(blog_id=seen))
+    await db.commit()
+    return {"adopted": True, "blog_id": seen, "was": old}
+
+
 class RescheduleIn(BaseModel):
     lock_token: str = Field(min_length=1, max_length=64)
     reason: Optional[str] = None
@@ -2439,16 +2477,29 @@ async def _agent_status(db: AsyncSession, user_id: str) -> AgentStatusOut:
                                       seconds_ago=seconds))
     live = [d for d in devices if d.seconds_ago <= ONLINE_SECONDS]
     running = any(d.running for d in live)
+    hint = ("실행기가 켜져 있다고는 하는데 올릴 글을 한참째 가져가지 않습니다. "
+            "실행기 창에서 [실행 중단]을 누른 뒤 [자동 발행 시작]을 다시 눌러 주세요.")
     try:
         stalled = bool(live and running) and await _stalled(db, user_id)
+        if stalled:
+            # 블로그가 막혀 있으면 실행기를 다시 켜도 소용없다 — 진짜 이유를 그대로 전한다.
+            # 이유를 못 읽어도 '멈춰 있다'는 사실 자체는 알려야 한다.
+            try:
+                blocked = (await db.execute(select(Blog).where(
+                    Blog.user_id == user_id, Blog.status != "active"))).scalars().first()
+            except Exception:  # noqa: BLE001
+                blocked = None
+            if blocked:
+                hint = (f"{blocked.label or blocked.blog_id}: {blocked.status_reason}"
+                        if blocked.status_reason else
+                        f"{blocked.label or blocked.blog_id} 블로그가 '{blocked.status}' 상태라 올리지 못합니다.")
     except Exception:  # noqa: BLE001  신호등이 곁다리 질의 때문에 꺼지면 안 된다
         stalled = False
     return AgentStatusOut(
         online=bool(live), running=running,
         version=live[0].version if live else None, devices=devices[:5],
         stalled=stalled,
-        stalled_hint=("실행기가 켜져 있다고는 하는데 올릴 글을 한참째 가져가지 않습니다. "
-                      "실행기 창에서 [실행 중단]을 누른 뒤 [자동 발행 시작]을 다시 눌러 주세요.") if stalled else None)
+        stalled_hint=hint if stalled else None)
 
 
 # ─────────────────────── 홈페이지 ↔ 실행기 자동 연결 ───────────────────────

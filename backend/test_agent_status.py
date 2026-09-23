@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import campaign as api
-from app.models.campaign import AgentSession, PublishAttempt, PublishJob
+from app.models.campaign import AgentSession, Blog, PublishAttempt, PublishJob
 from app.models.user import User
 
 
@@ -19,7 +19,7 @@ class AgentStatusTests(unittest.IsolatedAsyncioTestCase):
         self.engine = create_async_engine('sqlite+aiosqlite:///' + str(Path(self.tmp.name) / 'agent.db'))
         async with self.engine.begin() as conn:
             await conn.run_sync(lambda sync: AgentSession.__table__.create(sync))
-            for table in (PublishJob.__table__, PublishAttempt.__table__):
+            for table in (PublishJob.__table__, PublishAttempt.__table__, Blog.__table__):
                 await conn.run_sync(lambda sync, t=table: t.create(sync))
         self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
         app = FastAPI()
@@ -59,6 +59,20 @@ class AgentStatusTests(unittest.IsolatedAsyncioTestCase):
         status = (await self.client.get('/agent/status')).json()
         self.assertTrue(status['stalled'])
         self.assertIn('실행 중단', status['stalled_hint'])
+
+    async def test_a_blocked_blog_is_named_instead_of_blaming_the_launcher(self):
+        """블로그가 막혀 있으면 실행기를 다시 켜 봐야 소용없다 — 진짜 이유를 그대로 전한다."""
+        await self.client.post('/agent/heartbeat', json=self.beat())
+        async with self.sessions() as db:
+            db.add(PublishJob(id='blocked', user_id='u', campaign_id='c', draft_id='d', blog_ref_id='b',
+                              scheduled_at=datetime.utcnow() + timedelta(days=1), status='queued',
+                              created_at=datetime.utcnow() - timedelta(minutes=30)))
+            db.add(Blog(id='b', user_id='u', client_id='client', blog_id='myblog', status='login_required',
+                        status_reason="로그인된 블로그가 다릅니다(예상 'myblog', 현재 'otherblog')."))
+            await db.commit()
+        status = (await self.client.get('/agent/status')).json()
+        self.assertTrue(status['stalled'])
+        self.assertIn("현재 'otherblog'", status['stalled_hint'])
 
     async def test_a_launcher_that_just_took_a_job_is_not_called_out(self):
         await self.client.post('/agent/heartbeat', json=self.beat())

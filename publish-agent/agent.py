@@ -483,8 +483,24 @@ async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, 
         return
 
     current = (await editor.read_blog_id() or "").lower()
-    if not current or not naver_id or current != naver_id.lower():
-        reason = f"로그인된 블로그가 다릅니다(예상 '{naver_id}', 현재 '{current}'). 에이전트 브라우저 창에서 '{naver_id}' 계정으로 다시 로그인하세요."
+    if current and naver_id and current != naver_id.lower():
+        # 네이버는 로그인 아이디와 블로그 주소가 다를 수 있다. 등록 칸에 아이디를 적어 둔 것뿐이라면
+        # 서버가 주소로 맞춰 준다(그 판단은 서버가 한다 — 여기서는 본 대로 알리기만 한다).
+        try:
+            answer = await asyncio.to_thread(client.adopt_blog_id, ref, current)
+        except ServerError as e:
+            answer = {"adopted": False, "reason": e.detail}
+        if answer.get("adopted"):
+            log.info("블로그 주소를 '%s' 로 맞췄습니다(적혀 있던 값: %s)", current, naver_id)
+            blog["naver_blog_id"] = naver_id = current
+        else:
+            reason = (f"로그인된 블로그가 다릅니다(예상 '{naver_id}', 현재 '{current}'). "
+                      f"에이전트 브라우저 창에서 '{naver_id}' 계정으로 다시 로그인하세요.")
+            client.set_blog_status(ref, "login_required", reason)
+            log.warning("%s (%s)", reason, answer.get("reason") or "")
+            return
+    if not current:
+        reason = "로그인된 블로그를 읽지 못했습니다. 에이전트 브라우저 창에서 네이버에 로그인하세요."
         client.set_blog_status(ref, "login_required", reason)
         log.warning(reason)
         return

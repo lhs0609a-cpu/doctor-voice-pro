@@ -247,6 +247,11 @@ class ServerClient:
     def put_categories(self, categories: List[Dict[str, str]]) -> Dict[str, Any]:
         return self._request("POST", "/publish/categories", json={"categories": categories}) or {}
 
+    def adopt_blog_id(self, blog_ref_id: str, blog_id: str) -> Dict[str, Any]:
+        """'로그인해 보니 블로그 주소가 이것' 이라고 알린다. 서버가 안전하다고 보면 맞춰 준다."""
+        return self._request("POST", f"/campaign/agent/blogs/{quote(str(blog_ref_id), safe='')}/identity",
+                             json={"blog_id": blog_id}) or {}
+
     def set_blog_status(self, blog_ref_id: str, status: str, reason: Optional[str] = None) -> Dict[str, Any]:
         """status: active | login_required | captcha | paused ..."""
         return self._request("POST", f"/campaign/blogs/{blog_ref_id}/status", json={"status": status, "reason": reason}) or {}
