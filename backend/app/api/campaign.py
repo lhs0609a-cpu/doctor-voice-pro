@@ -988,10 +988,13 @@ class DraftOut(BaseModel):
     error: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    # 이미 예약이 걸린 원고인가. 걸려 있으면 다시 고를 수 없어야 한다.
+    booked_at: Optional[str] = None           # 잡혀 있는 예약 시각(KST)
 
 
-def _draft_out(d: Draft, with_body: bool = True) -> DraftOut:
+def _draft_out(d: Draft, with_body: bool = True, booked_at: Optional[str] = None) -> DraftOut:
     return DraftOut(
+        booked_at=booked_at,
         id=d.id, campaign_id=d.campaign_id, keyword_id=d.keyword_id, keyword=d.keyword, source=d.source or "manual",
         parent_draft_id=d.parent_draft_id, title=d.title or "", body=(d.body if with_body else None),
         char_count=d.char_count or 0, status=d.status or "ready", checks=d.checks or {}, image_plan=d.image_plan or [],
@@ -1214,7 +1217,11 @@ async def list_drafts(campaign_id: str, with_body: bool = False, current_user: U
     c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
     rows = (await db.execute(select(Draft).where(Draft.campaign_id == c.id).order_by(Draft.created_at.asc()))).scalars().all()
     await _heal_law_holds(db, rows)
-    return [_draft_out(d, with_body=with_body) for d in rows]
+    booked = {r: at for r, at in (await db.execute(select(PublishJob.draft_id, PublishJob.scheduled_at).where(
+        PublishJob.campaign_id == c.id, PublishJob.status.in_(list(JOB_ACTIVE))))).all()}
+    return [_draft_out(d, with_body=with_body,
+                       booked_at=booked[d.id].isoformat(timespec="minutes") if d.id in booked and booked[d.id] else None)
+            for d in rows]
 
 
 @router.get("/drafts/{draft_id}", response_model=DraftOut)
@@ -1502,7 +1509,14 @@ async def _schedule_inputs(db: AsyncSession, c: Campaign, body: ScheduleIn, user
         warnings.append(f"이미 예약된 원고 {len(skipped)}건은 제외했습니다.")
     drafts = [d for d in drafts if d.id not in busy]
     if not drafts:
-        raise HTTPException(status_code=400, detail="예약할 원고가 없습니다. 3단계에서 원고를 준비하세요(검수 통과 상태만 예약됩니다).")
+        if skipped:
+            raise HTTPException(status_code=400, detail=(
+                f"고른 원고 {len(skipped)}건은 이미 예약이 걸려 있습니다. "
+                "새 Word 원고를 올리거나, 아래 발행 현황에서 기존 예약을 취소한 뒤 다시 잡으세요."))
+        if body.draft_ids:
+            raise HTTPException(status_code=400, detail=(
+                "고른 원고를 예약할 수 없습니다. 검토가 필요한 원고는 화면에서 확인을 눌러 풀어 주세요."))
+        raise HTTPException(status_code=400, detail="예약할 원고가 없습니다. Word 원고를 먼저 올려 주세요.")
     plans = [se.blog_plan_from_model(b) for b in usable]
     if body.per_day:
         for p in plans:

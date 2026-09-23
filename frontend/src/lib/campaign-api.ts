@@ -271,6 +271,8 @@ export interface Draft {
   error?: string | null
   created_at?: string
   updated_at?: string
+  /** 이미 예약이 걸린 원고의 예약 시각(KST). 있으면 다시 고를 수 없다. */
+  booked_at?: string | null
 }
 
 export interface PhotoMeta {

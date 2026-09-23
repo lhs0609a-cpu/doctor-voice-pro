@@ -35,6 +35,15 @@ function isWord(file: File) {
   return file.name.toLowerCase().endsWith('.docx')
 }
 
+/** 9/24(목) 09:00 */
+function whenLabel(iso?: string | null) {
+  if (!iso) return ''
+  const [day, clock] = iso.split('T')
+  const [, m, d] = day.split('-')
+  const week = ['일', '월', '화', '수', '목', '금', '토'][new Date(`${day}T00:00:00`).getDay()]
+  return `${Number(m)}/${Number(d)}(${week}) ${clock?.slice(0, 5) || ''}`
+}
+
 type Flag = { text?: string; category?: string; suggestion?: string }
 type Fix = { from?: string; to?: string; category?: string }
 
@@ -69,7 +78,12 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
 
   useEffect(() => {
     campaignAPI.listDrafts(campaign.id)
-      .then(rows => setDrafts(rows.filter(d => d.source === 'upload')))
+      .then(rows => {
+        const mine = rows.filter(d => d.source === 'upload')
+        setDrafts(mine)
+        const pickable = new Set(mine.filter(d => d.status === 'ready' && !d.booked_at).map(d => d.id))
+        setSelected(previous => previous.filter(id => pickable.has(id)))
+      })
       .catch(e => setError(errMsg(e)))
   }, [campaign.id])
 
@@ -104,7 +118,7 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
         try {
           const rows = await campaignAPI.uploadDrafts(campaign.id, [words[i]])
           setDrafts(previous => [...previous, ...rows])
-          setSelected(previous => [...previous, ...rows.filter(d => d.status === 'ready').map(d => d.id)])
+          setSelected(previous => [...previous, ...rows.filter(d => d.status === 'ready' && !d.booked_at).map(d => d.id)])
           const needsReview = rows.some(d => d.status !== 'ready')
           mark(i, { state: needsReview ? 'review' : 'done' })
         } catch (err) {
@@ -224,15 +238,19 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
             const flags = flagsOf(d)
             const fixes = fixesOf(d)
             const review = d.status !== 'ready'
+            const booked = !!d.booked_at          // 이미 예약이 걸린 원고는 다시 걸 수 없다
             return (
               <li key={d.id} className="px-3 py-2 text-sm">
                 <div className="flex items-center gap-2">
-                  <input type="checkbox" id={`pick-${d.id}`} checked={selected.includes(d.id)} disabled={review}
+                  <input type="checkbox" id={`pick-${d.id}`} checked={selected.includes(d.id)} disabled={review || booked}
                     onChange={e => setSelected(value => e.target.checked ? [...value, d.id] : value.filter(id => id !== d.id))} />
-                  <label htmlFor={`pick-${d.id}`} className={cn('min-w-0 flex-1 truncate', review ? 'text-muted-foreground' : 'cursor-pointer')}>
+                  <label htmlFor={`pick-${d.id}`} className={cn('min-w-0 flex-1 truncate', (review || booked) ? 'text-muted-foreground' : 'cursor-pointer')}>
                     {d.title}
                   </label>
-                  {review ? (
+                  {booked && (
+                    <span className="shrink-0 text-xs text-success">예약됨 · {whenLabel(d.booked_at)}</span>
+                  )}
+                  {booked ? null : review ? (
                     <button type="button" onClick={() => setOpen(open === d.id ? '' : d.id)}
                       className="shrink-0 text-xs text-warning underline-offset-2 hover:underline">
                       검토 필요 {flags.length > 0 && `· ${flags.length}곳`}
@@ -310,6 +328,12 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
       {drafts.some(d => d.status !== 'ready') && (
         <p className="text-xs text-muted-foreground">
           검토가 필요한 원고는 <b>확인 전까지 예약되지 않습니다</b>. 줄 오른쪽의 &lsquo;검토 필요&rsquo;를 눌러 이유를 보세요.
+        </p>
+      )}
+      {drafts.length > 0 && drafts.every(d => d.booked_at) && (
+        <p className="text-sm text-muted-foreground">
+          올린 원고가 모두 예약되어 있습니다. 더 올리려면 <b>새 Word 파일</b>을 놓으시고,
+          시간을 바꾸려면 아래 발행 현황에서 기존 예약을 취소한 뒤 다시 잡으세요.
         </p>
       )}
       {drafts.some(d => d.status === 'ready' && fixesOf(d).length > 0) && (

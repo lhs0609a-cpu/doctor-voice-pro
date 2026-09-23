@@ -156,6 +156,32 @@ class DocxUploadTests(DatabaseCase):
         rows = (await self.client.get('/campaigns/c/drafts')).json()
         self.assertEqual(next(r for r in rows if r['id'] == 'held')['status'], 'needs_review')
 
+    async def test_a_manuscript_already_booked_is_marked_so(self):
+        """이미 예약이 걸린 원고는 목록에 그 시각과 함께 나온다 — 다시 고르지 못하게."""
+        async with self.sessions() as db:
+            db.add(Draft(id='booked', user_id='u', client_id='client', campaign_id='c', source='upload',
+                         title='이미 잡힌 원고', body='본문', status='ready', checks={'ok': True}))
+            job = await db.get(PublishJob, 'j0')
+            job.draft_id, job.status = 'booked', 'queued'
+            await db.commit()
+        rows = (await self.client.get('/campaigns/c/drafts')).json()
+        row = next(r for r in rows if r['id'] == 'booked')
+        self.assertTrue(row['booked_at'], row)
+
+    async def test_scheduling_only_booked_manuscripts_says_exactly_that(self):
+        """'3단계에서 원고를 준비하세요'가 아니라 '이미 예약돼 있습니다'라고 말한다."""
+        async with self.sessions() as db:
+            db.add(Draft(id='again', user_id='u', client_id='client', campaign_id='c', source='upload',
+                         title='이미 잡힌 원고', body='본문', status='ready', checks={'ok': True}))
+            job = await db.get(PublishJob, 'j0')
+            job.draft_id, job.status = 'again', 'queued'
+            await db.commit()
+        response = await self.client.post('/campaigns/c/schedule/preview', json={
+            'start_date': '2026-09-24', 'days': 30, 'draft_ids': ['again'],
+            'mode': 'interval', 'every_minutes': 120})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('이미 예약이 걸려', response.json()['detail'])
+
     async def test_upload_reports_what_it_read(self):
         draft = await self.upload()
         self.assertEqual(draft['checks']['import'],
