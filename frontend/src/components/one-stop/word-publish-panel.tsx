@@ -175,6 +175,9 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
 
   const waiting = jobs.filter(j => j.state === 'wait' || j.state === 'up').length
   const failed = jobs.filter(j => j.state === 'fail').length
+  // 고를 수 있는 원고(검토 중이거나 이미 예약된 것은 뺀다)
+  const pickable = drafts.filter(d => d.status === 'ready' && !d.booked_at)
+  const picked = pickable.filter(d => selected.includes(d.id)).length
 
   return (
     <div className="space-y-4">
@@ -244,7 +247,21 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
       )}
 
       {drafts.length > 0 && (
-        <ul className="divide-y rounded-lg border">
+        <div className="rounded-lg border">
+          {/* 원고가 스무 개씩 올라온다 — 하나씩 체크하게 두지 않는다. */}
+          {pickable.length > 0 && (
+            <label className="flex cursor-pointer items-center gap-2 border-b bg-muted/30 px-3 py-2 text-sm">
+              <input type="checkbox" aria-label="원고 전체 선택"
+                ref={el => { if (el) el.indeterminate = picked > 0 && picked < pickable.length }}
+                checked={picked === pickable.length}
+                onChange={e => setSelected(e.target.checked ? pickable.map(d => d.id) : [])} />
+              <span className="font-medium">전체 선택</span>
+              <span className="text-muted-foreground">
+                고를 수 있는 {pickable.length}개 중 <b className="tabular-nums text-foreground">{picked}개</b> 선택
+              </span>
+            </label>
+          )}
+        <ul className="divide-y">
           {drafts.map(d => {
             const flags = flagsOf(d)
             const fixes = fixesOf(d)
@@ -345,6 +362,7 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
             )
           })}
         </ul>
+        </div>
       )}
 
       {drafts.some(d => d.status !== 'ready') && (

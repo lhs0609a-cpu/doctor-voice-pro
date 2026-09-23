@@ -137,8 +137,8 @@ async def main():
         await page.get_by_text('글자 강조 설정 바꾸기',exact=True).click()
         await expect(page.get_by_label('핵심 문구 자동 강조')).to_be_checked()
         await expect(page.get_by_label('특히 강조할 문구',exact=False)).to_have_value('핵심 기준')
-        for did in ('d1', 'd3'):
-            await page.locator(f'#pick-{did}').check()
+        # 전체 선택 한 번으로 고를 수 있는 원고가 모두 잡힌다(하나씩 체크하지 않는다).
+        await page.get_by_label('원고 전체 선택').check()
         await page.get_by_role('button',name='선택한 2개 원고 예약하기').click()
         # 이미 걸린 예약을 세어 보여 주고, 그 다음부터가 기본으로 골라져 있어야 한다.
         await expect(page.get_by_label('이미 예약된 글')).to_contain_text('이미 예약된 글 1건')
