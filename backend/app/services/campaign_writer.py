@@ -501,20 +501,53 @@ def _agree_particles(text: str) -> str:
     return _PARTICLE.sub(fix, text)
 
 
+# 바꿔 넣는 말이 관형형('차별화된', '놀라운', '효과적인')이면 원래 말에 붙어 있던
+# 관형 어미를 함께 먹어야 한다. 안 그러면 '특허받은' → '차별화된받은' 이 된다.
+_TAIL = r"(?P<_tail>받은|받는|받아|적인|적|의|인|한|하는)?"
+_ADNOMINAL = ("된", "운", "인", "한", "는")
+
+
+def _law_rules() -> list:
+    """고칠 표 한 벌. 우리 표 + 의료광고법 검사기의 대안 표를 합친다.
+
+    검사기 표를 그대로 쓰는 이유는 두 벌을 만들면 어긋나기 때문이다. 다만 치환은 여기서
+    직접 한다 — 어미를 함께 먹어야 문장이 깨지지 않고, 무엇을 바꿨는지도 정확히 남는다.
+    """
+    rules = [(re.compile(pattern.pattern + _TAIL), category, alternative)
+             for pattern, category, alternative in LAW_FIXES if alternative]
+    try:
+        from app.services.medical_law_checker import medical_law_checker  # type: ignore
+        for category, pairs in (medical_law_checker.compiled_patterns or {}).items():
+            for pattern, alternative in pairs:
+                if alternative:
+                    rules.append((re.compile(pattern.pattern + _TAIL), category, alternative))
+    except Exception as e:  # noqa: BLE001  검사기가 없어도 우리 표로 고친다
+        logger.debug("[검수] 의료광고법 검사기 표를 쓸 수 없습니다: %s", e)
+    return rules
+
+
+_LAW_RULES: Optional[list] = None
+
+
 def _fix_one(text: str) -> tuple:
     """한 덩어리의 글을 고친다. 반환 (고친 글, [{from, to, category}])."""
+    global _LAW_RULES
     if not text:
         return text, []
+    if _LAW_RULES is None:
+        _LAW_RULES = _law_rules()
     changes: list = []
     fixed = text
-    # ① 대안이 있는 표현은 그 자리에서 바꾼다.
-    for pattern, category, alternative in LAW_FIXES:
-        if alternative is None:
-            continue
+
+    # ① 대안이 있는 표현은 그 자리에서 바꾼다. 관형형으로 바꿀 때는 뒤따르는 어미도 먹는다.
+    for pattern, category, alternative in _LAW_RULES:
         def swap(m, category=category, alternative=alternative):
-            changes.append({"from": m.group(0), "to": alternative, "category": category})
-            return alternative
+            tail = (m.groupdict().get("_tail") or "")
+            keep = "" if alternative and alternative[-1] in _ADNOMINAL else tail
+            changes.append({"from": m.group(0), "to": alternative + keep, "category": category})
+            return alternative + keep
         fixed = pattern.sub(swap, fixed)
+
     # ② 대안이 없는 표현(가격·할인·최초)은 그 문장을 덜어낸다. 반쪽 문장을 남기지 않는다.
     drop = [(p, c) for p, c, alt in LAW_FIXES if alt is None]
     if drop and any(p.search(fixed) for p, _ in drop):

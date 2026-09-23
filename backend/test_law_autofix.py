@@ -35,6 +35,14 @@ class AutoFixTest(unittest.TestCase):
         self.assertEqual(changes[0]["to"], "")
         self.assertEqual(changes[0]["category"], "가격_할인")
 
+    def test_the_ending_is_eaten_when_the_new_word_is_adnominal(self):
+        """'특허받은' 을 '차별화된' 으로 바꾸면 '차별화된받은' 이 된다 — 어미를 함께 먹는다."""
+        self.assertEqual(fix("특허받은 기적의 획기적인 방법")[1], "차별화된 놀라운 효과적인 방법")
+
+    def test_a_word_that_merely_looks_similar_is_left_alone(self):
+        """'한적인 시골' 의 '적인' 은 어미가 아니다 — 바꾼 자리에서만 어미를 먹는다."""
+        self.assertEqual(fix("한적인 시골 마을에서도 가능합니다.")[1], "한적인 시골 마을에서도 가능합니다.")
+
     def test_an_ordinary_manuscript_is_left_alone(self):
         text = "아이가 잘 자는데도 키가 크지 않는다면 성장판 검사를 받아 보세요."
         _, body, _, changes = fix(text)

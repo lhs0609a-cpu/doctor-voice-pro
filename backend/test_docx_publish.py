@@ -128,6 +128,34 @@ class DocxUploadTests(DatabaseCase):
         image = next(b for b in claimed['blocks'] if b['type'] == 'image')
         self.assertTrue(image['image'].startswith('data:image/gif;base64,'))
 
+    async def test_old_manuscripts_held_by_the_law_check_heal_when_listed(self):
+        """규칙이 '막기'에서 '고치기'로 바뀌기 전에 올라온 원고는 영영 예약되지 않는다.
+
+        목록을 읽을 때 한 번 고쳐서 풀어 준다 — 사용자가 다시 올릴 일이 없어야 한다."""
+        async with self.sessions() as db:
+            db.add(Draft(id='old', user_id='u', client_id='client', campaign_id='c', source='upload',
+                         title='특허받은 치료', body='100% 완치를 보장합니다. 꾸준히 관리하면 좋아집니다.',
+                         status='needs_review',
+                         checks={'medical_law': [{'text': '특허', 'category': '과장_광고'}],
+                                 'forbidden': [], 'ok': False}))
+            await db.commit()
+        rows = (await self.client.get('/campaigns/c/drafts')).json()
+        healed = next(r for r in rows if r['id'] == 'old')
+        self.assertEqual(healed['status'], 'ready')
+        self.assertEqual(healed['title'], '차별화된 치료')
+        self.assertTrue(healed['checks']['auto_fixed'])
+        self.assertEqual(healed['checks']['medical_law'], [])
+
+    async def test_a_forbidden_word_still_holds_the_manuscript(self):
+        """병원이 등록한 금칙어는 사람이 판단할 몫이다 — 읽는다고 풀어 주지 않는다."""
+        async with self.sessions() as db:
+            db.add(Draft(id='held', user_id='u', client_id='client', campaign_id='c', source='upload',
+                         title='제목', body='본문', status='needs_review',
+                         checks={'medical_law': [{'text': '특허'}], 'forbidden': ['최고'], 'ok': False}))
+            await db.commit()
+        rows = (await self.client.get('/campaigns/c/drafts')).json()
+        self.assertEqual(next(r for r in rows if r['id'] == 'held')['status'], 'needs_review')
+
     async def test_upload_reports_what_it_read(self):
         draft = await self.upload()
         self.assertEqual(draft['checks']['import'],

@@ -1184,10 +1184,36 @@ async def add_draft_text(campaign_id: str, body: DraftTextIn, current_user: User
     return _draft_out(d)
 
 
+async def _heal_law_holds(db: AsyncSession, rows: List[Draft]) -> None:
+    """의료광고법 표현 때문에 서 있던 옛 원고를 고쳐서 풀어 준다.
+
+    규칙이 '막기'에서 '고치기'로 바뀌기 전에 올라온 원고들은 needs_review 인 채로 남아
+    영영 예약되지 않는다. 읽을 때 한 번 고쳐 주면 사용자가 다시 올릴 일이 없다.
+    병원이 등록한 금칙어에 걸린 원고는 건드리지 않는다 — 그것은 사람이 판단할 몫이다."""
+    healed = False
+    for d in rows:
+        checks = dict(d.checks or {})
+        if d.status != "needs_review" or checks.get("forbidden") or not checks.get("medical_law"):
+            continue
+        title, body, blocks, fixes = writer.sanitize_blocks(d.blocks, d.title, d.body or "")
+        d.title, d.body, d.blocks = title[:200], body, blocks
+        d.char_count = writer.count_chars(body)
+        checks["medical_law"] = []
+        checks["ok"] = True
+        if fixes:
+            checks["auto_fixed"] = (checks.get("auto_fixed") or []) + fixes[:30]
+        d.checks = checks
+        d.status = "ready"
+        healed = True
+    if healed:
+        await db.commit()
+
+
 @router.get("/campaigns/{campaign_id}/drafts", response_model=List[DraftOut])
 async def list_drafts(campaign_id: str, with_body: bool = False, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
     rows = (await db.execute(select(Draft).where(Draft.campaign_id == c.id).order_by(Draft.created_at.asc()))).scalars().all()
+    await _heal_law_holds(db, rows)
     return [_draft_out(d, with_body=with_body) for d in rows]
 
 
