@@ -13,7 +13,7 @@ from typing import Dict, Optional, List
 from app.core.config import settings
 from app.models.user import IndustryType
 from app.services.industry_config import get_industry_config, get_industry_ai_prompt
-from app.services import research_context
+from app.services import evidence_context, research_context
 from app.services.quality_scorer import quality_scorer, split_title_body, strip_greeting
 
 try:
@@ -984,9 +984,13 @@ class AIRewriteEngine:
         )
         # 남들이 뭘 썼고 뭘 안 썼는지. 키워드가 있을 때만, 느리면 건너뛴다(생성을 붙잡지 않는다).
         research_text = await research_context.for_keyword(keyword) if keyword else ""
+        # 진짜 공공기관 본문. 프롬프트에도 넣고 채점기의 대조본에도 넣는다 —
+        # 그래야 인용이 '지어낸 출처'로 몰려 감점되지 않는다.
+        evidence_text, evidence_corpus = await evidence_context.for_keyword(keyword) if keyword else ("", "")
+        score_source = original_content + (chr(10) + chr(10) + evidence_corpus if evidence_corpus else "")
         user_prompt = self._build_user_prompt(
             original_content, framework, persuasion_level, ask_length, target_audience, top_post_rules, keyword,
-            doctor_profile, research_text,
+            doctor_profile, research_text + evidence_text,
         )
 
         # 긴 일반 지침보다 이번 원고의 주제와 원본을 우선하도록 마지막에 짧은 잠금 블록을 둔다.
@@ -1108,7 +1112,7 @@ class AIRewriteEngine:
             content = strip_greeting(content)
             report, usage_delta = await self._score(
                 content, keyword=keyword, differentiators=differentiators,
-                source_text=original_content,
+                source_text=score_source,
             )
             total_input += usage_delta[0]
             total_output += usage_delta[1]
@@ -1134,7 +1138,7 @@ class AIRewriteEngine:
                     break
                 new_report, usage_delta = await self._score(
                     revised, keyword=keyword, differentiators=differentiators,
-                    source_text=original_content,
+                    source_text=score_source,
                 )
                 total_input += usage_delta[0]
                 total_output += usage_delta[1]
@@ -1149,6 +1153,40 @@ class AIRewriteEngine:
                 report = new_report
                 actual_length = len(content)
 
+            # 전체 재작성이 목표에 못 미치면, 이번엔 비어 있는 항목을 하나씩 집중해서 채운다.
+            # 여덟 개를 한꺼번에 주면 쉬운 것만 고치고 만다(실측: two_sided 가 네 번 연속 0/5).
+            for _ in range(self.REINFORCE_ROUNDS):
+                if report["total"] >= QUALITY_THRESHOLD:
+                    break
+                weak = self._weakest(report)
+                if not weak:
+                    break
+                name, item = weak
+                material = evidence_text if name == "trust.evidence" else ""
+                patched, usage_delta = await self._reinforce(
+                    content, item, model, max_output_tokens, material)
+                total_input += usage_delta[0]
+                total_output += usage_delta[1]
+                total_thinking += usage_delta[2]
+                if not patched:
+                    break
+                patched = strip_greeting(patched)
+                new_report, usage_delta = await self._score(
+                    patched, keyword=keyword, differentiators=differentiators,
+                    source_text=score_source,
+                )
+                total_input += usage_delta[0]
+                total_output += usage_delta[1]
+                total_thinking += usage_delta[2]
+                print(f"[보강] {name} → {new_report['total']}점"
+                      f" [원점수 {new_report['raw_total']} <- {report['raw_total']}]")
+                if not quality_scorer.is_better(new_report, report):
+                    print(f"[보강] {name} 은(는) 나아지지 않아 되돌립니다")
+                    break
+                content = patched
+                report = new_report
+                actual_length = len(content)
+
         # ── 분량 맞추기는 마지막에 한다 ──────────────────────────────
         # 품질 재작성이 내용을 더하면서 분량을 밀어올리기 때문에,
         # 순서를 뒤집으면 애써 맞춘 분량이 다시 어긋난다.
@@ -1159,17 +1197,27 @@ class AIRewriteEngine:
         total_output += usage_delta[1]
         total_thinking += usage_delta[2]
         if fitted and fitted != content:
-            content = fitted
-            actual_length = len(content)
             # 분량만 손봤으므로 규칙 점수만 다시 매기고 LLM 심사는 재사용한다 (호출 절약)
-            if report is not None:
+            if report is None:
+                content = fitted
+                actual_length = len(content)
+            else:
                 rules = quality_scorer.score_rules(
-                    content, keyword=keyword,
+                    fitted, keyword=keyword,
                     differentiators=doctor_profile.get("differentiators") or None,
-                    source_text=original_content,
+                    source_text=score_source,
                 )
-                report = quality_scorer.combine(rules, report.get("llm_judge"))
-                print(f"[품질] 분량 조정 후 {report['total']}점 ({report['grade']})")
+                fitted_report = quality_scorer.combine(rules, report.get("llm_judge"))
+                # 분량을 맞추려다 내용을 깎아내면 애써 올린 점수가 도로 내려간다.
+                # 실측: 2167자를 1942자로 줄이면서 '오늘 할 수 있는 행동'이 6.0 -> 3.1 로 떨어졌다.
+                # 분량은 목표일 뿐이고 글의 값어치가 아니다 — 나빠지면 버린다.
+                if quality_scorer.is_better(fitted_report, report):
+                    content = fitted
+                    actual_length = len(content)
+                    report = fitted_report
+                    print(f"[품질] 분량 조정 후 {report['total']}점 ({report['grade']})")
+                else:
+                    print(f"[분량] 조정본이 {fitted_report['total']}점으로 더 낮아 원고를 유지합니다")
 
         self.last_usage = {
             "ai_provider": "gemini",
@@ -1300,6 +1348,61 @@ class AIRewriteEngine:
             print(f"[품질] LLM 심사 실패, 규칙 점수만 사용합니다: {e}")
 
         return quality_scorer.combine(rules, judge), used
+
+    # 지적을 여덟 개 한꺼번에 주면 모델은 쉬운 것만 고치고 어려운 것은 건너뛴다.
+    # 실측 네 번 모두 two_sided 가 0/5 였다 — 매번 지적했는데 매번 안 고쳤다.
+    # 분량 맞추기(_fit_length)가 잘 듣는 이유는 단 하나만 요구하기 때문이다. 같은 방식을 쓴다.
+    WEAK_RATIO = 0.4          # 만점 대비 이 아래면 '결손'으로 본다
+    REINFORCE_ROUNDS = 3      # 한 번에 한 항목씩, 나아질 때만 채택
+
+    @staticmethod
+    def _weakest(report: Dict) -> Optional[tuple]:
+        """가장 크게 비어 있는 규칙 항목 하나. 없으면 None."""
+        worst = None
+        for axis in ("trust", "engagement", "actionability", "understandability", "naver_fit"):
+            for name, item in (((report.get(axis) or {}).get("details")) or {}).items():
+                top = item.get("max") or 0
+                if not top or not item.get("notes"):
+                    continue
+                lost = top - (item.get("score") or 0)
+                if (item.get("score") or 0) / top >= AIRewriteEngine.WEAK_RATIO:
+                    continue
+                if worst is None or lost > worst[1]:
+                    worst = (f"{axis}.{name}", lost, item)
+        return (worst[0], worst[2]) if worst else None
+
+    async def _reinforce(self, content: str, item: Dict, model: str, max_output_tokens: int,
+                         material: str = ""):
+        """딱 한 가지만 고친다. 나머지는 건드리지 말라고 못박는다.
+
+        재료가 필요한 지적에는 재료를 함께 준다. '근거를 넣으세요' 라고만 하면 모델은
+        그럴듯한 출처를 지어내고, 채점기가 그걸 잡아 오히려 점수를 깎는다
+        (2026-09-25 실측: 근거 보강이 85.1 -> 79.5 로 떨어져 되돌려졌다)."""
+        demand = "\n".join(f"- {n}" for n in (item.get("notes") or [])[:2])
+        prompt = f"""<원고>
+{content}
+</원고>
+{material}
+
+<고칠 것 하나>
+{demand}
+</고칠 것 하나>
+
+위 한 가지만 고친다. 다른 문단, 다른 문장, 소제목, 말투, 제목은 하나도 건드리지 않는다.
+필요하면 문장을 두세 개 더 넣는다. 기존 문장을 지우지 않는다.
+없는 사실, 없는 숫자, 없는 출처를 만들지 않는다.
+설명 없이 고친 원고 전문만 출력한다."""
+        result = await self._gemini_call(
+            user_prompt=prompt,
+            system_prompt="당신은 한국어 의료 콘텐츠 편집자입니다. 지시한 한 가지만 고칩니다.",
+            max_output_tokens=max_output_tokens,
+            temperature=0.4,
+            thinking_budget=THINKING_BUDGET_LIGHT,
+            model=model,
+        )
+        text = (result.get("text") or "").strip()
+        usage = (result["input_tokens"], result["output_tokens"], result["thinking_tokens"])
+        return (text if len(text) > 200 else ""), usage
 
     async def _revise(
         self,
