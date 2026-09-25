@@ -13,7 +13,7 @@ from typing import Dict, Optional, List
 from app.core.config import settings
 from app.models.user import IndustryType
 from app.services.industry_config import get_industry_config, get_industry_ai_prompt
-from app.services.quality_scorer import quality_scorer
+from app.services.quality_scorer import quality_scorer, split_title_body
 
 try:
     from google import genai
@@ -116,7 +116,10 @@ UNIVERSAL_REWRITE_RULES = """
 </모든 원고 공통 편집 규칙>
 """
 # 이 점수 미만이면 채점 결과를 지적으로 넣어 한 번 고쳐 쓴다 (100점 만점).
-QUALITY_THRESHOLD = 80
+# 목표 점수. 여기에 닿을 때까지 고친다. 80 에서 멈추면 B 등급(75~84)이 지적 사항을 안고 그대로 나간다.
+QUALITY_THRESHOLD = 95
+# 재작성 라운드 상한. 나아지지 않으면 그 자리에서 멈추므로 대개 이보다 덜 돈다.
+MAX_REVISIONS = 2
 
 
 class APIKeyNotConfiguredError(Exception):
@@ -493,37 +496,7 @@ class AIRewriteEngine:
         # 여기가 "여기는 다르네" 를 만드는 유일한 재료다. 없으면 어느 병원 글이나 똑같아진다.
         # 자랑 나열이 되면 광고로 읽히고 의료법 비교·과장 조항에도 걸리므로,
         # 반드시 독자의 문제를 설명하는 흐름 안에서 나오도록 쓰는 법까지 지정한다.
-        differentiators = doctor_profile.get("differentiators") or {}
-        diff_items = differentiators.get("items") or []
-        diff_philosophy = differentiators.get("philosophy") or ""
-        differentiator_text = ""
-        if diff_items or diff_philosophy:
-            lines = []
-            if diff_philosophy:
-                lines.append(f"- 진료 원칙: {diff_philosophy}")
-            for it in diff_items:
-                if isinstance(it, dict):
-                    cat = it.get("category") or ""
-                    txt = it.get("text") or ""
-                    lines.append(f"- {f'[{cat}] ' if cat else ''}{txt}")
-                elif str(it).strip():
-                    lines.append(f"- {it}")
-
-            differentiator_text = f"""
-
-<이 병원만의 것>
-아래는 이 병원에만 있는 내용이다. 읽는 사람이 "여기는 좀 다르네" 하고 느끼게 만드는 유일한 재료다.
-{chr(10).join(lines)}
-
-쓰는 방법
-- 최소 두 군데에 나눠서 녹인다. 한곳에 몰아 소개하지 않는다.
-- 소개 문장으로 쓰지 않는다. 독자의 문제를 설명하다가 그래서 나는 이렇게 한다로 이어지게 쓴다.
-  약한 예: 저희는 최신 초음파 장비를 갖추고 있습니다.
-  좋은 예: 엑스레이만으로는 초기 연골 손상이 잘 안 보입니다. 그래서 저는 초음파로 한 번 더 봅니다. 그 한 번에서 치료 방향이 갈리는 경우가 자주 있습니다.
-- 장비나 자격 자체를 자랑하지 말고, 그것 때문에 환자가 무엇을 덜 겪는지를 쓴다.
-- 다른 병원과 비교하거나 최고·유일·최초 같은 말을 쓰지 않는다. 의료법 위반이다.
-- 위에 적힌 것 말고 다른 장비, 자격, 실적, 수치를 지어내지 않는다.
-</이 병원만의 것>"""
+        differentiator_text = self._differentiator_block(doctor_profile)
 
         compliance_text = f"\n- {compliance_warning}" if compliance_warning else ""
 
@@ -760,6 +733,78 @@ class AIRewriteEngine:
 """
         }
 
+    @staticmethod
+    def _differentiator_block(doctor_profile: Optional[Dict]) -> str:
+        """이 병원에만 있는 것. 초안과 재작성이 같은 재료를 보도록 한곳에서 만든다.
+
+        예전에는 시스템 프롬프트에서만 조립돼 재작성(80점 미만)에만 들어갔다. 그래서
+        채점기는 이 재료로 채점하는데(차별화 12점) 정작 초안을 쓰는 모델은 본 적이 없었다
+        — 실측 20건 전부 6.0/12, 즉 '재료 없음' 기본값에 머물렀다."""
+        doctor_profile = doctor_profile or {}
+        differentiators = doctor_profile.get("differentiators") or {}
+        diff_items = differentiators.get("items") or []
+        diff_philosophy = differentiators.get("philosophy") or ""
+        differentiator_text = ""
+        if diff_items or diff_philosophy:
+            lines = []
+            if diff_philosophy:
+                lines.append(f"- 진료 원칙: {diff_philosophy}")
+            for it in diff_items:
+                if isinstance(it, dict):
+                    cat = it.get("category") or ""
+                    txt = it.get("text") or ""
+                    lines.append(f"- {f'[{cat}] ' if cat else ''}{txt}")
+                elif str(it).strip():
+                    lines.append(f"- {it}")
+
+            differentiator_text = f"""
+
+<이 병원만의 것>
+아래는 이 병원에만 있는 내용이다. 읽는 사람이 "여기는 좀 다르네" 하고 느끼게 만드는 유일한 재료다.
+{chr(10).join(lines)}
+
+쓰는 방법
+- 최소 두 군데에 나눠서 녹인다. 한곳에 몰아 소개하지 않는다.
+- 소개 문장으로 쓰지 않는다. 독자의 문제를 설명하다가 그래서 나는 이렇게 한다로 이어지게 쓴다.
+  약한 예: 저희는 최신 초음파 장비를 갖추고 있습니다.
+  좋은 예: 엑스레이만으로는 초기 연골 손상이 잘 안 보입니다. 그래서 저는 초음파로 한 번 더 봅니다. 그 한 번에서 치료 방향이 갈리는 경우가 자주 있습니다.
+- 장비나 자격 자체를 자랑하지 말고, 그것 때문에 환자가 무엇을 덜 겪는지를 쓴다.
+- 다른 병원과 비교하거나 최고·유일·최초 같은 말을 쓰지 않는다. 의료법 위반이다.
+- 위에 적힌 것 말고 다른 장비, 자격, 실적, 수치를 지어내지 않는다.
+</이 병원만의 것>"""
+        return differentiator_text
+
+    @staticmethod
+    def _quality_contract(target_length: int) -> str:
+        """초안이 지켜야 할 '개수 계약'.
+
+        채점기는 문장을 세서 점수를 준다(quality_scorer 의 정규식들). 그래서 "잘 써라" 는
+        점수를 못 움직인다. 실측 20건에서 가장 많이 깎인 자리가 전부 여기였다:
+        한계 인정+대응 -4.4/5, 구체적 행동 -4.1/6, 내원 기준 -2.0/5, 장면 -1.5/3.
+
+        **예시 문구는 주지 않는다.** 주면 그대로 베껴 써서 모든 글이 판박이가 된다.
+        무엇을 할지만 개수로 말하고 표현은 맡긴다."""
+        # 여기 들어오는 값은 ask_length(목표의 78%)다. 실제 글은 그보다 길게 나오므로
+        # 개수를 그대로 쓰면 1,000자당 밀도가 채점 구간의 하한에 붙는다. 미리 나눠서 보정한다.
+        per_k = max(1.0, target_length / LENGTH_CALIBRATION / 1000)
+        actions = max(3, round(4.0 * per_k))      # 채점 구간 1,000자당 2~10개의 가운데 아래
+        scenes = max(2, round(3.0 * per_k))       # 채점 구간 1.5~8
+        asks = max(2, round(3.0 * per_k))         # 채점 구간 1.5~6
+        return f"""
+
+<이 글에 반드시 들어갈 것>
+개수만 지키고 표현은 알아서 쓴다. 아래를 채우려고 없는 사실을 지어내지 않는다.
+
+- 한계나 예외를 인정하고 **곧바로 이어서** 그럴 때 어떻게 하는지 말하는 대목 2곳.
+  인정만 하고 넘어가면 오히려 신뢰를 깎는다. 인정과 대응은 붙어 있어야 한다.
+- 독자가 오늘 바로 할 수 있는 행동 {actions}개. 뭉뚱그리지 말고 횟수나 순서를 붙인다.
+- 언제 병원에 와야 하는지 판단 기준 1문장. 기간이나 증상으로 선을 긋는다.
+- 겁주는 대목보다 "관리하면 나아진다"는 대목이 더 많아야 한다. 위협만 키우면 독자는 외면한다.
+- 시간과 장면이 드러나는 묘사 {scenes}곳. 하루 중 언제 어떤 동작에서 그런지.
+- 독자를 직접 지목하는 문장 {asks}곳.
+- 첫 문단은 인사도 자기소개도 병원 이름도 아닌, 독자가 자기 얘기라고 느낄 장면이나 질문으로 연다.
+</이 글에 반드시 들어갈 것>"""
+
     def _build_user_prompt(
         self,
         original_content: str,
@@ -769,6 +814,7 @@ class AIRewriteEngine:
         target_audience: Optional[Dict] = None,
         top_post_rules: Optional[Dict] = None,
         keyword: Optional[str] = None,
+        doctor_profile: Optional[Dict] = None,
     ) -> str:
         """
         각색 요구사항 프롬프트 생성
@@ -829,6 +875,9 @@ class AIRewriteEngine:
         structure = self._plan_structure(target_length, top_post_rules)
 
         keyword_text = f"\n<검색 키워드>\n{keyword}\n</검색 키워드>" if keyword else ""
+        # 채점 기준이 되는 재료와 개수 계약은 초안이 반드시 봐야 한다.
+        # (예전에는 시스템 프롬프트에만 있어 재작성 때나 닿았다 — 보여주지 않고 채점하던 셈)
+        material_text = self._differentiator_block(doctor_profile) + self._quality_contract(target_length)
         return f"""<원본 정보>
 {original_content}
 </원본 정보>
@@ -847,6 +896,8 @@ class AIRewriteEngine:
 {target_length}자는 상한이기도 하다. 넘기지 않는다.
 분량은 내용을 채워서 맞추는 것이지 문장을 늘려서 맞추는 것이 아니다. 같은 말을 다시 하거나 수식어를 덧붙여 늘리지 않는다.
 </분량>
+
+{material_text}
 
 위 원본 정보를 바탕으로 블로그 글을 쓴다.
 첫 줄에 제목을 한 줄로 쓰고, 빈 줄을 하나 둔 다음 본문을 시작한다.
@@ -921,7 +972,8 @@ class AIRewriteEngine:
             keyword,
         )
         user_prompt = self._build_user_prompt(
-            original_content, framework, persuasion_level, ask_length, target_audience, top_post_rules, keyword
+            original_content, framework, persuasion_level, ask_length, target_audience, top_post_rules, keyword,
+            doctor_profile,
         )
 
         # 긴 일반 지침보다 이번 원고의 주제와 원본을 우선하도록 마지막에 짧은 잠금 블록을 둔다.
@@ -946,7 +998,7 @@ class AIRewriteEngine:
 독자의 걱정 하나를 공감하되 공포를 키우지 않고, 설명과 근거와 선택 가능한 다음 행동을 논리적으로 연결합니다.
 사실과 해석을 구분하고, 근거가 없으면 단정하지 않습니다.
 합니다·했습니다·입니다체를 끝까지 유지하며, 짧고 자연스러운 문장으로 씁니다.
-인사로 시작해 독자의 실제 고민을 장면이나 질문으로 붙잡고, 검색 키워드가 들어간 제목 후킹과
+인사말이나 병원 소개로 시작하지 않고 독자의 실제 고민을 장면이나 질문으로 붙잡으며, 검색 키워드가 들어간 제목 후킹과
 도입 후킹을 만듭니다. 본문에는 독자가 이해할 수 있는 설명, 필요한 경우 짧은 비유,
 확인 가능한 근거, 병원에 실제로 있는 차별화 포인트, 오늘 할 수 있는 행동을 넣습니다.
 끝에서는 처음의 고민에 답하고 다음 판단 기준을 남기는 마무리 후킹을 만듭니다.
@@ -1049,33 +1101,38 @@ class AIRewriteEngine:
             print(f"[품질] {report['total']}점 ({report['grade']})"
                   f"{' · 의료광고법 상한 적용' if report['capped_by_law'] else ''}")
 
-            if report["total"] < QUALITY_THRESHOLD:
+            # 목표에 닿을 때까지 고친다. 매번 '나아졌을 때만' 채택하므로 나빠질 위험은 없고,
+            # 비용은 라운드당 재작성 1회 + 채점 1회다. 80점에서 멈추면 B등급이 그대로 나간다.
+            for _ in range(MAX_REVISIONS):
+                if report["total"] >= QUALITY_THRESHOLD:
+                    break
                 notes = quality_scorer.build_revision_notes(report)
-                if notes:
-                    revised, usage_delta = await self._revise(
-                        content, notes, system_prompt, max_output_tokens, model, target_length
-                    )
-                    total_input += usage_delta[0]
-                    total_output += usage_delta[1]
-                    total_thinking += usage_delta[2]
-
-                    if revised:
-                        new_report, usage_delta = await self._score(
-                            revised, keyword=keyword, differentiators=differentiators,
-                            source_text=original_content,
-                        )
-                        total_input += usage_delta[0]
-                        total_output += usage_delta[1]
-                        total_thinking += usage_delta[2]
-                        print(f"[품질] 재작성 후 {new_report['total']}점 ({new_report['grade']})"
-                              f" [원점수 {new_report['raw_total']} <- {report['raw_total']}]")
-                        # 나아졌을 때만 채택한다 (법 위반 감소 > 원점수 순으로 판정)
-                        if quality_scorer.is_better(new_report, report):
-                            content = revised
-                            report = new_report
-                            actual_length = len(content)
-                        else:
-                            print("[품질] 재작성이 더 낫지 않아 1차 원고를 유지합니다")
+                if not notes:
+                    break
+                revised, usage_delta = await self._revise(
+                    content, notes, system_prompt, max_output_tokens, model, target_length
+                )
+                total_input += usage_delta[0]
+                total_output += usage_delta[1]
+                total_thinking += usage_delta[2]
+                if not revised:
+                    break
+                new_report, usage_delta = await self._score(
+                    revised, keyword=keyword, differentiators=differentiators,
+                    source_text=original_content,
+                )
+                total_input += usage_delta[0]
+                total_output += usage_delta[1]
+                total_thinking += usage_delta[2]
+                print(f"[품질] 재작성 후 {new_report['total']}점 ({new_report['grade']})"
+                      f" [원점수 {new_report['raw_total']} <- {report['raw_total']}]")
+                # 나아졌을 때만 채택한다 (법 위반 감소 > 원점수 순으로 판정)
+                if not quality_scorer.is_better(new_report, report):
+                    print("[품질] 재작성이 더 낫지 않아 이전 원고를 유지합니다")
+                    break
+                content = revised
+                report = new_report
+                actual_length = len(content)
 
         # ── 분량 맞추기는 마지막에 한다 ──────────────────────────────
         # 품질 재작성이 내용을 더하면서 분량을 밀어올리기 때문에,
@@ -1209,8 +1266,11 @@ class AIRewriteEngine:
         used = (0, 0, 0)
         try:
             res = await self._gemini_call(
+                # 심사자에게 제목을 준다. 원고 첫 줄이 제목이므로 키워드가 없어도 줄 수 있다 —
+                # 빈 제목·빈 키워드로 '검색 의도가 해결되는가'를 판정하게 두면 낮게 줄 수밖에 없다.
                 user_prompt=quality_scorer.build_judge_prompt(
-                    content, keyword=keyword or "", differentiators=differentiators
+                    content, title=split_title_body(content)[0],
+                    keyword=keyword or "", differentiators=differentiators
                 ),
                 max_output_tokens=2048,
                 temperature=0.2,
