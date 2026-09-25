@@ -13,6 +13,7 @@ from typing import Dict, Optional, List
 from app.core.config import settings
 from app.models.user import IndustryType
 from app.services.industry_config import get_industry_config, get_industry_ai_prompt
+from app.services import research_context
 from app.services.quality_scorer import quality_scorer, split_title_body
 
 try:
@@ -815,6 +816,7 @@ class AIRewriteEngine:
         top_post_rules: Optional[Dict] = None,
         keyword: Optional[str] = None,
         doctor_profile: Optional[Dict] = None,
+        research_text: str = "",
     ) -> str:
         """
         각색 요구사항 프롬프트 생성
@@ -877,7 +879,9 @@ class AIRewriteEngine:
         keyword_text = f"\n<검색 키워드>\n{keyword}\n</검색 키워드>" if keyword else ""
         # 채점 기준이 되는 재료와 개수 계약은 초안이 반드시 봐야 한다.
         # (예전에는 시스템 프롬프트에만 있어 재작성 때나 닿았다 — 보여주지 않고 채점하던 셈)
-        material_text = self._differentiator_block(doctor_profile) + self._quality_contract(target_length)
+        material_text = (self._differentiator_block(doctor_profile)
+                         + research_text
+                         + self._quality_contract(target_length))
         return f"""<원본 정보>
 {original_content}
 </원본 정보>
@@ -971,9 +975,11 @@ class AIRewriteEngine:
             industry_type,
             keyword,
         )
+        # 남들이 뭘 썼고 뭘 안 썼는지. 키워드가 있을 때만, 느리면 건너뛴다(생성을 붙잡지 않는다).
+        research_text = await research_context.for_keyword(keyword) if keyword else ""
         user_prompt = self._build_user_prompt(
             original_content, framework, persuasion_level, ask_length, target_audience, top_post_rules, keyword,
-            doctor_profile,
+            doctor_profile, research_text,
         )
 
         # 긴 일반 지침보다 이번 원고의 주제와 원본을 우선하도록 마지막에 짧은 잠금 블록을 둔다.

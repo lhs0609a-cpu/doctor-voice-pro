@@ -214,6 +214,9 @@ export default function CreatePostPage() {
   const [editorMode, setEditorMode] = useState<'simple' | 'advanced'>('simple')
   const [selectedPreset, setSelectedPreset] = useState<string | null>('quick_simple')
 
+  // 검색 키워드. 비워도 글은 나오지만, 적으면 제목과 주제가 이 말에 묶이고
+  // 검색해서 남들이 뭘 썼는지까지 참고해 쓴다(서버의 research_context).
+  const [keyword, setKeyword] = useState('')
   const [config, setConfig] = useState({
     persuasion_level: 4,
     framework: '관심유도형',
@@ -567,6 +570,7 @@ export default function CreatePostPage() {
         try {
           const post = await postsAPI.create({
             original_content: processedContent,
+            keyword: keyword.trim() || undefined,
             persuasion_level: config.persuasion_level,
             framework: config.framework,
             target_length: config.target_length,
@@ -1500,6 +1504,23 @@ export default function CreatePostPage() {
               />
               <div className="text-sm text-muted-foreground">
                 {originalContent.length}자 / 최소 50자
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="search-keyword" className="text-sm font-medium">
+                  검색 키워드 <span className="text-xs font-normal text-muted-foreground">(선택)</span>
+                </label>
+                <Input
+                  id="search-keyword"
+                  placeholder="예: 무릎통증"
+                  maxLength={60}
+                  value={keyword}
+                  onChange={(e) => setKeyword(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  환자가 네이버에 칠 법한 말을 적으세요. 제목과 주제가 이 말에 묶이고,
+                  같은 말로 검색했을 때 남들이 이미 쓴 내용은 피해서 씁니다.
+                </p>
               </div>
 
               {/* 주제 변환 옵션 - 전문가 모드에서만 표시 */}

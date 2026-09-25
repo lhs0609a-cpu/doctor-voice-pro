@@ -88,6 +88,7 @@ async def create_post(
                 persuasion_level=post_data.persuasion_level,
                 framework=post_data.framework,
                 target_length=post_data.target_length,
+                keyword=post_data.keyword,
                 writing_style=writing_style_dict,
                 requirements=requirements_dict,
                 ai_provider=post_data.ai_provider,

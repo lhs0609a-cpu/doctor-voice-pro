@@ -53,6 +53,9 @@ class PostCreate(BaseModel):
     # AI 제공자 및 모델 선택
     ai_provider: str = Field(default="gemini")  # 원고 생성은 Gemini 단일 스택
     ai_model: Optional[str] = Field(default=None)  # 비우면 서버 기본값(gemini-2.5-flash). 예: gemini-2.5-flash-lite, gemini-2.5-pro
+    # 검색 키워드. 비워도 글은 나오지만, 주면 제목·주제 고정이 이 말에 묶이고
+    # 검색해 보니 남들이 뭘 썼는지까지 참고해서 쓴다(research_context).
+    keyword: Optional[str] = Field(default=None, max_length=60)
     # SEO 최적화 (DIA/CRANK)
     seo_optimization: Optional[SEOOptimization] = None
     # 상위글 분석 기반 규칙

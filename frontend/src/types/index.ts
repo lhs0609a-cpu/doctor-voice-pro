@@ -214,6 +214,8 @@ export interface TopPostRules {
 
 export interface PostCreateRequest {
   original_content: string
+  /** 환자가 검색할 법한 말. 주면 제목·주제가 여기 묶이고 경쟁 글까지 참고해서 쓴다. */
+  keyword?: string
   persuasion_level: number
   framework: string
   target_length: number
