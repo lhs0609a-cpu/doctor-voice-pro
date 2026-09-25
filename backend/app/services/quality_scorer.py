@@ -58,8 +58,13 @@ MEDICAL_AD_RULES = [
         "severity": "critical",
         "clause": "제56조 제2항 제3호·제8호(거짓·과장)",
         # '통증 없이 지내다' 같은 부사구는 위반이 아니다. 단정하는 서술형만 잡는다.
+        # 관형형 '없는' 을 통째로 넣으면 "통증이 없는 범위에서 움직이세요" 같은 환자 지도 문구가
+        # 걸려 멀쩡한 원고가 55점 상한을 맞는다(2026-09-25 실측, 원점수 79.3 → 총점 55).
+        # 그래서 서술형은 그대로 잡고, 관형형은 시술·제품을 꾸밀 때만 잡는다.
         "pattern": r"(100\s*%|완치|영구적으로|절대\s*안전"
-                   r"|(?:부작용|통증|흉터|후유증|다운타임)\s*(?:이|가)?\s*없(?:습니다|다|음|어요|는)"
+                   r"|(?:부작용|통증|흉터|후유증|다운타임)\s*(?:이|가)?\s*없(?:습니다|다|음|어요)"
+                   r"|(?:부작용|통증|흉터|후유증|다운타임)\s*(?:이|가)?\s*없는\s*"
+                   r"(?:시술|수술|치료|요법|방법|장비|주사|약|제품|성형|교정|레이저)"
                    r"|무조건\s*(?:낫|좋아)|반드시\s*(?:낫|치료))",
         "message": "효과를 단정하거나 부작용이 없다고 하는 표현은 과장 광고입니다",
         "fix": "'대부분', '개인차가 있습니다', '부작용이 적은 편입니다' 처럼 정도를 낮춰 쓰세요",
@@ -245,6 +250,16 @@ REFUTATION = re.compile(
     r"보완|함께\s*하면|병행|다른\s*방법|이를\s*줄이려면)"
 )
 
+# 지어낸 통계. 원본에 없는 비율을 붙이는 것은 의료법 제56조 제2항의 거짓·과장에 닿고,
+# 무엇보다 환자가 그 숫자를 믿는다. 2026-09-25 실측: 원본에 숫자가 하나도 없는데
+# "70% 이상을 차지합니다", "열에 아홉은" 이 생성됐다.
+STAT_CLAIM = re.compile(
+    r"(\d{1,3}\s*(?:%|퍼센트)"
+    r"|열\s*에\s*(?:아홉|여덟|일곱)"
+    r"|\d{1,3}\s*명\s*중\s*\d{1,3}"
+    r"|\d{1,3}\s*(?:배|곱절)\s*(?:더|이상|높|많|빠르))"
+)
+
 # 자기참조 (독자를 직접 지목)
 SELF_REFERENCE = re.compile(
     r"(신가요\?|하시나요\?|으신가요\?|보신\s*적|여러분|혹시\s|"
@@ -286,6 +301,27 @@ def split_title_body(text: str):
     if looks_like_title:
         return first, rest
     return "", text
+
+
+# 인사 도입부. 프롬프트로 세 번 막았는데 세 번 다 "안녕하세요" 로 시작했다(2026-09-25 실측).
+# 채점기는 이 때문에 첫 문단 5점 중 3.5점을 깎는다. 지시로 안 되면 지우는 편이 확실하다.
+GREETING_SENTENCE = re.compile(
+    r"^\s*(?:안녕하세요|반갑습니다)[^.!?\n]*[.!?]\s*"
+    r"(?:[^.!?\n]{0,40}(?:입니다|드립니다)[.!?]\s*)?"
+)
+
+
+def strip_greeting(text: str) -> str:
+    """본문 첫머리의 인사말만 지운다. 제목과 나머지 문장은 건드리지 않는다.
+
+    인사 뒤에 붙는 '정형외과 전문의입니다' 같은 자기소개 한 문장까지가 사정권이다.
+    지우고 나서 남는 것이 너무 짧으면(문단 전체가 인사였으면) 손대지 않는다 —
+    본문을 통째로 날리는 것보다 3.5점을 잃는 편이 낫다."""
+    title, body = split_title_body(text)
+    stripped = GREETING_SENTENCE.sub("", body, count=1).lstrip()
+    if not stripped or len(stripped) < len(body) * 0.5:
+        return text
+    return f"{title}\n\n{stripped}" if title else stripped
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
@@ -604,6 +640,20 @@ class QualityScorer:
                 "사실이면 그대로 두시고, 아니면 기관명을 빼고 일반론으로 바꾸세요: "
                 + " / ".join(u[:60] for u in unverified[:2])
             )
+        # 원본에 없는 비율을 붙였으면 근거가 아니라 위험이다. 인용 조작과 같은 무게로 깎는다.
+        invented = []
+        if source_text:
+            for m in STAT_CLAIM.finditer(body):
+                claim = m.group(0).strip()
+                digits = re.sub(r"[^0-9]", "", claim)
+                if claim not in source_text and (not digits or digits not in re.sub(r"[^0-9]", "", source_text)):
+                    invented.append(claim)
+        if invented:
+            ev_score *= _clamp(1 - 0.4 * len(invented), 0.2, 1.0)
+            notes.append(
+                f"원본에 없는 숫자를 만들어 붙였습니다({len(invented)}건: {', '.join(invented[:3])}). "
+                "환자는 그 숫자를 믿습니다. 지우고 숫자 없이 쓰거나 원본에 있는 숫자만 쓰세요"
+            )
         if ev < 2:
             notes.append(
                 "근거를 한두 군데 넣으세요. 확실히 아는 공공기관·학회 자료만 쓰고, "
@@ -612,6 +662,7 @@ class QualityScorer:
         details["evidence"] = {
             "score": round(ev_score, 1), "max": 5, "notes": notes,
             "citations": citations, "unverified_citations": unverified,
+            "invented_stats": invented,
         }
 
         # E2. 양면 + 반박 (5점)

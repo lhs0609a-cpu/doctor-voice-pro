@@ -14,7 +14,7 @@ from app.core.config import settings
 from app.models.user import IndustryType
 from app.services.industry_config import get_industry_config, get_industry_ai_prompt
 from app.services import research_context
-from app.services.quality_scorer import quality_scorer, split_title_body
+from app.services.quality_scorer import quality_scorer, split_title_body, strip_greeting
 
 try:
     from google import genai
@@ -796,14 +796,21 @@ class AIRewriteEngine:
 <이 글에 반드시 들어갈 것>
 개수만 지키고 표현은 알아서 쓴다. 아래를 채우려고 없는 사실을 지어내지 않는다.
 
-- 한계나 예외를 인정하고 **곧바로 이어서** 그럴 때 어떻게 하는지 말하는 대목 2곳.
-  인정만 하고 넘어가면 오히려 신뢰를 깎는다. 인정과 대응은 붙어 있어야 한다.
+- 한계나 예외를 인정하고 **바로 다음 문장에서** 그럴 때 어떻게 하는지 말하는 대목 2곳.
+  "이 방법이 모두에게 듣는 것은 아닙니다" 로 끝내면 안 되고, 이어서 "그런 경우에는 무엇을
+  본다/무엇을 함께 한다" 까지 써야 한 세트다. 인정 문장과 대응 문장은 붙어 있어야 한다.
+  단점을 아예 말하지 않는 글보다, 인정만 하고 답이 없는 글이 더 불신을 산다.
 - 독자가 오늘 바로 할 수 있는 행동 {actions}개. 뭉뚱그리지 말고 횟수나 순서를 붙인다.
 - 언제 병원에 와야 하는지 판단 기준 1문장. 기간이나 증상으로 선을 긋는다.
 - 겁주는 대목보다 "관리하면 나아진다"는 대목이 더 많아야 한다. 위협만 키우면 독자는 외면한다.
 - 시간과 장면이 드러나는 묘사 {scenes}곳. 하루 중 언제 어떤 동작에서 그런지.
 - 독자를 직접 지목하는 문장 {asks}곳.
-- 첫 문단은 인사도 자기소개도 병원 이름도 아닌, 독자가 자기 얘기라고 느낄 장면이나 질문으로 연다.
+- 제목 줄 다음의 첫 문단은 인사도 자기소개도 병원 이름도 아닌, 독자가 자기 얘기라고
+  느낄 장면이나 질문으로 연다. "안녕하세요", "반갑습니다", "오늘은 ~에 대해" 로 시작하지 않는다.
+  (제목 줄은 그대로 쓴다. 제목을 빼라는 말이 아니다.)
+
+숫자를 지어내지 않는다. 위 개수를 채우려고 비율·퍼센트·"열에 아홉"·"대부분의 경우" 같은
+표현을 만들어 붙이지 않는다. 원본에 숫자가 없으면 숫자 없이 쓴다.
 </이 글에 반드시 들어갈 것>"""
 
     def _build_user_prompt(
@@ -1097,6 +1104,8 @@ class AIRewriteEngine:
         report = None
         if quality_check:
             differentiators = doctor_profile.get("differentiators") or None
+            # 인사 도입은 프롬프트로 세 번 막아도 안 됐다. 채점 전에 지워서 점수와 결과를 맞춘다.
+            content = strip_greeting(content)
             report, usage_delta = await self._score(
                 content, keyword=keyword, differentiators=differentiators,
                 source_text=original_content,

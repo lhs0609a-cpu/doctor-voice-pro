@@ -255,31 +255,30 @@ QUESTION_PROBES = [
 
 
 async def _probe_questions(seed: str, time_budget: float = 12.0) -> List[str]:
-    """자동완성에 질문 프로브를 붙여 실제 질문형 검색어를 수집한다"""
+    """자동완성에 질문 프로브를 붙여 실제 질문형 검색어를 수집한다.
+
+    2026-09-25 실측: keyword_expander.fetch_naver_autocomplete 를 부르고 있었는데
+    그런 함수가 없다. 조용히 예외로 빠져서 '질문' 재료가 늘 비어 있었고,
+    LLM 심사의 intent 항목이 그만큼 낮게 나왔다. 실제 함수는 keyword_collector 에 있다."""
     import asyncio as _asyncio
-    import httpx as _httpx
+
+    from app.services.keyword_collector import get_naver_autocomplete
 
     queries = [f"{seed} {probe}" for probe in QUESTION_PROBES]
     found: List[str] = []
-    sem = _asyncio.Semaphore(8)
-
     try:
-        async with _httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
-            tasks = [
-                keyword_expander.fetch_naver_autocomplete(client, q, sem)
-                for q in queries
-            ] + [
-                keyword_expander.fetch_google_autocomplete(client, q, sem)
-                for q in queries[:6]
-            ]
-            results = await _asyncio.wait_for(
-                _asyncio.gather(*tasks, return_exceptions=True),
-                timeout=time_budget,
-            )
+        results = await _asyncio.wait_for(
+            _asyncio.gather(*[get_naver_autocomplete(q) for q in queries],
+                            return_exceptions=True),
+            timeout=time_budget,
+        )
         for result in results:
             if isinstance(result, BaseException) or not result:
                 continue
-            found.extend(result)
+            for item in result:
+                text = (item or "").strip()
+                if text and text not in found:
+                    found.append(text)
     except Exception as e:  # noqa: BLE001
         logger.warning("[딥리서치] 질문 프로브 실패(%s): %s", seed, e)
 
