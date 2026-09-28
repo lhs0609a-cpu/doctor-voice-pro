@@ -150,7 +150,9 @@ class ServerClient:
         return data
 
     def summary(self) -> List[Dict[str, Any]]:
-        """[{blog_ref_id, naver_blog_id, label, status, status_reason, pending, next_at, login_id}]"""
+        """[{blog_ref_id, naver_blog_id, label, status, status_reason, pending, blocked, next_at, login_id}]
+
+        blocked = '확인 필요' 건수. 0 이 아니면 그 블로그의 대기 예약이 전부 멈춰 있다."""
         return self._request("GET", "/campaign/agent/summary") or []
 
     def proxy_for(self, blog_ref_id: str) -> Optional[str]:

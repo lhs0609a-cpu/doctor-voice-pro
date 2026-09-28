@@ -53,6 +53,21 @@ export function Step6Status({ campaign, setCampaign, goStep }: StepProps) {
     return c
   }, [jobs])
 
+  // '확인 필요' 한 건은 그 블로그의 **나머지 예약을 전부 멈춘다**(한 블로그에 미해결 발행은 하나).
+  // 실행기는 글쓰기 화면만 새로고침하며 아무 말도 하지 않아, 사용자에게는 "예약발행이 안 된다"로만
+  // 보였다(2026-09-28 신고). 멈춘 이유와 푸는 방법을 여기서 말한다.
+  const blockedBlogs = useMemo(() => {
+    const byBlog = new Map<string, PublishJobItem[]>()
+    for (const j of jobs) byBlog.set(j.blog_ref_id, [...(byBlog.get(j.blog_ref_id) || []), j])
+    return [...byBlog.values()]
+      .map((list) => ({
+        label: list[0].blog_label,
+        stuck: list.filter((j) => j.status === 'uncertain').length,
+        waiting: list.filter((j) => ACTIVE.has(j.status)).length,
+      }))
+      .filter((b) => b.stuck > 0 && b.waiting > 0)
+  }, [jobs])
+
   const act = async (id: string, fn: () => Promise<PublishJobItem>, okMsg: string) => {
     setBusy(id)
     try {
@@ -92,6 +107,17 @@ export function Step6Status({ campaign, setCampaign, goStep }: StepProps) {
         <StatTile label="실패" value={fmt(counts.failed)} tone={counts.failed > 0 ? 'danger' : undefined} />
         <StatTile label="확인 필요" value={fmt(counts.uncertain)} tone={counts.uncertain > 0 ? 'warn' : undefined} />
       </div>
+
+      {/* 한 건이 막고 있는 블로그 안내 */}
+      {blockedBlogs.map((b) => (
+        <p key={b.label} className="rounded-lg bg-amber-500/10 p-3 text-sm">
+          <b className="font-medium">‘{b.label}’ 블로그가 멈춰 있습니다.</b> ‘확인 필요’ {fmt(b.stuck)}건 때문에
+          대기 중인 {fmt(b.waiting)}건이 올라가지 않습니다. 한 블로그에 결과를 모르는 발행이 하나라도 있으면
+          그 블로그의 다음 글을 올리지 않습니다(같은 글이 두 번 올라가는 것을 막기 위해서입니다).
+          네이버 블로그의 예약 목록을 보고, 아래 목록에서 그 건의 <b className="font-medium">[예약 등록 확인]</b> 또는
+          <b className="font-medium"> [미등록 확인]</b>을 눌러 주세요. 누르는 즉시 나머지가 이어서 올라갑니다.
+        </p>
+      ))}
 
       {/* 발행 실행 */}
       <PublishRunner campaign={campaign} onJobsChanged={() => load(true)} />

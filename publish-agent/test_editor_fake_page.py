@@ -288,6 +288,50 @@ class TestEditorOnFakePage(unittest.TestCase):
         first_para = html.split("<!--PARA-->")[0]
         self.assertNotIn("사진 뒤 문단", first_para)
 
+    # ------------------------------------------- 발행 뒤 예약 건수는 새 화면에서 읽는다
+    def test_reserve_count_after_publishing_is_read_from_a_fresh_screen(self):
+        """예약을 걸고 나서 세는 숫자는 **다시 연 화면**의 숫자여야 한다.
+
+        네이버는 예약이 걸려도 글쓰기 주소(…?Redirect=Write)에 그대로 머무는 일이 많다. 그
+        화면에 남아 있는 칩은 발행 전 숫자다 — 그것을 '후'로 읽으면 멀쩡히 걸린 예약이
+        '안 걸렸다'가 되고, 그 '확인 필요' 한 건이 그 블로그의 나머지 예약을 전부 막는다
+        (2026-09-28: 사용자 화면에서 실행기가 글쓰기 화면만 새로고침하며 멈춰 있었다)."""
+        async def body(ed: NaverEditor, page):
+            await ed.open_write_page()
+            await ed.dismiss_draft_popup()
+            before = await ed.reserve_count()
+            await ed.set_title("예약 건수 확인")
+            await ed.insert_body_blocks([{"type": "text", "content": "본문입니다."}], [])
+            await ed.open_publish_layer()
+            await ed.set_category("24")
+            await ed.set_schedule(datetime(2026, 11, 5, 14, 37))
+            out = await ed.publish()
+            self.assertTrue(out.ok, out.message)
+            # 발행한 그 화면에는 옛 숫자가 그대로 있다 — 그걸 읽으면 안 된다.
+            self.assertEqual(await ed.reserve_count(), before, "발행 화면의 칩은 발행 전 숫자 그대로")
+            return before, await ed.reserve_count(reopen=True)
+
+        before, after = self._run(self._with_editor("?reserve=2", body))
+        self.assertEqual(before, 2)
+        self.assertEqual(after, 3, "다시 연 화면에서 읽어야 늘어난 숫자가 보인다")
+
+    def test_reserve_count_still_flags_a_reservation_that_never_took(self):
+        """?reservestuck=1 — 예약이 실제로 안 걸린 경우에는 숫자가 늘지 않아야 한다."""
+        async def body(ed: NaverEditor, page):
+            await ed.open_write_page()
+            await ed.dismiss_draft_popup()
+            before = await ed.reserve_count()
+            await ed.set_title("예약 건수 확인")
+            await ed.insert_body_blocks([{"type": "text", "content": "본문입니다."}], [])
+            await ed.open_publish_layer()
+            await ed.set_category("24")
+            await ed.set_schedule(datetime(2026, 11, 5, 14, 37))
+            await ed.publish()
+            return before, await ed.reserve_count(reopen=True)
+
+        before, after = self._run(self._with_editor("?reserve=2&reservestuck=1", body))
+        self.assertEqual((before, after), (2, 2))
+
     # ------------------------------------------------------------ 예약 실패 → 발행 금지
     def test_datepicker_missing_raises_before_publish(self):
         async def body(ed: NaverEditor, page):

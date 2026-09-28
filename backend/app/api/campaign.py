@@ -2411,6 +2411,11 @@ class AgentBlogSummary(BaseModel):
     pending: int = 0
     next_at: Optional[str] = None
     login_id: Optional[str] = None
+    # '확인 필요' 건수. 한 블로그에 미해결 실행 시도는 하나뿐이므로(PublishAttempt.active_blog_id
+    # 유니크), 이 숫자가 0 이 아니면 그 블로그의 **대기 중인 예약이 전부 멈춘다**.
+    # 실행기가 그 이유를 말할 수 있어야 한다 — 말하지 않으면 글쓰기 화면만 새로고침하며
+    # 멈춰 있는 것처럼 보인다(2026-09-28 사용자 신고).
+    blocked: int = 0
     # 예약 목록을 다시 읽어야 하는가(웹에서 [새로 읽기]를 눌렀거나 읽은 지 오래됨)
     wants_scan: bool = True
     reservations_scanned_at: Optional[str] = None
@@ -2424,6 +2429,8 @@ async def agent_summary(current_user: User = Depends(get_current_user), db: Asyn
     out = []
     for b in blogs:
         rows = (await db.execute(select(PublishJob.scheduled_at).where(PublishJob.blog_ref_id == b.id, PublishJob.status.in_(["queued", "assigned", "failed"])).order_by(PublishJob.scheduled_at.asc()))).all()
+        blocked = (await db.execute(select(func.count()).select_from(PublishJob).where(
+            PublishJob.blog_ref_id == b.id, PublishJob.status == "uncertain"))).scalar() or 0
         scanned = b.reservations_scanned_at
         stale = not scanned or (datetime.utcnow() - scanned) > timedelta(hours=RESERVATION_STALE_HOURS)
         # 한 번 못 읽은 블로그는 계속 못 읽는다(주소를 모르는 것이지 일시적인 실패가 아니다).
@@ -2431,6 +2438,7 @@ async def agent_summary(current_user: User = Depends(get_current_user), db: Asyn
         give_up = bool(b.reservations_note) and not b.reservations_scan_requested_at
         out.append(AgentBlogSummary(blog_ref_id=b.id, naver_blog_id=b.blog_id, label=b.label or b.blog_id, status=b.status or "active", status_reason=b.status_reason,
                                     pending=len(rows), next_at=rows[0][0].isoformat(timespec="minutes") if rows else None, login_id=b.login_id,
+                                    blocked=int(blocked),
                                     wants_scan=bool(b.reservations_scan_requested_at or (stale and not give_up)),
                                     reservations_scanned_at=scanned.isoformat(timespec="minutes") if scanned else None,
                                     wants_categories=bool(b.categories_scan_requested_at) or not b.categories

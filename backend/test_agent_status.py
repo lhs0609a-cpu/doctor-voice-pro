@@ -84,6 +84,22 @@ class AgentStatusTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
         self.assertFalse((await self.client.get('/agent/status')).json()['stalled'])
 
+    async def test_summary_says_how_many_uncertain_jobs_hold_the_blog(self):
+        """'확인 필요' 한 건은 그 블로그의 나머지 예약을 전부 멈춘다 — 그 숫자를 실행기에 알린다.
+
+        한 블로그에 미해결 발행은 하나뿐이다(PublishAttempt.active_blog_id 유니크). 서버가 말해
+        주지 않으면 실행기는 글쓰기 화면만 새로고침하며 멈춘 것처럼 보인다(2026-09-28 신고)."""
+        async with self.sessions() as db:
+            db.add(Blog(id='b9', user_id='u', client_id='c', blog_id='myblog', status='active'))
+            db.add(PublishJob(id='j-stuck', user_id='u', campaign_id='c', draft_id='d', blog_ref_id='b9',
+                              scheduled_at=datetime.utcnow() + timedelta(hours=1), status='uncertain'))
+            db.add(PublishJob(id='j-waiting', user_id='u', campaign_id='c', draft_id='d2', blog_ref_id='b9',
+                              scheduled_at=datetime.utcnow() + timedelta(hours=3), status='queued'))
+            await db.commit()
+        row = next(r for r in (await self.client.get('/agent/summary')).json() if r['blog_ref_id'] == 'b9')
+        self.assertEqual(row['blocked'], 1)
+        self.assertEqual(row['pending'], 1)      # 막힌 건은 대기 수에 섞지 않는다
+
     async def test_categories_are_fetched_on_request_and_shown_to_the_app(self):
         """[카테고리 새로 읽기]를 누르면 실행기가 다음 차례에 읽어 오고, 그 목록이 화면에 뜬다.
 

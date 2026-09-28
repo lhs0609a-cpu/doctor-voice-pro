@@ -536,12 +536,33 @@ async def process_queue_jobs(client: ServerClient, editor: Any, blog: Dict[str, 
     return done
 
 
+def explain_idle(label: str, blog: Dict[str, Any]) -> None:
+    """올릴 것이 있는데 서버가 한 건도 내주지 않았을 때 **그 이유를 말한다**.
+
+    잠자코 넘어가면 실행기는 글쓰기 화면만 새로고침하다 멈춘 것처럼 보인다. 사용자에게는
+    "예약발행이 안 된다"로만 보였다(2026-09-28 신고). 서버가 건너뛴 이유는 로그에만 남으므로,
+    적어도 '무엇을 하면 풀리는지'는 여기서 알려 준다."""
+    blocked, pending = int(blog.get("blocked") or 0), int(blog.get("pending") or 0)
+    if blocked:
+        log.warning("'%s': '확인 필요' %d건이 이 블로그의 예약을 **전부 막고 있습니다**. "
+                    "한 블로그에 미해결 발행은 하나뿐이라서, 그 건을 처리해야 대기 %d건이 이어집니다. "
+                    "웹 [발행 현황]에서 네이버 예약 목록과 대조해 '예약 등록 확인' 또는 '미등록 확인'을 눌러 주세요.",
+                    label, blocked, pending)
+    elif pending:
+        log.warning("'%s': 대기 %d건이 있는데 서버가 한 건도 내주지 않았습니다. "
+                    "웹 [발행 현황]에서 사유를 확인하세요(자동 운영 일시정지 / 원고 검수 미통과 / "
+                    "예약 시각이 15분 안으로 임박 / 블로그 상태).", label, pending)
+    else:
+        log.info("'%s': 올릴 예약이 없습니다.", label)
+
+
 async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, Any], args: argparse.Namespace,
                        *, claim_unassigned: bool = False) -> None:
     from naver_editor import WRITE_URL, NaverEditor
 
     label, ref, naver_id = blog.get("label") or blog.get("naver_blog_id"), blog["blog_ref_id"], blog["naver_blog_id"]
-    log.info("=== 블로그 '%s' (%s) 대기 %s건, 상태 %s ===", label, naver_id, blog.get("pending"), blog.get("status"))
+    log.info("=== 블로그 '%s' (%s) 대기 %s건, 확인 필요 %s건, 상태 %s ===",
+             label, naver_id, blog.get("pending"), blog.get("blocked") or 0, blog.get("status"))
 
     try:
         proxy = await asyncio.to_thread(client.proxy_for, ref)
@@ -606,6 +627,8 @@ async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, 
         jobs = await asyncio.to_thread(client.claim, ref, limit=1, include_images=not args.no_images,
                                        mode="dry_run" if args.dry_run else "live")
         if not jobs:
+            if i == 0:
+                explain_idle(label, blog)
             break
         job = jobs[0]
         journal.start(job)

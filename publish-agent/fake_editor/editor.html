@@ -186,9 +186,17 @@
   });
 
   // 예약 발행 칩 — 누르면 목록 레이어가 열린다(실제 네이버와 같은 구조).
+  // 숫자는 **화면을 새로 열 때만** 바뀐다. 실제 네이버도 예약을 걸고 나면 글쓰기 주소에
+  // 그대로 머무는데, 그 화면의 칩은 발행 전 숫자 그대로다. 대역이 친절하게 그 자리에서
+  // 숫자를 올려 주면, 발행 뒤 stale 한 칩을 읽는 버그를 시험이 영영 잡지 못한다.
+  const RESERVE_ADDED_KEY = 'dv-reserve-added';
+  function reserveAdded() {
+    try { return parseInt(sessionStorage.getItem(RESERVE_ADDED_KEY) || '0', 10) || 0; } catch (e) { return 0; }
+  }
   (function reserveChip() {
     const q = new URLSearchParams(location.search);
-    const count = q.has('reserve') ? parseInt(q.get('reserve'), 10) : 3;
+    const base = q.has('reserve') ? parseInt(q.get('reserve'), 10) : 3;
+    const count = base + reserveAdded();
     const shown = q.get('reservebad') ? Math.max(0, count - 1) : count;
     const chip = document.getElementById('reservechip');
     chip.textContent = '예약 발행 ' + count + '건';
@@ -259,12 +267,11 @@
       images: document.querySelectorAll('.se-component.se-image').length,
     };
     layer.classList.remove('open');
-    // 예약으로 올리면 '예약 발행 N건' 숫자가 하나 는다 — 실제 네이버가 그렇다.
-    // ?reservestuck=1 이면 숫자가 그대로다(예약이 실제로는 안 걸린 경우를 흉내 낸다).
+    // 예약으로 올리면 네이버에 예약 한 건이 는다. 다만 **지금 이 화면의 칩은 그대로다** —
+    // 늘어난 숫자는 글쓰기 화면을 새로 열어야 보인다(위 reserveChip 주석 참고).
+    // ?reservestuck=1 이면 아예 늘지 않는다(예약이 실제로는 안 걸린 경우를 흉내 낸다).
     if (t2.checked && q.get('reservestuck') !== '1') {
-      const chip = document.getElementById('reservechip');
-      const shown = parseInt((chip.textContent.match(/(\d+)/) || ['0', '0'])[1], 10);
-      chip.textContent = '예약 발행 ' + (shown + 1) + '건';
+      try { sessionStorage.setItem(RESERVE_ADDED_KEY, String(reserveAdded() + 1)); } catch (e) {}
     }
     // ?postlink=1 — 발행 뒤 '예약 발행되었습니다' 안내 토스트에 글 링크가 뜨는 경우를 흉내 낸다
     if (q.get('postlink') === '1') {
