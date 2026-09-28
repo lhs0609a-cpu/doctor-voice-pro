@@ -140,6 +140,11 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
         if expected != current:
             raise BlogMismatch(f"로그인된 블로그가 다릅니다(예상 '{expected}', 현재 '{current}'). 엉뚱한 블로그에 발행되지 않도록 중단했습니다.")
 
+        # 네이버가 말하는 예약 건수를 적어 둔다. 발행 뒤 이 숫자가 늘어야 진짜 등록이다.
+        reserved_before = None
+        if action == "schedule" and hasattr(editor, "reserve_count"):
+            reserved_before = await editor.reserve_count()
+
         # 3) 제목/본문
         await editor.set_title(title)
         blocks = job.get("blocks") or [{"type": "text", "content": job.get("content") or ""}]
@@ -194,6 +199,18 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
         if out is None:
             return JobResult(ok=False, uncertain=True, message="발행 결과 없음 — 네이버 예약 목록 확인 필요")
         if out.ok and not out.uncertain:
+            if action == "schedule":
+                # 예약한 글은 아직 공개되지 않아 주소가 없다. 발행 뒤 화면에 보이는 글 번호는
+                # **이미 올라가 있던 남의 글**이다 — 그것을 영수증으로 보내면 서버가 엉뚱한 글로
+                # 공개를 확인한다(2026-09-28 실측: 두 건이 같은 기존 글 번호로 보고됐다).
+                after = await editor.reserve_count(reopen=True) if hasattr(editor, "reserve_count") else None
+                if after is not None and after <= (reserved_before or 0):
+                    return JobResult(ok=False, uncertain=True, message=(
+                        f"발행 창은 닫혔는데 네이버 예약 건수가 늘지 않았습니다"
+                        f"(전 {reserved_before if reserved_before is not None else '?'}건 → 후 {after}건). "
+                        f"네이버 예약 목록을 확인하세요"))
+                log.info("예약 확인: %s건 → %s건", reserved_before, after)
+                return JobResult(ok=True, message=out.message)
             from urllib.parse import urlparse
             parsed = urlparse(out.url or '')
             import re

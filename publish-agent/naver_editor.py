@@ -1024,6 +1024,33 @@ class NaverEditor:
         log.warning("예약 목록 화면을 찾지 못했습니다. 주소가 바뀌었다면 DV_RESERVE_URL 로 알려 주세요")
         return None
 
+    async def reserve_count(self, *, reopen: bool = False) -> Optional[int]:
+        """글쓰기 화면의 '예약 발행 N건' 숫자. 못 읽으면 None — 0 과 절대 같게 두지 않는다.
+
+        발행 전후로 이 숫자를 견주면 '예약이 진짜 걸렸는가'를 네이버 화면으로 확인할 수 있다.
+        발행 창이 닫혔다는 것만으로 성공이라고 보고했다가, 예약 목록에는 아무것도 없는 일이
+        있었다(2026-09-28 실측: 2건이 '예약 등록 후 페이지 이동'으로 보고됐는데 블로그에는
+        새 글도 예약도 없었다)."""
+        for again in (False, True):
+            if again:
+                # 발행하면 네이버가 글쓰기 화면을 떠난다. 지금 화면에 칩이 없을 때만 다시 연다.
+                if not reopen:
+                    break
+                try:
+                    await self.open_write_page()
+                    await self.dismiss_draft_popup()
+                except Exception as e:  # noqa: BLE001
+                    log.info("예약 건수를 보려고 글쓰기 화면을 열지 못했습니다: %s", e)
+                    break
+            try:
+                for scope in (await self.frame(), self.page):
+                    chip = await scope.evaluate(JS_RESERVE_CHIP)
+                    if chip and chip.get("found"):
+                        return int(chip.get("count") or 0)
+            except Exception as e:  # noqa: BLE001 — 숫자를 못 본 것뿐이다
+                log.info("예약 건수를 읽지 못했습니다: %s", e)
+        return None
+
     async def read_reservations_in_editor(self) -> Optional[List[Dict[str, Any]]]:
         """글쓰기 화면의 '예약 발행 N건' 칩을 눌러 목록을 읽는다.
 

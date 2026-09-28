@@ -94,6 +94,15 @@ async def result(db, job_id, user_id, token, body, now=None):
     url = urlparse(body.get('url') or '')
     receipt = str(body.get('receipt_id') or '')
     identified = bool(re.fullmatch(r'[0-9]+', receipt)) and url.scheme == 'https' and url.hostname == 'blog.naver.com' and url.path.rstrip('/') == f'/{j.naver_blog_id}/{receipt}'
+    if identified:
+        # 같은 블로그의 다른 건이 이미 이 번호를 가져갔다면 우리 글의 번호가 아니다.
+        # 실행기가 발행 뒤 화면에 보이던 **남의 글 번호**를 주워 보낸 적이 있다(2026-09-28 실측:
+        # 두 건이 같은 기존 글 번호로 성공 보고됐고, 네이버에는 새 글도 예약도 없었다).
+        taken = (await db.execute(select(PublishJob.id).where(
+            PublishJob.user_id == user_id, PublishJob.naver_blog_id == j.naver_blog_id,
+            PublishJob.result_url == body.get('url'), PublishJob.id != j.id))).scalars().first()
+        if taken:
+            identified = False
     release = body.get("release") and not finalizing and not body.get("ok")
     uncertain = bool(body.get("uncertain")) or (finalizing and not body.get("ok"))
     if attempt.mode == "dry_run":

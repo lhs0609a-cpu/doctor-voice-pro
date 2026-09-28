@@ -394,6 +394,8 @@ class FakeEditor:
         self.calls = []
         self.fail_at = fail_at
         self.blog_id = blog_id
+        self.publish_url = None
+        self.counts = None            # None 이면 '예약 건수를 못 읽는 화면'
 
     def _rec(self, name, *a):
         self.calls.append(name)
@@ -423,11 +425,18 @@ class FakeEditor:
         self._rec("save_draft")
         return PublishOutcome(ok=True, message="임시저장")
 
+    async def reserve_count(self, *, reopen=False):
+        self._rec("reserve_count")
+        counts = getattr(self, "counts", None)
+        if counts is None:
+            return None
+        return counts.pop(0) if counts else None
+
     async def publish(self, dry_run=False):
         from naver_editor import PublishOutcome
 
         self._rec("publish")
-        return PublishOutcome(ok=True, url=None, message="발행 레이어 닫힘")
+        return PublishOutcome(ok=True, url=self.publish_url, message="발행 레이어 닫힘")
 
 
 def _job(**over):
@@ -458,7 +467,8 @@ class TestRunJob(unittest.TestCase):
         self.assertEqual(ed.dt, datetime(2026, 9, 10, 14, 30))
         self.assertLess(ed.calls.index("set_schedule"), ed.calls.index("publish"))
         self.assertLess(ed.calls.index("set_category"), ed.calls.index("set_schedule"))
-        self.assertEqual(ed.calls[-1], "publish")
+        # 발행이 마지막 '쓰는' 동작이다. 그 뒤에는 예약이 실제로 걸렸는지 읽어 보기만 한다.
+        self.assertEqual([c for c in ed.calls if c != "reserve_count"][-1], "publish")
 
     def test_schedule_failure_never_publishes(self):
         ed = FakeEditor(fail_at="set_schedule")
@@ -513,6 +523,41 @@ class TestRunJob(unittest.TestCase):
                 self.assertFalse(r.ok)
                 self.assertNotIn("set_title", ed.calls)
                 self.assertNotIn("publish", ed.calls)
+
+    def test_a_reservation_that_did_not_register_is_not_reported_as_success(self):
+        """발행 창이 닫혔어도 네이버 예약 건수가 늘지 않았으면 성공이 아니다.
+
+        2026-09-28 실측: 두 건이 '예약 등록 후 페이지 이동'으로 성공 보고됐는데 블로그에는
+        새 글도 예약도 없었다. 창이 닫혔다는 것만으로 성공이라고 하면 사용자는 예약이 걸린 줄 안다."""
+        editor = FakeEditor()
+        editor.counts = [2, 2]                      # 발행 전 2건 → 발행 후에도 2건
+        out = self.run_job(editor, _job())
+        self.assertFalse(out.ok)
+        self.assertTrue(out.uncertain)
+        self.assertIn("예약 건수가 늘지 않았습니다", out.message)
+
+    def test_a_reservation_that_registered_is_a_success(self):
+        editor = FakeEditor()
+        editor.counts = [2, 3]
+        out = self.run_job(editor, _job())
+        self.assertTrue(out.ok)
+        self.assertIsNone(out.receipt_id)
+
+    def test_a_reservation_never_borrows_another_posts_number(self):
+        """예약한 글은 아직 주소가 없다. 화면에 보이는 글 번호는 이미 올라가 있던 남의 글이다."""
+        editor = FakeEditor()
+        editor.publish_url = "https://blog.naver.com/platonmarketing/224423860380"
+        out = self.run_job(editor, _job())
+        self.assertTrue(out.ok)
+        self.assertIsNone(out.receipt_id)
+        self.assertIsNone(out.url)
+
+    def test_immediate_publish_still_reports_its_own_number(self):
+        editor = FakeEditor()
+        editor.publish_url = "https://blog.naver.com/platonmarketing/224423860380"
+        out = self.run_job(editor, _job(finalAction="publish"))
+        self.assertTrue(out.ok)
+        self.assertEqual(out.receipt_id, "224423860380")
 
     def test_missing_publish_response_is_uncertain(self):
         class NoResponseEditor(FakeEditor):

@@ -59,6 +59,31 @@ class ProtocolTests(DatabaseCase):
             with self.assertRaises(p.Conflict):
                 await p.result(db, 'j0', 'u', token, {'ok': True})
 
+    async def test_a_receipt_another_job_already_used_is_not_trusted(self):
+        """실행기가 발행 뒤 화면에서 주운 '남의 글 번호'를 우리 영수증으로 받지 않는다.
+
+        2026-09-28 실측: 예약 두 건이 같은 기존 글 번호로 성공 보고됐고, 네이버에는 새 글도
+        예약도 없었다. 번호가 겹치면 그 번호는 우리 글의 것이 아니다 — 주소를 남기지 않고
+        예약 시각 뒤 RSS 확인에 맡긴다."""
+        url = 'https://blog.naver.com/testblog/224423860380'
+        async with self.sessions() as db:
+            for name in ('j0', 'j1'):
+                job = await db.get(PublishJob, name)
+                job.naver_blog_id = 'testblog'
+            await db.commit()
+        first = await self.claim('j0')
+        async with self.sessions() as db:
+            await p.checkpoint(db, 'j0', 'u', first, 'finalizing')
+            await p.result(db, 'j0', 'u', first, {'ok': True, 'url': url, 'receipt_id': '224423860380'})
+            self.assertEqual((await db.get(PublishJob, 'j0')).result_url, url)
+        second = await self.claim('j1')
+        async with self.sessions() as db:
+            await p.checkpoint(db, 'j1', 'u', second, 'finalizing')
+            await p.result(db, 'j1', 'u', second, {'ok': True, 'url': url, 'receipt_id': '224423860380'})
+            job = await db.get(PublishJob, 'j1')
+            self.assertEqual(job.status, 'submitted')       # 발행 자체는 성공으로 둔다
+            self.assertIsNone(job.result_url)               # 남의 번호는 남기지 않는다
+
     async def test_finalizing_loss_never_requeues(self):
         token = await self.claim()
         async with self.sessions() as db:

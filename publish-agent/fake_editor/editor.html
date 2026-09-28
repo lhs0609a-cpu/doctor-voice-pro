@@ -259,6 +259,13 @@
       images: document.querySelectorAll('.se-component.se-image').length,
     };
     layer.classList.remove('open');
+    // 예약으로 올리면 '예약 발행 N건' 숫자가 하나 는다 — 실제 네이버가 그렇다.
+    // ?reservestuck=1 이면 숫자가 그대로다(예약이 실제로는 안 걸린 경우를 흉내 낸다).
+    if (t2.checked && q.get('reservestuck') !== '1') {
+      const chip = document.getElementById('reservechip');
+      const shown = parseInt((chip.textContent.match(/(\d+)/) || ['0', '0'])[1], 10);
+      chip.textContent = '예약 발행 ' + (shown + 1) + '건';
+    }
     // ?postlink=1 — 발행 뒤 '예약 발행되었습니다' 안내 토스트에 글 링크가 뜨는 경우를 흉내 낸다
     if (q.get('postlink') === '1') {
       const toast = document.createElement('div');
