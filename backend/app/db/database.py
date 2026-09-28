@@ -35,6 +35,10 @@ if async_database_url.startswith("sqlite"):
             cur.execute("PRAGMA journal_mode=WAL")
             cur.execute("PRAGMA synchronous=NORMAL")
             cur.execute("PRAGMA busy_timeout=30000")
+            # WAL 은 큰 쓰기(VACUUM·대량 정리) 뒤에 그 크기대로 남는다 — 볼륨이 한 장뿐이라
+            # 그것만으로 디스크가 찼다(2026-09-28: VACUUM 뒤 WAL 349MB). 체크포인트 뒤
+            # 64MB 로 다시 줄이게 한다. 연결 단위 설정이라 여기서 매번 걸어 준다.
+            cur.execute("PRAGMA journal_size_limit=67108864")
             cur.close()
         except Exception:  # noqa: BLE001
             pass

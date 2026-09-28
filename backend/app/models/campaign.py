@@ -296,7 +296,9 @@ class PublishAttempt(Base):
     active_blog_id = Column(String(36), nullable=True, unique=True)
     mode = Column(String(20), nullable=False, default="live")
     stage = Column(String(20), nullable=False, default="claimed")
-    payload = Column(JSON, nullable=True)
+    # none_as_null: payload=None 을 JSON 'null' 문자열이 아니라 SQL NULL 로 적는다.
+    # 끝난 시도의 payload 를 비울 때(publish_protocol) 'IS NOT NULL' 로 걸러낼 수 있어야 한다.
+    payload = Column(JSON(none_as_null=True), nullable=True)
     result = Column(JSON, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)

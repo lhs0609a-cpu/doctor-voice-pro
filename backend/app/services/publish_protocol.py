@@ -146,6 +146,10 @@ async def result(db, job_id, user_id, token, body, now=None):
     attempt.result = {"request": body, "ack": ack}
     attempt.stage = "done"
     attempt.updated_at = now
+    # 넘겨 준 원고·사진(base64)은 끝난 뒤에는 쓰이지 않는다 — 영수증만 남기고 버린다.
+    # 발행 1건의 payload 가 1~2MB 라서 남겨 두면 100건 예약에 150MB 가 볼륨에 박힌다
+    # (2026-09-28 실측: 3건이 4.5MB). 다시 필요하면 claim 이 그 자리에서 새로 만든다.
+    attempt.payload = None
     # Uncertain blocks this profile until explicitly reconciled.
     if status != "uncertain":
         attempt.active_blog_id = None
@@ -160,4 +164,11 @@ async def recover_expired(db, user_id, now=None):
         PublishJob.lock_expires_at <= now,
     ).values(status="uncertain", next_retry_at=None,
              error="실행기 연결이 끊겼습니다. 복구 결과 또는 네이버 예약 목록 확인을 기다립니다"))
+    # 결과도 없이 잠금이 만료된 시도의 payload 도 버린다 — 그 권한으로는 더 받아 갈 수 없다
+    # (execution_payload 가 만료된 잠금을 409 로 막는다). 남겨 두면 조용히 볼륨만 먹는다.
+    await db.execute(update(PublishAttempt).where(
+        PublishAttempt.user_id == user_id, PublishAttempt.result.is_(None),
+        PublishAttempt.payload.isnot(None),
+        PublishAttempt.updated_at <= now - timedelta(seconds=LEASE_SECONDS * 4),
+    ).values(payload=None))
     await db.commit()

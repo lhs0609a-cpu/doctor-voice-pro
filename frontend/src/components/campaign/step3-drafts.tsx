@@ -18,6 +18,7 @@ import { DraftDialog, summarizeChecks } from './draft-dialog'
 import { PointFormattingPanel } from './point-formatting'
 
 const NONE = '__none__'
+const UPLOAD_AT_ONCE = 2        // 동시에 보내는 파일 수. 서버가 워드 한 개씩 파싱한다.
 const SOURCE_LABEL: Record<string, string> = { generated: '자동 작성', variant: '변형', upload: '파일', manual: '붙여넣기' }
 
 /** 워드에서 무엇을 살려 읽었는지 한 줄로. 못 읽은 것이 있으면 그것을 먼저 알린다. */
@@ -59,6 +60,7 @@ export function Step3Drafts({ campaign, client, goStep }: StepProps) {
 
   // 업로드/붙여넣기
   const [uploading, setUploading] = useState(false)
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const [pasteTitle, setPasteTitle] = useState('')
@@ -130,17 +132,37 @@ export function Step3Drafts({ campaign, client, goStep }: StepProps) {
     } finally { setStarting(false) }
   }
 
+  // 파일을 **한 건씩**(동시에 둘만) 보낸다. 50~100개를 한 요청에 담으면 서버가 다 읽기 전에
+  // 타임아웃(5분)이 나고, 그때는 어디까지 들어갔는지 알 수 없다 — '실패했는데 들어가 있음'이 된다.
+  // 하나씩 보내면 실패한 파일만 골라 다시 올릴 수 있다(2026-09-28).
   const uploadFiles = async (files: File[]) => {
     const ok = files.filter((f) => /\.(txt|md|docx)$/i.test(f.name))
     if (!ok.length) { toast.error('.txt .md .docx 파일만 올릴 수 있어요'); return }
     setUploading(true)
+    setProgress({ done: 0, total: ok.length })
+    const added: Draft[] = []
+    const failed: string[] = []
+    let done = 0
+    let cursor = 0
+    const worker = async () => {
+      for (let i = cursor++; i < ok.length; i = cursor++) {
+        try {
+          added.push(...(await campaignAPI.uploadDrafts(campaign.id, [ok[i]])))
+        } catch (err: any) {
+          failed.push(`${ok[i].name}: ${errMsg(err)}`)
+        }
+        setProgress({ done: ++done, total: ok.length })
+      }
+    }
     try {
-      const res = await campaignAPI.uploadDrafts(campaign.id, ok)
-      toast.success(`${res.length}개 원고를 올렸어요`, { description: readSummary(res) })
+      await Promise.all(Array.from({ length: Math.min(UPLOAD_AT_ONCE, ok.length) }, worker))
+      if (added.length) toast.success(`${added.length}개 원고를 올렸어요`, { description: readSummary(added) })
+      if (failed.length) toast.error(`${failed.length}개 파일을 올리지 못했어요`, { description: failed.slice(0, 3).join(' / ') })
       loadDrafts()
-    } catch (err: any) {
-      toast.error('업로드 실패', { description: errMsg(err) })
-    } finally { setUploading(false); if (fileRef.current) fileRef.current.value = '' }
+    } finally {
+      setUploading(false); setProgress(null)
+      if (fileRef.current) fileRef.current.value = ''
+    }
   }
 
   const addPaste = async () => {
@@ -242,7 +264,7 @@ export function Step3Drafts({ campaign, client, goStep }: StepProps) {
                 className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-8 text-sm transition-colors ${dragOver ? 'border-primary bg-accent' : 'border-input hover:bg-muted/40'}`}
               >
                 {uploading ? <Loader2 className="h-6 w-6 animate-spin text-primary" /> : <Upload className="h-6 w-6 text-muted-foreground" />}
-                <div>파일을 끌어다 놓거나 클릭해서 선택 (.txt .md .docx, 여러 개 가능)</div>
+                <div>{progress ? `올리는 중 ${progress.done}/${progress.total}` : '파일을 끌어다 놓거나 클릭해서 선택 (.txt .md .docx, 여러 개 가능)'}</div>
                 <input ref={fileRef} type="file" multiple accept=".txt,.md,.docx" className="hidden" onChange={(e) => uploadFiles(Array.from(e.target.files || []))} />
               </div>
               <div className="space-y-3 border-t pt-4">

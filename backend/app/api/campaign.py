@@ -1723,15 +1723,39 @@ async def schedule_commit(campaign_id: str, body: ScheduleIn, current_user: User
     assigned, remaining, extra, starts_after = _allocate(body, c, drafts, plans, blogs)
     warnings = warnings + extra
     by_ref = {b.id: b for b in blogs}
+    formatting = PointFormatting.model_validate((c.settings or {}).get('formatting') or {}).model_dump()
+    for d, _pair in zip(drafts, assigned):
+        d.checks = {**(d.checks or {}), 'formatting': formatting}
+    # 원고 쪽 변경을 먼저 내려놓는다 — 아래 건별 SAVEPOINT 가 되돌려질 때 휩쓸리지 않게.
+    await db.flush()
+    # 예약은 **건별로** 저장한다. 100건을 한 덩어리로 넣으면 한 칸이 이미 차 있을 때
+    # (schedule_marks 의 같은 시각 금지) 100건 전부가 함께 실패했다(2026-09-28).
+    # 겹친 칸은 건너뛰고 나머지는 그대로 예약한다 — 사람은 건너뛴 시각만 다시 잡으면 된다.
+    kept_drafts: List[Draft] = []
+    kept_assigned: List[Tuple[str, datetime]] = []
+    clashed: List[str] = []
     for d, (ref, at) in zip(drafts, assigned):
         b = by_ref[ref]
-        d.checks = {**(d.checks or {}), 'formatting': PointFormatting.model_validate((c.settings or {}).get('formatting') or {}).model_dump()}
-        db.add(PublishJob(
-            user_id=_uid(current_user), campaign_id=c.id, draft_id=d.id, blog_ref_id=ref, naver_blog_id=b.blog_id,
-            scheduled_at=at, status="queued", open_type=b.open_type or "public", category=b.default_category,
-        ))
-        # 예약 자리 기록(다른 경로의 간격 예약과 공유)
-        db.add(ScheduleMark(user_id=_uid(current_user), blog_id=b.blog_id, scheduled_at=at, title=d.title[:200], source="campaign"))
+        try:
+            async with db.begin_nested():
+                db.add(PublishJob(
+                    user_id=_uid(current_user), campaign_id=c.id, draft_id=d.id, blog_ref_id=ref, naver_blog_id=b.blog_id,
+                    scheduled_at=at, status="queued", open_type=b.open_type or "public", category=b.default_category,
+                ))
+                # 예약 자리 기록(다른 경로의 간격 예약과 공유)
+                db.add(ScheduleMark(user_id=_uid(current_user), blog_id=b.blog_id, scheduled_at=at, title=d.title[:200], source="campaign"))
+                await db.flush()
+        except IntegrityError:
+            clashed.append(f"{(b.label or b.blog_id)} {at.strftime('%m/%d %H:%M')}")
+            continue
+        kept_drafts.append(d)
+        kept_assigned.append((ref, at))
+    if clashed:
+        remaining += len(clashed)
+        warnings = warnings + [
+            f"이미 예약이 있는 시각 {len(clashed)}칸은 건너뛰었습니다({', '.join(clashed[:5])}"
+            f"{' 외 %d칸' % (len(clashed) - 5) if len(clashed) > 5 else ''}). 그 원고는 다시 예약해 주세요."]
+    drafts, assigned = kept_drafts, kept_assigned
     for b in blogs:
         b.reservations_scan_requested_at = datetime.utcnow()   # 지운 예약이 있는지 다시 확인
     c.status = "scheduled"
@@ -1746,7 +1770,7 @@ async def schedule_commit(campaign_id: str, body: ScheduleIn, current_user: User
         await db.commit()
     except Exception as e:  # noqa: BLE001
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"예약 저장 실패(같은 시각이 이미 있을 수 있습니다): {e}")
+        raise HTTPException(status_code=400, detail=f"예약 저장 실패: {e}")
     # 사진 사전 유니크화
     await job_worker.enqueue(db, "prepare_images", {"campaign_id": c.id}, _uid(current_user), dedupe_key=f"prep:{c.id}")
     await campaign_jobs._bump_stats(job_worker.JobContext(db=db, job=BackgroundJob()), c.id)

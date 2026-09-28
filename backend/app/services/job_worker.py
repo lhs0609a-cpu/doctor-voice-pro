@@ -262,12 +262,16 @@ async def _run_jobs(poll_interval: float = POLL_INTERVAL) -> None:
 async def _maintenance():
     from app.services.autopilot import tick
     from app.services.publication_verifier import verify_due
+    from app.services.storage_reclaim import reclaim as reclaim_storage
     while True:
         try:
             async with AsyncSessionLocal() as db:
                 await _reclaim_stale(db)
                 await tick(db)
                 await verify_due(db)
+                # 볼륨이 차면 예약만이 아니라 API 전체가 멈춘다. 다시 만들 수 있는 캐시는
+                # 스스로 덜어낸다(안에서 1시간에 한 번만 실제로 일한다).
+                await reclaim_storage(db)
         except asyncio.CancelledError:
             raise
         except Exception:

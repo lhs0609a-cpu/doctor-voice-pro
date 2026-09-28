@@ -18,7 +18,9 @@ primary_region = 'nrt'
 [[mounts]]
   source = 'doctorvoice_data'
   destination = '/data'
-  initial_size = '1gb'
+  # 1GB 로는 워드 100건 두 배치에 볼륨이 찼다(2026-09-28). 차는 순간 SQLite 가
+  # 'disk is full' 을 내며 예약뿐 아니라 API 전체가 멈춘다.
+  initial_size = '3gb'
 
 [http_service]
   internal_port = 8080

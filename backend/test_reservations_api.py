@@ -9,10 +9,12 @@
 3) 발행 직전 그 칸이 차 있으면 올리지 않고 다음 빈 자리로 옮긴다(시도 횟수는 늘지 않는다).
 """
 import unittest
+import unittest.mock
 from datetime import datetime, timedelta
 
 import httpx
 from fastapi import FastAPI
+from sqlalchemy import select
 
 from test_publish_protocol import DatabaseCase
 
@@ -278,6 +280,37 @@ class ReservationTests(DatabaseCase):
             self.assertNotIn(slot, taken)
             self.assertTrue(all(abs((slot - t).total_seconds()) >= 120 * 60 for t in taken),
                             f'{slot} 가 기존 예약 {taken} 에 너무 가깝다')
+
+    async def test_one_taken_slot_never_sinks_the_whole_batch(self):
+        """한 칸이 이미 차 있어도 나머지 예약은 그대로 저장된다.
+
+        예전에는 100건을 한 덩어리로 넣어서, 같은 시각 금지(schedule_marks)에 한 칸만 걸리면
+        100건 전부가 함께 실패했다(2026-09-28). 겹친 칸만 건너뛰고 나머지는 걸려야 한다.
+        자리 배정 자체는 이미 잡힌 칸을 피하므로, 배정이 그 칸을 골랐을 때를 흉내낸다
+        (같은 네이버 아이디를 블로그로 두 번 등록했거나, 방금 다른 경로가 그 칸을 잡은 경우)."""
+        clash = self.future + timedelta(hours=8)
+        async with self.sessions() as db:
+            for i in range(3):
+                db.add(Draft(id=f'x{i}', user_id='u', campaign_id='c', title=f'원고 {i}', status='ready'))
+            db.add(ScheduleMark(user_id='u', blog_id='testblog', scheduled_at=clash,
+                                title='이미 걸린 예약', source='campaign'))
+            await db.commit()
+        plan = [('b', clash), ('b', clash + timedelta(hours=2)), ('b', clash + timedelta(hours=4))]
+        with unittest.mock.patch.object(api, '_allocate', return_value=(plan, 0, [], None)):
+            response = await self.client.post('/campaigns/c/schedule/commit', json={
+                'start_date': self.now.date().isoformat(), 'days': 60,
+                'draft_ids': ['x0', 'x1', 'x2'], 'mode': 'interval', 'every_minutes': 120})
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual([a['scheduled_at'] for a in body['assigned']],
+                         [t.isoformat(timespec='minutes') for _, t in plan[1:]])
+        self.assertEqual(body['unassigned'], 1)
+        self.assertTrue(any('건너뛰었습니다' in w for w in body['warnings']), body['warnings'])
+        async with self.sessions() as db:
+            booked = (await db.execute(select(PublishJob.draft_id, PublishJob.scheduled_at).where(
+                PublishJob.draft_id.in_(['x0', 'x1', 'x2'])))).all()
+        self.assertEqual(len(booked), 2, booked)                     # 두 건은 실제로 저장되었다
+        self.assertNotIn(clash, [at for _, at in booked])            # 차 있던 칸에는 걸지 않았다
 
     # ------------------------------------------------- 로그인이 필요한 블로그
     async def test_a_blog_waiting_for_naver_login_can_still_be_scheduled(self):
