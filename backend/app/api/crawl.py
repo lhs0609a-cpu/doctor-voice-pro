@@ -8,13 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import Optional, List
 from pydantic import BaseModel, HttpUrl
-from datetime import datetime, timedelta
 
 from app.db.database import get_db
 from app.api.deps import get_current_user, get_current_user_optional
-from app.models import User, NaverConnection
+from app.models import User
 from app.services.blog_crawler import blog_crawler
-from app.services.naver_blog_service import naver_blog_service
 from app.services.ai_service import AIService
 
 
@@ -167,7 +165,9 @@ async def get_supported_platforms():
 class OneClickRequest(BaseModel):
     """원클릭 자동화 요청"""
     url: str
-    category_no: Optional[str] = None  # 네이버 블로그 카테고리
+    # 어느 캠페인의 원고로 넣을지. 비우면 가장 최근에 손댄 캠페인에 넣는다.
+    campaign_id: Optional[str] = None
+    category_no: Optional[str] = None  # (옛 네이버 API 경로에서 쓰던 값 — 지금은 쓰지 않는다)
     ai_provider: str = "gemini"
     ai_model: Optional[str] = None  # 비우면 서버 기본 모델(gemini-2.5-flash)
     target_length: int = 1800
@@ -187,7 +187,12 @@ class OneClickResponse(BaseModel):
     rewritten_title: Optional[str] = None
     rewritten_content: Optional[str] = None
     rewritten_content_length: Optional[int] = None
-    # 네이버 발행 결과
+    # 원고로 저장한 결과 — 여기서부터는 예약발행(실행기)이 이어받는다
+    draft_id: Optional[str] = None
+    draft_status: Optional[str] = None      # ready | needs_review
+    campaign_id: Optional[str] = None
+    campaign_name: Optional[str] = None
+    # (옛 네이버 오픈 API 경로의 잔재. 지금은 항상 비어 있다)
     naver_post_id: Optional[str] = None
     naver_post_url: Optional[str] = None
     # 이미지 URL 목록 (사용자가 수동으로 추가해야 함)
@@ -201,51 +206,41 @@ async def one_click_automation(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    원클릭 자동화: URL → 크롤링 → AI 리라이트 → 네이버 블로그 임시저장
+    """원클릭 자동화: URL → 크롤링 → AI 리라이트 → **원고로 저장**
+
+    예전에는 여기서 네이버 오픈 API(blog/writePost.json)로 임시저장까지 했다. 그 길은
+    두 군데서 막혀 있었다 — 연동 콜백 주소가 localhost 로 박혀 있어 운영에서는 연동이
+    끝나지 않고, 그 API 자체가 더 이상 열리지 않는다. 그래서 **아무도 성공할 수 없는
+    버튼**이었다(2026-09-28: 연동 기록 0건, 누르면 '네이버 블로그 연동이 필요합니다').
+
+    이 제품이 실제로 글을 올리는 길은 PC 실행기다. 그래서 여기서는 원고까지만 만들고,
+    발행은 예약발행이 이어받는다. 사용자에게는 버튼 하나인 것이 그대로다.
 
     **동작 순서:**
-    1. 입력된 블로그 URL에서 글+이미지 크롤링
-    2. AI로 콘텐츠 리라이트
-    3. 네이버 블로그에 비공개(임시저장)로 발행
-
-    **필수 조건:**
-    - 네이버 블로그 연동 필요
-    - 로그인 필요
-
-    **참고:**
-    - 이미지는 자동 발행되지 않습니다 (네이버 API 제한)
-    - 이미지 URL 목록이 반환되므로 수동으로 추가하세요
+    1. 입력한 블로그 URL 에서 글+이미지 가져오기
+    2. AI 로 리라이트
+    3. 캠페인의 원고로 저장(검수까지) → 예약발행에서 시각만 고르면 올라간다
     """
     import traceback
+    from app.models.campaign import Campaign, Client, Draft
+    from app.services import campaign_writer as writer
 
     try:
-        # 1. 네이버 연동 확인
-        conn_result = await db.execute(
-            select(NaverConnection).where(NaverConnection.user_id == current_user.id)
-        )
-        connection = conn_result.scalar_one_or_none()
-
-        if not connection:
-            raise HTTPException(
-                status_code=400,
-                detail="네이버 블로그 연동이 필요합니다. 설정에서 네이버 계정을 연동해주세요."
-            )
-
-        # 토큰 만료 확인 및 갱신
-        if datetime.utcnow() >= connection.token_expires_at:
-            token_response = await naver_blog_service.refresh_access_token(
-                connection.refresh_token
-            )
-            if not token_response:
-                raise HTTPException(
-                    status_code=401,
-                    detail="네이버 토큰이 만료되었습니다. 다시 연동해주세요."
-                )
-            connection.access_token = token_response.get("access_token")
-            expires_in = token_response.get("expires_in", 3600)
-            connection.token_expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
-            await db.commit()
+        # 1. 어느 캠페인의 원고로 넣을지 — 비우면 가장 최근에 손댄 캠페인
+        uid = str(current_user.id)
+        if request.campaign_id:
+            campaign = (await db.execute(select(Campaign).where(
+                Campaign.id == request.campaign_id, Campaign.user_id == uid))).scalars().first()
+            if not campaign:
+                raise HTTPException(status_code=404, detail="캠페인을 찾을 수 없습니다")
+        else:
+            campaign = (await db.execute(select(Campaign).where(Campaign.user_id == uid)
+                                         .order_by(Campaign.updated_at.desc()))).scalars().first()
+        if not campaign:
+            return OneClickResponse(
+                success=False,
+                message="원고를 넣을 곳이 없습니다",
+                error="먼저 원스톱 자동화에서 병원과 블로그를 등록해 주세요. 그 다음 이 버튼이 원고를 거기에 넣습니다.")
 
         # 2. 블로그 글 크롤링
         url = request.url.strip()
@@ -319,64 +314,41 @@ async def one_click_automation(
             if len(parts) > 1:
                 rewritten_content = parts[1].strip()
 
-        # 4. 네이버 블로그에 임시저장 (비공개)
-        category_no = None
-        if request.category_no:
-            try:
-                category_no = int(request.category_no)
-            except ValueError:
-                pass
-
-        if not category_no and connection.default_category_no:
-            try:
-                category_no = int(connection.default_category_no)
-            except ValueError:
-                pass
-
-        naver_result = await naver_blog_service.create_post(
-            access_token=connection.access_token,
-            title=rewritten_title or "제목 없음",
-            content=rewritten_content,
-            category_no=category_no,
-            open_type="2",  # 비공개 (임시저장)
-            tag=None
+        # 4. 캠페인의 원고로 저장 — 예약발행이 여기서 이어받는다.
+        #    원고 화면에서 손으로 넣은 글과 **똑같은 검사**를 거친다(의료광고 표현 자동 수정,
+        #    병원 금칙어). 다른 문으로 들어왔다고 검수를 건너뛰면 그 글만 사고를 낸다.
+        client = await db.get(Client, campaign.client_id)
+        body_text = writer.reflow(rewritten_content)
+        title_text, body_text, _blocks, fixes = writer.sanitize_blocks(None, rewritten_title or "제목 없음", body_text)
+        checks = writer.run_static_checks(title_text, body_text, client.forbidden_words if client else [])
+        if fixes:
+            checks["auto_fixed"] = fixes[:30]
+        checks["source_url"] = url
+        draft = Draft(
+            user_id=uid, client_id=campaign.client_id, campaign_id=campaign.id,
+            source="crawl", title=title_text[:200], body=body_text,
+            char_count=writer.count_chars(body_text),
+            status="ready" if checks["ok"] else "needs_review", checks=checks,
         )
+        db.add(draft)
+        await db.commit()
 
-        if not naver_result:
-            return OneClickResponse(
-                success=False,
-                message="네이버 블로그 임시저장 실패",
-                original_title=original_title,
-                original_content_length=len(original_content),
-                images_count=len(images),
-                rewritten_title=rewritten_title,
-                rewritten_content=rewritten_content,
-                rewritten_content_length=len(rewritten_content),
-                images=[
-                    ImageInfo(
-                        url=img.get("url", ""),
-                        alt=img.get("alt", ""),
-                        caption=img.get("caption", ""),
-                    )
-                    for img in images
-                ],
-                error="네이버 블로그 API 오류가 발생했습니다."
-            )
-
-        naver_post_id = naver_result.get("logNo")
-        naver_post_url = f"{connection.blog_url}/{naver_post_id}" if naver_post_id else None
-
+        done = ("원고로 저장했습니다. 예약발행에서 시각만 고르면 그대로 올라갑니다."
+                if draft.status == "ready"
+                else "원고로 저장했습니다. 검수에 걸린 표현이 있어 확인이 필요합니다.")
         return OneClickResponse(
             success=True,
-            message="원클릭 자동화 완료! 네이버 블로그에 임시저장되었습니다.",
+            message=done,
             original_title=original_title,
             original_content_length=len(original_content),
             images_count=len(images),
-            rewritten_title=rewritten_title,
-            rewritten_content=rewritten_content,
-            rewritten_content_length=len(rewritten_content),
-            naver_post_id=naver_post_id,
-            naver_post_url=naver_post_url,
+            rewritten_title=title_text,
+            rewritten_content=body_text,
+            rewritten_content_length=len(body_text),
+            draft_id=draft.id,
+            draft_status=draft.status,
+            campaign_id=campaign.id,
+            campaign_name=campaign.name,
             images=[
                 ImageInfo(
                     url=img.get("url", ""),

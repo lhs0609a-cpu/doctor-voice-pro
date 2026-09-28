@@ -950,7 +950,7 @@ export default function CreatePostPage() {
     toast.success(`${crawledImages.length}개 이미지 다운로드 완료`)
   }
 
-  // 원클릭 자동화: URL → 크롤링 → AI 리라이트 → 네이버 임시저장
+  // 원클릭 자동화: URL → 크롤링 → AI 리라이트 → 원고로 저장(발행은 예약발행이 이어받는다)
   const handleOneClickAutomation = async () => {
     if (!blogUrl.trim()) {
       toast.error('블로그 URL을 입력해주세요')
@@ -976,7 +976,7 @@ export default function CreatePostPage() {
       setTimeout(() => {
         toast.loading('원클릭 자동화 진행 중...', {
           id: loadingToast,
-          description: '3/3 네이버 블로그 임시저장 중...'
+          description: '3/3 원고로 저장 중...'
         })
       }, 8000)
 
@@ -994,7 +994,7 @@ export default function CreatePostPage() {
       if (result.success) {
         toast.success('원클릭 자동화 완료!', {
           id: loadingToast,
-          description: '네이버 블로그에 임시저장되었습니다'
+          description: result.message || '원고로 저장했습니다'
         })
 
         // 이미지가 있으면 표시
@@ -1374,7 +1374,8 @@ export default function CreatePostPage() {
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  <strong className="font-medium text-foreground">원클릭 자동화:</strong> URL 입력, 글·이미지 가져오기, AI 리라이트, 네이버 블로그 임시저장까지 한 번에 처리합니다.
+                  <strong className="font-medium text-foreground">원클릭 자동화:</strong> 주소만 넣으면 글·이미지 가져오기 → AI 리라이트 → <b>원고 저장</b>까지 한 번에 합니다.
+                  저장한 원고는 <b>원스톱 자동화</b>에서 시각만 고르면 실행기가 네이버에 예약 등록합니다.
                 </p>
               </div>
 
@@ -1409,21 +1410,26 @@ export default function CreatePostPage() {
                     </div>
                   </div>
 
-                  {oneClickResult.naver_post_url && (
+                  {/* 발행은 예약발행(실행기)이 이어받는다 — 다음에 무엇을 하면 되는지 바로 짚어 준다. */}
+                  {oneClickResult.campaign_id && (
                     <a
-                      href={oneClickResult.naver_post_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-2 rounded-lg bg-success-soft p-3 text-success transition-opacity hover:opacity-80"
+                      href="/dashboard/one-stop"
+                      className={`flex items-center gap-2 rounded-lg p-3 transition-opacity hover:opacity-80 ${
+                        oneClickResult.draft_status === 'ready' ? 'bg-success-soft text-success' : 'bg-warning-soft text-warning'
+                      }`}
                     >
                       <ExternalLink className="h-4 w-4" />
-                      <span className="font-medium">네이버 블로그에서 확인하기 (임시저장됨)</span>
+                      <span className="font-medium">
+                        {oneClickResult.draft_status === 'ready'
+                          ? `'${oneClickResult.campaign_name}'의 원고로 저장했습니다 — 예약발행에서 시각 고르기`
+                          : `'${oneClickResult.campaign_name}'에 저장했습니다 — 검수에 걸린 표현 확인하기`}
+                      </span>
                     </a>
                   )}
 
                   {oneClickResult.images_count && oneClickResult.images_count > 0 && (
                     <p className="text-xs text-muted-foreground">
-                      이미지 {oneClickResult.images_count}개를 추출했습니다. 아래에서 내려받아 블로그에 직접 첨부하세요.
+                      이미지 {oneClickResult.images_count}개를 추출했습니다. 아래에서 내려받아 사진 풀에 올리면 발행할 때 함께 들어갑니다.
                     </p>
                   )}
                 </div>
