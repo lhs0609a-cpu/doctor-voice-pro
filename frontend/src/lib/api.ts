@@ -2953,10 +2953,9 @@ export const crawlAPI = {
     return response.data
   },
 
-  // 원클릭 자동화 (크롤링 + AI 리라이트 + 원고 저장까지 하므로 5분 타임아웃)
+  // 원클릭 자동화 (크롤링 + AI 생성 + 네이버 발행까지 포함하므로 5분 타임아웃)
   oneClick: async (params: {
     url: string
-    campaign_id?: string
     category_no?: string
     ai_provider?: string
     ai_model?: string
@@ -2965,7 +2964,7 @@ export const crawlAPI = {
     persuasion_level?: number
   }): Promise<OneClickResponse> => {
     const response = await api.post('/api/v1/crawl/one-click', params, {
-      timeout: 300000, // 5분 타임아웃 (크롤링 + AI 리라이트 + 원고 저장)
+      timeout: 300000, // 5분 타임아웃 (크롤링 + AI 생성 + 네이버 발행)
     })
     return response.data
   },
@@ -2980,11 +2979,6 @@ export interface OneClickResponse {
   rewritten_title?: string
   rewritten_content?: string
   rewritten_content_length?: number
-  // 원고로 저장한 결과 — 발행은 예약발행(실행기)이 이어받는다
-  draft_id?: string
-  draft_status?: string
-  campaign_id?: string
-  campaign_name?: string
   naver_post_id?: string
   naver_post_url?: string
   images?: CrawlImage[]
