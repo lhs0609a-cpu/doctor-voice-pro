@@ -73,6 +73,9 @@ function toInput(b: BlogAccount): BlogInput {
 }
 
 const TH = 'py-2.5 pr-4 text-left text-[12px] font-medium uppercase tracking-wide text-muted-foreground'
+// Select 는 빈 값을 다루지 못한다 — '안 고름'을 나타내는 표식.
+const NONE_CATEGORY = '__none__'
+
 const TD = 'py-2.5 pr-4 align-middle'
 
 export function BlogAccounts({ clientId, blogs, onChanged }: BlogAccountsProps) {
@@ -346,7 +349,18 @@ export function BlogAccounts({ clientId, blogs, onChanged }: BlogAccountsProps) 
               </div>
               <div className="space-y-1">
                 <Label htmlFor="b-cat">기본 카테고리</Label>
-                <Input id="b-cat" value={form.default_category ?? ''} onChange={(e) => set('default_category', e.target.value)} placeholder="블로그 카테고리명" />
+                {/* 실행기가 이 블로그의 카테고리를 읽어 왔으면 고르게 한다 — 번호를 손으로 적다 틀리면
+                    실행기가 그 카테고리를 못 찾아 발행을 멈춘다(엉뚱한 곳에 올리지 않기 위해서다). */}
+                {editing?.categories?.length
+                  ? <Select value={form.default_category || NONE_CATEGORY} onValueChange={(v) => set('default_category', v === NONE_CATEGORY ? '' : v)}>
+                      <SelectTrigger id="b-cat"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={NONE_CATEGORY}>네이버 기본 카테고리</SelectItem>
+                        {editing.categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  : <Input id="b-cat" value={form.default_category ?? ''} onChange={(e) => set('default_category', e.target.value)}
+                      placeholder="카테고리 번호 (실행기를 켜면 목록에서 고를 수 있어요)" />}
               </div>
               <div className="space-y-1">
                 <Label>공개 범위</Label>

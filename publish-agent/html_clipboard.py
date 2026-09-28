@@ -56,7 +56,7 @@ def temporary_html(fragment, plain):
             kernel.GlobalFree(handle)
             raise RuntimeError('HTML 클립보드 기록 실패')
 
-    saved=[]; changed=False; sequence=None
+    saved=[]; changed=False; sequence=None; kept_all=True
     try:
         open_clipboard()
         try:
@@ -64,11 +64,17 @@ def temporary_html(fragment, plain):
             while True:
                 fmt=user.EnumClipboardFormats(fmt)
                 if not fmt: break
+                # 복제할 수 없는 형식(메타파일·소유자 그림·다른 앱이 늦게 그려 주는 형식)은
+                # 되돌려 주지 못한다. 그렇다고 발행을 포기하면 예약한 글을 잃는다 —
+                # 남의 클립보드보다 글이 올라가는 것이 먼저다(2026-09-28 실패 1건).
                 if fmt in (3,0x83,0x80):
-                    raise RuntimeError('현재 클립보드 형식을 안전하게 보관할 수 없어 서식 입력을 보류합니다')
+                    kept_all=False
+                    continue
                 original=user.GetClipboardData(fmt)
                 duplicate=ole.OleDuplicateData(original,fmt,0) if original else None
-                if not duplicate: raise RuntimeError('기존 클립보드를 보관하지 못해 서식 입력을 보류합니다')
+                if not duplicate:
+                    kept_all=False
+                    continue
                 saved.append((fmt,duplicate))
             user.EmptyClipboard();changed=True
             put(user.RegisterClipboardFormatW('HTML Format'),cf_html(fragment))
@@ -76,6 +82,10 @@ def temporary_html(fragment, plain):
             sequence=user.GetClipboardSequenceNumber()
         finally:
             user.CloseClipboard()
+        if not kept_all:
+            import logging
+            logging.getLogger(__name__).info(
+                '복사해 두신 내용 중 되돌릴 수 없는 형식이 있어 클립보드가 바뀔 수 있습니다(발행은 계속합니다)')
         yield
     finally:
         if changed:

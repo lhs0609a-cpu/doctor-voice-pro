@@ -9,7 +9,7 @@ import unittest
 from PIL import Image
 
 from app.services.image_widen import BLOG_WIDTH, widen
-from app.services.point_formatting import trim_stray_emphasis
+from app.services.point_formatting import drop_default_colors, trim_stray_emphasis
 
 BODY = {'color': '#222b2f'}
 MARK = {'b': True, 'color': '#1a9e8f'}
@@ -49,6 +49,34 @@ class EmphasisTest(unittest.TestCase):
                      span('성장책임보증제', **MARK), span('를 운영합니다.', **BODY))
         out = trim_stray_emphasis([para])[0]
         self.assertEqual([s for s in styles(out) if s[1]], [('키네스 부산점', True, '#1a9e8f')])
+
+    def test_body_black_is_not_a_colour_but_an_accent_is(self):
+        """워드가 본문에 적어 둔 검정(#222b2f)은 색으로 보지 않는다.
+
+        팔레트에 없는 색은 실행기가 클립보드로 붙여 넣고, 되읽기 확인이 한 번 어긋나면 글
+        전체가 발행되지 않는다(2026-09-28 실패 1건). 눈에 안 보이는 색 때문에 발행을 잃지 않는다.
+        반대로 진짜 강조색과 회색 캡션은 원고의 뜻이므로 그대로 남긴다."""
+        block = {'type': 'text', 'spans': [
+            {'t': '본문입니다', 'color': '#222b2f'},
+            {'t': '완전한 검정', 'color': '#000000'},
+            {'t': '회색 캡션', 'color': '#666e73'},
+            {'t': '강조', 'b': True, 'color': '#1a9e8f'},
+            {'t': '흰 배경', 'background': '#ffffff'},
+            {'t': '형광', 'background': '#fff8b2'},
+        ]}
+        spans = drop_default_colors([block])[0]['spans']
+        self.assertNotIn('color', spans[0])
+        self.assertNotIn('color', spans[1])
+        self.assertEqual(spans[2]['color'], '#666e73')
+        self.assertEqual((spans[3]['b'], spans[3]['color']), (True, '#1a9e8f'))
+        self.assertNotIn('background', spans[4])
+        self.assertEqual(spans[5]['background'], '#fff8b2')
+        self.assertEqual([s['t'] for s in spans], [s['t'] for s in block['spans']])   # 글자는 그대로
+
+    def test_dropping_default_colour_does_not_touch_the_original(self):
+        block = {'type': 'text', 'spans': [{'t': '본문', 'color': '#222b2f'}]}
+        drop_default_colors([block])
+        self.assertEqual(block['spans'][0]['color'], '#222b2f')
 
     def test_plain_word_documents_are_untouched(self):
         """서식을 적어 두지 않은 원고는 그대로 지나간다."""

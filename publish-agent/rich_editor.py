@@ -52,6 +52,9 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
     attrs = attrs or {}
     if not text:
         return
+    # 공백만 있는 조각(워드가 남긴 빈칸)은 눈에 보이는 서식이 없다. 확인을 요구하면
+    # 글 전체가 '강조 문구가 본문에 표시되지 않았습니다'로 막힌다(2026-09-28 실측).
+    verify = bool(text.strip())
     frame = await editor.frame()
     from naver_editor import EditorError
     for key, name, shortcut in [('b','bold','Control+b'),('i','italic','Control+i'),('u','underline','Control+u')]:
@@ -91,12 +94,15 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
             await asyncio.sleep(.5)
     else:
         await editor._insert(text)
-    await asyncio.sleep(.15)
-    actual = await frame.evaluate(r'''text => {
+    read_back = r'''text => {
+      // 네이버는 띄어쓰기를 nbsp 로 바꾸고, HTML 로 붙여 넣은 연속 공백은 한 칸으로 합친다.
+      // 글자 그대로 비교하면 방금 넣은 문구를 못 찾아 글 전체가 막힌다(2026-09-28).
+      const norm=s=>s.replace(/\s+/g,' ').trim();
+      const wanted=norm(text);
       const paragraphs=[...document.querySelectorAll('.se-component:not(.se-documentTitle) .se-text-paragraph')].reverse();
-      const paragraph=paragraphs.find(p=>p.textContent.endsWith(text));
+      const paragraph=paragraphs.find(p=>norm(p.textContent).endsWith(wanted));
       if(!paragraph) return null;
-      const start=paragraph.textContent.length-text.length;
+      const start=Math.max(0,paragraph.textContent.length-text.length);
       const walker=document.createTreeWalker(paragraph,NodeFilter.SHOW_TEXT);
       let node, offset=0; const styles=[];
       while((node=walker.nextNode())){
@@ -112,7 +118,16 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
         offset=end;
       }
       return styles;
-    }''',text)
+    }'''
+    # 편집기가 화면에 반영하기 전에 읽으면 없는 것처럼 보인다 — 한 번 더 기다려 본다.
+    actual = None
+    for wait in (.15, .5):
+        await asyncio.sleep(wait)
+        actual = await frame.evaluate(read_back, text)
+        if actual:
+            break
+    if not verify:
+        return
     if not actual:
         raise EditorError('입력한 강조 문구가 본문에 표시되지 않았습니다')
     for style in actual:

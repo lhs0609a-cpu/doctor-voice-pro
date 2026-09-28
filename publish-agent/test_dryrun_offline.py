@@ -637,6 +637,10 @@ class FakeQueueClient:
     def categories(self):
         return {"categories": self.saved_categories}
 
+    def put_blog_categories(self, blog_ref_id, categories):
+        self.blog_categories = (blog_ref_id, categories)
+        return {"saved": len(categories)}
+
     def put_categories(self, categories):
         self.put_calls += 1
         self.saved_categories = categories
@@ -713,10 +717,10 @@ class TestQueueJobs(unittest.TestCase):
 class TestCategorySync(unittest.TestCase):
     """앱 카테고리 드롭다운 채우기(확장 SYNC_CATEGORIES 대체)."""
 
-    def sync(self, client, editor):
+    def sync(self, client, editor, blog=None):
         import agent
 
-        return asyncio.run(agent.sync_categories(client, editor))
+        return asyncio.run(agent.sync_categories(client, editor, blog))
 
     def test_reads_and_stores_categories_when_the_cache_is_empty(self):
         client = FakeQueueClient([])
@@ -729,6 +733,24 @@ class TestCategorySync(unittest.TestCase):
         client = FakeQueueClient([], categories=[{"id": "24", "name": "칼럼"}])
         editor = FakeEditor()
         self.assertEqual(self.sync(client, editor), 0)
+        self.assertNotIn("read_categories", editor.calls)
+
+    def test_a_blog_gets_its_own_list_even_when_another_blog_filled_the_cache(self):
+        """카테고리 목록은 블로그마다 다르다.
+
+        예전에는 사용자 단위로 한 벌만 두어서, 먼저 읽은 블로그의 목록이 영구히 남고 다른
+        블로그는 남의 카테고리를 골라 두게 됐다. 실행기는 못 찾은 카테고리로는 올리지 않으므로
+        그 블로그의 발행이 통째로 막힌다(2026-09-28)."""
+        client = FakeQueueClient([], categories=[{"id": "24", "name": "칼럼"}])
+        editor = FakeEditor()
+        blog = {"blog_ref_id": "ref-2", "wants_categories": True}
+        self.assertEqual(self.sync(client, editor, blog), 1)
+        self.assertEqual(client.blog_categories, ("ref-2", [{"id": "24", "name": "칼럼"}]))
+
+    def test_a_blog_that_already_reported_is_not_asked_again(self):
+        client = FakeQueueClient([], categories=[{"id": "24", "name": "칼럼"}])
+        editor = FakeEditor()
+        self.assertEqual(self.sync(client, editor, {"blog_ref_id": "ref-2", "wants_categories": False}), 0)
         self.assertNotIn("read_categories", editor.calls)
 
     def test_editor_failure_never_blocks_publishing(self):

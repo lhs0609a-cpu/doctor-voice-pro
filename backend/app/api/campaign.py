@@ -37,7 +37,7 @@ from app.services import campaign_jobs
 from app.services import campaign_writer as writer
 from app.services import docx_import
 from app.services.image_widen import widen as widen_image
-from app.services.point_formatting import PointFormatting, apply_points, trim_stray_emphasis
+from app.services.point_formatting import PointFormatting, apply_points, drop_default_colors, trim_stray_emphasis
 from app.services import image_uniquifier as uniq
 from app.services import job_worker
 from app.services import schedule_engine as se
@@ -171,6 +171,9 @@ class BlogOut(BaseModel):
     footer_link_label: Optional[str] = None
     place_url: Optional[str] = None
     place_label: Optional[str] = None
+    # 실행기가 네이버 편집기에서 읽어 온 이 블로그의 카테고리 목록. 화면이 이걸로 고르게 한다.
+    categories: List[Dict[str, str]] = []
+    categories_synced_at: Optional[datetime] = None
 
 
 class BriefOut(BaseModel):
@@ -221,6 +224,9 @@ def _blog_out(b: Blog) -> BlogOut:
         last_published_at=b.last_published_at, proxy_label=_proxy_label(b.proxy_enc),
         footer_link_url=b.footer_link_url, footer_link_label=b.footer_link_label,
         place_url=b.place_url, place_label=b.place_label,
+        categories=[{"id": str(c.get("id") or ""), "name": str(c.get("name") or "")}
+                    for c in (b.categories or []) if isinstance(c, dict)],
+        categories_synced_at=b.categories_synced_at,
     )
 
 
@@ -421,7 +427,14 @@ async def update_blog(blog_ref_id: str, body: BlogIn, current_user: User = Depen
     if body.proxy_url is not None and body.proxy_url.strip():
         b.proxy_enc = None if body.proxy_url.strip() == "-" else crypto.encrypt(_clean_proxy(body.proxy_url))
     b.daily_limit, b.window_start, b.window_end = body.daily_limit, body.window_start, body.window_end
+    was_category = b.default_category
     b.min_gap_minutes, b.default_category, b.open_type = body.min_gap_minutes, body.default_category, body.open_type
+    if b.default_category != was_category:
+        # 이미 걸어 둔 예약은 그때의 카테고리를 안고 있다. 바꾼 뜻은 '앞으로 올릴 글 전부'이므로
+        # 아직 실행기가 손대지 않은 건(queued/failed)까지 같이 바꾼다 — 진행 중인 건은 건드리지 않는다.
+        await db.execute(update(PublishJob).where(
+            PublishJob.blog_ref_id == b.id, PublishJob.status.in_(["queued", "failed"]),
+        ).values(category=b.default_category))
     b.footer_link_url = _clean_footer_url(body.footer_link_url)
     b.footer_link_label = (body.footer_link_label or "").strip()[:100] or None
     b.place_url = _clean_footer_url(body.place_url)
@@ -1559,6 +1572,8 @@ async def _schedule_inputs(db: AsyncSession, c: Campaign, body: ScheduleIn, user
 # 모른다고 간격을 넓히지는 않는다 — 넓혀도 모르는 자리를 피하는 데는 도움이 안 되고,
 # 사용자가 고른 간격("2시간마다")과 화면에 적힌 시각만 어긋난다. 대신 화면에 그대로 알린다.
 RESERVATION_STALE_HOURS = 2
+# 카테고리는 사람이 블로그에서 새로 만들기도 한다. 일주일에 한 번은 다시 읽어 온다.
+CATEGORY_STALE_DAYS = 7
 
 
 def _reservations_state(blogs: List[Blog], plans, warnings: List[str],
@@ -2221,8 +2236,10 @@ async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_us
             blocks = await _assemble_blocks(db, draft, j.image_variants or [], body.include_images)
             if body.include_images and draft.image_plan and sum(b.type == "image" for b in blocks) != len(draft.image_plan):
                 raise ValueError("필수 이미지가 누락되었습니다")
-            blocks = [JobBlock(**b) for b in
-                      trim_stray_emphasis([b.model_dump(exclude_none=True) for b in blocks])]
+            # 워드가 본문 글자에 적어 둔 기본색은 떼어 낸다 — 팔레트에 없는 색은 실행기가
+            # 클립보드로 붙여 넣고, 그 확인이 어긋나면 글 전체가 발행되지 않는다.
+            blocks = [JobBlock(**b) for b in trim_stray_emphasis(drop_default_colors(
+                [b.model_dump(exclude_none=True) for b in blocks]))]
             if 'point_styles_v1' in body.capabilities:
                 blocks = [JobBlock(**b) for b in apply_points(
                     [b.model_dump(exclude_none=True) for b in blocks], point_settings,
@@ -2371,6 +2388,8 @@ class AgentBlogSummary(BaseModel):
     # 예약 목록을 다시 읽어야 하는가(웹에서 [새로 읽기]를 눌렀거나 읽은 지 오래됨)
     wants_scan: bool = True
     reservations_scanned_at: Optional[str] = None
+    # 카테고리 목록을 읽어 보내야 하는가(한 번도 없거나 오래됨). 화면의 카테고리 선택이 이걸로 채워진다.
+    wants_categories: bool = False
 
 
 @router.get("/agent/summary", response_model=List[AgentBlogSummary])
@@ -2387,7 +2406,9 @@ async def agent_summary(current_user: User = Depends(get_current_user), db: Asyn
         out.append(AgentBlogSummary(blog_ref_id=b.id, naver_blog_id=b.blog_id, label=b.label or b.blog_id, status=b.status or "active", status_reason=b.status_reason,
                                     pending=len(rows), next_at=rows[0][0].isoformat(timespec="minutes") if rows else None, login_id=b.login_id,
                                     wants_scan=bool(b.reservations_scan_requested_at or (stale and not give_up)),
-                                    reservations_scanned_at=scanned.isoformat(timespec="minutes") if scanned else None))
+                                    reservations_scanned_at=scanned.isoformat(timespec="minutes") if scanned else None,
+                                    wants_categories=not b.categories or not b.categories_synced_at
+                                    or (datetime.utcnow() - b.categories_synced_at) > timedelta(days=CATEGORY_STALE_DAYS)))
     return out
 
 
@@ -2454,6 +2475,31 @@ async def agent_reservations(blog_ref_id: str, body: ReservationsIn,
     b.reservations_note = None
     await db.commit()
     return {"ok": True, "saved": len(slots), "freed": freed}
+
+
+class BlogCategoriesIn(BaseModel):
+    categories: List[Dict[str, str]] = Field(default_factory=list, max_length=200)
+
+
+@router.post("/agent/blogs/{blog_ref_id}/categories")
+async def agent_blog_categories(blog_ref_id: str, body: BlogCategoriesIn,
+                                current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """실행기가 네이버 편집기에서 읽어 온 이 블로그의 카테고리 목록을 적어 둔다.
+
+    카테고리는 에디터 DOM 안에만 있어서 서버가 스스로 알 수 없다. 블로그마다 목록이 다르므로
+    반드시 **블로그별로** 보관한다 — 사용자 단위로 한 벌만 두면 다른 블로그의 카테고리를
+    골라 두고 발행이 통째로 실패한다(실행기는 못 찾은 카테고리로는 올리지 않는다)."""
+    b = await _owned(db, Blog, blog_ref_id, current_user, "블로그")
+    items = []
+    for c in body.categories:
+        cid, name = str(c.get("id") or "").strip()[:50], str(c.get("name") or "").strip()[:200]
+        if cid and name:
+            items.append({"id": cid, "name": name})
+    if not items:
+        raise HTTPException(status_code=400, detail="카테고리 목록이 비어 있습니다")
+    b.categories, b.categories_synced_at = items, datetime.utcnow()
+    await db.commit()
+    return {"saved": len(items)}
 
 
 class BlogIdentityIn(BaseModel):

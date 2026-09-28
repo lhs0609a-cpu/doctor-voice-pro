@@ -23,12 +23,16 @@ function loggedInBlogId(reason?: string | null): string {
   return hit ? hit[1] : ''
 }
 
-/** 블로그 수정은 전체 값을 보낸다. 비밀번호를 비우면 서버가 기존 값을 유지한다. */
+/** 블로그 수정은 전체 값을 보낸다. 비밀번호를 비우면 서버가 기존 값을 유지한다.
+ *  글 끝에 붙는 링크(홈페이지·플레이스)까지 반드시 실어야 한다 — 빼면 서버가 '지웠다'로 읽어
+ *  계정이나 카테고리만 저장해도 링크가 사라진다(2026-09-28). */
 function blogBody(blog: BlogAccount, extra: Partial<BlogInput> = {}): BlogInput {
   return {
     blog_id: blog.blog_id, label: blog.label ?? null, login_id: blog.login_id ?? null, login_pw: null, proxy_url: null,
     daily_limit: blog.daily_limit, window_start: blog.window_start, window_end: blog.window_end,
     min_gap_minutes: blog.min_gap_minutes, default_category: blog.default_category ?? null, open_type: blog.open_type,
+    footer_link_url: blog.footer_link_url ?? null, footer_link_label: blog.footer_link_label ?? null,
+    place_url: blog.place_url ?? null, place_label: blog.place_label ?? null,
     ...extra,
   }
 }
@@ -53,6 +57,7 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
   const [newBlog, setNewBlog] = useState('')
   const [creds, setCreds] = useState<Record<string, { id: string; pw: string }>>({})
   const [proxies, setProxies] = useState<Record<string, string>>({})
+  const [links, setLinks] = useState<Record<string, { site: string; siteLabel: string; place: string; placeLabel: string }>>({})
 
   const linked = client.blogs.filter(b => campaign.blog_ids.includes(b.id))
   const troubled = linked.filter(b => ['captcha', 'login_required'].includes(b.status))
@@ -76,6 +81,33 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
     setCreds(c => ({ ...c, [blog.id]: { id: '', pw: '' } }))
     onChanged()
     return '저장했습니다. 실행기가 이 계정으로 알아서 로그인합니다'
+  })
+
+  // 카테고리는 '앞으로 올릴 글 전부'에 대한 선택이다. 서버가 아직 안 올린 예약건의
+  // 카테고리까지 같이 바꿔 준다 — 그래야 지금 걸려 있는 예약도 이 칸으로 올라간다.
+  const saveCategory = (blog: BlogAccount, value: string) => run(`cat-${blog.id}`, async () => {
+    await campaignAPI.updateBlog(blog.id, blogBody(blog, { default_category: value.trim() || null }))
+    onChanged()
+    const picked = (blog.categories || []).find(c => c.id === value.trim())
+    return value.trim()
+      ? `'${picked?.name || value.trim()}' 카테고리로 올립니다. 걸려 있는 예약도 함께 바꿨습니다.`
+      : '네이버 기본 카테고리로 올립니다.'
+  })
+
+  // 이 블로그로 올리는 **모든 글** 끝에 들어가는 링크. 한 번 넣으면 100건을 예약해도 전부 들어간다.
+  // 네이버는 주소가 한 줄로 있으면 알아서 카드(플레이스면 지도 카드)로 만들어 준다.
+  const saveLinks = (blog: BlogAccount) => run(`links-${blog.id}`, async () => {
+    const value = links[blog.id] || { site: '', siteLabel: '', place: '', placeLabel: '' }
+    const body = blogBody(blog, {
+      footer_link_url: value.site.trim() || null,
+      footer_link_label: value.siteLabel.trim() || null,
+      place_url: value.place.trim() || null,
+      place_label: value.placeLabel.trim() || null,
+    })
+    await campaignAPI.updateBlog(blog.id, body)
+    onChanged()
+    const kept = [body.place_url && '플레이스 지도', body.footer_link_url && '홈페이지·예약 링크'].filter(Boolean).join(' · ')
+    return kept ? `${kept}를 이 블로그의 모든 글 끝에 넣습니다.` : '글 끝 링크를 지웠습니다.'
   })
 
   const saveProxy = (blog: BlogAccount) => run(`proxy-${blog.id}`, async () => {
@@ -180,9 +212,85 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
       })}
     </div>}
 
-    {/* ③ 블로그별 고정 IP */}
+    {/* ③ 올릴 카테고리 */}
     {linked.length > 0 && <div className="space-y-2">
-      <p className="text-sm font-medium">③ 블로그별 고정 IP <span className="font-normal text-muted-foreground">(선택 — 여러 병원을 한 PC에서 운영할 때)</span></p>
+      <p className="text-sm font-medium">③ 올릴 카테고리 <span className="font-normal text-muted-foreground">(선택 — 안 고르면 네이버 기본 카테고리)</span></p>
+      {linked.map(b => {
+        const list = b.categories || []
+        const current = b.default_category ?? ''
+        const chosen = list.find(c => c.id === current)
+        return <div key={b.id} className="space-y-1.5 rounded-lg border p-3">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="font-medium">{b.label || b.blog_id}</span>
+            {current
+              ? <Pill tone="ok">{chosen?.name || `번호 ${current}`}</Pill>
+              : <Pill tone="muted">네이버 기본 카테고리</Pill>}
+          </div>
+          {list.length > 0
+            ? <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={current} disabled={!!busy}
+                aria-label={`${b.label || b.blog_id} 카테고리`}
+                onChange={e => saveCategory(b, e.target.value)}>
+                <option value="">네이버 기본 카테고리</option>
+                {list.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            : <div className="space-y-1.5">
+                <p className="text-xs text-muted-foreground">
+                  카테고리는 네이버 글쓰기 화면 안에만 있어서, <b>실행기를 한 번 켜면</b> 이 블로그의 목록을 읽어 와 여기에 채워집니다.
+                  그 전에는 번호를 직접 넣어도 됩니다.
+                </p>
+                <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                  <Input placeholder="카테고리 번호 (예: 24)" defaultValue={current} disabled={!!busy}
+                    onKeyDown={e => { if (e.key === 'Enter') saveCategory(b, (e.target as HTMLInputElement).value) }}
+                    onBlur={e => { if (e.target.value.trim() !== current) saveCategory(b, e.target.value) }} />
+                  <Button size="sm" className="h-9" disabled={!!busy} onClick={() => saveCategory(b, current)}>
+                    {busy === `cat-${b.id}` ? '저장 중…' : '저장'}
+                  </Button>
+                </div>
+              </div>}
+        </div>
+      })}
+    </div>}
+
+    {/* ④ 글 끝에 늘 들어갈 링크 */}
+    {linked.length > 0 && <div className="space-y-2">
+      <p className="text-sm font-medium">④ 글 끝에 늘 들어갈 링크 <span className="font-normal text-muted-foreground">(플레이스 지도 · 홈페이지)</span></p>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        한 번 넣어 두면 이 블로그로 올리는 <b>모든 글</b>(대량 예약 100건도) 끝에 들어갑니다.
+        네이버가 주소 한 줄을 알아서 카드로 만들어 줍니다 — 플레이스 주소는 지도 카드가 됩니다.
+        원고 본문에 이미 그 주소가 있으면 두 번 넣지 않습니다.
+      </p>
+      {linked.map(b => {
+        const value = links[b.id] || {
+          site: b.footer_link_url ?? '', siteLabel: b.footer_link_label ?? '',
+          place: b.place_url ?? '', placeLabel: b.place_label ?? '',
+        }
+        const set = (patch: Partial<typeof value>) => setLinks(l => ({ ...l, [b.id]: { ...value, ...patch } }))
+        return <div key={b.id} className="space-y-1.5 rounded-lg border p-3">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="font-medium">{b.label || b.blog_id}</span>
+            {b.place_url ? <Pill tone="ok">지도 카드</Pill> : <Pill tone="muted">지도 없음</Pill>}
+            {b.footer_link_url ? <Pill tone="ok">링크 카드</Pill> : <Pill tone="muted">링크 없음</Pill>}
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Input placeholder="플레이스 지도 주소 (naver.me/… 또는 map.naver.com/…)" value={value.place} disabled={!!busy}
+              autoComplete="off" onChange={e => set({ place: e.target.value })} />
+            <Input placeholder="지도 앞에 붙일 한 줄 (예: 오시는 길)" value={value.placeLabel} disabled={!!busy}
+              autoComplete="off" onChange={e => set({ placeLabel: e.target.value })} />
+            <Input placeholder="홈페이지·예약 주소 (https://…)" value={value.site} disabled={!!busy}
+              autoComplete="off" onChange={e => set({ site: e.target.value })} />
+            <Input placeholder="링크 앞에 붙일 한 줄 (예: 예약은 여기서)" value={value.siteLabel} disabled={!!busy}
+              autoComplete="off" onChange={e => set({ siteLabel: e.target.value })} />
+          </div>
+          <Button size="sm" className="h-9" disabled={!!busy} onClick={() => saveLinks(b)}>
+            {busy === `links-${b.id}` ? '저장 중…' : '저장'}
+          </Button>
+        </div>
+      })}
+    </div>}
+
+    {/* ⑤ 블로그별 고정 IP */}
+    {linked.length > 0 && <div className="space-y-2">
+      <p className="text-sm font-medium">⑤ 블로그별 고정 IP <span className="font-normal text-muted-foreground">(선택 — 여러 병원을 한 PC에서 운영할 때)</span></p>
       <p className="text-xs leading-relaxed text-muted-foreground">
         블로그마다 <b>고정된</b> 주소를 넣으세요. 계속 바꾸면 같은 계정이 여기저기서 접속하는 꼴이라
         로그인이 자꾸 풀립니다. 예) <code>123.45.67.89:8080</code> 또는 <code>http://아이디:비밀번호@123.45.67.89:8080</code>
@@ -207,7 +315,7 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
 
     {/* ④ 블로그 추가 */}
     <div className="space-y-2">
-      <p className="text-sm font-medium">④ 블로그 추가 <span className="font-normal text-muted-foreground">(주소를 붙여 넣어도 됩니다)</span></p>
+      <p className="text-sm font-medium">⑥ 블로그 추가 <span className="font-normal text-muted-foreground">(주소를 붙여 넣어도 됩니다)</span></p>
       <div className="flex gap-2">
         <Input placeholder="abc123 또는 블로그 주소" value={newBlog} disabled={!!busy} onChange={e => setNewBlog(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && newBlog.trim()) void add() }} />

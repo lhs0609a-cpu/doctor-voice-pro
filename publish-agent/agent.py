@@ -66,7 +66,6 @@ class JobResult:
     need_login: bool = False
     captcha: bool = False
     receipt_id: Optional[str] = None
-    verification: Optional[Dict[str, Any]] = None
 
     def as_report(self) -> Dict[str, Any]:
         return asdict(self)
@@ -401,19 +400,25 @@ async def ensure_login(editor: Any, client: ServerClient, blog: Dict[str, Any]) 
         return False, str(e)
 
 
-async def sync_categories(client: ServerClient, editor: Any) -> int:
+async def sync_categories(client: ServerClient, editor: Any, blog: Optional[Dict[str, Any]] = None) -> int:
     """앱의 카테고리 드롭다운을 채운다(확장 SYNC_CATEGORIES 대체).
 
-    카테고리는 네이버 에디터 안에만 있어서 서버가 스스로 알 수 없다. 캐시가 비어 있을 때만
-    발행 레이어를 열어 목록만 읽고 글쓰기 화면으로 되돌린다. 실패해도 발행은 계속한다."""
+    카테고리는 네이버 에디터 안에만 있어서 서버가 스스로 알 수 없다. 목록은 **블로그마다 다르다** —
+    서버가 이 블로그의 목록을 청할 때만(wants_categories) 발행 레이어를 열어 읽고 글쓰기 화면으로
+    되돌린다. 실패해도 발행은 계속한다."""
+    # 블로그를 모르고 불린 경우(예전 경로)에는 예전 규칙대로 — 캐시가 비었을 때만 읽는다.
+    wants = bool(blog.get("wants_categories")) if blog else False
     try:
         cached = await asyncio.to_thread(client.categories)
-        if (cached or {}).get("categories"):
+        if not wants and (cached or {}).get("categories"):
             return 0
         await editor.open_publish_layer()
         items = await editor.read_categories()
         if items:
-            await asyncio.to_thread(client.put_categories, items)
+            if blog and blog.get("blog_ref_id"):
+                await asyncio.to_thread(client.put_blog_categories, blog["blog_ref_id"], items)
+            if not (cached or {}).get("categories"):
+                await asyncio.to_thread(client.put_categories, items)   # 예전 대량발행 화면의 드롭다운
             log.info("카테고리 %d개를 서버에 저장했습니다", len(items))
         return len(items)
     except Exception as e:  # noqa: BLE001
@@ -564,7 +569,7 @@ async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, 
         log.info("로그인 확인됨 → 블로그 상태를 active 로 복구")
         client.set_blog_status(ref, "active", "에이전트가 로그인을 확인했습니다")
 
-    await sync_categories(client, editor)
+    await sync_categories(client, editor, blog)
     # 예약 목록 훑기는 **발행 뒤**로 미룬다. 사용자가 예약을 걸면 그 글이 네이버에 등록되는 것이
     # 먼저다 — 목록을 먼저 열다 로그인·화면 변경으로 시간을 쓰면 그만큼 등록이 늦어진다.
     taken: set = set()

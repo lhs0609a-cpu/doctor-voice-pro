@@ -59,11 +59,18 @@ class Journal:
 async def flush(journal, client):
     """Persist recovery decisions before transport. A failed ACK never retypes."""
     import asyncio
+    import inspect
+    # 이 기록은 디스크에 남아 다음 실행(다른 버전일 수 있다)이 읽는다. 보고 함수가 모르는
+    # 칸이 하나 섞여 있으면 TypeError 로 보고 자체가 영영 실패한다 — 아는 칸만 보낸다.
+    params = inspect.signature(client.report_result).parameters.values()
+    known = (None if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params)
+             else {p.name for p in params})
     for token, job_id, stage, serialized in journal.pending():
         report = json.loads(serialized) if serialized else {
             'ok': False, 'uncertain': stage == 'finalizing',
             'release': stage != 'finalizing', 'message': '실행기 재시작 후 복구',
         }
         journal.save_result(token, report)
-        await asyncio.to_thread(client.report_result, job_id, token, **report)
+        payload = report if known is None else {k: v for k, v in report.items() if k in known}
+        await asyncio.to_thread(client.report_result, job_id, token, **payload)
         journal.acknowledge(token)

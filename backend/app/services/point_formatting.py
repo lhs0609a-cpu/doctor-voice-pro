@@ -37,6 +37,38 @@ def _restyle(span, style):
     return out
 
 
+def _channels(hex_color):
+    value = (hex_color or '').strip()
+    if not re.fullmatch(r'#[0-9a-fA-F]{6}', value):
+        return None
+    return tuple(int(value[i:i + 2], 16) for i in (1, 3, 5))
+
+
+# 사람 눈으로 본문 검정과 구분되지 않는 범위. #222b2f(47) 는 들어오고 #666e73(115) 는 아니다.
+DEFAULT_TEXT_MAX = 80
+DEFAULT_BACKGROUND_MIN = 240
+
+
+def drop_default_colors(blocks):
+    """본문 기본색에 가까운 글자색과 흰 배경은 '색 없음'으로 본다.
+
+    워드는 본문 글자에도 색을 적어 둔다(#222b2f). 그 색은 네이버 팔레트에 없어서 실행기가
+    문단마다 클립보드로 붙여 넣어야 하고, 붙여 넣은 글을 되읽는 확인이 한 번 어긋나면
+    글 **전체**가 발행되지 않는다(2026-09-28 실측: '입력한 강조 문구가 본문에 표시되지
+    않았습니다'로 예약 1건 실패). 눈에 보이지도 않는 색을 재현하려고 발행을 잃지 않는다.
+    진짜 강조색(청록·회색 캡션 등)은 그대로 둔다."""
+    result = deepcopy(blocks)
+    for block in result:
+        for span in block.get('spans') or []:
+            text = _channels(span.get('color'))
+            if text and max(text) <= DEFAULT_TEXT_MAX:
+                span.pop('color', None)
+            back = _channels(span.get('background'))
+            if back and min(back) >= DEFAULT_BACKGROUND_MIN:
+                span.pop('background', None)
+    return result
+
+
 def trim_stray_emphasis(blocks):
     """중요하지 않은 곳에 붙은 강조를 떼어 낸다. 글자와 순서는 건드리지 않는다.
 

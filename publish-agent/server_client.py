@@ -252,6 +252,11 @@ class ServerClient:
     def put_categories(self, categories: List[Dict[str, str]]) -> Dict[str, Any]:
         return self._request("POST", "/publish/categories", json={"categories": categories}) or {}
 
+    def put_blog_categories(self, blog_ref_id: str, categories: List[Dict[str, str]]) -> Dict[str, Any]:
+        """이 블로그의 카테고리 목록을 서버에 적어 둔다 — 웹 화면이 이걸로 고르게 한다."""
+        return self._request("POST", f"/campaign/agent/blogs/{quote(str(blog_ref_id), safe='')}/categories",
+                             json={"categories": categories}) or {}
+
     def adopt_blog_id(self, blog_ref_id: str, blog_id: str) -> Dict[str, Any]:
         """'로그인해 보니 블로그 주소가 이것' 이라고 알린다. 서버가 안전하다고 보면 맞춰 준다."""
         return self._request("POST", f"/campaign/agent/blogs/{quote(str(blog_ref_id), safe='')}/identity",

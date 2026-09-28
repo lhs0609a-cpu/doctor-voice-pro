@@ -57,6 +57,9 @@ export interface BlogAccount extends BlogFooter {
   status_reason?: string | null
   last_published_at?: string | null
   proxy_label?: string | null      // 이 블로그 전용 고정 IP. host:port 만 온다(비밀번호는 서버에 남는다)
+  // 실행기가 네이버 편집기에서 읽어 온 이 블로그의 카테고리. 없으면 실행기를 한 번 켜야 채워진다.
+  categories?: { id: string; name: string }[]
+  categories_synced_at?: string | null
   // 블로그 지수(blog-index 분석 결과 캐시)
   index_score?: number | null
   index_level?: number | null

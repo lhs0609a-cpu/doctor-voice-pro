@@ -76,6 +76,11 @@ class Blog(Base):
     window_end = Column(String(5), default="21:00")
     min_gap_minutes = Column(Integer, default=120)           # 같은 블로그 글 사이 최소 간격
     default_category = Column(String(100), nullable=True)    # 네이버 카테고리 번호
+    # 이 블로그의 카테고리 목록 [{"id": "24", "name": "성장 칼럼"}]. 카테고리는 네이버 에디터
+    # 안에만 있어서 서버가 스스로 알 수 없다 — 실행기가 읽어 채운다. 사용자 단위로 한 벌만
+    # 두면 블로그가 여러 개일 때 남의 목록을 보여 주게 된다(2026-09-28).
+    categories = Column(JSON, nullable=True)
+    categories_synced_at = Column(DateTime, nullable=True)
     open_type = Column(String(20), default="public")
     # active | paused | captcha | login_required | disabled
     status = Column(String(30), default="active")
