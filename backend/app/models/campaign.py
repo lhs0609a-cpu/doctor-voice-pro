@@ -81,6 +81,8 @@ class Blog(Base):
     # 두면 블로그가 여러 개일 때 남의 목록을 보여 주게 된다(2026-09-28).
     categories = Column(JSON, nullable=True)
     categories_synced_at = Column(DateTime, nullable=True)
+    # 화면에서 [카테고리 새로 읽기]를 눌렀을 때. 실행기가 다음 차례에 읽어 오고 비운다.
+    categories_scan_requested_at = Column(DateTime, nullable=True)
     open_type = Column(String(20), default="public")
     # active | paused | captcha | login_required | disabled
     status = Column(String(30), default="active")

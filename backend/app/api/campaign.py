@@ -174,6 +174,7 @@ class BlogOut(BaseModel):
     # 실행기가 네이버 편집기에서 읽어 온 이 블로그의 카테고리 목록. 화면이 이걸로 고르게 한다.
     categories: List[Dict[str, str]] = []
     categories_synced_at: Optional[datetime] = None
+    categories_pending: bool = False          # [새로 읽기]를 눌러 실행기를 기다리는 중
 
 
 class BriefOut(BaseModel):
@@ -227,6 +228,7 @@ def _blog_out(b: Blog) -> BlogOut:
         categories=[{"id": str(c.get("id") or ""), "name": str(c.get("name") or "")}
                     for c in (b.categories or []) if isinstance(c, dict)],
         categories_synced_at=b.categories_synced_at,
+        categories_pending=bool(b.categories_scan_requested_at),
     )
 
 
@@ -2407,7 +2409,8 @@ async def agent_summary(current_user: User = Depends(get_current_user), db: Asyn
                                     pending=len(rows), next_at=rows[0][0].isoformat(timespec="minutes") if rows else None, login_id=b.login_id,
                                     wants_scan=bool(b.reservations_scan_requested_at or (stale and not give_up)),
                                     reservations_scanned_at=scanned.isoformat(timespec="minutes") if scanned else None,
-                                    wants_categories=not b.categories or not b.categories_synced_at
+                                    wants_categories=bool(b.categories_scan_requested_at) or not b.categories
+                                    or not b.categories_synced_at
                                     or (datetime.utcnow() - b.categories_synced_at) > timedelta(days=CATEGORY_STALE_DAYS)))
     return out
 
@@ -2498,8 +2501,22 @@ async def agent_blog_categories(blog_ref_id: str, body: BlogCategoriesIn,
     if not items:
         raise HTTPException(status_code=400, detail="카테고리 목록이 비어 있습니다")
     b.categories, b.categories_synced_at = items, datetime.utcnow()
+    b.categories_scan_requested_at = None
     await db.commit()
     return {"saved": len(items)}
+
+
+@router.post("/blogs/{blog_ref_id}/categories/rescan", response_model=BlogOut)
+async def request_category_scan(blog_ref_id: str, current_user: User = Depends(get_current_user),
+                                db: AsyncSession = Depends(get_db)):
+    """[카테고리 새로 읽기]. 실행기가 다음 차례에 이 블로그의 글쓰기 화면에서 목록을 읽어 온다.
+
+    카테고리는 네이버 에디터 안에만 있어서 서버가 직접 볼 수 없다. 블로그에서 카테고리를
+    새로 만들었을 때 일주일을 기다리지 않고 바로 가져오려면 사람이 눌러 줄 수 있어야 한다."""
+    b = await _owned(db, Blog, blog_ref_id, current_user, "블로그")
+    b.categories_scan_requested_at = datetime.utcnow()
+    await db.commit()
+    return _blog_out(b)
 
 
 class BlogIdentityIn(BaseModel):

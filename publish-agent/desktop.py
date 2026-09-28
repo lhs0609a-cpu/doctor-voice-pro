@@ -22,6 +22,7 @@ import uuid
 import webbrowser
 
 import agent
+import browser_setup
 import credential_store
 import updater
 from local_bridge import LocalBridge
@@ -786,6 +787,13 @@ class Desktop:
 
         def run():
             try:
+                # 아무것도 안 깔린 PC 에서는 브라우저부터 준비한다. 처음 한 번뿐이고,
+                # 구글 크롬이 이미 있으면 아무것도 받지 않는다.
+                if not browser_setup.prepare(lambda m: self.output.put(m)):
+                    self.output.put('브라우저를 준비하지 못해 발행을 시작할 수 없습니다. '
+                                    '구글 크롬을 설치한 뒤 다시 눌러 주세요.')
+                    self.ui.put(('status', '브라우저 준비 실패 — 구글 크롬을 설치해 주세요'))
+                    return
                 result = asyncio.run(agent.main_async(args))
                 if result == 3:
                     # 인증이 끊긴 것뿐이다. 새 열쇠를 받아 스스로 이어서 시작한다.
@@ -927,10 +935,11 @@ def hand_over_to_installed() -> bool:
 
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == '--self-check':
-        import naver_editor, journal, rich_editor, html_clipboard
+        import naver_editor, journal, rich_editor, html_clipboard, browser_setup
         interpreter = tk.Tcl()
         Path(sys.argv[2]).write_text(json.dumps({'ok': True, 'tcl': interpreter.eval('info patchlevel'),
-                                               'editor': bool(naver_editor), 'journal': bool(journal)}), encoding='utf-8')
+                                               'editor': bool(naver_editor), 'journal': bool(journal),
+                                               'browser_driver': bool(browser_setup._driver())}), encoding='utf-8')
         return
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())

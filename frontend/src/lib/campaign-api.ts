@@ -60,6 +60,7 @@ export interface BlogAccount extends BlogFooter {
   // 실행기가 네이버 편집기에서 읽어 온 이 블로그의 카테고리. 없으면 실행기를 한 번 켜야 채워진다.
   categories?: { id: string; name: string }[]
   categories_synced_at?: string | null
+  categories_pending?: boolean     // [새로 읽기]를 눌러 실행기를 기다리는 중
   // 블로그 지수(blog-index 분석 결과 캐시)
   index_score?: number | null
   index_level?: number | null
@@ -421,6 +422,8 @@ export const campaignAPI = {
   // 블로그 계정
   addBlog: async (clientId: string, body: BlogInput): Promise<BlogAccount> => (await api.post(`${C}/clients/${clientId}/blogs`, body)).data,
   updateBlog: async (blogRefId: string, body: BlogInput): Promise<BlogAccount> => (await api.put(`${C}/blogs/${blogRefId}`, body)).data,
+  rescanCategories: async (blogRefId: string): Promise<BlogAccount> =>
+    (await api.post(`${C}/blogs/${blogRefId}/categories/rescan`)).data,
   setBlogStatus: async (blogRefId: string, status: string, reason?: string): Promise<BlogAccount> =>
     (await api.post(`${C}/blogs/${blogRefId}/status`, { status, reason })).data,
   deleteBlog: async (blogRefId: string): Promise<{ success: boolean }> => (await api.delete(`${C}/blogs/${blogRefId}`)).data,

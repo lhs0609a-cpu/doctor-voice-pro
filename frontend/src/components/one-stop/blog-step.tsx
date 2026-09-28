@@ -110,6 +110,14 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
     return kept ? `${kept}를 이 블로그의 모든 글 끝에 넣습니다.` : '글 끝 링크를 지웠습니다.'
   })
 
+  // 카테고리는 네이버 글쓰기 화면 안에만 있다. 블로그에서 새로 만들었으면 사람이 눌러
+  // 바로 가져올 수 있어야 한다 — 일주일마다 자동으로 다시 읽는 것만으로는 늦다.
+  const rescanCategories = (blog: BlogAccount) => run(`catscan-${blog.id}`, async () => {
+    await campaignAPI.rescanCategories(blog.id)
+    onChanged()
+    return '실행기가 다음 차례에 이 블로그의 카테고리를 읽어 옵니다(보통 1~2분). 다 읽으면 아래 목록에 뜹니다.'
+  })
+
   const saveProxy = (blog: BlogAccount) => run(`proxy-${blog.id}`, async () => {
     const value = (proxies[blog.id] || '').trim()
     if (!value) throw new Error('프록시 주소를 넣어 주세요 (지우려면 - 한 글자)')
@@ -225,6 +233,11 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
             {current
               ? <Pill tone="ok">{chosen?.name || `번호 ${current}`}</Pill>
               : <Pill tone="muted">네이버 기본 카테고리</Pill>}
+            {b.categories_pending && <Pill tone="warn">읽어 오는 중</Pill>}
+            <Button size="sm" variant="outline" className="ml-auto h-7" disabled={!!busy}
+              onClick={() => rescanCategories(b)}>
+              {busy === `catscan-${b.id}` ? '요청 중…' : list.length ? '카테고리 새로 읽기' : '카테고리 가져오기'}
+            </Button>
           </div>
           {list.length > 0
             ? <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" value={current} disabled={!!busy}
@@ -235,8 +248,8 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
               </select>
             : <div className="space-y-1.5">
                 <p className="text-xs text-muted-foreground">
-                  카테고리는 네이버 글쓰기 화면 안에만 있어서, <b>실행기를 한 번 켜면</b> 이 블로그의 목록을 읽어 와 여기에 채워집니다.
-                  그 전에는 번호를 직접 넣어도 됩니다.
+                  카테고리는 네이버 글쓰기 화면 안에만 있습니다. 실행기를 켜 둔 채 위의 <b>[카테고리 가져오기]</b>를 누르면
+                  1~2분 안에 목록이 여기에 뜹니다. 그 전에는 번호를 직접 넣어도 됩니다.
                 </p>
                 <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
                   <Input placeholder="카테고리 번호 (예: 24)" defaultValue={current} disabled={!!busy}

@@ -84,6 +84,37 @@ class AgentStatusTests(unittest.IsolatedAsyncioTestCase):
             await db.commit()
         self.assertFalse((await self.client.get('/agent/status')).json()['stalled'])
 
+    async def test_categories_are_fetched_on_request_and_shown_to_the_app(self):
+        """[카테고리 새로 읽기]를 누르면 실행기가 다음 차례에 읽어 오고, 그 목록이 화면에 뜬다.
+
+        카테고리는 네이버 글쓰기 화면 안에만 있다. 블로그에서 카테고리를 새로 만들었을 때
+        일주일을 기다리지 않고 바로 가져오려면 사람이 눌러 줄 수 있어야 한다."""
+        async with self.sessions() as db:
+            db.add(Blog(id='b1', user_id='u', client_id='c', blog_id='dojtp647', status='active',
+                        categories=[{'id': '1', 'name': '옛 목록'}], categories_synced_at=datetime.utcnow()))
+            await db.commit()
+        summary = (await self.client.get('/agent/summary')).json()
+        self.assertFalse(summary[0]['wants_categories'])          # 방금 읽었으면 또 읽지 않는다
+
+        blog = (await self.client.post('/blogs/b1/categories/rescan')).json()
+        self.assertTrue(blog['categories_pending'])
+        summary = (await self.client.get('/agent/summary')).json()
+        self.assertTrue(summary[0]['wants_categories'])           # 실행기가 다음 차례에 읽는다
+
+        saved = await self.client.post('/agent/blogs/b1/categories', json={'categories': [
+            {'id': '24', 'name': 'PLT 컨설팅 칼럼'}, {'id': '25', 'name': 'PLT 심리학 연구'}]})
+        self.assertEqual(saved.json()['saved'], 2)
+        summary = (await self.client.get('/agent/summary')).json()
+        self.assertFalse(summary[0]['wants_categories'])          # 받았으면 요청은 끝난다
+
+    async def test_an_empty_category_report_never_wipes_the_list(self):
+        async with self.sessions() as db:
+            db.add(Blog(id='b2', user_id='u', client_id='c', blog_id='x', status='active',
+                        categories=[{'id': '1', 'name': '살아 있어야 할 목록'}]))
+            await db.commit()
+        refused = await self.client.post('/agent/blogs/b2/categories', json={'categories': []})
+        self.assertEqual(refused.status_code, 400)
+
     async def test_light_turns_on_with_the_first_heartbeat(self):
         before = await self.client.get('/agent/status')
         self.assertEqual(before.json()['online'], False)

@@ -87,7 +87,8 @@ def build_app(output: Path) -> Path:
     subprocess.run([sys.executable, '-m', 'PyInstaller', '--clean', '--noconfirm', '--windowed', '--onedir',
         '--name', 'DoctorVoiceAutopilot', '--contents-directory', 'app', '--distpath', str(output),
         '--workpath', str(HERE / 'build'), '--specpath', str(HERE / 'build'), '--collect-all', 'playwright',
-        '--hidden-import', 'naver_editor', '--hidden-import', 'journal', str(HERE / 'desktop.py')], check=True)
+        '--hidden-import', 'naver_editor', '--hidden-import', 'journal',
+        '--hidden-import', 'browser_setup', str(HERE / 'desktop.py')], check=True)
     return output / 'DoctorVoiceAutopilot'
 
 
