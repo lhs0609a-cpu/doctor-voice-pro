@@ -131,6 +131,26 @@ def valid_server(value):
         return False
 
 
+def start_file_log(folder: Path) -> None:
+    """무슨 일이 있었는지 날짜별 파일로 남긴다.
+
+    화면의 글자는 창을 닫으면 사라진다. 고객 PC 에서 발행이 막혔을 때 들여다볼 것이
+    없었다 — 로그 폴더 자체가 만들어지지 않았다(2026-09-28: agent.setup_logging 은
+    명령줄 실행에서만 불렸다). 창에 띄우는 일은 이미 하고 있으므로 파일만 더한다."""
+    from datetime import datetime
+
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f'agent-{datetime.now():%Y-%m-%d}.log'
+    root = logging.getLogger()
+    if any(getattr(h, 'baseFilename', '') == str(path) for h in root.handlers):
+        return
+    handler = logging.FileHandler(path, encoding='utf-8')
+    handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)-5s [%(name)s] %(message)s'))
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+    root.info('실행기 %s 시작 — 로그 %s', VERSION, path)
+
+
 def make_args(server, email, password, folder, stop_event, wake_event=None):
     if not valid_server(server):
         raise ValueError('서버 주소는 HTTPS 주소 또는 로컬 서버여야 합니다')
@@ -787,6 +807,7 @@ class Desktop:
 
         def run():
             try:
+                start_file_log(Path(args.log_dir))
                 # 아무것도 안 깔린 PC 에서는 브라우저부터 준비한다. 처음 한 번뿐이고,
                 # 구글 크롬이 이미 있으면 아무것도 받지 않는다.
                 if not browser_setup.prepare(lambda m: self.output.put(m)):

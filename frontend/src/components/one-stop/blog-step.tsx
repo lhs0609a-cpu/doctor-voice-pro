@@ -233,7 +233,9 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
             {current
               ? <Pill tone="ok">{chosen?.name || `번호 ${current}`}</Pill>
               : <Pill tone="muted">네이버 기본 카테고리</Pill>}
-            {b.categories_pending && <Pill tone="warn">읽어 오는 중</Pill>}
+            {b.categories_pending && (b.status === 'active'
+              ? <Pill tone="warn">읽어 오는 중</Pill>
+              : <Pill tone="warn">로그인 확인 먼저</Pill>)}
             <Button size="sm" variant="outline" className="ml-auto h-7" disabled={!!busy}
               onClick={() => rescanCategories(b)}>
               {busy === `catscan-${b.id}` ? '요청 중…' : list.length ? '카테고리 새로 읽기' : '카테고리 가져오기'}
@@ -250,6 +252,7 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
                 <p className="text-xs text-muted-foreground">
                   카테고리는 네이버 글쓰기 화면 안에만 있습니다. 실행기를 켜 둔 채 위의 <b>[카테고리 가져오기]</b>를 누르면
                   1~2분 안에 목록이 여기에 뜹니다. 그 전에는 번호를 직접 넣어도 됩니다.
+                  {b.status !== 'active' && <> 이 블로그는 <b>로그인 확인이 먼저</b>입니다 — 로그인이 풀려 있으면 목록을 읽어 올 수 없습니다.</>}
                 </p>
                 <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
                   <Input placeholder="카테고리 번호 (예: 24)" defaultValue={current} disabled={!!busy}

@@ -400,9 +400,31 @@ def _clean_blog_id(raw: str) -> str:
     return bid
 
 
+async def _check_blog_address(db: AsyncSession, user_id: str, blog_id: str, *, skip: Optional[str] = None) -> None:
+    """같은 주소를 두 번 등록하거나, 주소 칸에 로그인 아이디를 적는 것을 막는다.
+
+    네이버는 **로그인 아이디와 블로그 주소가 다를 수 있다**(lhs0609c 로 로그인하면 열리는
+    블로그는 blog.naver.com/platonmarketing). 아이디를 주소 칸에 적으면 실행기가 로그인해
+    보고 "예상과 다른 블로그"라며 영영 멈춘다 — 예약은 쌓이는데 한 건도 올라가지 않는다.
+    오늘 하루에만 세 번 같은 일이 났다(2026-09-28)."""
+    rows = (await db.execute(select(Blog).where(Blog.user_id == user_id))).scalars().all()
+    for other in rows:
+        if skip and other.id == skip:
+            continue
+        if (other.blog_id or "").lower() == blog_id.lower():
+            raise HTTPException(status_code=400, detail=(
+                f"'{blog_id}' 는 이미 등록된 블로그입니다. 목록에서 그 블로그를 고르세요."))
+        if (other.login_id or "").lower() == blog_id.lower():
+            raise HTTPException(status_code=400, detail=(
+                f"'{blog_id}' 는 이미 등록된 블로그 '{other.blog_id}' 의 **로그인 아이디**입니다. "
+                f"여기에는 blog.naver.com/ 뒤에 오는 **블로그 주소**를 넣어 주세요. "
+                f"같은 계정의 블로그라면 '{other.blog_id}' 를 그대로 쓰시면 됩니다."))
+
+
 @router.post("/clients/{client_id}/blogs", response_model=BlogOut)
 async def add_blog(client_id: str, body: BlogIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     await _owned(db, Client, client_id, current_user, "병원")
+    await _check_blog_address(db, _uid(current_user), _clean_blog_id(body.blog_id))
     b = Blog(
         user_id=_uid(current_user), client_id=client_id, blog_id=_clean_blog_id(body.blog_id), label=body.label,
         login_id=body.login_id, login_pw_enc=crypto.encrypt(body.login_pw), daily_limit=body.daily_limit,
@@ -422,6 +444,8 @@ async def add_blog(client_id: str, body: BlogIn, current_user: User = Depends(ge
 @router.put("/blogs/{blog_ref_id}", response_model=BlogOut)
 async def update_blog(blog_ref_id: str, body: BlogIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     b = await _owned(db, Blog, blog_ref_id, current_user, "블로그")
+    if _clean_blog_id(body.blog_id).lower() != (b.blog_id or "").lower():
+        await _check_blog_address(db, _uid(current_user), _clean_blog_id(body.blog_id), skip=b.id)
     b.blog_id = _clean_blog_id(body.blog_id)
     b.label, b.login_id = body.label, body.login_id
     if body.login_pw:

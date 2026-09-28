@@ -312,6 +312,36 @@ class ReservationTests(DatabaseCase):
         self.assertEqual(len(booked), 2, booked)                     # 두 건은 실제로 저장되었다
         self.assertNotIn(clash, [at for _, at in booked])            # 차 있던 칸에는 걸지 않았다
 
+    # ------------------------------------------------- 블로그 주소 등록
+    async def add_blog(self, blog_id):
+        return await self.client.post('/clients/client/blogs', json={
+            'blog_id': blog_id, 'daily_limit': 2, 'window_start': '09:00', 'window_end': '21:00',
+            'min_gap_minutes': 120, 'open_type': 'public'})
+
+    async def test_the_login_id_cannot_be_registered_as_a_blog_address(self):
+        """네이버는 로그인 아이디와 블로그 주소가 다를 수 있다.
+
+        아이디를 주소 칸에 적으면 실행기가 로그인해 보고 '예상과 다른 블로그'라며 영영 멈춘다 —
+        예약은 쌓이는데 한 건도 올라가지 않는다. 2026-09-28 하루에 세 번 같은 일이 났다.
+        등록하는 자리에서 막고, 어느 블로그를 쓰면 되는지 이름으로 알려 준다."""
+        async with self.sessions() as db:
+            (await db.get(Blog, 'b')).login_id = 'lhs0609c'
+            await db.commit()
+        refused = await self.add_blog('lhs0609c')
+        self.assertEqual(refused.status_code, 400)
+        self.assertIn('로그인 아이디', refused.json()['detail'])
+        self.assertIn('testblog', refused.json()['detail'])        # 쓸 수 있는 블로그를 짚어 준다
+
+    async def test_the_same_address_is_never_registered_twice(self):
+        refused = await self.add_blog('testblog')
+        self.assertEqual(refused.status_code, 400)
+        self.assertIn('이미 등록된', refused.json()['detail'])
+
+    async def test_a_new_address_is_accepted(self):
+        added = await self.add_blog('https://blog.naver.com/newblog?x=1')
+        self.assertEqual(added.status_code, 200, added.text)
+        self.assertEqual(added.json()['blog_id'], 'newblog')       # 주소를 붙여 넣어도 아이디만 남는다
+
     # ------------------------------------------------- 로그인이 필요한 블로그
     async def test_a_blog_waiting_for_naver_login_can_still_be_scheduled(self):
         """로그인은 '올릴 때' 푸는 문제다 — 예약까지 막으면 빠져나올 수 없다.
