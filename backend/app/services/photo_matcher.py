@@ -61,6 +61,21 @@ def _norm(s: str) -> str:
     return "".join(s.split()).lower()
 
 
+# 치료 전후를 나란히 놓은 사진. 의료광고에서 가장 까다로운 사진이라 **자동 발행에서는 쓰지
+# 않는다**(2026-09-30 사용자 결정). 태그가 붙기 전에 올라온 사진도 걸러야 해서, scene 뿐
+# 아니라 태그·설명 글자도 같이 본다 — 다시 태깅하지 않아도 오늘부터 걸린다.
+BEFORE_AFTER_SCENE = "before_after"
+_BEFORE_AFTER_WORDS = ("전후", "비포애프터", "비포&애프터", "beforeafter", "before/after",
+                       "before&after", "치료전후", "시술전후", "개선전후", "전후비교")
+
+
+def is_before_after(photo: "Photo") -> bool:
+    if (photo.scene or "") == BEFORE_AFTER_SCENE:
+        return True
+    haystack = _norm(" ".join([*(photo.tags or []), photo.caption or ""]))
+    return any(word in haystack for word in _BEFORE_AFTER_WORDS)
+
+
 MIN_MATCH_CHARS = 2      # 한 글자 키워드는 아무 태그에나 걸린다("기" → 기기·대기실·장기)
 
 
@@ -148,6 +163,10 @@ def assign(
     - 반환은 슬롯 순서. 사진이 없으면 [].
     """
     if not slots or not photos:
+        return []
+    # 전후 사진은 후보에서 아예 뺀다. 빈 자리로 남기는 한이 있어도 자동으로 고르지 않는다.
+    photos = [p for p in photos if not is_before_after(p)]
+    if not photos:
         return []
     recent = recently_used_ids or set()
     taken = taken_ids or set()

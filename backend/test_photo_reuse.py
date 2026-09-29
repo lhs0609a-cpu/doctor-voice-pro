@@ -59,3 +59,26 @@ class PhotoReuseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BeforeAfterTests(unittest.TestCase):
+    """전후 사진은 자동 발행에서 아예 고르지 않는다(2026-09-30 사용자 결정).
+
+    의료광고에서 가장 까다로운 사진이다. 빈 자리로 남기는 한이 있어도 자동으로 넣지 않는다.
+    """
+
+    def test_a_tagged_before_after_photo_is_never_chosen(self):
+        pool = [Photo(id="p-ba", tags=["레이저", "장비"], suitable_for=["시술"], scene="before_after")]
+        self.assertEqual(assign(slots(1, "레이저", "장비"), pool), [])
+
+    def test_photos_tagged_before_the_new_scene_existed_are_also_caught(self):
+        """다시 태깅하지 않아도 오늘부터 걸려야 한다 — 태그·설명 글자로도 본다."""
+        for photo in (Photo(id="p1", tags=["전후", "비교"], suitable_for=["시술"]),
+                      Photo(id="p2", tags=["레이저"], caption="치료 전후 비교 사진", suitable_for=["시술"]),
+                      Photo(id="p3", tags=["Before/After"], suitable_for=["시술"])):
+            with self.subTest(photo.id):
+                self.assertEqual(assign(slots(1, "전후", "레이저"), [photo]), [], photo.id)
+
+    def test_ordinary_photos_are_untouched(self):
+        assigned = assign(slots(1, "레이저", "장비"), POOL)
+        self.assertEqual(len(assigned), 1)

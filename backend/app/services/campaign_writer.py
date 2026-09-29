@@ -95,6 +95,20 @@ def _brief_text(brief: Optional[Dict]) -> str:
     return "\n".join(lines)
 
 
+def _title_rule(client: Dict[str, Any], keyword: str) -> str:
+    """제목 규칙. 병원 키워드가 있으면 **둘 다** 제목에 넣게 한다('더블 키워드').
+
+    한 글로 질환 키워드와 병원 키워드를 함께 잡으려는 것이다. 지시만으로는 모델이 둘 중
+    하나를 흘리므로(2026-09-30 소잠한의원 실측: "선릉역한의원이 제목에 포함 안 됨"),
+    editorial_quality.structural_checks 가 제목에 둘 다 있는지 실제로 확인한다."""
+    brand = (client.get("brand_keyword") or "").strip()
+    if not brand:
+        return "제목은 28자 이내, 키워드가 앞쪽에 오게."
+    return (f"제목에는 '{keyword}'와 '{brand}'가 **둘 다** 들어가야 한다. "
+            f"'{keyword}'를 앞쪽에 두고, '{brand}'는 자연스럽게 이어 붙인다(둘을 붙여 한 낱말로 만들지 않는다). "
+            f"제목은 40자 이내. 둘 중 하나라도 빠지면 그 제목은 쓸 수 없다.")
+
+
 def reflow(body: str) -> str:
     """서버측 모바일 정리(멱등). 소제목 같은 짧은 줄은 그대로 둔다."""
     out: List[str] = []
@@ -170,7 +184,7 @@ async def write_from_keyword(
 {_brief_text(brief)}
 {_photo_text(photo_hints)}
 분량 목표: 공백 제외 {tc}자 안팎(±10%). 소제목 {hc}개. 키워드 '{keyword}'를 제목에 1회, 본문에 {kc}회 안팎 자연스럽게.
-제목은 28자 이내, 키워드가 앞쪽에 오게.
+{_title_rule(client, keyword)}
 {MOBILE_RULES}
 {UNIVERSAL_EDITORIAL_RULES}
 {_kines_rules(client, brief)}

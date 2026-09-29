@@ -120,6 +120,8 @@ export interface ClientInput {
   forbidden_words: string[]
   tone?: string | null
   facts?: string | null
+  /** 모든 글 제목에 질환 키워드와 함께 들어갈 병원 키워드(예: "선릉역한의원"). 비우면 안 쓴다. */
+  brand_keyword?: string | null
   default_collection_id?: string | null
   sheet_url?: string | null
   sheet_blog_tab?: string | null

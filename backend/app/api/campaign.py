@@ -146,6 +146,7 @@ class ClientIn(BaseModel):
     forbidden_words: List[str] = []
     tone: Optional[str] = None
     facts: Optional[str] = None
+    brand_keyword: Optional[str] = None
     default_collection_id: Optional[str] = None
     sheet_url: Optional[str] = None
     sheet_blog_tab: Optional[str] = "블로그"
@@ -263,6 +264,7 @@ async def _client_out(db: AsyncSession, c: Client) -> ClientOut:
         region_expand_level=c.region_expand_level or 1, suffixes=c.suffixes or [],
         min_volume_region=c.min_volume_region or 20, min_volume_national=c.min_volume_national or 100,
         forbidden_words=c.forbidden_words or [], tone=c.tone, facts=c.facts,
+        brand_keyword=c.brand_keyword,
         default_collection_id=c.default_collection_id, sheet_url=c.sheet_url,
         sheet_blog_tab=c.sheet_blog_tab, sheet_cafe_tab=c.sheet_cafe_tab,
         active=bool(c.active), created_at=c.created_at,

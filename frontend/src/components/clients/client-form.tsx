@@ -115,6 +115,20 @@ export function ClientForm({ form, onChange, collections }: ClientFormProps) {
           </div>
 
           <div className="space-y-1">
+            <Label htmlFor="c-brand">병원 키워드 (제목에 늘 함께 넣기)</Label>
+            <Input
+              id="c-brand"
+              value={form.brand_keyword ?? ''}
+              onChange={(e) => set('brand_keyword', e.target.value)}
+              placeholder="예: 선릉역한의원"
+            />
+            <p className="text-xs text-muted-foreground">
+              적어 두면 <b>모든 글 제목</b>에 질환 키워드와 함께 들어갑니다(더블 키워드).
+              둘 중 하나라도 빠진 제목은 검수에서 걸러 다시 씁니다. 비워 두면 질환 키워드만 씁니다.
+            </p>
+          </div>
+
+          <div className="space-y-1">
             <Label htmlFor="c-facts">병원 고정 사실</Label>
             <Textarea
               id="c-facts"
@@ -125,6 +139,7 @@ export function ClientForm({ form, onChange, collections }: ClientFormProps) {
             />
             <p className="text-xs text-muted-foreground">
               병원 고정 사실: 주소, 원장, 장비, 프로그램명 등. 원고는 이 밖의 병원 정보를 지어내지 않습니다.
+              <b> 실적 숫자(누적 진료 건수, 경력 연수)는 여기 적은 것만 글에 쓸 수 있습니다.</b>
             </p>
           </div>
         </CardContent>

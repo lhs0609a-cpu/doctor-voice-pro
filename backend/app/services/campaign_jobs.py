@@ -51,6 +51,7 @@ def _client_dict(c: Client) -> Dict[str, Any]:
         "id": c.id, "name": c.name, "short_name": c.short_name, "specialty": c.specialty,
         "diseases": c.diseases or [], "treatments": c.treatments or [], "regions": c.regions or [],
         "forbidden_words": c.forbidden_words or [], "tone": c.tone, "facts": c.facts,
+        "brand_keyword": (c.brand_keyword or "").strip() or None,
     }
 
 
@@ -492,10 +493,26 @@ async def image_plan(ctx: JobContext) -> dict:
     p = ctx.payload
     campaign_id = p["campaign_id"]
     camp = await ctx.db.get(Campaign, campaign_id)
-    collection_id = p.get("collection_id") or camp.collection_id
+    # 병원 기본 사진 세트까지 본다. 여기만 그 폴백이 빠져 있어서, 세트를 안 고른 캠페인이
+    # **그 계정의 사진 전부**(= 다른 병원 사진)를 후보로 삼았다. 한 계정이 여러 병원을
+    # 대행하므로, 남의 전후 사진이 그대로 글에 실렸다(2026-09-30 소잠한의원 실측:
+    # "소잠한의원용 전후 사진 없고, 처음 보는 전후 사진 있음").
+    client = await ctx.db.get(Client, camp.client_id) if camp.client_id else None
+    collection_id = p.get("collection_id") or camp.collection_id or (client.default_collection_id if client else None)
     if collection_id and not camp.collection_id:
         camp.collection_id = collection_id
         await ctx.db.commit()
+    if not collection_id:
+        # 세트를 못 정했다. 이 계정에 병원이 둘 이상이면 '전체 풀'은 남의 사진이 섞인다는 뜻이다.
+        # 남의 병원 전후 사진을 올리는 것보다 멈추고 물어보는 편이 낫다.
+        clinics = (await ctx.db.execute(select(func.count()).select_from(Client).where(
+            Client.user_id == ctx.user_id))).scalar() or 0
+        if clinics > 1:
+            raise ValueError(
+                "이 캠페인에 사진 세트가 지정되지 않았습니다. 세트 없이 고르면 이 계정의 다른 병원 사진까지 "
+                "후보가 됩니다. → 병원 관리에서 이 병원의 기본 사진 세트를 정하거나, 캠페인에서 사진 세트를 "
+                "골라 주세요.")
+        logger.warning("[사진계획] 세트가 없어 전체 사진 풀을 씁니다(이 계정의 병원은 1곳입니다)")
 
     # 0) 미태깅 사진 먼저 태깅(비용은 사진당 1회)
     try:

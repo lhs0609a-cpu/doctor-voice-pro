@@ -33,7 +33,45 @@ def approved(draft):
             and q.get('content_hash') == fingerprint(draft.title, draft.body))
 
 
-def structural_checks(title, body, keyword, previous, target_chars=2000, forbidden=None):
+def title_misses(title, keyword, brand_keyword=None):
+    """제목에서 빠진 키워드들. 공백만 무시하고 **떨어져 있어도 들어 있으면 통과**다.
+
+    붙어 있어야 통과로 보면 '지루성피부염, 선릉역한의원에서…' 같은 자연스러운 제목이
+    떨어진다. 두 키워드를 한 낱말로 붙이라는 뜻이 아니다 — 둘 다 있으면 된다."""
+    flat = re.sub(r'\s+', '', title or '')
+    wanted = [k for k in (keyword, brand_keyword) if (k or '').strip()]
+    return [k for k in wanted if re.sub(r'\s+', '', k) not in flat]
+
+
+# 병원 실적을 말하는 숫자. 환자가 가장 곧이곧대로 믿는 숫자라서, 병원이 적어 준 것이
+# 아니면 글에 실리면 안 된다(2026-09-30 소잠한의원 실측: 본문에 "23541건 이상"이라고
+# 나갔는데 실제 실적은 27000건 이상이었다). 일반 의학 수치("3개월", "2주")는 건드리지
+# 않는다 — 네 자리 이상이거나 '누적'·'이상'이 붙은 것만 실적으로 본다.
+_CLINIC_NUMBER = re.compile(
+    r'누적\s*[\d][\d,]*\s*(?:건|명|례)'
+    r'|[\d][\d,]*\s*(?:건|명|례)\s*이상'
+    r'|[\d]{1,3}(?:,\d{3})+\s*(?:건|명|례)'
+    r'|[\d]{4,}\s*(?:건|명|례)'
+    r'|[\d][\d,]*\s*년째'
+    r'|[\d][\d,]*\s*년\s*경력')
+
+
+def clinic_number_misses(body, *sources):
+    """병원이 준 적 없는 실적 숫자. 숫자만 비교한다(표기가 달라도 같은 숫자면 통과).
+
+    '23541건 이상' 은 병원 고정 사실에 23541 이 있을 때만 쓸 수 있다."""
+    known = re.sub(r'[^0-9]', '', ' '.join(str(s or '') for s in sources))
+    out = []
+    for match in _CLINIC_NUMBER.finditer(body or ''):
+        claim = match.group(0).strip()
+        digits = re.sub(r'[^0-9]', '', claim)
+        if digits and digits not in known and claim not in out:
+            out.append(claim)
+    return out
+
+
+def structural_checks(title, body, keyword, previous, target_chars=2000, forbidden=None, brand_keyword=None,
+                      facts=None):
     checks = writer.run_static_checks(title, body, forbidden)
     issues = []
     if checks.get('ok') is not True:
@@ -41,8 +79,17 @@ def structural_checks(title, body, keyword, previous, target_chars=2000, forbidd
     chars = writer.count_chars(re.sub(r'https?://\S+', '', body))
     if not max(800, int(target_chars * .8)) <= chars <= int(target_chars * 1.3):
         issues.append('본문 분량이 목표 범위를 벗어남')
-    if not 8 <= len(title) <= 60 or keyword.replace(' ', '') not in title.replace(' ', ''):
-        issues.append('제목 길이 또는 핵심 키워드 누락')
+    if not 8 <= len(title) <= 60:
+        issues.append('제목 길이가 8~60자를 벗어남')
+    missing = title_misses(title, keyword, brand_keyword)
+    if missing:
+        # 병원 키워드를 정해 두면 질환 키워드와 함께 제목에 있어야 한다('더블 키워드').
+        # 지시만으로는 모델이 둘 중 하나를 흘린다(2026-09-30 소잠한의원 실측).
+        issues.append('제목에 빠진 키워드: ' + ', '.join(missing))
+    invented = clinic_number_misses(body, facts)
+    if invented:
+        issues.append('병원이 준 적 없는 실적 숫자: ' + ', '.join(invented[:3])
+                      + ' — 병원 관리의 고정 사실에 적힌 숫자만 쓸 수 있습니다')
     paras = [re.sub(r'\s+', '', p) for p in body.split('\n\n') if p.strip()]
     if len(paras) < 6 or len(set(paras)) != len(paras):
         issues.append('문단 부족 또는 동일 문단 반복')
@@ -65,7 +112,9 @@ JSON만 반환: {"relevant":true,"facts_supported":true,"no_invented_experience"
 
 
 async def assess(title, body, keyword, client, evidence, previous, target_chars, min_score):
-    structural = structural_checks(title, body, keyword, previous, target_chars, client.get('forbidden_words'))
+    structural = structural_checks(title, body, keyword, previous, target_chars,
+                                   client.get('forbidden_words'), client.get('brand_keyword'),
+                                   client.get('facts'))
     raw = await cc.complete_json(REVIEW_SYSTEM, json.dumps({
         'keyword': keyword, 'title': title, 'body': body, 'hospital_facts': client.get('facts'),
         'sources': evidence, 'structural_issues': structural['issues'],

@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 SCENES: List[str] = [
     "exterior", "reception", "consult", "treatment", "equipment", "herbal",
-    "staff", "patient", "illustration", "product", "other",
+    "staff", "patient", "illustration", "product", "before_after", "other",
 ]
 STAGES: List[str] = ["도입", "진료과정", "시술", "장비소개", "마무리"]
 
@@ -42,7 +42,7 @@ _SYSTEM_PROMPT = """당신은 병원(의원·한의원) 마케팅 블로그용 �
 주어진 사진 한 장을 보고 반드시 아래 형식의 JSON 객체 하나만 출력합니다. 설명 문장, 마크다운, 코드펜스 없이 JSON 만 출력하세요.
 
 {
-  "scene": "exterior|reception|consult|treatment|equipment|herbal|staff|patient|illustration|product|other 중 하나",
+  "scene": "exterior|reception|consult|treatment|equipment|herbal|staff|patient|illustration|product|before_after|other 중 하나",
   "tags": ["짧은 한국어 명사 6~12개"],
   "caption": "사진을 설명하는 한국어 한 문장",
   "has_text": true 또는 false,
@@ -51,7 +51,8 @@ _SYSTEM_PROMPT = """당신은 병원(의원·한의원) 마케팅 블로그용 �
   "avoid": "글에 쓰기 부적절하다면 그 사유, 아니면 null"
 }
 
-scene 기준: exterior=건물 외관/간판/거리, reception=접수처/대기실/로비, consult=진료실 상담 장면, treatment=시술/치료/침·물리치료 장면, equipment=의료 장비·기기 클로즈업, herbal=한약재/탕약/약재실, staff=의료진·직원 인물 중심, patient=환자 중심(얼굴이 드러나는 경우 포함), illustration=일러스트/도표/그래픽, product=제품·패키지, other=그 외.
+scene 기준: exterior=건물 외관/간판/거리, reception=접수처/대기실/로비, consult=진료실 상담 장면, treatment=시술/치료/침·물리치료 장면, equipment=의료 장비·기기 클로즈업, herbal=한약재/탕약/약재실, staff=의료진·직원 인물 중심, patient=환자 중심(얼굴이 드러나는 경우 포함), illustration=일러스트/도표/그래픽, product=제품·패키지, before_after=치료 전후를 나란히 비교한 사진(좌우·상하 분할, "Before/After", "전/후" 표기 포함), other=그 외.
+before_after 는 특히 조심해서 고릅니다. 한 장 안에 같은 부위가 두 상태로 나란히 있거나 전·후 표기가 있으면 before_after 입니다 — 의료광고에서 가장 까다로운 사진이라 자동 발행에서 제외됩니다.
 tags 는 피사체, 장소, 분위기, 실내/실외, 계절, 색감을 섞어 한국어 명사로만 적습니다(예: "진료실", "실내", "밝은 톤", "의사", "겨울").
 has_text 는 간판·안내문·모니터 글자 등 사진 안에 읽을 수 있는 글자가 있으면 true 입니다.
 people 은 사람이 한 명이라도 보이면 true 입니다.

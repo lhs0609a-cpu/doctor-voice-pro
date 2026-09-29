@@ -67,3 +67,59 @@ class QualityTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DoubleKeywordTitleTests(unittest.TestCase):
+    """제목에 질환 키워드와 병원 키워드가 **둘 다** 들어간다(2026-09-30 소잠한의원 요청).
+
+    "더블 키워드 중, 제목에 포함 안 됨 (ex. 지루성피부염, 선릉역한의원이라면
+    선릉역한의원이 제목에 포함 안 됨)". 지시만으로는 모델이 하나를 흘린다.
+    """
+
+    def test_both_keywords_pass_even_when_separated(self):
+        """'지루성피부염, 선릉역한의원에서…' 처럼 떨어져 있어도 통과해야 한다.
+        붙어 있어야 통과로 보면 자연스러운 제목이 전부 떨어진다."""
+        self.assertEqual(
+            q.title_misses('지루성피부염, 선릉역한의원에서 이렇게 봅니다', '지루성피부염', '선릉역한의원'), [])
+
+    def test_a_missing_clinic_keyword_is_named(self):
+        self.assertEqual(
+            q.title_misses('지루성피부염 원인과 관리법', '지루성피부염', '선릉역한의원'), ['선릉역한의원'])
+
+    def test_without_a_clinic_keyword_nothing_changes(self):
+        self.assertEqual(q.title_misses('지루성피부염 원인과 관리법', '지루성피부염', None), [])
+
+    def test_the_structural_check_reports_it(self):
+        issues = q.structural_checks(
+            '지루성피부염 원인과 관리법', '문단\n\n' * 8, '지루성피부염', [],
+            target_chars=10, brand_keyword='선릉역한의원')['issues']
+        self.assertTrue(any('선릉역한의원' in i for i in issues), issues)
+
+
+class ClinicNumberTests(unittest.TestCase):
+    """병원 실적 숫자는 병원이 적어 준 것만 쓴다(2026-09-30 소잠한의원 실측).
+
+    본문에 "23541건 이상"이라고 나갔는데 실제 실적은 27000건 이상이었다.
+    환자는 이 숫자를 곧이곧대로 믿는다.
+    """
+
+    FACTS = '소잠한의원, 2008년 개원. 누적 진료 27000건 이상.'
+
+    def test_a_number_the_clinic_never_gave_is_caught(self):
+        self.assertEqual(q.clinic_number_misses('누적 23541건 이상 진료했습니다.', self.FACTS), ['누적 23541건'])
+
+    def test_the_clinics_own_number_passes_however_it_is_written(self):
+        """27,000 과 27000 은 같은 숫자다. 표기 때문에 막으면 쓸 수 있는 말이 없어진다."""
+        self.assertEqual(q.clinic_number_misses('27,000건 이상 진료했습니다.', self.FACTS), [])
+
+    def test_ordinary_medical_numbers_are_left_alone(self):
+        self.assertEqual(q.clinic_number_misses('하루 10분씩 3주간 해 보세요. 3건의 사례가 있습니다.', self.FACTS), [])
+
+    def test_years_of_experience_is_a_clinic_claim_too(self):
+        self.assertEqual(q.clinic_number_misses('12년째 진료하고 있습니다.', self.FACTS), ['12년째'])
+
+    def test_the_structural_check_tells_the_writer_where_to_fix_it(self):
+        issues = q.structural_checks(
+            '지루성피부염 관리법', '누적 23541건 이상 진료했습니다.\n\n' + '문단\n\n' * 8,
+            '지루성피부염', [], target_chars=10, facts=self.FACTS)['issues']
+        self.assertTrue(any('23541' in i and '고정 사실' in i for i in issues), issues)

@@ -47,6 +47,10 @@ class Client(Base):
     forbidden_words = Column(JSON, default=list)             # 병원별 금칙어
     tone = Column(Text, nullable=True)                       # 문체 지침(자유 서술)
     facts = Column(Text, nullable=True)                      # 병원 고정 사실(주소/원장/장비 등)
+    # 모든 글 제목에 질환 키워드와 함께 넣을 병원 키워드(예: "선릉역한의원").
+    # 한 글로 질환 키워드와 병원 키워드 둘 다 잡으려는 '더블 키워드'용(2026-09-30 소잠한의원 요청:
+    # "더블 키워드 중 제목에 포함 안 됨"). 비워 두면 예전처럼 질환 키워드 하나만 쓴다.
+    brand_keyword = Column(String(60), nullable=True)
     default_collection_id = Column(String(36), nullable=True)  # 기본 사진 세트(pool_collections.id)
     sheet_url = Column(String(500), nullable=True)           # 구글시트 URL
     sheet_blog_tab = Column(String(100), default="블로그")
