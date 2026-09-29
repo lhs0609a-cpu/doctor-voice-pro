@@ -524,7 +524,20 @@ async def image_plan(ctx: JobContext) -> dict:
     drafts = [d for d in drafts if d.id not in parent_ids]
 
     default_count = int(p.get("image_count") or 0)
-    recently: set = set()
+    # 이 캠페인에서 이미 어느 글엔가 배정된 사진. 여기 있는 사진은 **다른 사진이 다 떨어졌을 때만**
+    # 다시 쓴다(photo_matcher.assign 의 taken_ids). 감점만 주던 예전 방식으로는 태그가 잘 맞는
+    # 사진이 매 글마다 1등을 해서 같은 사진이 계속 나왔다(2026-09-29 고객 지적).
+    # 이번에 다시 계획하지 않는 글(draft_ids 로 일부만 고른 경우)이 쥐고 있는 사진도 넣어 둔다.
+    replanning = {d.id for d in drafts}
+    taken: set = {
+        s.get("pool_image_id")
+        for (other,) in (await ctx.db.execute(select(Draft).where(
+            Draft.campaign_id == campaign_id, Draft.image_plan.isnot(None)))).all()
+        if other.id not in replanning
+        for s in (other.image_plan or [])
+        if s.get("pool_image_id")
+    }
+    recently: set = set(taken)
     total = len(drafts)
     planned = 0
     for i, d in enumerate(drafts):
@@ -542,7 +555,8 @@ async def image_plan(ctx: JobContext) -> dict:
         # 여기서 따로 균등 배치를 덧붙이지 않는다 — 소제목을 모르는 옛 규칙이 되살아난다.
         slots = [pm.Slot(index=s["slot"], after_paragraph=s["after_paragraph"], need=s.get("need", ""),
                          keywords=s.get("keywords", []), stage=s.get("stage", "기타")) for s in slots_raw]
-        assigned = pm.assign(slots, photos, recently_used_ids=recently, allow_repeat=len(photos) < len(slots))
+        assigned = pm.assign(slots, photos, recently_used_ids=recently, taken_ids=taken,
+                             allow_repeat=len(photos) < len(slots))
         need_by_slot = {s.index: s for s in slots}
         plan = []
         for a in assigned:
@@ -553,9 +567,11 @@ async def image_plan(ctx: JobContext) -> dict:
                 "need": s.need if s else "", "keywords": s.keywords if s else [], "stage": s.stage if s else "기타",
             })
             recently.add(a["pool_image_id"])
-        # 최근 사용 집합은 너무 커지지 않게(세트 크기의 절반)
-        if len(recently) > max(4, len(photos) // 2):
-            recently = set(list(recently)[-(len(photos) // 2):])
+            taken.add(a["pool_image_id"])
+        # 사진을 다 돌려 썼으면 한 바퀴를 새로 시작한다. 여기서 비우지 않으면 두 바퀴째부터는
+        # 모든 사진이 '쓴 사진'이라 taken 이 아무 구실도 못 한다(사진 10장에 글 20건이면 흔한 일).
+        if len(taken) >= len(photos):
+            taken = set()
         d.image_plan = plan
         d.image_count_target = n_img
         planned += 1

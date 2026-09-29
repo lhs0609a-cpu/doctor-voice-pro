@@ -14,65 +14,99 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-# background.js 와 같은 상수 (backend/app/services/post_formatter.py 규칙과 동일)
-MOBILE_LINE_MAX = 45
-SENTENCES_PER_GROUP = 2
+# 문단 하나의 길이(공백 제외). 문장을 이 범위가 될 때까지 이어 붙이고 마침표에서 끊는다.
+# 2026-09-29 고객(키네스·소잠) 확정 규격.
+PARA_MIN_CHARS = 35
+PARA_MAX_CHARS = 50
 
-_CONNECTIVE_RE = re.compile(
-    r"(?:지만|는데|은데|면서|어서|아서|여서|라서|니까|므로|거나|도록)\s"
-    r"|(?<=[가-힣][가-힣])(?<!그리)(?:고|며)\s"
-)
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。？！])\s+|\n+")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。？！])\s+")
+_BLANK_LINE_RE = re.compile(r"\n\s*\n+")
+# 줄 전체가 따옴표로 감싸인 경우에만 소제목이다. 문장 속 인용("어느 것이 제일 좋습니까" 같은)까지
+# 소제목으로 올리면 본문이 제목투성이가 된다.
+_HEADING_RE = re.compile(r'^\s*["“「『](?P<t>[^"”」』\n]{2,60})["”」』]\s*[.!?]?\s*$')
+# 따옴표가 없어도 소제목인 모양: 한 줄이고, 짧고, 문장부호로 끝나지 않는다.
+# 서버(campaign_writer.is_heading)가 사진 자리를 정할 때 쓰는 바로 그 규칙이다 — 같은 줄을
+# 서버는 소제목으로 보는데 발행은 본문으로 흘려보내면, 이미 써 둔 원고들이 전부 밋밋해진다.
+HEADING_MAX_CHARS = 30
+
+
+def _heading_text(source: str) -> Optional[str]:
+    """이 원고 문단이 소제목이면 그 글자(따옴표 제거), 아니면 None."""
+    quoted = _HEADING_RE.match(source)
+    if quoted:
+        return quoted.group("t").strip()
+    if "\n" in source or len(source) > HEADING_MAX_CHARS:
+        return None
+    return source if not re.search(r"[.!?…]$", source) else None
+
+
+def nospace_len(text: str) -> int:
+    """공백을 뺀 글자 수. 문단 길이는 이 값으로 잰다(띄어쓰기는 읽는 부담이 아니다)."""
+    return len(re.sub(r"\s+", "", text or ""))
 
 
 # ---------------------------------------------------------------- 모바일 포맷
-def _find_cut(s: str) -> int:
-    n = len(s)
-    mid = n / 2
-    best = -1
-
-    def consider(i: int) -> None:
-        nonlocal best
-        if i < n * 0.3 or i > n * 0.7:
-            return
-        if best < 0 or abs(i - mid) < abs(best - mid):
-            best = i
-
-    for i, ch in enumerate(s):
-        if ch == ",":
-            consider(i)
-    if best >= 0:
-        return best
-    for m in _CONNECTIVE_RE.finditer(s):
-        consider(m.start() + len(m.group(0)) - 1)
-    if best >= 0:
-        return best
-    for i, ch in enumerate(s):
-        if ch == " ":
-            consider(i)
-    return best
-
-
-def _split_long(s: str) -> List[str]:
-    if len(s) <= MOBILE_LINE_MAX:
-        return [s]
-    cut = _find_cut(s)
-    if cut < 0:
-        return [s]
-    return [s[: cut + 1].strip(), *_split_long(s[cut + 1 :].strip())]
-
-
 def split_sentences(body: str) -> List[str]:
-    return [p.strip() for p in _SENTENCE_SPLIT_RE.split(body or "") if p and p.strip()]
+    """마침표·물음표·느낌표 뒤에서만 문장을 나눈다.
+
+    줄바꿈으로는 나누지 않는다 — 원고가 한 문장을 두 줄에 걸쳐 써 두었을 때 그것까지 문장
+    경계로 보면 토막이 난다. 문단 경계(빈 줄)는 split_paragraphs 가 따로 지킨다."""
+    parts: List[str] = []
+    for chunk in re.split(r"\n+", body or ""):
+        parts.extend(p.strip() for p in _SENTENCE_SPLIT_RE.split(chunk) if p and p.strip())
+    return parts
+
+
+def group_sentences(sentences: Sequence[str]) -> List[str]:
+    """문장들을 공백 제외 35~50자 문단으로 묶는다. 문장 중간은 절대 끊지 않는다.
+
+    - 이어 붙였을 때 50자를 넘기면, 넘기기 전에 문단을 닫는다(넘치느니 조금 모자란 편이 낫다).
+    - 35자를 채우면 닫는다.
+    - 그래서 50자가 넘는 긴 문장 하나는 혼자 한 문단이 된다 — 마침표에서만 끊기 때문이다.
+    """
+    out: List[str] = []
+    buf: List[str] = []
+    for s in sentences:
+        if buf and nospace_len(" ".join(buf)) + nospace_len(s) > PARA_MAX_CHARS:
+            out.append(" ".join(buf))
+            buf = [s]
+        else:
+            buf.append(s)
+        if nospace_len(" ".join(buf)) >= PARA_MIN_CHARS:
+            out.append(" ".join(buf))
+            buf = []
+    if buf:
+        out.append(" ".join(buf))
+    return out
+
+
+def split_paragraphs(text: str) -> List[Dict[str, str]]:
+    """원고 → [{kind: 'heading'|'text', text: …}]. 원고가 나눠 둔 문단은 그대로 지킨다.
+
+    원고의 빈 줄은 글쓴이가 화제를 바꾼 자리다. 그 경계를 넘어 문장을 이어 붙이면 상관없는
+    두 이야기가 한 문단에 섞인다 — 문단 묶기는 **원고 문단 안에서만** 한다."""
+    out: List[Dict[str, str]] = []
+    for source in _BLANK_LINE_RE.split(text or ""):
+        source = source.strip()
+        if not source:
+            continue
+        heading = _heading_text(source)
+        if heading:
+            out.append({"kind": "heading", "text": heading})
+            continue
+        for para in group_sentences(split_sentences(source)):
+            out.append({"kind": "text", "text": para})
+    return out
 
 
 def mobile_format(text: str) -> str:
-    """한 줄 한 문장, 두 문장마다 빈 줄. 이미 정리된 글에 다시 걸어도 결과가 같다."""
-    lines: List[str] = []
-    for s in split_sentences(text):
-        lines.extend(_split_long(s))
-    groups = ["\n".join(lines[i : i + SENTENCES_PER_GROUP]) for i in range(0, len(lines), SENTENCES_PER_GROUP)]
-    return "\n\n".join(g for g in groups if g)
+    """문단 사이는 **언제나 빈 줄 하나**(2줄 엔터). 줄바꿈이 한 칸·두 칸으로 섞이지 않는다.
+
+    예전에는 '한 줄 한 문장, 두 문장마다 빈 줄'이라 문단 안은 1줄·문단 사이는 2줄로 섞였다
+    (2026-09-29 고객 지적: "한 부분은 1줄 엔터, 다른 부분은 2줄 엔터"). 이제 모든 경계가
+    빈 줄이고, 문단 하나는 공백 제외 35~50자다. 소제목은 따옴표를 떼고 한 줄로 세운다.
+    이미 정리된 글에 다시 걸어도 결과가 같다."""
+    return "\n\n".join(p["text"] for p in split_paragraphs(text))
 
 
 def pick_emphasize(raw: Optional[Iterable[Any]]) -> List[str]:
@@ -130,59 +164,109 @@ def _emphasis_regex(words: Sequence[str]) -> Optional["re.Pattern[str]"]:
     return re.compile("(" + "|".join(re.escape(w) for w in uniq) + ")")
 
 
+# 단위가 붙은 숫자. 사람이 손으로 쓸 때 굵게 칠하는 바로 그 자리다(2026-09-29 고객 요청:
+# "숫자나, 중요한 부분 강조 표시"). 단위를 요구하는 이유는 글 안의 아무 숫자(연번·각주)까지
+# 칠하면 글이 알록달록해져 정작 중요한 값이 묻히기 때문이다. 긴 단위를 먼저 적어야
+# '3mm' 가 '3m'+'m' 으로 끊기지 않는다.
+# 뒤에 붙는 조사(3개월'이면', 5cm'가')는 그대로 두고 숫자+단위만 칠한다. 뒤를 막는 것은
+# 영문·숫자뿐이다 — 그래야 '3mg' 이 '3m'+'g' 로, '20대' 가 '2'+'0대' 로 끊기지 않는다.
+_NUMBER_RE = re.compile(
+    r"\d[\d,.]*\s*(?:[~-]\s*\d[\d,.]*\s*)?"
+    r"(?:퍼센트|개월|번째|주일|시간|만원|천원|가지|단계|%|mm|cm|kg|ml|cc|배|회|번|차|주|일|년|분|초|원|명|건|곳|세|대|종|위|점|층|m|g)"
+    r"(?![A-Za-z0-9])"
+)
+# 문단 하나에 숫자 강조는 이만큼까지. 더 칠하면 강조가 아니라 배경이 된다.
+NUMBERS_PER_PARAGRAPH = 2
+
+
+def _bold_spans(line: str, rx, word_set, bolded: set, budget: List[int]) -> List[Tuple[int, int]]:
+    """이 줄에서 굵게 칠할 구간. 키워드는 문단당 한 낱말에 한 번, 숫자는 문단당 두 개까지."""
+    spans: List[Tuple[int, int]] = []
+    if rx:
+        for m in rx.finditer(line):
+            word = m.group(0)
+            if word in word_set and word not in bolded:
+                bolded.add(word)
+                spans.append((m.start(), m.end()))
+    for m in _NUMBER_RE.finditer(line):
+        if budget[0] <= 0:
+            break
+        if any(start < m.end() and m.start() < end for start, end in spans):
+            continue          # 키워드와 겹치는 자리는 두 번 칠하지 않는다
+        budget[0] -= 1
+        spans.append((m.start(), m.end()))
+    return sorted(spans)
+
+
 def plan_text(content: str, emphasize: Sequence[str]) -> List[Op]:
-    """background.js typeBody 포트: 줄 단위 insertText, 줄 사이 Enter,
-    빈 줄(문단 경계)마다 강조 이력 초기화, 문단당 키워드 1회만 Ctrl+B."""
+    """줄 단위 insertText, 줄 사이 Enter, 빈 줄(문단 경계)마다 강조 이력 초기화.
+
+    굵게 칠하는 것은 둘이다 — 키워드(문단당 낱말마다 한 번)와 단위가 붙은 숫자(문단당 두 개까지)."""
     ops: List[Op] = []
-    rx = _emphasis_regex(emphasize)
     word_set = set(w.strip() for w in emphasize if isinstance(w, str) and len(w.strip()) >= 2)
+    rx = _emphasis_regex(word_set)
     bolded: set = set()
+    budget = [NUMBERS_PER_PARAGRAPH]
     lines = (content or "").split("\n")
     for i, line in enumerate(lines):
         if not line:
-            bolded = set()
+            bolded, budget = set(), [NUMBERS_PER_PARAGRAPH]
+        elif re.fullmatch(r'https://\S+', line):
+            ops.append(Op('text', line))
+            if i == len(lines) - 1:
+                ops.append(Op('enter'))
         else:
-            if re.fullmatch(r'https://\S+', line):
-                ops.append(Op('text', line))
-                if i == len(lines) - 1:
-                    ops.append(Op('enter'))
-            elif rx:
-                for part in rx.split(line):
-                    if not part:
-                        continue
-                    if part in word_set and part not in bolded:
-                        bolded.add(part)
-                        ops.append(Op("bold", part))
-                    else:
-                        ops.append(Op("text", part))
-            else:
-                ops.append(Op("text", line))
+            cursor = 0
+            for start, end in _bold_spans(line, rx, word_set, bolded, budget):
+                if start > cursor:
+                    ops.append(Op("text", line[cursor:start]))
+                ops.append(Op("bold", line[start:end]))
+                cursor = end
+            if cursor < len(line):
+                ops.append(Op("text", line[cursor:]))
         if i < len(lines) - 1:
             ops.append(Op("enter"))
     return ops
 
 
 def plan_blocks(blocks: Sequence[Dict[str, Any]], emphasize: Sequence[str], *, reformat: bool = True) -> List[Op]:
-    """background.js typeBlocksInterleaved 포트.
-    글→글 사이엔 Enter 2번(빈 줄), 글↔이미지 사이엔 Enter 1번."""
+    """블록 → 타이핑 동작. 글↔글 사이엔 빈 줄(Enter 2번), 글↔사진 사이엔 Enter 1번.
+
+    reformat 이면 문단을 다시 묶는다(공백 제외 35~50자, 마침표에서만 끊음). 따옴표로만 이뤄진
+    줄은 소제목이라 따옴표를 떼고 굵게 한 줄로 세운다. 워드 원고(reformat=False)는 글쓴이가
+    잡아 둔 줄바꿈이 곧 원고이므로 손대지 않는다."""
     ops: List[Op] = []
     first = True
     prev: Optional[str] = None
+
+    def gap(kind: str) -> None:
+        nonlocal first
+        if first:
+            first = False
+            return
+        ops.append(Op("enter"))
+        if prev != "image" and kind != "image":
+            ops.append(Op("enter"))
+
     for b in blocks or []:
         t = b.get("type")
         if t == "text" and b.get("content"):
-            content = mobile_format(b["content"]) if reformat else b["content"]
-            if not first:
-                ops.append(Op("enter"))
-                if prev == "text":
-                    ops.append(Op("enter"))
-            ops.extend(plan_text(content, emphasize))
-            first, prev = False, "text"
+            if not reformat:
+                gap("text")
+                ops.extend(plan_text(b["content"], emphasize))
+                prev = "text"
+                continue
+            for para in split_paragraphs(b["content"]):
+                gap("text")
+                if para["kind"] == "heading":
+                    ops.append(Op("bold", para["text"]))
+                else:
+                    ops.extend(plan_text(para["text"], emphasize))
+                prev = "text"
         elif t == "image" and b.get("image"):
-            if not first:
-                ops.append(Op("enter"))
+            gap("image")
             ops.append(Op("image", b["image"]))
-            first, prev = False, "image"
+            prev = "image"
     return ops
 
 

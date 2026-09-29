@@ -29,6 +29,11 @@ from plan import (  # noqa: E402
     floor_minute,
     merge_text_ops,
     mobile_format,
+    nospace_len,
+    split_paragraphs,
+    PARA_MAX_CHARS,
+    PARA_MIN_CHARS,
+    NUMBERS_PER_PARAGRAPH,
     parse_schedule,
     pick_emphasize,
     plan_blocks,
@@ -81,8 +86,9 @@ class TestTypingPlan(unittest.TestCase):
         bolds = [o for o in ops if o.kind == "bold"]
         self.assertEqual(len(bolds), 2)  # 문단 1에서 1회, 빈 줄 뒤 문단 2에서 1회
         self.assertEqual(ops[0], Op("bold", "임플란트"))
-        self.assertEqual(ops[1], Op("text", " 상담은 "))
-        self.assertEqual(ops[2], Op("text", "임플란트"))  # 같은 문단 두 번째는 일반 텍스트
+        # 같은 문단의 두 번째 '임플란트'는 굵게 하지 않는다 — 앞 문장에 그대로 남아 있어야 한다.
+        self.assertEqual("".join(o.payload for o in ops if o.kind == "text" and o.payload),
+                         " 상담은 임플란트 전문. 다시.")
 
     def test_longest_keyword_first(self):
         ops = plan_text("치과 임플란트 치과", ["치과", "치과 임플란트"])
@@ -112,17 +118,72 @@ class TestTypingPlan(unittest.TestCase):
         merged = merge_text_ops([Op("text", "a"), Op("text", "b"), Op("enter"), Op("text", "c")])
         self.assertEqual(merged, [Op("text", "ab"), Op("enter"), Op("text", "c")])
 
-    def test_mobile_format_idempotent_and_grouping(self):
-        raw = "첫 문장입니다. 둘째 문장입니다. 셋째 문장입니다."
-        once = mobile_format(raw)
-        self.assertEqual(once, "첫 문장입니다.\n둘째 문장입니다.\n\n셋째 문장입니다.")
-        self.assertEqual(mobile_format(once), once)
+    def test_every_break_is_a_blank_line(self):
+        """줄바꿈이 한 칸·두 칸으로 섞이지 않는다(2026-09-29 고객 지적).
 
-    def test_mobile_format_splits_long_line_at_comma(self):
-        long = "이 문장은 아주 길어서 모바일 화면에서 두 줄을 훌쩍 넘기게 되고, 그래서 가운데 쉼표에서 잘라 주는 편이 읽기 좋습니다."
-        out = mobile_format(long)
-        self.assertIn("\n", out)
-        self.assertTrue(all(len(l) <= 80 for l in out.split("\n")))
+        예전에는 '한 줄 한 문장, 두 문장마다 빈 줄'이라 문단 안은 1줄, 문단 사이는 2줄이었다."""
+        raw = "첫 문장입니다. 둘째 문장입니다. 셋째 문장입니다. 넷째 문장입니다."
+        once = mobile_format(raw)
+        self.assertNotIn("\n", once.replace("\n\n", ""), "빈 줄이 아닌 줄바꿈이 남아 있다")
+        self.assertEqual(mobile_format(once), once, "다시 걸어도 결과가 같아야 한다")
+
+    def test_a_paragraph_is_35_to_50_characters_without_spaces(self):
+        raw = ("상담을 시작하면 열 분 중 예닐곱 분이 이 질문부터 하십니다. 프리사이스가 제일 좋은 겁니까. "
+               "속성연장술은 옛날 방식 아닙니까. 레이튼은 왜 안 하십니까. 충분히 이해합니다.")
+        paras = mobile_format(raw).split("\n\n")
+        for para in paras:
+            self.assertLessEqual(nospace_len(para), PARA_MAX_CHARS, para)
+        # 마지막 문단만 35자에 못 미칠 수 있다(남은 문장을 버리지 않는다)
+        for para in paras[:-1]:
+            self.assertGreaterEqual(nospace_len(para), PARA_MIN_CHARS, para)
+
+    def test_a_long_sentence_is_never_cut_in_the_middle(self):
+        """'. 찍은 기준으로 문단나눔' — 50자를 넘겨도 마침표에서만 끊는다."""
+        long = "뼈 안에 무엇이 어떻게 들어가는지, 그 결과 다리의 축이 어디로 지나가는지를 함께 보는 일입니다."
+        self.assertEqual(mobile_format(long), long, "문장 중간을 끊으면 안 된다")
+
+    def test_the_manuscripts_own_paragraphs_are_kept(self):
+        """원고가 빈 줄로 나눠 둔 화제 경계를 넘어 문장을 이어 붙이지 않는다."""
+        raw = "짧은 도입입니다.\n\n여기부터는 다른 이야기입니다."
+        self.assertEqual(mobile_format(raw), "짧은 도입입니다.\n\n여기부터는 다른 이야기입니다.")
+
+    def test_a_quoted_line_becomes_a_subheading(self):
+        paras = split_paragraphs('"무엇을 보고 판단하는가"\n\n기계는 도구입니다.')
+        self.assertEqual(paras[0], {"kind": "heading", "text": "무엇을 보고 판단하는가"})
+        self.assertEqual(paras[1]["kind"], "text")
+
+    def test_a_quote_inside_a_sentence_is_not_a_subheading(self):
+        """문장 속 인용까지 소제목으로 올리면 본문이 제목투성이가 된다."""
+        raw = '그래서 "어느 것이 제일 좋습니까"는 답이 없는 질문입니다.'
+        self.assertEqual(split_paragraphs(raw)[0]["kind"], "text")
+
+    def test_a_short_line_without_punctuation_is_still_a_subheading(self):
+        """따옴표가 없어도 서버가 소제목으로 보는 모양(짧은 한 줄)은 소제목이다."""
+        self.assertEqual(split_paragraphs("이 질문에 바로 답하면 손해입니다")[0]["kind"], "heading")
+
+    def test_a_subheading_is_typed_bold_without_its_quotes(self):
+        ops = merge_text_ops(plan_blocks(
+            [{"type": "text", "content": '"무엇을 보고 판단하는가"\n\n기계는 도구입니다.'}], []))
+        self.assertEqual(ops[0], Op("bold", "무엇을 보고 판단하는가"))
+        self.assertEqual(ops[1:3], [Op("enter"), Op("enter")])
+
+    def test_numbers_with_units_are_emphasised(self):
+        """'숫자나, 중요한 부분 강조 표시'(2026-09-29 고객 요청). 조사가 붙어도 숫자만 칠한다."""
+        ops = plan_text("수술 후 3개월이면 재수술률은 2% 미만입니다.", [])
+        self.assertEqual([o.payload for o in ops if o.kind == "bold"], ["3개월", "2%"])
+
+    def test_number_emphasis_is_capped_per_paragraph(self):
+        """문단마다 두 개까지. 더 칠하면 강조가 아니라 배경이 된다."""
+        ops = plan_text("1일 2회 3주 4개월 5cm 를 지킵니다.", [])
+        self.assertEqual(len([o for o in ops if o.kind == "bold"]), NUMBERS_PER_PARAGRAPH)
+
+    def test_a_keyword_and_a_number_can_share_a_paragraph(self):
+        ops = plan_text("임플란트는 3개월이면 자리를 잡습니다.", ["임플란트"])
+        self.assertEqual([o.payload for o in ops if o.kind == "bold"], ["임플란트", "3개월"])
+
+    def test_plain_numbers_without_a_unit_are_left_alone(self):
+        ops = plan_text("자료 3 을 봅니다.", [])
+        self.assertEqual([o.payload for o in ops if o.kind == "bold"], [])
 
     def test_pick_emphasize(self):
         self.assertEqual(pick_emphasize(["#임플란트", "치", "  교정 ", "임플란트", 3]), ["임플란트", "교정"])

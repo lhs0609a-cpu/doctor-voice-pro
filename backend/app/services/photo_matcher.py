@@ -135,16 +135,22 @@ def assign(
     recently_used_ids: Optional[Set[str]] = None,
     allow_repeat: bool = False,
     min_score: Optional[float] = MIN_SCORE,
+    taken_ids: Optional[Set[str]] = None,
 ) -> List[dict]:
     """전체 (슬롯, 사진) 쌍을 점수 내림차순으로 그리디 배정한다.
 
     - 사진은 기본적으로 한 번만 사용. allow_repeat 이고 사진 수 < 슬롯 수일 때만
       남은 슬롯에 재사용(이번 배정에서 덜 쓴 사진 우선).
+    - `taken_ids` 는 **다른 글이 이미 가져간 사진**이다. 아직 아무도 안 쓴 사진으로 먼저
+      채우고, 그러고도 빈 자리가 남을 때만 여기서 꺼내 쓴다(감점이 아니라 순서다).
+      `recently_used_ids` 는 감점일 뿐이라 태그가 잘 맞는 사진은 다음 글에서 또 1등이 됐다
+      — 고객이 "1번째 포스팅 사진이 2번째에도 쓰인다"고 지적한 것이 이것이다(2026-09-29).
     - 반환은 슬롯 순서. 사진이 없으면 [].
     """
     if not slots or not photos:
         return []
     recent = recently_used_ids or set()
+    taken = taken_ids or set()
 
     scores: Dict[Tuple[int, str], float] = {}
     pairs: List[Tuple[float, int, str]] = []
@@ -159,15 +165,21 @@ def assign(
     photo_by_id = {p.id: p for p in photos}
     chosen: Dict[int, str] = {}
     used: Set[str] = set()
-    for sc, si, pid in pairs:
-        if si in chosen or pid in used:
-            continue
-        if min_score is not None and sc < min_score:
-            continue        # 이 사진은 이 자리에 어울리지 않는다 — 비워 둔다
-        chosen[si] = pid
-        used.add(pid)
-        if len(chosen) == len(slots):
+    # 1차: 다른 글이 안 쓴 사진만. 2차: 그래도 빈 자리가 있으면 쓴 사진도 허용.
+    for allow_taken in (False, True):
+        if allow_taken and len(chosen) == len(slots):
             break
+        for sc, si, pid in pairs:
+            if si in chosen or pid in used:
+                continue
+            if not allow_taken and pid in taken:
+                continue
+            if min_score is not None and sc < min_score:
+                continue    # 이 사진은 이 자리에 어울리지 않는다 — 비워 둔다
+            chosen[si] = pid
+            used.add(pid)
+            if len(chosen) == len(slots):
+                break
 
     if allow_repeat and len(chosen) < len(slots):
         times: Dict[str, int] = {pid: 1 for pid in used}
