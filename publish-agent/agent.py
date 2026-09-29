@@ -319,18 +319,47 @@ class BrowserPool:
             try:
                 pages = ctx.pages
                 if pages:
+                    await self._tidy_tabs(ctx, pages[0])
                     return pages[0]
                 return await ctx.new_page()
             except Exception:  # noqa: BLE001
                 self._ctx.pop(naver_blog_id, None)
         ctx = await self._launch(naver_blog_id, proxy)
         self._ctx[naver_blog_id] = ctx
-        return ctx.pages[0] if ctx.pages else await ctx.new_page()
+        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+        await self._tidy_tabs(ctx, page)
+        return page
+
+    async def _tidy_tabs(self, ctx, keep) -> None:
+        """우리가 남긴 탭을 정리한다. 실행기는 탭 하나만 쓴다.
+
+        예전 빌드가 --restore-last-session 으로 쌓아 둔 탭이 프로필에 남아 있을 수 있어,
+        옵션을 뺀 뒤에도 한 번은 치워 줘야 한다. **사람이 쓰고 있을지 모르는 탭은 건드리지
+        않는다** — 네이버 로그인 창(nid.naver.com)을 닫으면 로그인하던 것이 날아간다."""
+        closed = 0
+        for page in list(ctx.pages):
+            if page is keep or page.is_closed():
+                continue
+            url = (page.url or "").strip()
+            ours = url in ("", "about:blank") or "blog.naver.com" in url
+            if not ours or "nid.naver.com" in url:
+                continue
+            try:
+                await page.close()
+                closed += 1
+            except Exception:  # noqa: BLE001
+                pass
+        if closed:
+            log.info("실행기가 남긴 탭 %d개를 닫았습니다(실행기는 탭 하나만 씁니다)", closed)
 
     async def _launch(self, naver_blog_id: str, proxy: Optional[str] = None):
         user_data_dir = self.profile_dir(naver_blog_id)
         user_data_dir.mkdir(parents=True, exist_ok=True)
-        args = ["--disable-blink-features=AutomationControlled", "--no-first-run", "--no-default-browser-check", "--restore-last-session"]
+        # --restore-last-session 은 넣지 않는다. 로그인은 프로필 폴더의 쿠키가 지키는 것이지
+        # 탭을 되살려서 지키는 것이 아니다. 그런데 이 옵션이 켜져 있으면 실행기를 껐다 켤 때마다
+        # 지난 탭이 통째로 되살아나 '글쓰기 화면 + about:blank' 가 한 쌍씩 쌓인다
+        # (2026-09-29 실측: 사용자 크롬에 탭 7개. "아무것도 안 해도 자꾸 블로그로 이동해").
+        args = ["--disable-blink-features=AutomationControlled", "--no-first-run", "--no-default-browser-check"]
         if self.window_pos:
             args.append(f"--window-position={self.window_pos}")
         kw: Dict[str, Any] = dict(
@@ -555,6 +584,15 @@ async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, 
     label, ref, naver_id = blog.get("label") or blog.get("naver_blog_id"), blog["blog_ref_id"], blog["naver_blog_id"]
     log.info("=== 블로그 '%s' (%s) 대기 %s건, 확인 필요 %s건, 상태 %s ===",
              label, naver_id, blog.get("pending"), blog.get("blocked") or 0, blog.get("status"))
+
+    # 서버가 '이래서 못 준다'고 이미 말해 뒀고 달리 볼 일도 없으면 브라우저를 열지 않는다.
+    # 막힌 줄 알면서 주기마다 글쓰기 화면을 여는 것은 사용자 화면만 어지럽힌다
+    # (2026-09-29 신고: "아무것도 안 해도 자꾸 블로그로 이동해").
+    # 사람이 원인을 고치면 서버가 그 즉시 보류를 지우므로(_clear_holds) 다음 주기에 바로 이어진다.
+    if (blog.get("hold_reason") or "").strip() and not blog.get("wants_scan") \
+            and (blog.get("status") or "active") == "active":
+        explain_idle(label, blog)
+        return
 
     try:
         proxy = await asyncio.to_thread(client.proxy_for, ref)

@@ -87,6 +87,9 @@ async def configure_autopilot(campaign_id: str, body: AutopilotIn, current_user:
         key: value for key, value in config.model_dump().items() if key.startswith('landing_')}}
     policy.next_run_at = datetime.utcnow()
     policy.message = '자동 운영 시작' if body.enabled else '일시정지 — 이미 네이버에 등록된 예약은 유지됩니다'
+    if body.enabled:
+        # 일시정지 때문에 보류해 둔 건들을 즉시 풀어 준다 — 켠 순간부터 이어져야 한다.
+        await _clear_holds(db, PublishJob.campaign_id == campaign_id)
     if not body.enabled:
         active = await db.get(AutomationRun, campaign_id)
         if active:
@@ -199,6 +202,16 @@ class ClientOut(ClientIn):
     created_at: Optional[datetime] = None
     blogs: List[BlogOut] = []
     briefs: List[BriefOut] = []
+
+
+async def _clear_holds(db: AsyncSession, *where) -> None:
+    """보류 사유를 지운다 — 사람이 그 원인을 고친 순간에 부른다.
+
+    실행기는 보류 사유가 적혀 있으면 브라우저를 열지 않고 기다린다(막힌 줄 알면서 5분마다
+    글쓰기 화면을 여는 것은 사용자 화면만 어지럽힌다). 그래서 **원인이 풀리면 서버가 즉시
+    지워 줘야** 한다. 안 지우면 실행기가 영영 다시 시도하지 않는다."""
+    await db.execute(update(PublishJob).where(
+        PublishJob.status == "queued", PublishJob.error.isnot(None), *where).values(error=None))
 
 
 def _proxy_label(proxy_enc: Optional[str]) -> Optional[str]:
@@ -480,6 +493,8 @@ async def set_blog_status(blog_ref_id: str, body: BlogStatusIn, current_user: Us
     if body.status not in ("active", "paused", "captcha", "login_required", "disabled"):
         raise HTTPException(status_code=400, detail="상태 값이 올바르지 않습니다")
     b.status, b.status_reason, b.status_changed_at = body.status, body.reason, datetime.utcnow()
+    if body.status == "active":
+        await _clear_holds(db, PublishJob.blog_ref_id == b.id)
     await db.commit()
     return _blog_out(b)
 

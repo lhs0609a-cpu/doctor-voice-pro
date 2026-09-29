@@ -48,6 +48,37 @@ class ApiTests(DatabaseCase):
         jobs = (await self.client.get('/campaigns/c/jobs')).json()
         self.assertIsNone(jobs[0]['error'], "내준 뒤에도 옛 보류 사유가 남으면 안 된다")
 
+    async def test_turning_automation_back_on_clears_the_hold_right_away(self):
+        """보류를 지워 주지 않으면 실행기가 영영 다시 시도하지 않는다.
+
+        실행기는 보류 사유가 적혀 있으면 브라우저를 열지 않고 기다린다(막힌 줄 알면서 주기마다
+        글쓰기 화면을 여는 것은 사용자 화면만 어지럽힌다 — 2026-09-29 신고). 그래서 사람이
+        원인을 고친 순간 서버가 지워 줘야 한다."""
+        from unittest.mock import patch, AsyncMock
+        async with self.sessions() as db:
+            db.add(AutopilotPolicy(campaign_id='c', user_id='u', enabled=False, config={}))
+            await db.commit()
+        await self.client.post('/agent/claim', json={'blog_ref_id': 'b', 'protocol_version': 2})
+        self.assertIsNotNone((await self.client.get('/campaigns/c/jobs')).json()[0]['error'])
+
+        with patch('app.services.autopilot.preflight', AsyncMock(return_value=[])), \
+             patch('app.services.autopilot.tick', AsyncMock(return_value=None)):
+            turned_on = await self.client.put('/campaigns/c/autopilot', json={'enabled': True, 'image_count': 0})
+        self.assertEqual(turned_on.status_code, 200, turned_on.text)
+        self.assertIsNone((await self.client.get('/campaigns/c/jobs')).json()[0]['error'],
+                          '켠 순간 보류가 풀려야 실행기가 다시 가져간다')
+
+    async def test_fixing_the_blog_clears_the_hold_right_away(self):
+        async with self.sessions() as db:
+            blog = await db.get(Blog, 'b')
+            blog.status = 'login_required'
+            await db.commit()
+        await self.client.post('/agent/claim', json={'blog_ref_id': 'b', 'protocol_version': 2})
+        self.assertIn('로그인', (await self.client.get('/campaigns/c/jobs')).json()[0]['error'])
+        restored = await self.client.post('/blogs/b/status', json={'status': 'active', 'reason': '로그인 확인'})
+        self.assertEqual(restored.status_code, 200, restored.text)
+        self.assertIsNone((await self.client.get('/campaigns/c/jobs')).json()[0]['error'])
+
     async def test_what_a_person_scheduled_is_what_gets_published(self):
         """5단계에서 "'확인 필요' 원고도 포함"으로 예약한 건은 발행까지 간다.
 
