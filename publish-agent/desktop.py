@@ -162,30 +162,15 @@ def make_args(server, email, password, folder, stop_event, wake_event=None):
 
 
 def summary_note(blogs) -> str:
-    """웹 신호등 옆에 뜰 한 줄 + 앱 현황 라벨. 예: '대기 3건 · 다음 09-11 14:30'"""
-    if not blogs:
-        return '등록된 블로그 없음'
-    pending = sum(int(b.get('pending') or 0) for b in blogs)
-    # 손이 필요한 건들은 '대기'에 섞지 않는다. 섞으면 "대기 1건인데 아무것도 안 올라간다"가 된다
-    # (2026-09-29 실측). 무엇을 해야 하는지가 이 한 줄에 보여야 한다.
-    blocked = sum(int(b.get('blocked') or 0) for b in blogs)
-    stalled = sum(int(b.get('stalled') or 0) for b in blogs)
-    trouble = [b for b in blogs if (b.get('status') or 'active') != 'active']
-    nexts = sorted(b['next_at'] for b in blogs if b.get('next_at'))
-    parts = [f'대기 {pending}건']
-    if nexts:
-        parts.append('다음 ' + nexts[0].replace('T', ' ')[5:16])
-    if blocked:
-        parts.append(f'확인 필요 {blocked}건 — 웹 [발행 현황]에서 대조해야 이어집니다')
-    if stalled:
-        parts.append(f'실패 {stalled}건 — 웹 [발행 현황]에서 재시도')
-    reasons = [r for r in ((b.get('hold_reason') or '').strip() for b in blogs) if r]
-    if pending and not blocked and reasons:
-        parts.append(reasons[0])
-    if trouble:
-        names = ', '.join((b.get('label') or b.get('naver_blog_id') or '') for b in trouble[:2])
-        parts.append(f'블로그 확인 필요: {names}')
-    return ' · '.join(parts)
+    """실행기 창 현황 한 줄. 조치가 필요하면 무엇을 누르면 되는지까지 적고,
+    아무 문제가 없으면 [정상]이라고 분명히 말한다.
+
+    예전에는 '대기 1건 · 다음 10-03 15:30' 처럼 숫자만 적었다. 손이 필요한 건과 그냥
+    기다리는 건이 같은 숫자에 섞여 있어, 사용자는 멀쩡히 기다리는 중인지 고장인지 알 수
+    없었다(2026-09-29 지적). 문장은 guidance 에 모아 두고 로그와 같은 말을 쓴다."""
+    from guidance import overall
+
+    return overall(blogs)[1]
 
 
 class QueueLog(logging.Handler):

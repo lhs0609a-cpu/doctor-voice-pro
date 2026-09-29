@@ -2207,6 +2207,21 @@ def _with_footer(blocks: List[JobBlock], b: Blog) -> List[JobBlock]:
     return out
 
 
+def _blog_action(blog: Optional[Blog]) -> str:
+    """블로그가 막혀 있을 때 **무엇을 하면 되는지**. 상태 이름만 보여 줘도 사람은 못 고친다."""
+    status = (blog.status if blog else None) or "없음"
+    if status == "login_required":
+        todo = "→ PC 실행기가 띄운 크롬 창에서 네이버에 로그인해 주세요. 로그인하면 알아서 이어집니다."
+    elif status == "captcha":
+        todo = "→ PC 실행기가 띄운 크롬 창에서 네이버 보안문자를 입력해 주세요. 그러면 알아서 이어집니다."
+    elif not blog:
+        todo = "→ 이 블로그가 삭제된 것 같습니다. 병원 관리에서 블로그를 다시 등록한 뒤 예약해 주세요."
+    else:
+        todo = "→ 병원 관리에서 이 블로그를 '정상'으로 바꿔 주세요."
+    detail = f" (사유: {blog.status_reason})" if blog and blog.status_reason else ""
+    return f"블로그 상태가 '{status}' 이라 올리지 않았습니다. {todo}{detail}"
+
+
 async def _hold(db: AsyncSession, job: PublishJob, reason: str) -> None:
     """내주지 않은 이유를 그 발행건에 적어 둔다. 상태는 건드리지 않는다(여전히 대기다).
 
@@ -2243,13 +2258,13 @@ async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_us
         policy = await db.get(AutopilotPolicy, candidate.campaign_id)
         bulk_publication = (candidate_draft.checks or {}).get('bulk_publication') if candidate_draft else None
         if policy and not policy.enabled and not bulk_publication:
-            await _hold(db, candidate, "이 캠페인의 자동 운영이 일시정지되어 있습니다. "
-                                       "캠페인 화면에서 자동 운영을 켜면 이어서 발행합니다")
+            await _hold(db, candidate, "이 캠페인의 '자동 운영'이 일시정지되어 있어 올리지 않습니다. "
+                                       "→ 캠페인 화면에서 [자동 운영]을 켜 주세요. 켜는 즉시 이어서 올라갑니다. "
+                                       "(예약 자체는 그대로 남아 있습니다)")
             continue
         blog = await db.get(Blog, blog_id)
         if not blog or blog.user_id != _uid(current_user) or blog.status != "active":
-            await _hold(db, candidate, f"블로그 상태가 '{(blog.status if blog else '없음')}' 이라 발행을 보류했습니다"
-                                       + (f" — {blog.status_reason}" if blog and blog.status_reason else ""))
+            await _hold(db, candidate, _blog_action(blog))
             continue
         token = await protocol.claim(db, job_id, _uid(current_user), blog_id, body.mode)
         if not token:
@@ -2260,14 +2275,15 @@ async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_us
         try:
             j = await db.get(PublishJob, job_id, populate_existing=True)
             if j.scheduled_at <= se.kst_now() + timedelta(minutes=15):
-                raise ValueError("예약 시각이 임박했습니다. 새 시각으로 예약하세요")
+                raise ValueError("예약 시각이 15분 안으로 다가와 네이버가 '즉시 발행'으로 처리할 위험이 있습니다. "
+                                 "→ 5단계에서 더 뒤쪽 시각으로 다시 예약해 주세요.")
             draft = await db.get(Draft, j.draft_id)
             if not draft or draft.user_id != _uid(current_user):
                 raise ValueError("원고를 찾을 수 없습니다")
             if draft.status != "ready" and not (draft.checks or {}).get('scheduled_unreviewed'):
-                raise ValueError("검수가 끝난 원고만 발행할 수 있습니다. "
-                                 "원고 화면에서 검수를 통과시키거나, 5단계에서 "
-                                 "\"'확인 필요' 원고도 포함\"으로 다시 예약해 주세요")
+                raise ValueError("이 원고가 아직 '확인 필요' 상태라 올리지 않았습니다. "
+                                 "→ 3단계 원고 화면에서 원고를 손봐 검수를 통과시키거나, "
+                                 "5단계에서 \"'확인 필요' 원고도 포함\"을 체크해 다시 예약해 주세요.")
             from app.services.editorial_quality import approved
             policy = await db.get(AutopilotPolicy, j.campaign_id)
             bulk_publication = (draft.checks or {}).get('bulk_publication')

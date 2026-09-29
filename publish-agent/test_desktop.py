@@ -38,41 +38,44 @@ class DesktopTests(unittest.TestCase):
 class SummaryNoteTests(unittest.TestCase):
     """앱 현황 한 줄 = 웹 신호등 옆에 뜨는 문구."""
 
-    def test_counts_pending_across_blogs_and_shows_the_next_slot(self):
+    def test_waiting_for_a_future_slot_reads_as_normal(self):
+        """'대기 3건 · 다음 09-11 09:10' 만 보고 고장이라 읽던 화면(2026-09-29 지적).
+
+        기다리는 중이라는 것과 손이 필요하다는 것이 한눈에 갈려야 한다."""
         note = summary_note([
             {'label': '메인', 'status': 'active', 'pending': 2, 'next_at': '2026-09-11T14:30'},
             {'label': '서브', 'status': 'active', 'pending': 1, 'next_at': '2026-09-11T09:10'},
         ])
+        self.assertIn('[정상]', note)
         self.assertIn('대기 3건', note)
         self.assertIn('09-11 09:10', note)   # 가장 이른 예약
 
-    def test_flags_blogs_that_need_a_person(self):
+    def test_flags_blogs_that_need_a_person_with_what_to_do(self):
         note = summary_note([{'label': '메인', 'status': 'captcha', 'pending': 0}])
-        self.assertIn('확인 필요', note)
+        self.assertIn('[조치 필요]', note)
         self.assertIn('메인', note)
+        self.assertIn('보안문자', note)
+        self.assertIn('→', note)
 
-    def test_no_blogs_is_said_plainly(self):
-        self.assertEqual(summary_note([]), '등록된 블로그 없음')
+    def test_no_blogs_says_what_to_do(self):
+        self.assertIn('블로그를 먼저 등록', summary_note([]))
 
     def test_stuck_work_is_not_hidden_inside_the_waiting_count(self):
-        """'대기 1건'만 떠 있고 아무것도 안 올라가던 화면(2026-09-29 실측)을 고친 자리.
-
-        손이 필요한 건은 무엇을 해야 하는지까지 한 줄에 적는다."""
+        """'대기 1건'만 떠 있고 아무것도 안 올라가던 화면(2026-09-29 실측)을 고친 자리."""
         note = summary_note([{'label': '메인', 'status': 'active', 'pending': 0,
                               'stalled': 1, 'blocked': 0}])
-        self.assertIn('대기 0건', note)
-        self.assertIn('실패 1건', note)
+        self.assertIn('[조치 필요]', note)
         self.assertIn('재시도', note)
 
     def test_an_unresolved_publication_says_it_blocks_the_rest(self):
         note = summary_note([{'label': '메인', 'status': 'active', 'pending': 3, 'blocked': 1}])
-        self.assertIn('확인 필요 1건', note)
-        self.assertIn('발행 현황', note)
+        self.assertIn('예약 등록 확인', note)
+        self.assertIn('3건', note)
 
     def test_a_hold_reason_from_the_server_is_shown_as_is(self):
         note = summary_note([{'label': '메인', 'status': 'active', 'pending': 2,
-                              'hold_reason': '이 캠페인의 자동 운영이 일시정지되어 있습니다'}])
-        self.assertIn('자동 운영이 일시정지', note)
+                              'hold_reason': "'자동 운영'이 꺼져 있습니다. → 켜 주세요"}])
+        self.assertIn('자동 운영', note)
 
 
 @unittest.skipUnless(sys.platform == 'win32' or os.environ.get('DISPLAY'), 'GUI display required')

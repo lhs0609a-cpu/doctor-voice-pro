@@ -25,11 +25,12 @@ class ApiTests(DatabaseCase):
         self.assertEqual(claimed.json(), [])
 
         jobs = (await self.client.get('/campaigns/c/jobs')).json()
-        self.assertIn('자동 운영이 일시정지', jobs[0]['error'])
+        self.assertIn('자동 운영', jobs[0]['error'])
+        self.assertIn('→', jobs[0]['error'], "왜인지만 적으면 '그래서 뭘 하라고?'가 된다")
         self.assertEqual(jobs[0]['status'], 'queued', "보류는 실패가 아니다 — 여전히 대기다")
 
         summary = next(r for r in (await self.client.get('/agent/summary')).json() if r['blog_ref_id'] == 'b')
-        self.assertIn('자동 운영이 일시정지', summary['hold_reason'])
+        self.assertIn('자동 운영', summary['hold_reason'])
 
     async def test_a_hold_note_is_cleared_when_the_job_finally_goes_out(self):
         from unittest.mock import patch
@@ -69,7 +70,8 @@ class ApiTests(DatabaseCase):
             await db.commit()
         await self.client.post('/agent/claim', json={'blog_ref_id': 'b', 'protocol_version': 2})
         jobs = (await self.client.get('/campaigns/c/jobs')).json()
-        self.assertIn('확인 필요', jobs[0]['error'], '무엇을 하면 되는지까지 적혀야 한다')
+        self.assertIn('확인 필요', jobs[0]['error'])
+        self.assertIn('→', jobs[0]['error'], '무엇을 하면 되는지까지 적혀야 한다')
 
     async def test_bulk_claim_works_with_paused_recurring_but_still_requires_review(self):
         from unittest.mock import patch
