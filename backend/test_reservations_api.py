@@ -251,6 +251,24 @@ class ReservationTests(DatabaseCase):
         self.assertEqual(response.status_code, 200, response.text)
         return [a['scheduled_at'] for a in response.json()['assigned']]
 
+    async def test_choosing_an_unreviewed_draft_is_remembered_until_publication(self):
+        """"'확인 필요' 원고도 포함"으로 예약하면 그 결정이 원고에 남아 발행까지 간다.
+
+        표식이 없으면 실행기가 가져갈 때 "검수가 끝난 원고만 발행할 수 있습니다"로 거부해,
+        예약은 잡혀 있는데 영영 올라가지 않는 건이 된다(2026-09-29 실측)."""
+        async with self.sessions() as db:
+            db.add(Draft(id='dr', user_id='u', campaign_id='c', title='검수 안 된 원고', status='needs_review'))
+            await db.commit()
+        body = {'start_date': self.now.date().isoformat(), 'days': 60, 'draft_ids': ['dr'],
+                'mode': 'interval', 'every_minutes': 120, 'start_mode': 'after_last',
+                'include_needs_review': True}
+        response = await self.client.post('/campaigns/c/schedule/commit', json=body)
+        self.assertEqual(response.status_code, 200, response.text)
+        async with self.sessions() as db:
+            draft = await db.get(Draft, 'dr')
+            self.assertTrue((draft.checks or {}).get('scheduled_unreviewed'),
+                            '사람이 고른 기록이 원고에 남아야 한다')
+
     async def test_two_separate_commits_never_reuse_a_slot(self):
         """따로 두 번 예약해도 시각이 겹치지 않는다 — 같은 시각 두 글은 저품질로 간다.
 

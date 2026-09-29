@@ -54,6 +54,26 @@ class SummaryNoteTests(unittest.TestCase):
     def test_no_blogs_is_said_plainly(self):
         self.assertEqual(summary_note([]), '등록된 블로그 없음')
 
+    def test_stuck_work_is_not_hidden_inside_the_waiting_count(self):
+        """'대기 1건'만 떠 있고 아무것도 안 올라가던 화면(2026-09-29 실측)을 고친 자리.
+
+        손이 필요한 건은 무엇을 해야 하는지까지 한 줄에 적는다."""
+        note = summary_note([{'label': '메인', 'status': 'active', 'pending': 0,
+                              'stalled': 1, 'blocked': 0}])
+        self.assertIn('대기 0건', note)
+        self.assertIn('실패 1건', note)
+        self.assertIn('재시도', note)
+
+    def test_an_unresolved_publication_says_it_blocks_the_rest(self):
+        note = summary_note([{'label': '메인', 'status': 'active', 'pending': 3, 'blocked': 1}])
+        self.assertIn('확인 필요 1건', note)
+        self.assertIn('발행 현황', note)
+
+    def test_a_hold_reason_from_the_server_is_shown_as_is(self):
+        note = summary_note([{'label': '메인', 'status': 'active', 'pending': 2,
+                              'hold_reason': '이 캠페인의 자동 운영이 일시정지되어 있습니다'}])
+        self.assertIn('자동 운영이 일시정지', note)
+
 
 @unittest.skipUnless(sys.platform == 'win32' or os.environ.get('DISPLAY'), 'GUI display required')
 class DesktopGuideTests(unittest.TestCase):

@@ -166,14 +166,25 @@ def summary_note(blogs) -> str:
     if not blogs:
         return '등록된 블로그 없음'
     pending = sum(int(b.get('pending') or 0) for b in blogs)
+    # 손이 필요한 건들은 '대기'에 섞지 않는다. 섞으면 "대기 1건인데 아무것도 안 올라간다"가 된다
+    # (2026-09-29 실측). 무엇을 해야 하는지가 이 한 줄에 보여야 한다.
+    blocked = sum(int(b.get('blocked') or 0) for b in blogs)
+    stalled = sum(int(b.get('stalled') or 0) for b in blogs)
     trouble = [b for b in blogs if (b.get('status') or 'active') != 'active']
     nexts = sorted(b['next_at'] for b in blogs if b.get('next_at'))
     parts = [f'대기 {pending}건']
     if nexts:
         parts.append('다음 ' + nexts[0].replace('T', ' ')[5:16])
+    if blocked:
+        parts.append(f'확인 필요 {blocked}건 — 웹 [발행 현황]에서 대조해야 이어집니다')
+    if stalled:
+        parts.append(f'실패 {stalled}건 — 웹 [발행 현황]에서 재시도')
+    reasons = [r for r in ((b.get('hold_reason') or '').strip() for b in blogs) if r]
+    if pending and not blocked and reasons:
+        parts.append(reasons[0])
     if trouble:
         names = ', '.join((b.get('label') or b.get('naver_blog_id') or '') for b in trouble[:2])
-        parts.append(f'확인 필요: {names}')
+        parts.append(f'블로그 확인 필요: {names}')
     return ' · '.join(parts)
 
 

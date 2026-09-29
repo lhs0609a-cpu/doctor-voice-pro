@@ -542,16 +542,25 @@ def explain_idle(label: str, blog: Dict[str, Any]) -> None:
     잠자코 넘어가면 실행기는 글쓰기 화면만 새로고침하다 멈춘 것처럼 보인다. 사용자에게는
     "예약발행이 안 된다"로만 보였다(2026-09-28 신고). 서버가 건너뛴 이유는 로그에만 남으므로,
     적어도 '무엇을 하면 풀리는지'는 여기서 알려 준다."""
-    blocked, pending = int(blog.get("blocked") or 0), int(blog.get("pending") or 0)
+    blocked = int(blog.get("blocked") or 0)
+    pending = int(blog.get("pending") or 0)
+    stalled = int(blog.get("stalled") or 0)
+    reason = (blog.get("hold_reason") or "").strip()
     if blocked:
         log.warning("'%s': '확인 필요' %d건이 이 블로그의 예약을 **전부 막고 있습니다**. "
                     "한 블로그에 미해결 발행은 하나뿐이라서, 그 건을 처리해야 대기 %d건이 이어집니다. "
                     "웹 [발행 현황]에서 네이버 예약 목록과 대조해 '예약 등록 확인' 또는 '미등록 확인'을 눌러 주세요.",
                     label, blocked, pending)
+    elif pending and reason:
+        log.warning("'%s': 대기 %d건을 내주지 않는 이유 — %s", label, pending, reason)
     elif pending:
         log.warning("'%s': 대기 %d건이 있는데 서버가 한 건도 내주지 않았습니다. "
                     "웹 [발행 현황]에서 사유를 확인하세요(자동 운영 일시정지 / 원고 검수 미통과 / "
                     "예약 시각이 15분 안으로 임박 / 블로그 상태).", label, pending)
+    elif stalled:
+        log.warning("'%s': 여러 번 실패해 멈춘 발행이 %d건 있습니다(대기 0건). "
+                    "웹 [발행 현황]에서 사유를 보고 [재시도]를 누르거나 새 시각으로 다시 예약해 주세요.",
+                    label, stalled)
     else:
         log.info("'%s': 올릴 예약이 없습니다.", label)
 

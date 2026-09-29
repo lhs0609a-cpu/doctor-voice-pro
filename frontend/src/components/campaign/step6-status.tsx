@@ -178,7 +178,13 @@ export function Step6Status({ campaign, setCampaign, goStep }: StepProps) {
                             글 보기 <ExternalLink className="h-3 w-3" />
                           </a>
                         )}
-                        {j.error && <div className="whitespace-pre-wrap break-words text-[11px] text-danger">{j.error}</div>}
+                        {/* 대기 중인 건의 메모는 '실패'가 아니라 '보류 사유'다 — 빨갛게 띄우면
+                            멀쩡히 기다리는 예약이 전부 고장 난 것처럼 보인다. */}
+                        {j.error && (
+                          <div className={`whitespace-pre-wrap break-words text-[11px] ${j.status === 'queued' ? 'text-warning' : 'text-danger'}`}>
+                            {j.status === 'queued' ? `보류: ${j.error}` : j.error}
+                          </div>
+                        )}
                         {j.published_at && <div className="text-[11px] tabular-nums text-muted-foreground">발행 {fmtDateTime(j.published_at)}</div>}
                       </TableCell>
                       <TableCell>

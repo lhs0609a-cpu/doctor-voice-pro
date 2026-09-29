@@ -12,6 +12,65 @@ from app.models.user import User
 
 
 class ApiTests(DatabaseCase):
+    async def test_a_paused_campaign_says_so_instead_of_going_quiet(self):
+        """내주지 않을 거면 이유를 적어 둔다(2026-09-29 실측).
+
+        예전에는 조용히 건너뛰기만 해서, 실행기는 글쓰기 화면만 새로고침하고 웹에는 '대기'라고만
+        떴다. 사용자가 무엇을 해야 하는지 알 길이 없었다."""
+        async with self.sessions() as db:
+            db.add(AutopilotPolicy(campaign_id='c', user_id='u', enabled=False, config={}))
+            await db.commit()
+        claimed = await self.client.post('/agent/claim', json={'blog_ref_id': 'b', 'protocol_version': 2})
+        self.assertEqual(claimed.status_code, 200, claimed.text)
+        self.assertEqual(claimed.json(), [])
+
+        jobs = (await self.client.get('/campaigns/c/jobs')).json()
+        self.assertIn('자동 운영이 일시정지', jobs[0]['error'])
+        self.assertEqual(jobs[0]['status'], 'queued', "보류는 실패가 아니다 — 여전히 대기다")
+
+        summary = next(r for r in (await self.client.get('/agent/summary')).json() if r['blog_ref_id'] == 'b')
+        self.assertIn('자동 운영이 일시정지', summary['hold_reason'])
+
+    async def test_a_hold_note_is_cleared_when_the_job_finally_goes_out(self):
+        from unittest.mock import patch
+        async with self.sessions() as db:
+            db.add(AutopilotPolicy(campaign_id='c', user_id='u', enabled=False, config={}))
+            await db.commit()
+        await self.client.post('/agent/claim', json={'blog_ref_id': 'b', 'protocol_version': 2})
+        async with self.sessions() as db:
+            policy = await db.get(AutopilotPolicy, 'c')
+            policy.enabled = True
+            await db.commit()
+        with patch('app.services.editorial_quality.approved', return_value=True):
+            claimed = await self.client.post('/agent/claim', json={'blog_ref_id': 'b', 'protocol_version': 2})
+        self.assertEqual(len(claimed.json()), 1, claimed.text)
+        jobs = (await self.client.get('/campaigns/c/jobs')).json()
+        self.assertIsNone(jobs[0]['error'], "내준 뒤에도 옛 보류 사유가 남으면 안 된다")
+
+    async def test_what_a_person_scheduled_is_what_gets_published(self):
+        """5단계에서 "'확인 필요' 원고도 포함"으로 예약한 건은 발행까지 간다.
+
+        2026-09-29 실측한 모순: 예약은 받아 주면서 발행할 때 "검수가 끝난 원고만 발행할 수
+        있습니다"로 거부했다. 그 건은 영영 올라가지 않는데 화면에는 '대기'로만 남았다.
+        **예약을 받았으면 발행한다** — 이 시험이 그 약속을 붙잡아 둔다."""
+        async with self.sessions() as db:
+            draft = await db.get(Draft, 'd')
+            draft.status = 'needs_review'
+            draft.checks = {'scheduled_unreviewed': True}   # schedule_commit 이 찍는 표식
+            await db.commit()
+        claimed = await self.client.post('/agent/claim', json={'blog_ref_id': 'b', 'protocol_version': 2})
+        self.assertEqual(claimed.status_code, 200, claimed.text)
+        self.assertEqual(len(claimed.json()), 1, '사람이 고른 원고는 내줘야 한다')
+
+    async def test_an_unreviewed_draft_nobody_chose_is_refused_with_a_way_out(self):
+        async with self.sessions() as db:
+            draft = await db.get(Draft, 'd')
+            draft.status = 'needs_review'
+            await db.commit()
+        await self.client.post('/agent/claim', json={'blog_ref_id': 'b', 'protocol_version': 2})
+        jobs = (await self.client.get('/campaigns/c/jobs')).json()
+        self.assertIn('확인 필요', jobs[0]['error'], '무엇을 하면 되는지까지 적혀야 한다')
+
     async def test_bulk_claim_works_with_paused_recurring_but_still_requires_review(self):
         from unittest.mock import patch
         async with self.sessions() as db:

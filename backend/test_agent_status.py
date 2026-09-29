@@ -100,6 +100,25 @@ class AgentStatusTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row['blocked'], 1)
         self.assertEqual(row['pending'], 1)      # 막힌 건은 대기 수에 섞지 않는다
 
+    async def test_a_job_that_ran_out_of_retries_is_not_counted_as_waiting(self):
+        """재시도가 끝난 건을 '대기'로 세면 실행기가 "대기 1건인데 안 내준다"고 말하게 된다.
+
+        2026-09-29 실측: 사용자 화면에 '대기 1건 · 다음 10-03 15:30' 이라고 떠 있는데 서버는
+        한 건도 내주지 않았다. 그 건은 이미 여러 번 실패해 멈춰 있었다 — 기다리는 게 아니라
+        사람이 손대야 하는 상태였다."""
+        async with self.sessions() as db:
+            db.add(Blog(id='b7', user_id='u', client_id='c', blog_id='myblog', status='active'))
+            db.add(PublishJob(id='j-dead', user_id='u', campaign_id='c', draft_id='d', blog_ref_id='b7',
+                              scheduled_at=datetime.utcnow() + timedelta(days=4), status='failed',
+                              attempts=3, max_attempts=3, error='검수가 끝난 원고만 발행할 수 있습니다'))
+            db.add(PublishJob(id='j-retry', user_id='u', campaign_id='c', draft_id='d2', blog_ref_id='b7',
+                              scheduled_at=datetime.utcnow() + timedelta(days=5), status='failed',
+                              attempts=1, max_attempts=3))
+            await db.commit()
+        row = next(r for r in (await self.client.get('/agent/summary')).json() if r['blog_ref_id'] == 'b7')
+        self.assertEqual(row['stalled'], 1, '재시도가 끝난 건')
+        self.assertEqual(row['pending'], 1, '아직 재시도가 남은 건만 대기다')
+
     async def test_categories_are_fetched_on_request_and_shown_to_the_app(self):
         """[카테고리 새로 읽기]를 누르면 실행기가 다음 차례에 읽어 오고, 그 목록이 화면에 뜬다.
 

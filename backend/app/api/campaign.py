@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, inspect, select, update
+from sqlalchemy import and_, delete, func, inspect, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1767,6 +1767,11 @@ async def schedule_commit(campaign_id: str, body: ScheduleIn, current_user: User
     formatting = PointFormatting.model_validate((c.settings or {}).get('formatting') or {}).model_dump()
     for d, _pair in zip(drafts, assigned):
         d.checks = {**(d.checks or {}), 'formatting': formatting}
+        if d.status != "ready":
+            # 사람이 5단계에서 "'확인 필요' 원고도 포함"을 체크해 이 원고를 직접 골랐다.
+            # 그 결정을 발행까지 가져간다 — 예약은 받아 놓고 발행에서 거부하면, 그 건은
+            # 영영 올라가지 않으면서 화면에는 '대기'로만 남는다(2026-09-29 실측).
+            d.checks = {**d.checks, 'scheduled_unreviewed': True}
     # 원고 쪽 변경을 먼저 내려놓는다 — 아래 건별 SAVEPOINT 가 되돌려질 때 휩쓸리지 않게.
     await db.flush()
     # 예약은 **건별로** 저장한다. 100건을 한 덩어리로 넣으면 한 칸이 이미 차 있을 때
@@ -2202,6 +2207,18 @@ def _with_footer(blocks: List[JobBlock], b: Blog) -> List[JobBlock]:
     return out
 
 
+async def _hold(db: AsyncSession, job: PublishJob, reason: str) -> None:
+    """내주지 않은 이유를 그 발행건에 적어 둔다. 상태는 건드리지 않는다(여전히 대기다).
+
+    예전에는 조용히 건너뛰기만 했다. 그러면 실행기는 글쓰기 화면만 새로고침하고, 웹의
+    발행 현황에도 '대기'라고만 적혀 있어 사용자가 무엇을 해야 하는지 알 수 없었다
+    (2026-09-29 실측: "대기 2건이 있는데 서버가 한 건도 내주지 않았습니다").
+    발행이 실제로 나가면 이 메모는 결과로 덮인다."""
+    await db.execute(update(PublishJob).where(
+        PublishJob.id == job.id, PublishJob.status == "queued").values(error=reason[:500]))
+    await db.commit()
+
+
 @router.post("/agent/claim", response_model=List[ClaimedJob])
 async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if body.protocol_version != 2:
@@ -2226,12 +2243,19 @@ async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_us
         policy = await db.get(AutopilotPolicy, candidate.campaign_id)
         bulk_publication = (candidate_draft.checks or {}).get('bulk_publication') if candidate_draft else None
         if policy and not policy.enabled and not bulk_publication:
+            await _hold(db, candidate, "이 캠페인의 자동 운영이 일시정지되어 있습니다. "
+                                       "캠페인 화면에서 자동 운영을 켜면 이어서 발행합니다")
             continue
         blog = await db.get(Blog, blog_id)
         if not blog or blog.user_id != _uid(current_user) or blog.status != "active":
+            await _hold(db, candidate, f"블로그 상태가 '{(blog.status if blog else '없음')}' 이라 발행을 보류했습니다"
+                                       + (f" — {blog.status_reason}" if blog and blog.status_reason else ""))
             continue
         token = await protocol.claim(db, job_id, _uid(current_user), blog_id, body.mode)
         if not token:
+            # 여기는 경합이다(다른 실행기가 먼저 가져갔거나, 방금 취소됐거나, '확인 필요'가
+            # 이 블로그를 쥐고 있거나). 사유를 적으려고 쓰기를 더하면 그 경합을 건드린다 —
+            # 오래가는 사유는 summary 의 blocked 가 이미 말해 준다.
             continue
         try:
             j = await db.get(PublishJob, job_id, populate_existing=True)
@@ -2240,8 +2264,10 @@ async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_us
             draft = await db.get(Draft, j.draft_id)
             if not draft or draft.user_id != _uid(current_user):
                 raise ValueError("원고를 찾을 수 없습니다")
-            if draft.status != "ready":
-                raise ValueError("검수가 끝난 원고만 발행할 수 있습니다")
+            if draft.status != "ready" and not (draft.checks or {}).get('scheduled_unreviewed'):
+                raise ValueError("검수가 끝난 원고만 발행할 수 있습니다. "
+                                 "원고 화면에서 검수를 통과시키거나, 5단계에서 "
+                                 "\"'확인 필요' 원고도 포함\"으로 다시 예약해 주세요")
             from app.services.editorial_quality import approved
             policy = await db.get(AutopilotPolicy, j.campaign_id)
             bulk_publication = (draft.checks or {}).get('bulk_publication')
@@ -2290,6 +2316,7 @@ async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_us
             )
             attempt = await db.get(PublishAttempt, token)
             attempt.payload = payload.model_dump()
+            j.error = None          # 보류 사유(_hold)는 실제로 내주는 순간 지운다
             j.lock_expires_at = datetime.utcnow() + timedelta(seconds=protocol.LEASE_SECONDS)
             await db.commit()
             return [payload]
@@ -2416,6 +2443,10 @@ class AgentBlogSummary(BaseModel):
     # 실행기가 그 이유를 말할 수 있어야 한다 — 말하지 않으면 글쓰기 화면만 새로고침하며
     # 멈춰 있는 것처럼 보인다(2026-09-28 사용자 신고).
     blocked: int = 0
+    # 여러 번 실패해 재시도가 끝난 건. 사람이 [재시도]를 누르거나 새 시각으로 다시 걸어야 한다.
+    stalled: int = 0
+    # 대기 중인데 서버가 내주지 않은 이유(_hold 가 적어 둔 것). 실행기가 로그에 그대로 옮긴다.
+    hold_reason: Optional[str] = None
     # 예약 목록을 다시 읽어야 하는가(웹에서 [새로 읽기]를 눌렀거나 읽은 지 오래됨)
     wants_scan: bool = True
     reservations_scanned_at: Optional[str] = None
@@ -2428,9 +2459,22 @@ async def agent_summary(current_user: User = Depends(get_current_user), db: Asyn
     blogs = (await db.execute(select(Blog).where(Blog.user_id == _uid(current_user)).order_by(Blog.created_at))).scalars().all()
     out = []
     for b in blogs:
-        rows = (await db.execute(select(PublishJob.scheduled_at).where(PublishJob.blog_ref_id == b.id, PublishJob.status.in_(["queued", "assigned", "failed"])).order_by(PublishJob.scheduled_at.asc()))).all()
+        # '대기'는 아직 올라갈 수 있는 건만 센다. 여러 번 실패해 재시도가 끝난 건까지 대기로 세면
+        # 실행기가 "대기 1건인데 서버가 안 내준다"고 말하게 된다 — 사실은 이미 실패한 건이다
+        # (2026-09-29 실측). 그런 건은 stalled 로 따로 세어 사람이 손대야 한다고 알린다.
+        rows = (await db.execute(select(PublishJob.scheduled_at).where(
+            PublishJob.blog_ref_id == b.id,
+            or_(PublishJob.status.in_(["queued", "assigned"]),
+                and_(PublishJob.status == "failed", PublishJob.attempts < PublishJob.max_attempts)),
+        ).order_by(PublishJob.scheduled_at.asc()))).all()
+        stalled = (await db.execute(select(func.count()).select_from(PublishJob).where(
+            PublishJob.blog_ref_id == b.id, PublishJob.status == "failed",
+            PublishJob.attempts >= PublishJob.max_attempts))).scalar() or 0
         blocked = (await db.execute(select(func.count()).select_from(PublishJob).where(
             PublishJob.blog_ref_id == b.id, PublishJob.status == "uncertain"))).scalar() or 0
+        hold_reason = (await db.execute(select(PublishJob.error).where(
+            PublishJob.blog_ref_id == b.id, PublishJob.status == "queued", PublishJob.error.isnot(None),
+        ).order_by(PublishJob.scheduled_at.asc()).limit(1))).scalar()
         scanned = b.reservations_scanned_at
         stale = not scanned or (datetime.utcnow() - scanned) > timedelta(hours=RESERVATION_STALE_HOURS)
         # 한 번 못 읽은 블로그는 계속 못 읽는다(주소를 모르는 것이지 일시적인 실패가 아니다).
@@ -2438,7 +2482,7 @@ async def agent_summary(current_user: User = Depends(get_current_user), db: Asyn
         give_up = bool(b.reservations_note) and not b.reservations_scan_requested_at
         out.append(AgentBlogSummary(blog_ref_id=b.id, naver_blog_id=b.blog_id, label=b.label or b.blog_id, status=b.status or "active", status_reason=b.status_reason,
                                     pending=len(rows), next_at=rows[0][0].isoformat(timespec="minutes") if rows else None, login_id=b.login_id,
-                                    blocked=int(blocked),
+                                    blocked=int(blocked), stalled=int(stalled), hold_reason=hold_reason,
                                     wants_scan=bool(b.reservations_scan_requested_at or (stale and not give_up)),
                                     reservations_scanned_at=scanned.isoformat(timespec="minutes") if scanned else None,
                                     wants_categories=bool(b.categories_scan_requested_at) or not b.categories
