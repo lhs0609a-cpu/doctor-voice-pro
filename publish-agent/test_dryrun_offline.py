@@ -381,8 +381,14 @@ class TestServerClient(unittest.TestCase):
         self.assertEqual(self.state.requests[-1]["body"], {
             "lock_token": "L1", "ok": True, "uncertain": False, "message": None,
             "url": "https://blog.naver.com/platonmarketing/1", "need_login": False, "captcha": False,
-            "release": False, "receipt_id": None,
+            "release": False, "receipt_id": None, "drafted": False,
         })
+
+    def test_a_saved_draft_says_so(self):
+        """임시저장까지만 했다는 것을 서버가 알아야 공개 확인(RSS)을 태우지 않는다."""
+        self.c.login("a@b.c", "pw")
+        self.c.report_result("j1", "L1", ok=True, drafted=True)
+        self.assertTrue(self.state.requests[-1]["body"]["drafted"])
         self.c.report_result("j1", "L1", ok=False, uncertain=False, message="dry-run")
         b = self.state.requests[-1]["body"]
         self.assertEqual((b["ok"], b["uncertain"], b["message"]), (False, False, "dry-run"))
