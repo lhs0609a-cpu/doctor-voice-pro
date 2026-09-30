@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { campaignAPI } from '@/lib/campaign-api'
@@ -22,11 +23,24 @@ export type MixValue = {
   draft: string
   diseaseQuota: Record<string, number>
   categoryRatio: Record<string, number>
+  /** 통합검색에 병원이 쓴 블로그 글이 떠 있는 키워드만 남긴다. */
+  requireHospitalBlog: boolean
+  /** 이 병원들의 블로그 글이 떠 있으면 그 키워드는 뺀다. 광고(파워컨텐츠)는 세지 않는다. */
+  excludeBlogs: string[]
+  /** 위 칸에 쳐 놓고 아직 [추가]를 누르지 않은 글자. */
+  excludeDraft: string
 }
 
 /** 쉼표·줄바꿈으로 나눈 씨앗 목록. 입력칸 글자와 칩을 같은 규칙으로 읽는다. */
 export function parseSeeds(raw: string): string[] {
   return (raw || '').split(/[,\n]/).map(s => s.trim()).filter(Boolean)
+}
+
+/** 실제로 뺄 병원 목록(칩 + 아직 안 누른 글자). */
+export function effectiveExcludes(value: MixValue): string[] {
+  const out = [...value.excludeBlogs]
+  for (const s of parseSeeds(value.excludeDraft)) if (!out.includes(s) && out.length < 20) out.push(s)
+  return out
 }
 
 /** 실제로 발굴에 쓸 씨앗(칩 + 아직 안 누른 글자). */
@@ -38,7 +52,8 @@ export function effectiveSeeds(value: MixValue): string[] {
 
 type Category = { key: string; label: string; default_ratio: number }
 
-export const EMPTY_MIX: MixValue = { seeds: [], draft: '', diseaseQuota: {}, categoryRatio: {} }
+export const EMPTY_MIX: MixValue = { seeds: [], draft: '', diseaseQuota: {}, categoryRatio: {},
+  requireHospitalBlog: false, excludeBlogs: [], excludeDraft: '' }
 
 export function KeywordMix({ subjects, target, value, onChange, disabled }: {
   /** 병원에 등록된 진료 질환·치료 항목 */
@@ -135,6 +150,67 @@ export function KeywordMix({ subjects, target, value, onChange, disabled }: {
               ))}
             </ul>
           )}
+        </div>
+
+        {/* ── 통검 결과로 거르기 ── */}
+        <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
+          <label className="flex cursor-pointer items-start gap-2 text-sm">
+            <Checkbox className="mt-0.5" checked={value.requireHospitalBlog} disabled={disabled}
+              onCheckedChange={v => onChange({ ...value, requireHospitalBlog: v === true })} />
+            <span>
+              <b className="font-medium">병원 블로그가 떠 있는 키워드만</b>
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                통합검색에 병원이 직접 쓴 블로그 글이 한 자리라도 있는 키워드만 남깁니다.
+                한 자리도 없으면 블로그로는 뚫을 자리가 아니라는 뜻입니다.
+              </span>
+            </span>
+          </label>
+
+          <div>
+            <Label htmlFor="mix-exclude">이 병원 글이 뜨면 빼기</Label>
+            <p className="mb-2 text-xs text-muted-foreground">
+              적은 병원의 <b>블로그 글</b>이 통합검색에 떠 있으면 그 키워드를 뺍니다.
+              파워컨텐츠·브랜드콘텐츠 같은 <b>광고 자리는 세지 않습니다</b> —
+              광고를 돌리는 병원이라고 키워드가 통째로 사라지지 않습니다.
+            </p>
+            <div className="flex gap-2">
+              <Input id="mix-exclude" value={value.excludeDraft} disabled={disabled}
+                placeholder="예: 소잠, 위례 (쉼표로 여러 개)"
+                onChange={e => onChange({ ...value, excludeDraft: e.target.value })}
+                onKeyDown={e => {
+                  if (e.key !== 'Enter') return
+                  e.preventDefault()
+                  const found = parseSeeds(value.excludeDraft)
+                  if (!found.length) return
+                  const next = [...value.excludeBlogs]
+                  for (const s of found) if (!next.includes(s) && next.length < 20) next.push(s)
+                  onChange({ ...value, excludeBlogs: next, excludeDraft: '' })
+                }} />
+              <Button type="button" variant="outline" disabled={disabled || !value.excludeDraft.trim()}
+                onClick={() => {
+                  const found = parseSeeds(value.excludeDraft)
+                  if (!found.length) return
+                  const next = [...value.excludeBlogs]
+                  for (const s of found) if (!next.includes(s) && next.length < 20) next.push(s)
+                  onChange({ ...value, excludeBlogs: next, excludeDraft: '' })
+                }}>추가</Button>
+            </div>
+            {value.excludeBlogs.length > 0 && (
+              <ul className="mt-2 flex flex-wrap gap-1.5">
+                {value.excludeBlogs.map(s => (
+                  <li key={s}>
+                    <button type="button" disabled={disabled}
+                      className="flex items-center gap-1 rounded-full border bg-muted/40 px-2.5 py-1 text-xs hover:bg-muted"
+                      onClick={() => onChange({
+                        ...value, excludeBlogs: value.excludeBlogs.filter(x => x !== s),
+                      })}>
+                      {s}<X className="h-3 w-3" aria-label={`${s} 빼기`} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
 
         {/* ── 질환별 개수 ── */}

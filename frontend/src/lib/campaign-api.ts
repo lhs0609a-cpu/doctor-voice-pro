@@ -469,6 +469,10 @@ export const campaignAPI = {
     disease_quota?: Record<string, number>
     /** 글 성격 비율 {"증상": 20, "치료": 25} */
     category_ratio?: Record<string, number>
+    /** 통합검색에 병원이 쓴 블로그 글이 떠 있는 키워드만 남긴다. */
+    require_hospital_blog?: boolean
+    /** 이 병원들의 블로그 글이 떠 있으면 제외. 광고(파워컨텐츠)는 세지 않는다. */
+    exclude_blogs?: string[]
   }): Promise<Task> =>
     (await api.post(`${C}/campaigns/${id}/keywords/hunt`, body)).data,
   keywordCategories: async (): Promise<{ categories: { key: string; label: string; default_ratio: number }[] }> =>

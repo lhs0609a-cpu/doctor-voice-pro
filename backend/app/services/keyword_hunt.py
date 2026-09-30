@@ -144,8 +144,43 @@ async def _naver_seeds(terms: Sequence[str], related_terms: Sequence[str] = ()) 
     return out
 
 
-async def _screen_serp(ctx: JobContext, rows: List[CampaignKeyword], base: int, total: int) -> Dict[str, int]:
-    """② 통검 자리 — 키워드당 SERP 1회. 본문 지표는 읽지 않아 글 8개 크롤을 건너뛴다."""
+def _owner_text(post: Dict[str, Any]) -> str:
+    """이 글을 누가 썼는가를 나타내는 글자(블로그 주소 + 블로그 이름). 제목은 보지 않는다.
+
+    제목까지 보면 체험단·일반인이 그 병원을 언급한 글까지 '그 병원 글'로 세어 버린다.
+    우리가 빼려는 것은 **그 병원이 직접 쓴 글**이다."""
+    return " ".join(str(post.get(k) or "") for k in ("blog_id", "blog_name")).lower()
+
+
+def blocked_owner(posts: Sequence[Dict[str, Any]], names: Sequence[str]) -> Optional[str]:
+    """제외 대상 병원이 블로그 글로 떠 있으면 그 이름. 없으면 None.
+
+    통검 분석의 posts 에는 광고(파워컨텐츠·브랜드콘텐츠)가 이미 빠져 있다. 그래서 광고를
+    돌리는 병원이라고 키워드가 통째로 사라지지 않는다(2026-09-30 고객 확인 사항:
+    "소잠한의원의 경우 파워컨텐츠 돌리고 있어서 … 꼭 블로그 글의 키워드가 있는 경우로")."""
+    wanted = [n.strip().lower() for n in (names or []) if str(n or "").strip()]
+    if not wanted:
+        return None
+    for post in posts or []:
+        owner = _owner_text(post)
+        for name in wanted:
+            if name in owner:
+                return name
+    return None
+
+
+def hospital_blog_count(posts: Sequence[Dict[str, Any]]) -> int:
+    """통검에 떠 있는 '병원이 쓴 블로그 글' 수(광고 제외)."""
+    return sum(1 for p in posts or [] if p.get("blog_type") == "hospital")
+
+
+async def _screen_serp(ctx: JobContext, rows: List[CampaignKeyword], base: int, total: int,
+                       *, require_hospital_blog: bool = False,
+                       exclude_blogs: Optional[Sequence[str]] = None) -> Dict[str, int]:
+    """② 통검 자리 — 키워드당 SERP 1회. 본문 지표는 읽지 않아 글 8개 크롤을 건너뛴다.
+
+    require_hospital_blog / exclude_blogs 에 걸린 키워드는 'avoid' 로 접어 둔다. 지우지 않는
+    이유는 사람이 왜 빠졌는지 볼 수 있어야 하기 때문이다 — 사유는 verdict_reason 에 적는다."""
     from app.services import serp_analyzer as sa
 
     sem = asyncio.Semaphore(SERP_CONCURRENCY)
@@ -169,10 +204,21 @@ async def _screen_serp(ctx: JobContext, rows: List[CampaignKeyword], base: int, 
                 row.verdict = "unknown"
                 row.verdict_reason = "통합검색을 읽지 못했습니다"
             else:
+                posts = res.get("posts") or []
+                hospitals = hospital_blog_count(posts)
+                blocked = blocked_owner(posts, exclude_blogs or [])
                 row.verdict = res.get("verdict") or "unknown"
                 row.verdict_reason = res.get("verdict_reason")
                 # depth=light: 본문 지표 없이 섹션·블로그 유형만 본 판정. 정밀 분석이 나중에 덮어쓴다.
-                row.serp_summary = {**(res.get("summary") or {}), "depth": "light"}
+                row.serp_summary = {**(res.get("summary") or {}), "depth": "light",
+                                    "hospital_blog_count": hospitals,
+                                    "blocked_by": blocked}
+                if blocked:
+                    row.verdict = "avoid"
+                    row.verdict_reason = f"'{blocked}' 블로그 글이 이미 통합검색에 떠 있습니다"
+                elif require_hospital_blog and hospitals == 0:
+                    row.verdict = "avoid"
+                    row.verdict_reason = "통합검색에 병원이 쓴 블로그 글이 한 자리도 없습니다"
             counts[row.verdict if row.verdict in counts else "unknown"] += 1
             done += 1
             if done % 5 == 0 or done == len(rows):
@@ -374,8 +420,11 @@ async def keyword_hunt(ctx: JobContext) -> dict:
         ).order_by(CampaignKeyword.total_volume.desc(), CampaignKeyword.created_at))).scalars().all()
         forbidden = [w for w in (client.forbidden_words or []) if w]
         rows = [r for r in rows if not any(w in r.keyword for w in forbidden)][:screen_limit]
-        counts = await _screen_serp(ctx, rows, base=1, total=total) if rows else \
-            {"possible": 0, "contested": 0, "avoid": 0, "unknown": 0}
+        counts = await _screen_serp(
+            ctx, rows, base=1, total=total,
+            require_hospital_blog=bool(p.get("require_hospital_blog")),
+            exclude_blogs=p.get("exclude_blogs") or [],
+        ) if rows else {"possible": 0, "contested": 0, "avoid": 0, "unknown": 0}
         await mark("screen", {"screened": len(rows), **counts})
     if await ctx.cancelled():
         return {**result, "cancelled": True}

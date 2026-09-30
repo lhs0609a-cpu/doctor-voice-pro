@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Pill } from '@/components/app-shell/ui-kit'
 import { campaignAPI, type Keyword, type Task } from '@/lib/campaign-api'
-import { KeywordMix, EMPTY_MIX, effectiveSeeds, type MixValue } from './keyword-mix'
+import { KeywordMix, EMPTY_MIX, effectiveSeeds, effectiveExcludes, type MixValue } from './keyword-mix'
 import { errMsg } from '@/components/campaign/common'
 import { cn } from '@/lib/utils'
 
@@ -101,6 +101,8 @@ export function KeywordStep({ campaignId, keywords, subjects = [], onChanged }: 
         ...(seeds.length ? { seeds } : {}),
         ...(Object.keys(mix.diseaseQuota).length ? { disease_quota: mix.diseaseQuota } : {}),
         ...(Object.keys(mix.categoryRatio).length ? { category_ratio: mix.categoryRatio } : {}),
+        ...(mix.requireHospitalBlog ? { require_hospital_blog: true } : {}),
+        ...(effectiveExcludes(mix).length ? { exclude_blogs: effectiveExcludes(mix) } : {}),
       }))
     }
     catch (e) { setError(errMsg(e)) }

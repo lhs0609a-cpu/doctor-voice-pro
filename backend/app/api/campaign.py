@@ -867,6 +867,13 @@ class HuntIn(BaseModel):
     category_ratio: Optional[Dict[str, int]] = None
     # 새로 찾을 때 이 캠페인의 지난 키워드를 비운다(기본). 이어 붙이려면 false.
     replace: bool = True
+    # 통합검색에 **병원이 쓴 블로그 글**이 떠 있는 키워드만 남긴다.
+    # 병원 블로그가 한 자리도 없는 키워드는 블로그로 뚫을 자리가 아니라는 뜻이다.
+    require_hospital_blog: bool = False
+    # 이 병원들의 블로그 글이 떠 있으면 그 키워드는 뺀다(예: ["소잠", "위례"]).
+    # **블로그 글만 본다** — 파워컨텐츠·브랜드콘텐츠 같은 광고 자리는 애초에 통검 분석에서
+    # 빠져 있으므로, 광고를 돌리는 병원이라고 키워드가 통째로 사라지지 않는다.
+    exclude_blogs: Optional[List[str]] = Field(None, max_length=20)
 
 
 @router.get("/keyword-categories")
