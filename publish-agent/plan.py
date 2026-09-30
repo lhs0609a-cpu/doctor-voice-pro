@@ -129,6 +129,7 @@ class Op:
     kind:
       text   글자 넣기. `attrs` 에 서식({'b','i','u','color','size'})이 있으면 그 서식으로.
       bold   강조어 한 번 굵게(Ctrl+B 켜고 끄기). 서식 없는 글에서만 쓴다.
+      quote  네이버 인용구 한 줄(소제목 자리). 넣고 나면 본문 문단으로 빠져나온다.
       enter  줄바꿈
       image  사진(data URL)
       para   뒤따르는 글의 문단 종류. `attrs` {'kind': 'text'|'heading'|'quote'|'list', 'level', 'ordered'}
@@ -259,7 +260,9 @@ def plan_blocks(blocks: Sequence[Dict[str, Any]], emphasize: Sequence[str], *, r
             for para in split_paragraphs(b["content"]):
                 gap("text")
                 if para["kind"] == "heading":
-                    ops.append(Op("bold", para["text"]))
+                    # 네이버 인용구로 세운다(2026-09-30 고객 확정: "소제목(인용구)").
+                    # 인용구는 그 자체가 한 덩어리라 앞뒤 빈 줄을 따로 넣지 않는다.
+                    ops.append(Op("quote", para["text"]))
                 else:
                     ops.extend(plan_text(para["text"], emphasize))
                 prev = "text"

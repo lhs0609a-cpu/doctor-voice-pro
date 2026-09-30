@@ -334,27 +334,38 @@ class BlogCrawler:
         elif soup.title:
             title = soup.title.get_text(strip=True)
 
-        # 본문 추출 (article, main, content 우선)
+        # 본문 추출 — 후보를 모두 재어 보고 **가장 긴 것**을 쓴다.
+        #
+        # 예전에는 선택자를 순서대로 보다가 100자를 넘으면 멈췄다. 그런데 사이트마다
+        # <article> 이 요약만 담거나 .content 가 사이드바를 가리키는 일이 흔하다. 그러면
+        # 짧은 조각이 잡히고, 루프가 끝난 뒤에도 content 가 비어 있지 않아 body 폴백조차
+        # 타지 않는다 — 본문이 잘린 채로 그대로 나간다(2026-09-30 신고: "원본 의료정보
+        # 링크 넣고 가져오는 부분에 글이 잘려서 결과본이 이상하게 나오네요").
         content = ""
+        content_elem = None
         content_selectors = [
             "article", "main", ".content", ".post-content",
-            ".article-content", ".entry-content", "#content"
+            ".article-content", ".entry-content", "#content",
         ]
         for selector in content_selectors:
-            content_elem = soup.select_one(selector)
-            if content_elem:
-                content = self._extract_text_with_newlines(content_elem)
-                if len(content) > 100:  # 충분한 내용이 있으면 사용
-                    break
+            candidate = soup.select_one(selector)
+            if not candidate:
+                continue
+            text = self._extract_text_with_newlines(candidate)
+            if len(text) > len(content):
+                content, content_elem = text, candidate
 
-        if not content:
-            # body 전체에서 추출 시도
+        # 후보가 없거나 너무 짧으면 body 전체에서 다시 뽑는다. 짧은 조각을 붙들고 있느니
+        # 군더더기가 섞이더라도 본문이 온전한 편이 낫다.
+        if len(content) < 300:
             body = soup.find("body")
             if body:
                 # 불필요한 요소 제거
                 for tag in body.select("script, style, nav, header, footer, aside"):
                     tag.decompose()
-                content = self._extract_text_with_newlines(body)
+                whole = self._extract_text_with_newlines(body)
+                if len(whole) > len(content):
+                    content, content_elem = whole, body
 
         if not content or len(content) < 50:
             return {

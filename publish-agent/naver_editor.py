@@ -798,6 +798,8 @@ class NaverEditor:
                 await self._insert(op.payload)
             elif op.kind == "bold":
                 await self._bold(op.payload)
+            elif op.kind == "quote":
+                await self.insert_quote(op.payload)
             elif op.kind == "enter":
                 await self._enter()
             elif op.kind == "image":
@@ -810,6 +812,37 @@ class NaverEditor:
             raise EditorError(f"이미지 {n_img}장 중 {inserted}장만 삽입됨")
         log.info("본문 입력 완료 (이미지 %d장)", inserted)
         return inserted
+
+    async def insert_quote(self, text: str) -> None:
+        """네이버 인용구로 한 줄 넣는다. 소제목 자리에 쓴다.
+
+        2026-09-30 고객 요청: '" " 들어가는 내용은 소제목(인용구)로 나오게'.
+        처음에는 굵은 글씨로 했는데, 원하신 것은 네이버의 인용구 컴포넌트였다.
+        서식 있는 원고(rich_editor)가 쓰던 길을 평문 원고에서도 쓴다.
+
+        인용구를 넣고 나면 **반드시 본문 문단으로 빠져나온다** — 안 그러면 뒤따르는 글이
+        전부 인용구 안에 들어간다."""
+        from rich_editor import exit_component
+
+        frame = await self.frame()
+        button = frame.locator('button[data-name="quotation"]').first
+        if not await button.count():
+            # 인용구 버튼을 못 찾으면 굵은 글씨로 대신한다 — 소제목이 아예 사라지는 것보다 낫다.
+            log.warning("인용구 버튼을 찾지 못해 굵은 글씨로 넣습니다: %s", text[:30])
+            await self._bold(text)
+            return
+        await button.click()
+        await asyncio.sleep(0.3)
+        box = frame.locator('.se-component.se-quotation').last.locator('.se-quote .se-text-paragraph').first
+        if await box.count():
+            await box.click()
+            await asyncio.sleep(0.2)
+        await self._insert(text)
+        await asyncio.sleep(0.3)
+        if not await frame.locator('.se-component.se-quotation').filter(has_text=text).count():
+            raise EditorError("인용구에 소제목이 들어갔는지 확인하지 못했습니다")
+        await exit_component(self)
+        log.info("인용구(소제목): %s", text[:40])
 
     async def _refocus_body_end(self) -> None:
         """이미지 삽입 후 캐럿을 본문 끝으로 되돌린다(다음 문단이 이미지 뒤에 오도록)."""

@@ -161,11 +161,13 @@ class TestTypingPlan(unittest.TestCase):
         """따옴표가 없어도 서버가 소제목으로 보는 모양(짧은 한 줄)은 소제목이다."""
         self.assertEqual(split_paragraphs("이 질문에 바로 답하면 손해입니다")[0]["kind"], "heading")
 
-    def test_a_subheading_is_typed_bold_without_its_quotes(self):
+    def test_a_subheading_becomes_a_naver_quote_without_its_quotes(self):
+        """2026-09-30 고객 확정: 따옴표 줄은 **인용구**로 세운다(처음엔 굵은 글씨로 했다)."""
         ops = merge_text_ops(plan_blocks(
             [{"type": "text", "content": '"무엇을 보고 판단하는가"\n\n기계는 도구입니다.'}], []))
-        self.assertEqual(ops[0], Op("bold", "무엇을 보고 판단하는가"))
+        self.assertEqual(ops[0], Op("quote", "무엇을 보고 판단하는가"))
         self.assertEqual(ops[1:3], [Op("enter"), Op("enter")])
+        self.assertEqual(ops[3], Op("text", "기계는 도구입니다."))
 
     def test_numbers_with_units_are_emphasised(self):
         """'숫자나, 중요한 부분 강조 표시'(2026-09-29 고객 요청). 조사가 붙어도 숫자만 칠한다."""
@@ -896,6 +898,32 @@ class TestSelectBlogs(unittest.TestCase):
         self.assertEqual([b["blog_ref_id"] for b in agent.select_blogs(s, "서브")], ["b2"])
         self.assertEqual([b["blog_ref_id"] for b in agent.select_blogs(s, "CCC")], ["b3"])
         self.assertEqual(agent.select_blogs(s, "없음"), [])
+
+    def test_the_first_cycle_visits_every_blog_so_chrome_opens(self):
+        """켜자마자 크롬 창이 열려야 로그인을 할 수 있다(2026-09-30 신고).
+
+        네이버 로그인은 실행기가 연 크롬 창에서만 할 수 있는데, 예전에는 대기 글이 있어야만
+        그 창이 열렸다. 그래서 첫 예약은 반드시 실패하고, 그 실패로 열린 창에 로그인해야
+        두 번째부터 됐다 — "무조건 처음 1회 실패 발생합니다"."""
+        import agent
+
+        s = [
+            {"blog_ref_id": "b1", "naver_blog_id": "aaa", "label": "메인", "status": "active", "pending": 0},
+            {"blog_ref_id": "b2", "naver_blog_id": "bbb", "label": "서브", "status": "login_required", "pending": 0},
+            {"blog_ref_id": "b3", "naver_blog_id": "ccc", "label": "셋", "status": "disabled", "pending": 0},
+        ]
+        # 평소에는 막힌 블로그(로그인 필요)만 들른다 — 멀쩡한 블로그는 올릴 것이 없으면 열지 않는다.
+        self.assertEqual([b["blog_ref_id"] for b in agent.select_blogs(s, None)], ["b2"])
+        first = [b["blog_ref_id"] for b in agent.select_blogs(s, None, first_run=True)]
+        self.assertEqual(first, ["b1", "b2"], "첫 바퀴는 멀쩡한 블로그도 들러 크롬을 열어 둔다")
+        self.assertNotIn("b3", first, "사용 안 함 블로그까지 열지는 않는다")
+
+    def test_the_first_cycle_still_honours_a_named_blog(self):
+        import agent
+
+        s = [{"blog_ref_id": "b1", "naver_blog_id": "aaa", "label": "메인", "status": "active", "pending": 0},
+             {"blog_ref_id": "b2", "naver_blog_id": "bbb", "label": "서브", "status": "active", "pending": 0}]
+        self.assertEqual([b["blog_ref_id"] for b in agent.select_blogs(s, "서브", first_run=True)], ["b2"])
 
 
 if __name__ == "__main__":

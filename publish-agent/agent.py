@@ -96,12 +96,23 @@ def setup_logging(log_dir: Path, verbose: bool) -> None:
 
 
 # ---------------------------------------------------------------- 블로그 선택
-def select_blogs(summary: List[Dict[str, Any]], want: Optional[str]) -> List[Dict[str, Any]]:
-    """--blog 가 있으면 라벨/네이버ID/blog_ref_id 일치 1개, 없으면 pending>0 이고 재시도 가능한 상태인 것 전부."""
+def select_blogs(summary: List[Dict[str, Any]], want: Optional[str], *,
+                 first_run: bool = False) -> List[Dict[str, Any]]:
+    """--blog 가 있으면 라벨/네이버ID/blog_ref_id 일치 1개, 없으면 pending>0 이고 재시도 가능한 상태인 것 전부.
+
+    first_run 은 실행기를 켠 직후의 첫 바퀴다. 이때는 **대기 글이 없어도** 블로그를 한 번씩
+    들른다 — 크롬 창을 열어 로그인 상태를 확인해 두기 위해서다.
+
+    예전에는 대기 글이 있어야만 크롬이 열렸다. 그런데 네이버 로그인은 **그 크롬 창에서만**
+    할 수 있어서, 창이 없으면 로그인할 방법이 없다. 그래서 첫 예약은 반드시 실패하고,
+    그 실패 덕에 열린 창에 로그인해야 두 번째부터 되는 구조였다(2026-09-30 신고:
+    "무조건 처음 1회 실패 발생합니다"). 켜자마자 열어 두면 그 한 번의 실패가 사라진다."""
     if want:
         w = want.strip().lower()
         hit = [b for b in summary if w in {str(b.get("label", "")).lower(), str(b.get("naver_blog_id", "")).lower(), str(b.get("blog_ref_id", "")).lower()}]
         return hit[:1]
+    if first_run:
+        return [b for b in summary if (b.get("status") or "active") in RETRYABLE_BLOG_STATUS]
     # 대기 글이 있거나, 상태가 막혀 있는 블로그(로그인·보안확인)는 한 번 들여다본다.
     # 막힌 블로그를 대기 글이 있을 때만 보면, 예약이 없는 동안에는 로그인해도 영영 안 풀린다.
     # 예약 목록을 봐 달라고 청한 블로그도 본다 — 사람이 네이버에서 지운 예약은 그렇게만 알 수 있다.
@@ -805,11 +816,15 @@ async def process_cafe(client: ServerClient, pool: BrowserPool, args: argparse.N
 
 
 # ---------------------------------------------------------------- 메인 루프
-async def run_once(client: ServerClient, pool: BrowserPool, args: argparse.Namespace) -> int:
+async def run_once(client: ServerClient, pool: BrowserPool, args: argparse.Namespace,
+                   *, first_run: bool = False) -> int:
     from journal import flush
     await flush(args.journal, client)
     summary = await asyncio.to_thread(client.summary)
-    blogs = select_blogs(summary, args.blog)
+    blogs = select_blogs(summary, args.blog, first_run=first_run)
+    if first_run and blogs:
+        log.info("켜자마자 크롬 창을 엽니다 — 네이버 로그인이 필요하면 그 창에서 해 주세요 (블로그 %d개)",
+                 len(blogs))
     if args.blog and not blogs:
         log.error("--blog '%s' 에 해당하는 블로그가 없습니다. 등록된 블로그: %s", args.blog, ", ".join(f"{b.get('label')}({b.get('naver_blog_id')})" for b in summary) or "없음")
         return 0
@@ -862,10 +877,12 @@ async def main_async(args: argparse.Namespace) -> int:
     async with async_playwright() as pw:
         pool = BrowserPool(pw, profiles_dir, headless=args.headless, window_pos=args.window_pos)
         try:
+            first_run = True
             while not stopping(args):
                 started = time.monotonic()
                 try:
-                    await run_once(client, pool, args)
+                    await run_once(client, pool, args, first_run=first_run)
+                    first_run = False
                 except ServerError as e:
                     # 인증이 끊기면(토큰 만료·다른 PC에서 재연결) 이 루프는 아무것도 할 수 없다.
                     # 그런데도 계속 돌면 화면에는 '자동 발행 실행 중' 초록불이 켜진 채

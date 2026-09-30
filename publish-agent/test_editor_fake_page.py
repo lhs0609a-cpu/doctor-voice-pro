@@ -549,3 +549,50 @@ class TestAgentEndToEnd(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+@unittest.skipUnless(_browser_available(), "Playwright Chromium 이 설치되지 않았습니다 (playwright install chromium)")
+class TestQuoteSubheading(unittest.TestCase):
+    """따옴표 줄은 네이버 인용구로 세운다(2026-09-30 고객 확정).
+
+    인용구를 넣고 **본문으로 빠져나오지 않으면** 뒤따르는 글이 전부 인용구 안에 들어간다.
+    그것이 이 시험이 지키는 것이다.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        handler = functools.partial(_Quiet, directory=str(HERE / "fake_editor"))
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.base = f"http://127.0.0.1:{cls.server.server_address[1]}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+
+    def test_a_quoted_line_lands_in_a_quote_and_the_rest_does_not(self):
+        from playwright.async_api import async_playwright
+
+        async def go():
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                try:
+                    ed = NaverEditor(page, write_url=f"{self.base}/write.html")
+                    await ed.open_write_page()
+                    await ed.dismiss_draft_popup()
+                    await ed.insert_body_blocks(
+                        [{"type": "text", "content": '"무엇을 보고 판단하는가"\n\n기계는 도구입니다.'}], [])
+                    frame = await ed.frame()
+                    return await frame.evaluate("""() => ({
+                      quote: [...document.querySelectorAll('.se-quotation')].map(e => e.innerText.trim()),
+                      body: [...document.querySelectorAll('.se-component.se-text .se-text-paragraph')]
+                              .map(e => e.innerText.trim()).filter(Boolean),
+                    })""")
+                finally:
+                    await browser.close()
+
+        got = asyncio.run(go())
+        self.assertEqual(got["quote"], ["무엇을 보고 판단하는가"], got)
+        self.assertIn("기계는 도구입니다.", " ".join(got["body"]),
+                      "인용구를 빠져나오지 못하면 본문이 인용구 안에 갇힌다")

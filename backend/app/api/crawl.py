@@ -195,6 +195,30 @@ class OneClickResponse(BaseModel):
     error: Optional[str] = None
 
 
+# 원본을 프롬프트에 실을 때의 상한. 예전에는 3000자에서 잘랐는데, 의료정보 글은 그보다
+# 긴 것이 보통이라 모델이 앞부분만 보고 썼다 — 뒤 내용이 통째로 빠진 결과가 나온다
+# (2026-09-30 신고). Gemini 2.5 Flash 는 이 정도를 넉넉히 받는다.
+MAX_SOURCE_CHARS = 20000
+
+
+def _for_prompt(text: str) -> str:
+    """원본 글을 프롬프트용으로 다듬는다. 잘라야 한다면 **문단 경계에서** 자른다."""
+    text = (text or "").strip()
+    if len(text) <= MAX_SOURCE_CHARS:
+        return text
+    cut = text.rfind("\n\n", 0, MAX_SOURCE_CHARS)
+    if cut < MAX_SOURCE_CHARS // 2:            # 문단 경계가 너무 앞이면 문장 경계로
+        cut = text.rfind(". ", 0, MAX_SOURCE_CHARS)
+    if cut < MAX_SOURCE_CHARS // 2:
+        cut = MAX_SOURCE_CHARS
+    return text[:cut].rstrip() + "\n\n(원본이 길어 여기까지만 싣습니다)"
+
+
+def _output_tokens(target_length: int) -> int:
+    """목표 글자수를 받아 낼 만한 출력 토큰. 한국어는 글자당 대략 1.5 토큰이다."""
+    return max(4000, min(16000, int((target_length or 1800) * 2.5) + 1000))
+
+
 @router.post("/one-click", response_model=OneClickResponse)
 async def one_click_automation(
     request: OneClickRequest,
@@ -265,11 +289,15 @@ async def one_click_automation(
         original_title = crawl_result.get("title", "")
         images = crawl_result.get("images", [])
 
-        if len(original_content) < 50:
+        # 200자도 안 되는 것은 본문이 아니라 안내문·요약이다. 그걸로 글을 쓰면 결과가
+        # 이상해지는데 사용자는 왜인지 모른다 — 여기서 분명히 말하고 멈춘다.
+        if len(original_content) < 200:
             return OneClickResponse(
                 success=False,
-                message="크롤링된 콘텐츠가 너무 짧습니다",
-                error="본문이 50자 미만입니다. URL을 확인해주세요."
+                message="원본에서 본문을 제대로 가져오지 못했습니다",
+                error=(f"가져온 글이 {len(original_content)}자뿐입니다. 이 주소는 본문이 "
+                       "스크립트로 그려지거나 로그인이 필요한 페이지일 수 있습니다. "
+                       "→ 다른 주소를 쓰거나, 원문을 복사해 직접 붙여 넣어 주세요.")
             )
 
         # 3. AI 리라이트
@@ -278,7 +306,7 @@ async def one_click_automation(
         rewrite_prompt = f"""다음 블로그 글을 리라이트해주세요.
 
 **원본 글:**
-{original_content[:3000]}
+{_for_prompt(original_content)}
 
 **리라이트 요구사항:**
 - 설득 프레임워크: {request.framework}
@@ -300,7 +328,9 @@ async def one_click_automation(
 
         rewritten = await ai_service.generate_text(
             prompt=rewrite_prompt,
-            max_tokens=4000,
+            # 목표 글자수에 맞춰 넉넉히. 한국어는 글자당 토큰이 1을 넘어서, 1800자를
+            # 4000 토큰으로 받으면 끝이 잘린 채로 나온다.
+            max_tokens=_output_tokens(request.target_length),
             temperature=0.7,
             system_prompt=system_prompt,
             provider=request.ai_provider,

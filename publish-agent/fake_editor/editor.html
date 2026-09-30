@@ -40,6 +40,9 @@
 <div class="se-toolbar se-document-toolbar">
   <button data-name="image" data-group="documentToolbar" data-log="dot.img" id="imgbtn">사진</button>
   <input type="file" id="imgfile" accept="image/*" multiple style="display:none">
+  <!-- 인용구: 누르면 새 인용구 컴포넌트가 생기고 거기에 글을 쓴다(실제 네이버와 같은 구조).
+       빠져나올 때 쓰는 '본문으로' 버튼도 실제처럼 둔다. -->
+  <button data-name="quotation" data-value="default" id="quotebtn">인용구</button>
 </div>
 
 <div class="se-content"><div class="se-components-wrap">
@@ -121,9 +124,36 @@
     });
   }
 
+  // 인용구 — 누르면 컴포넌트를 만들고 그 안의 문단에 커서를 둔다.
+  (function quotation() {
+    const btn = document.getElementById('quotebtn');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      const wrap = document.querySelector('.se-components-wrap');
+      const box = document.createElement('div');
+      box.className = 'se-component se-quotation';
+      box.innerHTML = '<div class="se-quote"><p class="se-text-paragraph" contenteditable="true"></p></div>';
+      wrap.appendChild(box);
+      const bottom = document.createElement('button');
+      bottom.className = 'se-canvas-bottom-button';
+      bottom.textContent = '본문으로';
+      bottom.onclick = () => {
+        const para = document.createElement('div');
+        para.className = 'se-component se-text';
+        para.innerHTML = '<div class="se-section-text"><p class="se-text-paragraph" contenteditable="true"></p></div>';
+        wrap.appendChild(para);
+        bottom.remove();
+        para.querySelector('p').focus();
+      };
+      document.body.appendChild(bottom);
+      box.querySelector('p').focus();
+    });
+  })();
+
   // 이미지: 실제 SE ONE 처럼 컴포넌트가 붙고 그 뒤에 빈 문단이 생긴다(업로드 지연 흉내 300ms)
   function addImage(name) {
-    const wrap = document.querySelector('.se-components-wrap');
+
+  const wrap = document.querySelector('.se-components-wrap');
     const c = document.createElement('div');
     c.className = 'se-component se-image';
     // 진짜 SE ONE 처럼 먼저 '전송중' 자리만 잡고, 바이트가 다 올라간 뒤에 그림이 들어온다.
