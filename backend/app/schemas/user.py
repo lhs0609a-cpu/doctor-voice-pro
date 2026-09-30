@@ -50,6 +50,8 @@ class UserResponse(BaseModel):
     is_active: bool
     is_approved: bool
     is_admin: bool
+    # 글 무제한 권한. 관리자가 부여해 놓고도 화면에서 확인할 길이 없었다(2026-09-30).
+    has_unlimited_posts: bool = False
     subscription_start_date: Optional[datetime]
     subscription_end_date: Optional[datetime]
     created_at: datetime
