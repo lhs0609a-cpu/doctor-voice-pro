@@ -88,6 +88,10 @@ class Blog(Base):
     # 화면에서 [카테고리 새로 읽기]를 눌렀을 때. 실행기가 다음 차례에 읽어 오고 비운다.
     categories_scan_requested_at = Column(DateTime, nullable=True)
     open_type = Column(String(20), default="public")
+    # schedule(기본) = 네이버에 예약 발행 | draft = 임시저장만 하고 발행은 병원이 직접 한다.
+    # 2026-09-30 키네스 요청: "원고 키네스 측에서 검토 후 발행을 원하셔서요".
+    # 블로그마다 두는 이유 — 지점이 여럿일 때 지점별로 다르게 갈 수 있어야 한다.
+    publish_mode = Column(String(20), default="schedule")
     # active | paused | captcha | login_required | disabled
     status = Column(String(30), default="active")
     status_reason = Column(Text, nullable=True)
@@ -399,4 +403,6 @@ class AgentPairRequest(Base):
 
 
 JOB_TERMINAL = {"published", "cancelled", "dry_run"}
-JOB_ACTIVE = {"queued", "assigned", "publishing", "submitted", "failed", "uncertain"}
+# drafted = 네이버에 임시저장됨. 발행은 병원이 직접 하므로 공개 확인(RSS)을 태우지 않는다.
+# submitted 와 섞으면 12시간 뒤 전부 '확인 필요'로 떨어진다 — 임시저장 글은 RSS 에 안 나온다.
+JOB_ACTIVE = {"queued", "assigned", "publishing", "submitted", "drafted", "failed", "uncertain"}

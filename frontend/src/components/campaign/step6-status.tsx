@@ -13,7 +13,8 @@ import { Pill, StepFooter, TABLE_CLS, errMsg, fmt, fmtDateTime, type StepProps, 
 import { PublishRunner } from './publish-runner'
 
 const JOB_TONE: Record<string, Tone> = {
-  queued: 'muted', assigned: 'info', publishing: 'info', submitted: 'info', published: 'ok', failed: 'crit', uncertain: 'warn', cancelled: 'muted', dry_run: 'muted',
+  queued: 'muted', assigned: 'info', publishing: 'info', submitted: 'info', drafted: 'ok',
+  published: 'ok', failed: 'crit', uncertain: 'warn', cancelled: 'muted', dry_run: 'muted',
 }
 const ACTIVE = new Set(['queued', 'assigned', 'publishing'])
 
@@ -42,11 +43,12 @@ export function Step6Status({ campaign, setCampaign, goStep }: StepProps) {
   }, [anyActive, load])
 
   const counts = useMemo(() => {
-    const c = { queued: 0, submitted: 0, published: 0, failed: 0, uncertain: 0 }
+    const c = { queued: 0, submitted: 0, published: 0, failed: 0, uncertain: 0, drafted: 0 }
     for (const j of jobs) {
       if (ACTIVE.has(j.status)) c.queued += 1
       else if (j.status === 'published') c.published += 1
       else if (j.status === 'submitted') c.submitted += 1
+      else if (j.status === 'drafted') c.drafted += 1
       else if (j.status === 'failed') c.failed += 1
       else if (j.status === 'uncertain') c.uncertain += 1
     }
@@ -103,6 +105,7 @@ export function Step6Status({ campaign, setCampaign, goStep }: StepProps) {
       <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
         <StatTile label="대기" value={fmt(counts.queued)} />
         <StatTile label="네이버 예약 등록" value={fmt(counts.submitted)} />
+        {counts.drafted > 0 && <StatTile label="임시저장됨" value={fmt(counts.drafted)} tone="ok" />}
         <StatTile label="공개 확인" value={fmt(counts.published)} tone="ok" />
         <StatTile label="실패" value={fmt(counts.failed)} tone={counts.failed > 0 ? 'danger' : undefined} />
         <StatTile label="확인 필요" value={fmt(counts.uncertain)} tone={counts.uncertain > 0 ? 'warn' : undefined} />

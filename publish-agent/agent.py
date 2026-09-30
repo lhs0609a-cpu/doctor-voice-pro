@@ -66,6 +66,8 @@ class JobResult:
     need_login: bool = False
     captcha: bool = False
     receipt_id: Optional[str] = None
+    # 임시저장까지만 했다(발행은 병원이 직접). 서버가 공개 확인을 태우지 않도록 구분해 알린다.
+    drafted: bool = False
 
     def as_report(self) -> Dict[str, Any]:
         return asdict(self)
@@ -160,11 +162,17 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
             if dry_run:
                 log.info("[dry-run] '%s' — 임시저장 클릭 생략", title[:40])
                 return JobResult(ok=False, uncertain=False, message="dry-run")
+            # 저장 버튼을 누르기 직전에 finalizing 을 보낸다. 이게 없으면 서버가
+            # "증거 없는 성공 보고"로 보고 uncertain 에 둬서 그 블로그의 다음 글이 전부 멈춘다.
+            if before_publish:
+                await before_publish()
             clicked_publish = True
             out = await editor.save_draft()
             if out is None or not out.ok:
                 return JobResult(ok=False, uncertain=True, message=(out.message if out else "임시저장 결과 없음"))
-            return JobResult(ok=True, message=out.message)
+            # drafted: 네이버에 임시저장까지만 했다. 발행은 병원이 직접 한다 —
+            # 서버가 공개 확인(RSS)을 태우지 않도록 예약 성공과 구분해서 알린다.
+            return JobResult(ok=True, drafted=True, message=out.message)
 
         # 5) 발행 레이어: 공개/검색/카테고리/태그
         await editor.open_publish_layer()

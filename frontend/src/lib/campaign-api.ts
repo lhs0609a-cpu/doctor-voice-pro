@@ -53,6 +53,8 @@ export interface BlogAccount extends BlogFooter {
   min_gap_minutes: number
   default_category?: string | null
   open_type: string
+  /** schedule = 네이버 예약 발행 | draft = 임시저장만(발행은 병원이 직접) */
+  publish_mode?: string
   status: 'active' | 'paused' | 'captcha' | 'login_required' | 'disabled' | string
   status_reason?: string | null
   last_published_at?: string | null
@@ -80,6 +82,8 @@ export interface BlogInput {
   min_gap_minutes: number
   default_category?: string | null
   open_type: string
+  /** schedule = 네이버 예약 발행 | draft = 임시저장만(발행은 병원이 직접) */
+  publish_mode?: string
   footer_link_url?: string | null
   footer_link_label?: string | null
   place_url?: string | null
@@ -638,7 +642,10 @@ export const VERDICT_LABEL: Record<string, { label: string; tone: 'ok' | 'warn' 
 }
 
 export const JOB_STATUS_LABEL: Record<string, string> = {
-  queued: '대기', assigned: '작성 중', publishing: '등록 처리 중', submitted: '네이버 예약 등록', published: '공개 확인', failed: '실패', uncertain: '결과 대조 필요', cancelled: '취소', dry_run: '시험 완료',
+  queued: '대기', assigned: '작성 중', publishing: '등록 처리 중', submitted: '네이버 예약 등록',
+  // 임시저장은 여기서 끝이다 — 발행은 병원이 직접 한다. 공개 확인을 기다리지 않는다.
+  drafted: '임시저장됨',
+  published: '공개 확인', failed: '실패', uncertain: '결과 대조 필요', cancelled: '취소', dry_run: '시험 완료',
 }
 
 export const BLOG_STATUS_LABEL: Record<string, string> = {

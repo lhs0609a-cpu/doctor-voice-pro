@@ -158,3 +158,36 @@ class ProtocolTests(DatabaseCase):
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
+
+class DraftOnlyTests(DatabaseCase):
+    """임시저장만 하는 블로그(2026-09-30 키네스 요청).
+
+    "원고 키네스 측에서 검토 후 발행을 원하셔서요! 임시저장만 되도록 하는 기능"
+
+    임시저장 성공을 submitted 로 두면 안 된다. submitted 는 '네이버에 예약 등록됨'이라
+    공개 확인(RSS)이 뒤따르는데, 임시저장 글은 영영 공개되지 않아 12시간 뒤 전부
+    '확인 필요'로 떨어진다.
+    """
+
+    async def test_a_saved_draft_is_its_own_state(self):
+        token = await self.claim()
+        async with self.sessions() as db:
+            await p.checkpoint(db, 'j0', 'u', token, 'finalizing')
+            ack = await p.result(db, 'j0', 'u', token, {'ok': True, 'drafted': True})
+        self.assertEqual(ack['status'], 'drafted')
+
+    async def test_a_saved_draft_does_not_hold_the_blog(self):
+        """임시저장 한 건이 그 블로그의 다음 글을 막으면 100건이 첫 건에서 멈춘다."""
+        token = await self.claim()
+        async with self.sessions() as db:
+            await p.checkpoint(db, 'j0', 'u', token, 'finalizing')
+            await p.result(db, 'j0', 'u', token, {'ok': True, 'drafted': True})
+        self.assertIsNotNone(await self.claim('j1'), '다음 글을 가져갈 수 있어야 한다')
+
+    async def test_a_draft_without_evidence_is_still_uncertain(self):
+        """저장 버튼을 눌렀다는 증거(finalizing) 없이 온 성공 보고는 믿지 않는다."""
+        token = await self.claim()
+        async with self.sessions() as db:
+            ack = await p.result(db, 'j0', 'u', token, {'ok': True, 'drafted': True})
+        self.assertEqual(ack['status'], 'uncertain')

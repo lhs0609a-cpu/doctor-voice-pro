@@ -111,6 +111,10 @@ async def result(db, job_id, user_id, token, body, now=None):
         status = "queued"
     elif uncertain:
         status = "uncertain"
+    elif body.get("ok") and body.get("drafted"):
+        # 임시저장만 하는 블로그. 발행은 병원이 직접 하므로 여기서 끝이다 —
+        # 공개 확인(RSS)을 태우면 영영 못 찾고 12시간 뒤 '확인 필요'로 떨어진다.
+        status = "drafted" if finalizing else "uncertain"
     elif body.get("ok"):
         # 실행기가 최종 발행 단계(finalizing)를 거쳐 성공 신호(발행 창 닫힘·페이지 이동)를 봤다 → 네이버 예약됨.
         # 글 번호가 있으면 그 주소로, 없으면 예약 시각 뒤 RSS 로 공개를 확인한다(publication_verifier).

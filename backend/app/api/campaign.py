@@ -166,6 +166,8 @@ class BlogOut(BaseModel):
     min_gap_minutes: int = 120
     default_category: Optional[str] = None
     open_type: str = "public"
+    # schedule = 네이버에 예약 발행 | draft = 임시저장만 하고 발행은 병원이 직접 한다.
+    publish_mode: str = "schedule"
     status: str = "active"
     status_reason: Optional[str] = None
     last_published_at: Optional[datetime] = None
@@ -235,7 +237,8 @@ def _blog_out(b: Blog) -> BlogOut:
         has_password=bool(b.login_pw_enc), daily_limit=b.daily_limit or 3,
         window_start=b.window_start or "09:00", window_end=b.window_end or "21:00",
         min_gap_minutes=b.min_gap_minutes or 120, default_category=b.default_category,
-        open_type=b.open_type or "public", status=b.status or "active", status_reason=b.status_reason,
+        open_type=b.open_type or "public", publish_mode=b.publish_mode or "schedule",
+        status=b.status or "active", status_reason=b.status_reason,
         last_published_at=b.last_published_at, proxy_label=_proxy_label(b.proxy_enc),
         footer_link_url=b.footer_link_url, footer_link_label=b.footer_link_label,
         place_url=b.place_url, place_label=b.place_label,
@@ -356,6 +359,9 @@ class BlogIn(BaseModel):
     min_gap_minutes: int = 120
     default_category: Optional[str] = None
     open_type: str = "public"
+    # schedule = 네이버에 예약 발행 | draft = 임시저장만 하고 발행은 병원이 직접 한다.
+    # 2026-09-30 키네스 요청: "원고 키네스 측에서 검토 후 발행을 원하셔서요".
+    publish_mode: str = "schedule"
     # 이 아이디로 올리는 글 끝에 늘 붙일 것들. 한 번 저장해 두면 매번 안 넣어도 된다.
     footer_link_url: Optional[str] = None
     footer_link_label: Optional[str] = None
@@ -445,6 +451,7 @@ async def add_blog(client_id: str, body: BlogIn, current_user: User = Depends(ge
         login_id=body.login_id, login_pw_enc=crypto.encrypt(body.login_pw), daily_limit=body.daily_limit,
         window_start=body.window_start, window_end=body.window_end, min_gap_minutes=body.min_gap_minutes,
         default_category=body.default_category, open_type=body.open_type,
+        publish_mode=body.publish_mode if body.publish_mode in ("schedule", "draft") else "schedule",
         proxy_enc=crypto.encrypt(_clean_proxy(body.proxy_url)),
         footer_link_url=_clean_footer_url(body.footer_link_url),
         footer_link_label=(body.footer_link_label or "").strip()[:100] or None,
@@ -470,6 +477,7 @@ async def update_blog(blog_ref_id: str, body: BlogIn, current_user: User = Depen
     b.daily_limit, b.window_start, b.window_end = body.daily_limit, body.window_start, body.window_end
     was_category = b.default_category
     b.min_gap_minutes, b.default_category, b.open_type = body.min_gap_minutes, body.default_category, body.open_type
+    b.publish_mode = body.publish_mode if body.publish_mode in ("schedule", "draft") else "schedule"
     if b.default_category != was_category:
         # 이미 걸어 둔 예약은 그때의 카테고리를 안고 있다. 바꾼 뜻은 '앞으로 올릴 글 전부'이므로
         # 아직 실행기가 손대지 않은 건(queued/failed)까지 같이 바꾼다 — 진행 중인 건은 건드리지 않는다.
@@ -1812,8 +1820,13 @@ async def schedule_commit(campaign_id: str, body: ScheduleIn, current_user: User
                     user_id=_uid(current_user), campaign_id=c.id, draft_id=d.id, blog_ref_id=ref, naver_blog_id=b.blog_id,
                     scheduled_at=at, status="queued", open_type=b.open_type or "public", category=b.default_category,
                 ))
-                # 예약 자리 기록(다른 경로의 간격 예약과 공유)
-                db.add(ScheduleMark(user_id=_uid(current_user), blog_id=b.blog_id, scheduled_at=at, title=d.title[:200], source="campaign"))
+                # 예약 자리 기록(다른 경로의 간격 예약과 공유).
+                # 임시저장만 하는 블로그는 네이버에 예약을 만들지 않으므로 자리도 잡지 않는다.
+                # 잡아 두면 있지도 않은 예약이 유령 자리로 남아, 나중에 그 블로그에 진짜 예약을
+                # 걸 때 계속 뒤로 밀린다(2026-09-23 에 겪은 그 문제와 같은 모양이다).
+                if (b.publish_mode or "schedule") != "draft":
+                    db.add(ScheduleMark(user_id=_uid(current_user), blog_id=b.blog_id, scheduled_at=at,
+                                        title=d.title[:200], source="campaign"))
                 await db.flush()
         except IntegrityError:
             clashed.append(f"{(b.label or b.blog_id)} {at.strftime('%m/%d %H:%M')}")
@@ -2298,7 +2311,9 @@ async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_us
             continue
         try:
             j = await db.get(PublishJob, job_id, populate_existing=True)
-            if j.scheduled_at <= se.kst_now() + timedelta(minutes=15):
+            # 임시저장은 네이버가 '즉시 발행'으로 바꿀 위험이 없다 — 그 검사는 예약에만 쓴다.
+            drafting = (blog.publish_mode or "schedule") == "draft"
+            if not drafting and j.scheduled_at <= se.kst_now() + timedelta(minutes=15):
                 raise ValueError("예약 시각이 15분 안으로 다가와 네이버가 '즉시 발행'으로 처리할 위험이 있습니다. "
                                  "→ 5단계에서 더 뒤쪽 시각으로 다시 예약해 주세요.")
             draft = await db.get(Draft, j.draft_id)
@@ -2347,6 +2362,7 @@ async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_us
                 content="\n\n".join(b.content for b in blocks if b.type != "image" and b.content),
                 blocks=[b.model_dump(exclude_none=True) for b in blocks],
                 tags=(draft.tags or [])[:10], emphasize=draft.emphasize or [],
+                finalAction="draft" if drafting else "schedule",
                 schedule={"datetime": j.scheduled_at.isoformat(timespec="minutes") + "+09:00"},
                 options={"openType": j.open_type or "public", "search": True, "category": j.category,
                          # 워드 원고는 글쓴이가 잡아 둔 줄바꿈이 곧 원고다. 실행기의 모바일 재정렬을 끈다.

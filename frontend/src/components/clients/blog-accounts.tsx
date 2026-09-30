@@ -47,6 +47,7 @@ const EMPTY_BLOG: BlogInput = {
   min_gap_minutes: 120,
   default_category: '',
   open_type: 'public',
+  publish_mode: 'schedule',
   footer_link_url: '',
   footer_link_label: '',
   place_url: '',
@@ -65,6 +66,7 @@ function toInput(b: BlogAccount): BlogInput {
     min_gap_minutes: b.min_gap_minutes,
     default_category: b.default_category ?? '',
     open_type: b.open_type,
+    publish_mode: b.publish_mode ?? 'schedule',
     footer_link_url: b.footer_link_url ?? '',
     footer_link_label: b.footer_link_label ?? '',
     place_url: b.place_url ?? '',
@@ -361,6 +363,22 @@ export function BlogAccounts({ clientId, blogs, onChanged }: BlogAccountsProps) 
                     </Select>
                   : <Input id="b-cat" value={form.default_category ?? ''} onChange={(e) => set('default_category', e.target.value)}
                       placeholder="카테고리 번호 (실행기를 켜면 목록에서 고를 수 있어요)" />}
+              </div>
+              <div className="space-y-1">
+                <Label>올리는 방식</Label>
+                <Select value={form.publish_mode ?? 'schedule'} onValueChange={(v) => set('publish_mode', v)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="schedule">네이버에 예약 발행</SelectItem>
+                    <SelectItem value="draft">임시저장만 (발행은 직접)</SelectItem>
+                  </SelectContent>
+                </Select>
+                {form.publish_mode === 'draft' && (
+                  <p className="text-xs text-muted-foreground">
+                    이 블로그의 글은 네이버에 <b>임시저장까지만</b> 됩니다. 병원에서 검토한 뒤
+                    네이버에서 직접 발행합니다. 예약 시각은 <b>임시저장할 시각</b>이 됩니다.
+                  </p>
+                )}
               </div>
               <div className="space-y-1">
                 <Label>공개 범위</Label>

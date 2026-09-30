@@ -204,6 +204,7 @@ class ServerClient:
         captcha: bool = False,
         release: bool = False,
         receipt_id: Optional[str] = None,
+        drafted: bool = False,
     ) -> Dict[str, Any]:
         body = {
             "lock_token": lock_token,
@@ -215,6 +216,8 @@ class ServerClient:
             "captcha": bool(captcha),
             "release": bool(release),
             "receipt_id": receipt_id,
+            # 임시저장까지만 했다 — 서버가 공개 확인(RSS)을 태우지 않도록 구분해 알린다.
+            "drafted": bool(drafted),
         }
         return self._request("POST", f"/campaign/agent/jobs/{job_id}/result", json=body) or {}
 
