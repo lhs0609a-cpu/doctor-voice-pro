@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Pill } from '@/components/app-shell/ui-kit'
 import { campaignAPI, type Keyword, type Task } from '@/lib/campaign-api'
-import { KeywordMix, EMPTY_MIX, type MixValue } from './keyword-mix'
+import { KeywordMix, EMPTY_MIX, effectiveSeeds, type MixValue } from './keyword-mix'
 import { errMsg } from '@/components/campaign/common'
 import { cn } from '@/lib/utils'
 
@@ -93,9 +93,12 @@ export function KeywordStep({ campaignId, keywords, subjects = [], onChanged }: 
     if (busy || running) return
     setBusy(true); setError('')
     try {
+      // 입력칸에 쳐 놓고 [추가]를 누르지 않은 글자도 씨앗으로 친다.
+      // 버리면 사람은 넣었는데 "질환이 필요합니다"로 실패한다(2026-09-30 신고).
+      const seeds = effectiveSeeds(mix)
       setTask(await campaignAPI.huntKeywords(campaignId, {
         target,
-        ...(mix.seeds.length ? { seeds: mix.seeds } : {}),
+        ...(seeds.length ? { seeds } : {}),
         ...(Object.keys(mix.diseaseQuota).length ? { disease_quota: mix.diseaseQuota } : {}),
         ...(Object.keys(mix.categoryRatio).length ? { category_ratio: mix.categoryRatio } : {}),
       }))
@@ -159,6 +162,13 @@ export function KeywordStep({ campaignId, keywords, subjects = [], onChanged }: 
             남겨야 할 키워드가 있으면 먼저 엑셀·텍스트로 내려받아 두세요.
           </p>
         </div>
+        {subjects.length === 0 && effectiveSeeds(mix).length === 0 && (
+          <p role="status" className="rounded-lg bg-warning-soft p-3 text-sm">
+            이 병원에 등록된 진료 질환·치료 항목이 없습니다.
+            → 아래 <b>찾고 싶은 키워드</b>에 직접 넣거나(예: 탈모, 지루성피부염),
+            병원 관리에서 진료 항목을 등록해 주세요.
+          </p>
+        )}
         <KeywordMix subjects={subjects} target={target} value={mix} onChange={setMix} disabled={busy} />
         {confirming && (
           <p role="alert" className="rounded-lg bg-warning-soft p-3 text-sm">
@@ -167,7 +177,8 @@ export function KeywordStep({ campaignId, keywords, subjects = [], onChanged }: 
         )}
         <Button className="h-12 w-full text-base"
           variant={confirming ? 'destructive' : 'default'}
-          disabled={busy || !loaded || !Number.isInteger(target) || target < 10 || target > 500}
+          disabled={busy || !loaded || !Number.isInteger(target) || target < 10 || target > 500
+            || (effectiveSeeds(mix).length === 0 && subjects.length === 0)}
           onClick={() => {
             // 지난 목록을 지우는 일이라 한 번 물어본다(처음 찾을 때는 바로 시작).
             if (keywords.length > 0 && !confirming) { setConfirming(true); return }
@@ -176,7 +187,8 @@ export function KeywordStep({ campaignId, keywords, subjects = [], onChanged }: 
           }}>
           {busy ? '시작하는 중…'
             : confirming ? `기존 ${keywords.length}개 지우고 새로 찾기`
-            : mix.seeds.length ? `'${mix.seeds[0]}'${mix.seeds.length > 1 ? ` 외 ${mix.seeds.length - 1}개` : ''} 연관 키워드 ${target}개 찾기`
+            : effectiveSeeds(mix).length ? `'${effectiveSeeds(mix)[0]}'${effectiveSeeds(mix).length > 1 ? ` 외 ${effectiveSeeds(mix).length - 1}개` : ''} 연관 키워드 ${target}개 찾기`
+            : subjects.length === 0 ? '찾고 싶은 키워드를 먼저 넣어 주세요'
             : keywords.length ? `새로 ${target}개 찾기` : `키워드 ${target}개 찾기`}
         </Button>
         {confirming && (

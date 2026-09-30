@@ -16,13 +16,29 @@ import { campaignAPI } from '@/lib/campaign-api'
 
 export type MixValue = {
   seeds: string[]
+  /** 입력칸에 쳐 놓고 아직 [추가]를 누르지 않은 글자.
+   *  예전에는 이 글자를 그냥 버렸다 — 사람은 쳐 넣었는데 발굴은 "질환이 필요합니다"로
+   *  실패했다(2026-09-30 신고). 시작할 때 이것도 씨앗으로 친다. */
+  draft: string
   diseaseQuota: Record<string, number>
   categoryRatio: Record<string, number>
 }
 
+/** 쉼표·줄바꿈으로 나눈 씨앗 목록. 입력칸 글자와 칩을 같은 규칙으로 읽는다. */
+export function parseSeeds(raw: string): string[] {
+  return (raw || '').split(/[,\n]/).map(s => s.trim()).filter(Boolean)
+}
+
+/** 실제로 발굴에 쓸 씨앗(칩 + 아직 안 누른 글자). */
+export function effectiveSeeds(value: MixValue): string[] {
+  const out = [...value.seeds]
+  for (const s of parseSeeds(value.draft)) if (!out.includes(s) && out.length < 20) out.push(s)
+  return out
+}
+
 type Category = { key: string; label: string; default_ratio: number }
 
-export const EMPTY_MIX: MixValue = { seeds: [], diseaseQuota: {}, categoryRatio: {} }
+export const EMPTY_MIX: MixValue = { seeds: [], draft: '', diseaseQuota: {}, categoryRatio: {} }
 
 export function KeywordMix({ subjects, target, value, onChange, disabled }: {
   /** 병원에 등록된 진료 질환·치료 항목 */
@@ -32,7 +48,8 @@ export function KeywordMix({ subjects, target, value, onChange, disabled }: {
   onChange: (next: MixValue) => void
   disabled?: boolean
 }) {
-  const [draft, setDraft] = useState('')
+  const draft = value.draft
+  const setDraft = (next: string) => onChange({ ...value, draft: next })
   const [categories, setCategories] = useState<Category[]>([])
 
   useEffect(() => {
@@ -45,14 +62,18 @@ export function KeywordMix({ subjects, target, value, onChange, disabled }: {
 
   // 직접 넣은 키워드가 있으면 그것이 질환 축이 된다 — 서버도 같은 규칙으로 동작한다.
   const axis = value.seeds.length ? value.seeds : subjects
+  // 진료 항목이 하나도 없으면 여기 말고는 키워드를 넣을 곳이 없다. 접어 두면
+  // "직접 입력해도 됩니다"라고 안내해 놓고 입력칸을 숨기는 꼴이다(2026-09-30 신고).
+  const mustOpen = subjects.length === 0
 
   const addSeeds = (raw: string) => {
-    const found = raw.split(/[,\n]/).map(s => s.trim()).filter(Boolean)
+    const found = parseSeeds(raw)
     if (!found.length) return
     const next = [...value.seeds]
     for (const s of found) if (!next.includes(s) && next.length < 20) next.push(s)
-    onChange({ ...value, seeds: next })
-    setDraft('')
+    // 한 번에 바꾼다. onChange 를 두 번 부르면 두 번째가 낡은 value 를 덮어써서
+    // 방금 넣은 칩이 사라진다.
+    onChange({ ...value, seeds: next, draft: '' })
   }
 
   const ratioTotal = useMemo(
@@ -72,9 +93,9 @@ export function KeywordMix({ subjects, target, value, onChange, disabled }: {
       : Math.round(target * (c.default_ratio / 100))
 
   return (
-    <details className="rounded-xl border">
+    <details className="rounded-xl border" open={mustOpen}>
       <summary className="cursor-pointer px-3 py-2 text-sm">
-        세부 설정
+        {mustOpen ? '찾고 싶은 키워드 넣기' : '세부 설정'}
         <span className="ml-2 text-xs text-muted-foreground">
           {value.seeds.length ? `찾을 키워드 ${value.seeds.length}개` : '진료 항목으로 찾기'}
           {(ratioTotal || quotaTotal) ? ' · 비율 지정됨' : ''}
