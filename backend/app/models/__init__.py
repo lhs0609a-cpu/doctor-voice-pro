@@ -69,6 +69,7 @@ from app.models.knowledge_extended import (
     AdoptionStatus, QuestionerType
 )
 from app.models.cafe_thread import CafeThread  # noqa: F401
+from app.models.cafe_job import CafeJob  # noqa: F401
 from app.models.cafe_extended import (
     CafeBoard, CommentReply, ReplyTemplate, CafePostImage, ImageLibrary,
     PopularPost, PopularPostPattern, EngagementActivity, EngagementSchedule,

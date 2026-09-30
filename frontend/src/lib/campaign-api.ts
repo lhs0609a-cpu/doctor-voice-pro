@@ -127,6 +127,19 @@ export interface CafeThread {
   created_at?: string | null
 }
 
+export interface CafeJob {
+  id: string
+  thread_id: string
+  account_id: string
+  cafe_url: string
+  board_name?: string | null
+  scheduled_at: string
+  status: string
+  attempts: number
+  result_url?: string | null
+  error?: string | null
+}
+
 export interface ClientInput {
   name: string
   short_name?: string | null
@@ -508,6 +521,16 @@ export const campaignAPI = {
   }): Promise<CafeThread> => (await api.put(`/cafe/threads/${id}`, body)).data,
   deleteCafeThread: async (id: string): Promise<{ success: boolean }> =>
     (await api.delete(`/cafe/threads/${id}`)).data,
+  // 카페 질문글 예약(2-a) — 실행기가 글 하나만 올린다. 댓글은 사람이.
+  cafeJobs: async (threadId: string): Promise<CafeJob[]> =>
+    (await api.get(`/cafe/threads/${threadId}/jobs`)).data,
+  scheduleCafeThread: async (threadId: string, body: {
+    cafe_url: string; account_id: string; board_name?: string; scheduled_at: string
+  }): Promise<CafeJob> => (await api.post(`/cafe/threads/${threadId}/schedule`, body)).data,
+  cancelCafeJob: async (jobId: string): Promise<CafeJob> =>
+    (await api.post(`/cafe/jobs/${jobId}/cancel`)).data,
+  reconcileCafeJob: async (jobId: string, posted: boolean, url?: string): Promise<CafeJob> =>
+    (await api.post(`/cafe/jobs/${jobId}/reconcile`, { posted, url })).data,
   keywordCategories: async (): Promise<{ categories: { key: string; label: string; default_ratio: number }[] }> =>
     (await api.get(`${C}/keyword-categories`)).data,
   addKeywords: async (id: string, keywords: string[], fetchVolume = true): Promise<Keyword[]> =>

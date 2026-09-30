@@ -99,6 +99,7 @@ import os
 os.environ.setdefault('DATABASE_URL', 'sqlite+aiosqlite:///./test-unused.db')
 os.environ.setdefault('DATABASE_URL_SYNC', 'sqlite:///./test-unused.db')
 import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -202,6 +203,125 @@ class ThreadApiTests(unittest.IsolatedAsyncioTestCase):
             thread.user_id = 'someone-else'
             await db.commit()
         self.assertEqual((await self.client.get(f'/cafe/threads/{thread_id}')).status_code, 404)
+
+# ─────────────────── 2-a: 예약과 실행기 창구 ───────────────────
+from app.models.cafe_job import CafeJob
+from app.models.viral_common import NaverAccount
+
+
+class CafeJobApiTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.engine = create_async_engine('sqlite+aiosqlite:///' + str(Path(self.tmp.name) / 'job.db'))
+        async with self.engine.begin() as conn:
+            for table in (CafeThread.__table__, Client.__table__, CafeJob.__table__,
+                          NaverAccount.__table__):
+                await conn.run_sync(lambda sync, t=table: t.create(sync))
+        self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
+        async with self.sessions() as db:
+            db.add(Client(id='c1', user_id='u', name='소잠한의원', brand_keyword='선릉역한의원'))
+            db.add(NaverAccount(id='acc-1', user_id='u', account_id='naver_id', use_for_cafe=True))
+            db.add(NaverAccount(id='acc-blog', user_id='u', account_id='blog_only', use_for_cafe=False))
+            db.add(CafeThread(id='t1', user_id='u', client_id='c1', topic='지루성피부염',
+                              title='어떻게들 관리하세요?', body='두 달째 가렵습니다.',
+                              comments=[{'seq': 1, 'persona': '', 'body': '저도요'}],
+                              promo_index=2, checks={'ok': True, 'issues': []}, approved=True))
+            await db.commit()
+        app = FastAPI()
+        app.include_router(api.router)
+
+        async def db_override():
+            async with self.sessions() as db:
+                yield db
+        app.dependency_overrides[api.get_db] = db_override
+        app.dependency_overrides[api.get_current_user] = lambda: User(id='u')
+        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test')
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+        await self.engine.dispose()
+        self.tmp.cleanup()
+
+    def _when(self, hours=2):
+        from app.services.schedule_engine import kst_now
+        from datetime import timedelta
+        return (kst_now() + timedelta(hours=hours)).isoformat(timespec='minutes')
+
+    async def _schedule(self, **over):
+        body = {'cafe_url': 'https://cafe.naver.com/mom', 'account_id': 'acc-1',
+                'board_name': '자유게시판', 'scheduled_at': self._when()}
+        body.update(over)
+        return await self.client.post('/cafe/threads/t1/schedule', json=body)
+
+    async def test_an_unapproved_thread_cannot_be_scheduled(self):
+        """검수를 통과하지 않은 글이 카페에 올라가면 안 된다."""
+        async with self.sessions() as db:
+            thread = await db.get(CafeThread, 't1')
+            thread.approved = False
+            await db.commit()
+        self.assertEqual((await self._schedule()).status_code, 400)
+
+    async def test_scheduling_and_listing(self):
+        created = await self._schedule()
+        self.assertEqual(created.status_code, 200, created.text)
+        self.assertEqual(created.json()['status'], 'queued')
+        rows = (await self.client.get('/cafe/threads/t1/jobs')).json()
+        self.assertEqual(len(rows), 1)
+
+    async def test_a_non_cafe_account_is_refused(self):
+        refused = await self._schedule(account_id='acc-blog')
+        self.assertEqual(refused.status_code, 400, refused.text)
+
+    async def test_scheduling_twice_is_refused(self):
+        await self._schedule()
+        self.assertEqual((await self._schedule()).status_code, 409)
+
+    async def test_a_time_too_close_is_refused(self):
+        self.assertEqual((await self._schedule(scheduled_at=self._when(hours=0))).status_code, 400)
+
+    async def test_an_old_launcher_is_told_to_update(self):
+        refused = await self.client.post('/cafe/agent/claim', json={'capabilities': []})
+        self.assertEqual(refused.status_code, 426)
+
+    async def test_the_launcher_gets_nothing_before_the_time(self):
+        await self._schedule()
+        got = await self.client.post('/cafe/agent/claim', json={'capabilities': ['cafe_post_v1']})
+        self.assertEqual(got.json(), [])
+
+    async def test_the_launcher_gets_the_post_and_reports_back(self):
+        job_id = (await self._schedule()).json()['id']
+        async with self.sessions() as db:   # 시각이 되었다고 치고
+            job = await db.get(CafeJob, job_id)
+            job.scheduled_at = datetime.utcnow() - timedelta(minutes=1)
+            await db.commit()
+        got = await self.client.post('/cafe/agent/claim',
+                                     json={'capabilities': ['cafe_post_v1'], 'account_ids': ['acc-1']})
+        self.assertEqual(got.status_code, 200, got.text)
+        claimed = got.json()[0]
+        self.assertEqual(claimed['title'], '어떻게들 관리하세요?')
+        self.assertEqual(claimed['cafe_url'], 'https://cafe.naver.com/mom')
+
+        token = claimed['lock_token']
+        beat = await self.client.post(f'/cafe/agent/jobs/{job_id}/checkpoint',
+                                      json={'lock_token': token, 'stage': 'posting'})
+        self.assertEqual(beat.status_code, 200, beat.text)
+        done = await self.client.post(f'/cafe/agent/jobs/{job_id}/result', json={
+            'lock_token': token, 'ok': True, 'url': 'https://cafe.naver.com/mom/123'})
+        self.assertEqual(done.json()['status'], 'submitted')
+
+    async def test_an_uncertain_job_is_freed_by_a_person(self):
+        """확인 필요를 풀어 주지 않으면 그 계정은 계속 묶여 있다."""
+        job_id = (await self._schedule()).json()['id']
+        async with self.sessions() as db:
+            job = await db.get(CafeJob, job_id)
+            job.status, job.busy_account_id = 'uncertain', 'acc-1'
+            await db.commit()
+        freed = await self.client.post(f'/cafe/jobs/{job_id}/reconcile',
+                                       json={'posted': True, 'url': 'https://cafe.naver.com/mom/9'})
+        self.assertEqual(freed.status_code, 200, freed.text)
+        self.assertEqual(freed.json()['status'], 'submitted')
+        async with self.sessions() as db:
+            self.assertIsNone((await db.get(CafeJob, job_id)).busy_account_id)
 
 if __name__ == "__main__":
     unittest.main()

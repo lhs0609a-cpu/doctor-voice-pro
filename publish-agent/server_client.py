@@ -174,6 +174,23 @@ class ServerClient:
         return self._request("POST", f"/campaign/agent/jobs/{job_id}/checkpoint",
                              json={"lock_token": lock_token, "stage": stage})
 
+    # ── 카페 질문글(2-a) ────────────────────────────────────────────────
+    # 블로그와 창구가 따로다. 잠금 단위도 다르다(블로그는 블로그, 카페는 계정).
+    def cafe_claim(self, account_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """→ [{id, lock_token, account_id, cafe_url, board_name, title, body}]"""
+        return self._request("POST", "/cafe/agent/claim", json={
+            "account_ids": account_ids or [], "capabilities": ["cafe_post_v1"]}) or []
+
+    def cafe_checkpoint(self, job_id: str, lock_token: str, stage: str = "heartbeat"):
+        return self._request("POST", f"/cafe/agent/jobs/{job_id}/checkpoint",
+                             json={"lock_token": lock_token, "stage": stage})
+
+    def cafe_result(self, job_id: str, lock_token: str, *, ok: bool, uncertain: bool = False,
+                    release: bool = False, url: Optional[str] = None, message: str = ""):
+        return self._request("POST", f"/cafe/agent/jobs/{job_id}/result", json={
+            "lock_token": lock_token, "ok": ok, "uncertain": uncertain,
+            "release": release, "url": url, "message": message[:500]})
+
     def report_result(
         self,
         job_id: str,

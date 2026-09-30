@@ -726,6 +726,76 @@ async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, 
         await sync_reservations(client, editor, blog)
 
 
+# ---------------------------------------------------------------- 카페 질문글(2-a)
+async def run_cafe_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, before_submit=None) -> JobResult:
+    """카페 글 하나를 올린다. 등록을 누른 뒤의 실패는 전부 uncertain 이다.
+
+    카페에 같은 글이 두 번 올라가면 그 계정은 바로 광고로 찍힌다. 블로그 중복보다 되돌리기
+    어렵다(남의 공간이고, 지워도 기록이 남는다). 그래서 '눌렀으면 다시 올리지 않는다'를
+    블로그보다 더 강하게 지킨다."""
+    from cafe_editor import CafeError, CafeLoginRequired
+
+    clicked = False
+    try:
+        await editor.open_write(job["cafe_url"])
+        await editor.choose_board(job.get("board_name"))
+        await editor.fill(job.get("title") or "", job.get("body") or "")
+        if dry_run:
+            log.info("[dry-run] '%s' — 카페 등록 클릭 생략", (job.get("title") or "")[:40])
+            return JobResult(ok=False, uncertain=False, message="dry-run")
+        if before_submit:
+            await before_submit()
+        clicked = True
+        out = await editor.submit()
+        if out is None:
+            return JobResult(ok=False, uncertain=True, message="등록 결과 없음 — 카페에서 확인 필요")
+        return JobResult(ok=out.ok, uncertain=out.uncertain, url=out.url, message=out.message)
+    except CafeLoginRequired as e:
+        return JobResult(ok=False, uncertain=clicked, need_login=True, message=str(e))
+    except CafeError as e:
+        # 글쓰기 화면까지 못 갔다 = 등록을 누르지 않았다. 다시 시도해도 안전하다.
+        return JobResult(ok=False, uncertain=clicked, message=str(e))
+    except Exception as e:  # noqa: BLE001
+        log.error("카페 글쓰기 오류: %s\n%s", e, traceback.format_exc())
+        return JobResult(ok=False, uncertain=clicked, message=f"{type(e).__name__}: {e}"[:400])
+
+
+async def process_cafe(client: ServerClient, pool: BrowserPool, args: argparse.Namespace) -> int:
+    """이 PC 가 맡은 카페 글을 올린다. 한 주기에 한 건만 — 몰아 올리면 그게 광고 티다."""
+    from cafe_editor import CafeEditor
+
+    try:
+        jobs = await asyncio.to_thread(client.cafe_claim)
+    except ServerError as e:
+        if e.status == 404:
+            return 0                      # 서버가 아직 카페 창구를 모른다(구버전)
+        raise
+    if not jobs:
+        return 0
+    job = jobs[0]
+    token = job["lock_token"]
+    label = (job.get("title") or "")[:40]
+    log.info("=== 카페 글 '%s' → %s ===", label, job.get("cafe_url"))
+
+    # 카페 계정은 블로그와 다른 사람이다. 프로필도 계정 단위로 따로 둔다.
+    page = await pool.page_for(f"cafe:{job['account_id']}")
+    editor = CafeEditor(page)
+
+    async def before_submit():
+        if stopping(args):
+            raise RuntimeError("사용자가 실행 중단을 요청했습니다")
+        await asyncio.to_thread(client.cafe_checkpoint, job["id"], token, "posting")
+
+    result = await run_cafe_job(editor, job, dry_run=args.dry_run, before_submit=before_submit)
+    log.info("카페 결과: ok=%s uncertain=%s — %s", result.ok, result.uncertain, result.message[:200])
+    try:
+        await asyncio.to_thread(client.cafe_result, job["id"], token, ok=result.ok,
+                                uncertain=result.uncertain, url=result.url, message=result.message)
+    except ServerError as e:
+        log.error("카페 결과를 보고하지 못했습니다(%s). 서버가 잠금 만료로 '확인 필요'로 둡니다", e.detail)
+    return 1
+
+
 # ---------------------------------------------------------------- 메인 루프
 async def run_once(client: ServerClient, pool: BrowserPool, args: argparse.Namespace) -> int:
     from journal import flush
@@ -735,9 +805,17 @@ async def run_once(client: ServerClient, pool: BrowserPool, args: argparse.Names
     if args.blog and not blogs:
         log.error("--blog '%s' 에 해당하는 블로그가 없습니다. 등록된 블로그: %s", args.blog, ", ".join(f"{b.get('label')}({b.get('naver_blog_id')})" for b in summary) or "없음")
         return 0
+    # 카페 글은 블로그와 따로 돈다. 블로그에 올릴 것이 없어도 카페는 볼 일이 있다.
+    cafe_done = 0
+    if not args.blog and not stopping(args):
+        try:
+            cafe_done = await process_cafe(client, pool, args)
+        except Exception as e:  # noqa: BLE001
+            log.error("카페 글 처리 중 오류: %s\n%s", e, traceback.format_exc())
     if not blogs:
-        log.info("처리할 블로그 없음(대기 잡 0건)")
-        return 0
+        if not cafe_done:
+            log.info("처리할 블로그 없음(대기 잡 0건)")
+        return cafe_done
     for b in blogs:
         if stopping(args):
             break
