@@ -47,26 +47,55 @@ def title_misses(title, keyword, brand_keyword=None):
 # 아니면 글에 실리면 안 된다(2026-09-30 소잠한의원 실측: 본문에 "23541건 이상"이라고
 # 나갔는데 실제 실적은 27000건 이상이었다). 일반 의학 수치("3개월", "2주")는 건드리지
 # 않는다 — 네 자리 이상이거나 '누적'·'이상'이 붙은 것만 실적으로 본다.
+# '5만건'·'2천명' 처럼 만/천/억을 끼워 쓰는 것이 한국어에서는 더 흔하다.
+_SCALE = {'만': 10000, '천': 1000, '억': 100000000}
+_NUM = r'[\d][\d,]*\s*[만천억]?'
 _CLINIC_NUMBER = re.compile(
-    r'누적\s*[\d][\d,]*\s*(?:건|명|례)'
-    r'|[\d][\d,]*\s*(?:건|명|례)\s*이상'
-    r'|[\d]{1,3}(?:,\d{3})+\s*(?:건|명|례)'
-    r'|[\d]{4,}\s*(?:건|명|례)'
-    r'|[\d][\d,]*\s*년째'
-    r'|[\d][\d,]*\s*년\s*경력')
+    rf'누적\s*{_NUM}\s*(?:건|명|례)'
+    rf'|{_NUM}\s*(?:건|명|례)\s*이상'
+    rf'|[\d]{{1,3}}(?:,\d{{3}})+\s*[만천억]?\s*(?:건|명|례)'
+    rf'|[\d]{{4,}}\s*[만천억]?\s*(?:건|명|례)'
+    rf'|[\d][\d,]*\s*[만천억]?\s*(?:건|명|례)(?=\s*(?:을|를|이|가|은|는|도|씩))'
+    rf'|{_NUM}\s*년째'
+    rf'|{_NUM}\s*년\s*경력')
+
+_VALUE = re.compile(r'([\d][\d,]*)\s*([만천억])?')
+
+
+def _numbers(text):
+    """텍스트에 적힌 수치들(표기 그대로 + 만/천/억을 푼 값).
+
+    '27,000' 과 '27000' 은 같은 수다. '5만' 은 50000 이기도 하다 — 둘 다 알아야
+    표기가 다르다는 이유로 멀쩡한 숫자를 막지 않는다."""
+    out = set()
+    for match in _VALUE.finditer(str(text or '')):
+        digits = match.group(1).replace(',', '')
+        if not digits:
+            continue
+        out.add(digits)
+        scale = _SCALE.get(match.group(2) or '')
+        if scale:
+            out.add(str(int(digits) * scale))
+    return out
 
 
 def clinic_number_misses(body, *sources):
-    """병원이 준 적 없는 실적 숫자. 숫자만 비교한다(표기가 달라도 같은 숫자면 통과).
+    """병원이 준 적 없는 실적 숫자. 표기가 달라도 같은 수면 통과한다.
 
     '23541건 이상' 은 병원 고정 사실에 23541 이 있을 때만 쓸 수 있다."""
-    known = re.sub(r'[^0-9]', '', ' '.join(str(s or '') for s in sources))
+    source_text = ' '.join(str(s or '') for s in sources)
+    known = _numbers(source_text)
+    flat_source = re.sub(r'\s+', '', source_text)
     out = []
     for match in _CLINIC_NUMBER.finditer(body or ''):
         claim = match.group(0).strip()
-        digits = re.sub(r'[^0-9]', '', claim)
-        if digits and digits not in known and claim not in out:
-            out.append(claim)
+        if claim in out:
+            continue
+        if re.sub(r'\s+', '', claim) in flat_source:
+            continue                      # 병원이 적어 준 말 그대로다
+        if _numbers(claim) & known:
+            continue                      # 표기만 다르고 같은 수다
+        out.append(claim)
     return out
 
 

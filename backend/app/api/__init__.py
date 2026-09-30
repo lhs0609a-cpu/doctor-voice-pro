@@ -13,6 +13,7 @@ from app.api import (
     publish_queue,  # 대량 자동발행 큐
     keyword_batch,  # 키워드 대량 생성 프롬프트 템플릿(계정 동기화)
     campaign,  # 캠페인(병원 단위 대량 발행: 키워드→원고→사진→예약→현황)
+    cafe_thread,  # 카페 질문글 세트(질문글 1 + 댓글 N, 2번 댓글만 병원 언급)
     blog_index,  # 블로그 지수 + 상위노출 가능성 판정
 )
 
@@ -72,5 +73,7 @@ api_router.include_router(publish_queue.router, prefix="/publish", tags=["publis
 api_router.include_router(keyword_batch.router, prefix="/keyword-batch", tags=["keyword-batch"])
 # 캠페인(병원 단위 대량 발행)
 api_router.include_router(campaign.router, prefix="/campaign", tags=["campaign"])
+# cafe_thread.router 는 스스로 prefix="/cafe" 를 갖고 있다(기존 cafe 와 경로를 나눠 쓴다).
+api_router.include_router(cafe_thread.router)
 # 블로그 지수 / 상위노출 가능성
 api_router.include_router(blog_index.router, prefix="/blog-index", tags=["blog-index"])

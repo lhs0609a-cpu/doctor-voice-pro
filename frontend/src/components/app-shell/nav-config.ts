@@ -57,7 +57,8 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: '채널',
     items: [
-      { href: '/dashboard/cafe', label: '카페 바이럴', icon: Coffee, dev: true, devNote: "카페 바이럴 자동 게시는 준비 중입니다. 카페 원고 변형은 캠페인 3단계에서 쓸 수 있습니다." },
+      { href: '/dashboard/cafe/thread', label: '카페 질문글 세트', icon: Coffee },
+      { href: '/dashboard/cafe', label: '카페 바이럴(구)', icon: Coffee, dev: true, devNote: "카페 자동 게시는 준비 중입니다(서버에서 브라우저를 띄우는 구조라 운영에서 동작하지 않습니다). 원고는 [카페 질문글 세트]에서 만들어 복사해 쓰세요." },
       { href: '/dashboard/knowledge', label: '지식인 답변', icon: HelpCircle, dev: true, devNote: "지식인 답변 자동화는 준비 중입니다." },
       { href: '/dashboard/place', label: '플레이스', icon: MapPin, dev: true, devNote: "플레이스 관리는 준비 중입니다." },
       { href: '/dashboard/sns', label: 'SNS', icon: Share2, dev: true, devNote: "SNS 연동은 준비 중입니다." },

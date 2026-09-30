@@ -106,6 +106,27 @@ export interface Brief {
 
 export type BriefInput = Omit<Brief, 'id'>
 
+export interface CafeComment {
+  seq: number
+  persona: string
+  body: string
+}
+
+export interface CafeThread {
+  id: string
+  client_id: string
+  topic: string
+  cafe_name?: string | null
+  title: string
+  body: string
+  comments: CafeComment[]
+  /** 몇 번째 댓글에서만 병원 이름을 말하는가(1-based). */
+  promo_index: number
+  checks: { ok?: boolean; issues?: string[]; promo_index?: number }
+  approved: boolean
+  created_at?: string | null
+}
+
 export interface ClientInput {
   name: string
   short_name?: string | null
@@ -475,6 +496,18 @@ export const campaignAPI = {
     exclude_blogs?: string[]
   }): Promise<Task> =>
     (await api.post(`${C}/campaigns/${id}/keywords/hunt`, body)).data,
+  // ── 카페 질문글 세트(질문글 1 + 댓글 N, 지정한 한 댓글만 병원 언급) ──
+  cafeThreads: async (clientId?: string): Promise<CafeThread[]> =>
+    (await api.get('/cafe/threads', { params: clientId ? { client_id: clientId } : {} })).data,
+  generateCafeThread: async (body: {
+    client_id: string; topic: string; cafe_name?: string
+    comment_count?: number; promo_index?: number
+  }): Promise<CafeThread> => (await api.post('/cafe/threads/generate', body)).data,
+  updateCafeThread: async (id: string, body: {
+    title?: string; body?: string; comments?: CafeComment[]; promo_index?: number; approved?: boolean
+  }): Promise<CafeThread> => (await api.put(`/cafe/threads/${id}`, body)).data,
+  deleteCafeThread: async (id: string): Promise<{ success: boolean }> =>
+    (await api.delete(`/cafe/threads/${id}`)).data,
   keywordCategories: async (): Promise<{ categories: { key: string; label: string; default_ratio: number }[] }> =>
     (await api.get(`${C}/keyword-categories`)).data,
   addKeywords: async (id: string, keywords: string[], fetchVolume = true): Promise<Keyword[]> =>
