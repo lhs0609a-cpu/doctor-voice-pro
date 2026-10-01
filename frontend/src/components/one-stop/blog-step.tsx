@@ -324,6 +324,13 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
         병원이 만들어 둔 그대로 나갑니다. 원고는 템플릿 <b>위쪽</b>에 들어갑니다.
         비워 두면 빈 글에 쓰고, 위에서 고른 글꼴·크기를 씁니다.
       </p>
+      {linked.some(b => b.template_name && (b.place_url || b.footer_link_url)) && (
+        <p className="rounded-lg bg-warning-soft p-2 text-xs leading-relaxed">
+          템플릿에 <b>지도나 링크가 이미 들어 있다면</b> 위 ④칸을 비워 주세요 — 템플릿 것과 우리가 넣는 것이
+          겹쳐 지도가 두 번 들어갑니다. (원고 본문에 있는 주소는 알아서 걸러내지만, 템플릿 안에 있는 것은
+          우리가 볼 수 없습니다.)
+        </p>
+      )}
       {linked.map(b => (
         <div key={b.id} className="space-y-1.5 rounded-lg border p-3">
           <div className="flex flex-wrap items-center gap-2 text-sm">
