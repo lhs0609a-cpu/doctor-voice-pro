@@ -800,7 +800,10 @@ class NaverEditor:
         await self._click_paragraph(S["body_para"])
         await self._ctrl_a()
         inserted = 0
+        carded = False          # 바로 앞이 링크 카드였나(카드는 빈 문단을 하나 남긴다)
         for i, op in enumerate(ops):
+            if op.kind not in ("enter", "link"):
+                carded = False
             if op.kind == "text":
                 await self._insert(op.payload)
             elif op.kind == "bold":
@@ -808,12 +811,19 @@ class NaverEditor:
             elif op.kind == "quote":
                 await self.insert_quote(op.payload)
             elif op.kind == "link":
-                if not await self.insert_url_card(op.payload):
+                if await self.insert_url_card(op.payload):
+                    # 카드는 자기 뒤에 빈 문단을 하나 만들어 둔다 — 뒤따르는 줄바꿈 하나를 삼킨다.
+                    # 안 삼키면 카드 뒤에만 빈 줄이 하나 더 생겨 간격이 들쭉날쭉해진다.
+                    carded = True
+                else:
                     # 카드가 안 되면 주소 글자 + Enter — 네이버가 알아서 링크로 바꿀 여지는 남긴다.
                     await self._insert(op.payload)
                     await self._enter()
             elif op.kind == "enter":
-                await self._enter()
+                if carded:
+                    carded = False
+                else:
+                    await self._enter()
             elif op.kind == "image":
                 log.info("이미지 삽입 (%d/%d)", inserted + 1, n_img)
                 await self._insert_image_verified(op.payload, index=inserted)

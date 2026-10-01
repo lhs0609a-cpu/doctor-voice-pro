@@ -146,10 +146,14 @@ async def insert_rich_blocks(editor, blocks):
     await editor._click_paragraph(S['body_para'])
     await editor._ctrl_a()
     images = 0
+    carded = False          # 바로 앞이 링크 카드였나 — 카드는 자기 뒤에 빈 문단을 하나 남긴다
     for index, block in enumerate(blocks):
         kind = block.get('type')
         if index:
-            await editor._enter()
+            if carded:
+                carded = False      # 카드가 남긴 빈 문단이 줄바꿈 하나를 대신한다
+            else:
+                await editor._enter()
             if kind != 'image' and blocks[index-1].get('type') != 'image':
                 await editor._enter()
         if kind == 'image':
@@ -165,7 +169,8 @@ async def insert_rich_blocks(editor, blocks):
         from plan import is_bare_url
         url = (block.get('content') or '').strip()
         if kind == 'text' and is_bare_url(url):
-            if not await editor.insert_url_card(url):
+            carded = await editor.insert_url_card(url)
+            if not carded:
                 await editor._insert(url)
             continue
         if kind == 'quote':
