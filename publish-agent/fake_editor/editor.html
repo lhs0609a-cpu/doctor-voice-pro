@@ -45,6 +45,16 @@
   <button data-name="quotation" data-value="default" id="quotebtn">인용구</button>
   <!-- 링크 카드: 누르면 주소 칸이 뜨고, Enter 나 [확인] 이면 카드 컴포넌트가 붙는다. -->
   <button data-name="oglink" id="linkbtn">링크</button>
+  <!-- 내 템플릿: 누르면 패널이 열리고, 템플릿을 고르면 본문에 고정 문단이 깔린다. -->
+  <button id="tplbtn">템플릿</button>
+</div>
+
+<div class="popup" id="tplpanel" style="display:none">
+  <button id="tplmine">내 템플릿</button>
+  <ul id="tpllist" style="display:none">
+    <li><button class="tplitem">리베리 기본</button></li>
+    <li><button class="tplitem">소잠 기본</button></li>
+  </ul>
 </div>
 
 <div class="popup" id="linklayer" style="display:none">
@@ -195,6 +205,28 @@
     }
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); if (!NEEDS_OK) addCard(); } });
     document.getElementById('linkok').onclick = addCard;
+  })();
+
+  // 내 템플릿 — 고르면 병원이 저장해 둔 고정 문단이 본문에 깔린다.
+  //   ?notemplate=1  템플릿 단추가 없는 판(빈 글로 진행해야 한다)
+  (function template() {
+    const btn = document.getElementById('tplbtn'), panel = document.getElementById('tplpanel');
+    if (q.get('notemplate') === '1') { btn.remove(); panel.remove(); return; }
+    btn.onclick = () => { panel.style.display = 'block'; };
+    document.getElementById('tplmine').onclick = () => { document.getElementById('tpllist').style.display = 'block'; };
+    panel.querySelectorAll('.tplitem').forEach((item) => item.onclick = () => {
+      state.template = item.textContent;
+      const wrap = document.querySelector('.se-components-wrap');
+      // 실제 템플릿처럼 '본문 쓸 자리' 한 줄 + 병원 고정 문단이 아래로 깔린다.
+      for (const line of ['', '리베리의원 화성동탄', '경기 화성시 병점노을4로 29', '#동탄여드름 #리베리의원']) {
+        const c = document.createElement('div');
+        c.className = 'se-component se-text';
+        c.innerHTML = '<div class="se-section-text"><p class="se-text-paragraph" contenteditable="true"></p></div>';
+        c.querySelector('p').textContent = line;
+        wrap.appendChild(c);
+      }
+      panel.style.display = 'none';
+    });
   })();
 
   // 이미지: 실제 SE ONE 처럼 컴포넌트가 붙고 그 뒤에 빈 문단이 생긴다(업로드 지연 흉내 300ms)

@@ -278,6 +278,21 @@ class DocxUploadTests(DatabaseCase):
         self.assertEqual(claimed['options']['font'], '')
         self.assertEqual(claimed['options']['size'], 0)
 
+    async def test_saved_template_name_reaches_the_launcher(self):
+        """병원이 네이버에 저장해 둔 '내 템플릿' 이름을 실행기가 받아 글쓰기 전에 불러온다."""
+        draft = await self.upload()
+        async with self.sessions() as db:
+            blog = await db.get(Blog, 'b')
+            blog.template_name = '리베리 기본'
+            await db.commit()
+        claimed = await self.claim(draft['id'], capabilities=['rich_text_v1'])
+        self.assertEqual(claimed['options']['template'], '리베리 기본')
+
+    async def test_no_template_means_an_empty_post(self):
+        draft = await self.upload()
+        claimed = await self.claim(draft['id'], capabilities=['rich_text_v1'])
+        self.assertEqual(claimed['options']['template'], '')
+
     async def test_old_client_cannot_silently_drop_requested_points(self):
         draft = await self.upload()
         async with self.sessions() as db:

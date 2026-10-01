@@ -786,9 +786,13 @@ class NaverEditor:
                 await self.dismiss_draft_popup()
         raise EditorError("제목이 입력되지 않았습니다. 제목 없는 글이 올라가지 않도록 발행하지 않고 중단합니다")
 
-    async def insert_body_blocks(self, blocks: Sequence[Dict[str, Any]], emphasize: Sequence[str], *, reformat: bool = True) -> int:
+    async def insert_body_blocks(self, blocks: Sequence[Dict[str, Any]], emphasize: Sequence[str], *,
+                                 reformat: bool = True, keep: bool = False) -> int:
         """블록(글/이미지) 순서대로 본문에 넣는다. 반환: 삽입된 이미지 수.
-        이미지 한 장이라도 실패하면 EditorError (사진 빠진 글이 나가면 안 된다)."""
+        이미지 한 장이라도 실패하면 EditorError (사진 빠진 글이 나가면 안 된다).
+
+        keep 이면 이미 들어 있는 글(불러온 템플릿)을 지우지 않고 **그 위에** 쓴다."""
+        self.keep_tail = keep
         if has_formatting(blocks):
             from rich_editor import insert_rich_blocks
             return await insert_rich_blocks(self, blocks)
@@ -798,7 +802,11 @@ class NaverEditor:
         log.info("본문 입력 계획: 동작 %d개 (글자 %d, 이미지 %d, 강조 %d)", len(ops), n_txt, n_img, sum(1 for o in ops if o.kind == "bold"))
 
         await self._click_paragraph(S["body_para"])
-        await self._ctrl_a()
+        if keep:
+            # 템플릿을 불러온 글이다. 전체 선택으로 지우면 병원이 만들어 둔 문단이 사라진다.
+            await self.page.keyboard.press("Control+Home")
+        else:
+            await self._ctrl_a()
         inserted = 0
         carded = False          # 바로 앞이 링크 카드였나(카드는 빈 문단을 하나 남긴다)
         for i, op in enumerate(ops):
@@ -865,6 +873,67 @@ class NaverEditor:
             raise EditorError("인용구에 소제목이 들어갔는지 확인하지 못했습니다")
         await exit_component(self)
         log.info("인용구(소제목): %s", text[:40])
+
+    # ------------------------------------------------------------ 내 템플릿
+    async def load_template(self, name: str) -> bool:
+        """네이버에 저장해 둔 '내 템플릿'을 글쓰기 화면에 불러온다. 못 불러오면 False.
+
+        2026-09-30 고객 제안: "블로그 내에 템플릿 저장을 해두면 그 템플릿에 맞게 폰트,
+        강조색, 카테고리, 지도까지 삽입되게". 템플릿에는 병원이 만들어 둔 글꼴·강조색과
+        고정 문단(주소·진료시간·해시태그·지도 카드)이 들어 있다. 원고는 그 **위에** 쓴다 —
+        고객이 보여 준 글에서 병원 정보가 늘 맨 아래에 있었다.
+
+        못 불러와도 발행은 그대로 진행한다. 템플릿은 모양을 좋게 하는 것이지 발행 조건이 아니다."""
+        wanted = (name or "").strip()
+        if not wanted:
+            return False
+        frame = await self.frame()
+        before = await frame.locator(".se-components-wrap > .se-component").count()
+        try:
+            if not await self._click_by_text(frame, ("템플릿",), tags="button, a"):
+                raise EditorError("템플릿 단추를 찾지 못했습니다")
+            await asyncio.sleep(0.6)
+            # 패널은 '추천 템플릿 / 부분 템플릿 / 내 템플릿' 으로 나뉜다. 내 것을 고른다.
+            await self._click_by_text(frame, ("내 템플릿", "내템플릿"), tags="button, a, li, span")
+            await asyncio.sleep(0.5)
+            if not await self._click_by_text(frame, (wanted,), tags="button, a, li, strong, span, p"):
+                raise EditorError(f"'{wanted}' 템플릿을 목록에서 찾지 못했습니다")
+            await asyncio.sleep(0.8)
+            # "현재 내용이 사라집니다" 같은 확인 창이 뜨면 받는다.
+            await self._click_layer_confirm(frame)
+            # 템플릿이 **실제로 깔렸는지**는 글 덩어리가 늘었는지로 본다. 늘지 않았는데
+            # 불러왔다고 보고하면, 빈 글에 쓰면서도 전체 선택을 건너뛰어 엉뚱한 글이 된다.
+            for _ in range(25):
+                if await frame.locator(".se-components-wrap > .se-component").count() > before:
+                    break
+                await asyncio.sleep(0.2)
+            else:
+                raise EditorError("템플릿을 골랐지만 본문에 아무것도 들어오지 않았습니다")
+        except Exception as e:  # noqa: BLE001
+            log.warning("템플릿 '%s' 불러오기 실패(빈 글로 진행): %s", wanted, e)
+            await self.page.keyboard.press("Escape")
+            return False
+        log.info("내 템플릿 '%s' 을 불러왔습니다", wanted)
+        return True
+
+    async def _click_by_text(self, frame: Frame, texts: Sequence[str], *, tags: str = "button, a") -> bool:
+        """화면에 **보이는** 것 중 글자가 맞는 첫 요소를 누른다."""
+        return bool(await frame.evaluate(r"""({texts, tags}) => {
+          const seen = e => { const r = e.getBoundingClientRect(); return r.width > 4 && r.height > 4; };
+          const norm = s => (s || '').replace(/\s+/g, '').trim();
+          const wanted = texts.map(norm);
+          const matches = [...document.querySelectorAll(tags)].filter(seen)
+            .filter(e => wanted.includes(norm(e.textContent))
+                      || wanted.includes(norm(e.getAttribute('title')))
+                      || wanted.includes(norm(e.getAttribute('aria-label'))));
+          // 목록은 <li><button><strong>이름</strong></button></li> 처럼 겹쳐 있다. 바깥을 누르면
+          // 아무 일도 안 일어나므로 **가장 안쪽**을 고른 뒤, 거기서 눌리는 것을 찾아 올라간다.
+          const inner = matches.filter(e => !matches.some(o => o !== e && e.contains(o)));
+          const hit = inner[0] || matches[0];
+          if (!hit) return false;
+          (hit.closest('button, a') || hit.querySelector('button, a') || hit).click();
+          return true;
+        }""", {"texts": list(texts), "tags": tags}))
 
     # ------------------------------------------------------------ 본문 글꼴 / 크기
     async def set_body_typography(self, font: str = "", size: int = 0) -> None:
@@ -1006,8 +1075,31 @@ class NaverEditor:
             log.warning("링크 층 닫기 실패(계속 진행): %s", e)
 
     async def _refocus_body_end(self) -> None:
-        """이미지 삽입 후 캐럿을 본문 끝으로 되돌린다(다음 문단이 이미지 뒤에 오도록)."""
+        """이미지 삽입 후 캐럿을 되돌린다(다음 문단이 이미지 뒤에 오도록).
+
+        템플릿을 깔아 둔 글에서는 **문서 끝**이 아니라 방금 넣은 사진 바로 다음 문단이다 —
+        끝으로 가면 뒤따르는 원고가 병원 정보 아래로 떨어진다."""
         try:
+            if getattr(self, "keep_tail", False):
+                frame = await self.frame()
+                moved = await frame.evaluate(r"""() => {
+                  const wrap = document.querySelector('.se-components-wrap');
+                  if (!wrap) return false;
+                  const kids = [...wrap.children];
+                  const last = kids.map((e, i) => [e, i]).filter(([e]) => e.classList.contains('se-image')).pop();
+                  if (!last) return false;
+                  const after = kids.slice(last[1] + 1).find(e => e.classList.contains('se-text'));
+                  const p = after && after.querySelector('.se-text-paragraph');
+                  if (!p) return false;
+                  p.setAttribute('data-dv-caret', 'true');
+                  return true;
+                }""")
+                if moved:
+                    await self._click_paragraph('[data-dv-caret="true"]')
+                    await frame.evaluate("() => document.querySelectorAll('[data-dv-caret]')"
+                                         ".forEach(e => e.removeAttribute('data-dv-caret'))")
+                    await asyncio.sleep(0.15)
+                    return
             await self._click_paragraph(S["body_para"], last=True)
             await self.page.keyboard.press("Control+End")
             await asyncio.sleep(0.15)

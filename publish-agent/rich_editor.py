@@ -144,7 +144,11 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
 async def insert_rich_blocks(editor, blocks):
     from naver_editor import EditorError, S
     await editor._click_paragraph(S['body_para'])
-    await editor._ctrl_a()
+    if getattr(editor, 'keep_tail', False):
+        # 불러온 템플릿을 지우지 않는다 — 원고는 그 위에 쓴다.
+        await editor.page.keyboard.press('Control+Home')
+    else:
+        await editor._ctrl_a()
     images = 0
     carded = False          # 바로 앞이 링크 카드였나 — 카드는 자기 뒤에 빈 문단을 하나 남긴다
     for index, block in enumerate(blocks):

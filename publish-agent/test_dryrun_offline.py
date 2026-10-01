@@ -478,6 +478,10 @@ class FakeEditor:
     def __init__(self, *, fail_at: str = "", blog_id: str = "platonmarketing"):
         self.calls = []
         self.fail_at = fail_at
+        self.template = ""
+        self.template_fails = False
+        self.keep = False
+        self.typography = None
         self.blog_id = blog_id
         self.publish_url = None
         self.counts = None            # None 이면 '예약 건수를 못 읽는 화면'
@@ -493,7 +497,16 @@ class FakeEditor:
     async def dismiss_draft_popup(self): self._rec("dismiss_draft_popup")
     async def read_blog_id(self): self._rec("read_blog_id"); return self.blog_id
     async def set_title(self, t): self._rec("set_title")
-    async def insert_body_blocks(self, b, e, *, reformat=True): self._rec("insert_body_blocks"); self.reformat = reformat; return sum(1 for x in b if x.get("type") == "image")
+    async def insert_body_blocks(self, b, e, *, reformat=True, keep=False): self._rec("insert_body_blocks"); self.reformat = reformat; self.keep = keep; return sum(1 for x in b if x.get("type") == "image")
+
+    async def set_body_typography(self, font="", size=0):
+        self._rec("set_body_typography")
+        self.typography = (font, size)
+
+    async def load_template(self, name):
+        self._rec("load_template")
+        self.template = name
+        return not self.template_fails
     async def open_publish_layer(self): self._rec("open_publish_layer")
     async def set_open_type(self, t): self._rec("set_open_type")
     async def set_search_allow(self, a): self._rec("set_search_allow")
@@ -705,6 +718,44 @@ class TestRunJob(unittest.TestCase):
         r = self.run_job(ed, _job(finalAction="publishNow"))
         self.assertFalse(r.ok)
         self.assertEqual(ed.calls, [])
+
+
+class TestBlogTemplate(unittest.TestCase):
+    """병원이 네이버에 저장해 둔 '내 템플릿'을 깔고 그 위에 원고를 쓴다(2026-09-30 고객 제안)."""
+
+    def run_job(self, editor, job):
+        import agent
+
+        return asyncio.run(agent.run_job(editor, job, dry_run=True, now=NOW))
+
+    def test_template_is_loaded_and_its_content_is_kept(self):
+        editor = FakeEditor()
+        self.run_job(editor, _job(options={"template": "리베리 기본", "openType": "public"}))
+        self.assertEqual(editor.template, "리베리 기본")
+        self.assertLess(editor.calls.index("load_template"), editor.calls.index("set_title"),
+                        "템플릿은 제목·본문보다 먼저 깔아야 한다")
+        self.assertTrue(editor.keep, "템플릿을 깔았으면 전체 선택으로 지우면 안 된다")
+
+    def test_a_missing_template_falls_back_to_an_empty_post(self):
+        """템플릿을 못 불러왔는데 keep 으로 쓰면, 남아 있던 글 위에 덧쓰게 된다."""
+        editor = FakeEditor()
+        editor.template_fails = True
+        self.run_job(editor, _job(options={"template": "없는 템플릿"}))
+        self.assertIn("insert_body_blocks", editor.calls)
+        self.assertFalse(editor.keep)
+
+    def test_the_templates_own_font_wins(self):
+        editor = FakeEditor()
+        self.run_job(editor, _job(options={"template": "리베리 기본", "font": "마루부리", "size": 16}))
+        self.assertNotIn("set_body_typography", editor.calls,
+                         "병원이 템플릿에 정해 둔 글꼴을 우리가 덮어쓰면 안 된다")
+
+    def test_without_a_template_the_chosen_font_is_applied(self):
+        editor = FakeEditor()
+        self.run_job(editor, _job(options={"font": "마루부리", "size": 16}))
+        self.assertEqual(editor.typography, ("마루부리", 16))
+        self.assertLess(editor.calls.index("set_body_typography"), editor.calls.index("insert_body_blocks"),
+                        "본문을 넣은 뒤에 글꼴을 바꾸면 이미 쓴 글은 그대로다")
 
 
 class TestFinalActions(unittest.TestCase):

@@ -103,6 +103,11 @@ class Blog(Base):
     footer_link_label = Column(String(100), nullable=True)   # 그 앞에 붙일 한 줄 ("예약은 여기서")
     place_url = Column(String(500), nullable=True)           # 네이버 플레이스(지도) 주소
     place_label = Column(String(100), nullable=True)         # ("오시는 길")
+    # 네이버 블로그에 저장해 둔 '내 템플릿' 이름. 적어 두면 실행기가 글을 쓰기 전에 그 템플릿을
+    # 먼저 불러온다 — 글꼴·강조색·고정 문단(주소·진료시간·지도)이 병원이 만들어 둔 그대로 나간다.
+    # 2026-09-30 고객 제안: "블로그 내에 템플릿 저장을 해두면 그 템플릿에 맞게 (…) 삽입되게".
+    # 비워 두면 예전처럼 빈 글에 쓴다.
+    template_name = Column(String(100), nullable=True)
     # 이 블로그만 쓰는 고정 프록시(http://user:pw@host:port). 계정 비밀번호가 들어갈 수 있어 암호화해 둔다.
     # 블로그마다 IP를 고정하는 것이 목적이다 — 매번 바꾸면 같은 계정이 여기저기서 접속하는 꼴이라 더 걸린다.
     proxy_enc = Column(Text, nullable=True)

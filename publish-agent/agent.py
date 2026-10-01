@@ -158,16 +158,23 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
         if action == "schedule" and hasattr(editor, "reserve_count"):
             reserved_before = await editor.reserve_count()
 
-        # 3) 제목/본문
+        # 3) 템플릿 → 제목 → 본문
+        settings = job.get("options") or {}
+        # 병원이 네이버에 저장해 둔 '내 템플릿'. 글꼴·강조색과 고정 문단(주소·진료시간·지도)이
+        # 거기 들어 있다. 원고는 그 **위에** 쓴다. 못 불러오면 예전처럼 빈 글에 쓴다.
+        templated = False
+        if settings.get("template") and hasattr(editor, "load_template"):
+            templated = await editor.load_template(settings["template"])
         await editor.set_title(title)
         # 글꼴·크기는 본문을 넣기 전에 정해 둔다 — 넣고 나서 바꾸면 이미 쓴 글은 그대로다.
-        typography = job.get("options") or {}
-        if (typography.get("font") or typography.get("size")) and hasattr(editor, "set_body_typography"):
-            await editor.set_body_typography(typography.get("font") or "", int(typography.get("size") or 0))
+        # 템플릿을 불러왔으면 템플릿의 글꼴을 그대로 둔다(병원이 정해 둔 것이 이긴다).
+        if not templated and (settings.get("font") or settings.get("size")) and hasattr(editor, "set_body_typography"):
+            await editor.set_body_typography(settings.get("font") or "", int(settings.get("size") or 0))
         blocks = job.get("blocks") or [{"type": "text", "content": job.get("content") or ""}]
         # 워드에서 올라온 원고는 서버가 reformat=False 로 내린다 — 글쓴이 줄바꿈을 다시 자르지 않는다.
-        reformat = (job.get("options") or {}).get("reformat", True)
-        await editor.insert_body_blocks(blocks, pick_emphasize(job.get("emphasize") or []), reformat=bool(reformat))
+        reformat = settings.get("reformat", True)
+        await editor.insert_body_blocks(blocks, pick_emphasize(job.get("emphasize") or []),
+                                        reformat=bool(reformat), keep=templated)
 
         # 4) 임시저장은 발행 레이어를 열지 않는다 — 글만 저장하고 끝낸다.
         opts = job.get("options") or {}

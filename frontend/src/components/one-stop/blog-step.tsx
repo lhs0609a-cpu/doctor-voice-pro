@@ -33,6 +33,7 @@ export function blogBody(blog: BlogAccount, extra: Partial<BlogInput> = {}): Blo
     min_gap_minutes: blog.min_gap_minutes, default_category: blog.default_category ?? null, open_type: blog.open_type,
     footer_link_url: blog.footer_link_url ?? null, footer_link_label: blog.footer_link_label ?? null,
     place_url: blog.place_url ?? null, place_label: blog.place_label ?? null,
+    template_name: blog.template_name ?? null,
     ...extra,
   }
 }
@@ -108,6 +109,16 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
     onChanged()
     const kept = [body.place_url && '플레이스 지도', body.footer_link_url && '홈페이지·예약 링크'].filter(Boolean).join(' · ')
     return kept ? `${kept}를 이 블로그의 모든 글 끝에 넣습니다.` : '글 끝 링크를 지웠습니다.'
+  })
+
+  // 네이버에 저장해 둔 '내 템플릿'. 적어 두면 실행기가 글을 쓰기 전에 그 템플릿을 깔고
+  // 원고를 그 위에 쓴다 — 글꼴·강조색·고정 문단(주소·진료시간·지도)이 병원 것 그대로 나간다.
+  const saveTemplate = (blog: BlogAccount, value: string) => run(`tpl-${blog.id}`, async () => {
+    await campaignAPI.updateBlog(blog.id, blogBody(blog, { template_name: value.trim() || null }))
+    onChanged()
+    return value.trim()
+      ? `글을 쓰기 전에 '${value.trim()}' 템플릿을 먼저 불러옵니다.`
+      : '템플릿 없이 빈 글에 씁니다.'
   })
 
   // 카테고리는 네이버 글쓰기 화면 안에만 있다. 블로그에서 새로 만들었으면 사람이 눌러
@@ -304,9 +315,37 @@ export function BlogStep({ campaign, client, setCampaign, onChanged }: {
       })}
     </div>}
 
-    {/* ⑤ 블로그별 고정 IP */}
+    {/* ⑤ 내 템플릿 */}
     {linked.length > 0 && <div className="space-y-2">
-      <p className="text-sm font-medium">⑤ 블로그별 고정 IP <span className="font-normal text-muted-foreground">(선택 — 여러 병원을 한 PC에서 운영할 때)</span></p>
+      <p className="text-sm font-medium">⑤ 네이버 &lsquo;내 템플릿&rsquo; <span className="font-normal text-muted-foreground">(선택 — 적어 두면 그 틀 위에 원고를 씁니다)</span></p>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        네이버 글쓰기에서 <b>[템플릿 → 내 템플릿]</b>에 저장해 둔 이름을 그대로 적으세요.
+        글을 쓰기 전에 그 템플릿을 먼저 불러오므로 <b>글꼴·강조색과 고정 문단</b>(주소·진료시간·해시태그·지도)이
+        병원이 만들어 둔 그대로 나갑니다. 원고는 템플릿 <b>위쪽</b>에 들어갑니다.
+        비워 두면 빈 글에 쓰고, 위에서 고른 글꼴·크기를 씁니다.
+      </p>
+      {linked.map(b => (
+        <div key={b.id} className="space-y-1.5 rounded-lg border p-3">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="font-medium">{b.label || b.blog_id}</span>
+            {b.template_name ? <Pill tone="ok">{b.template_name}</Pill> : <Pill tone="muted">템플릿 없음</Pill>}
+          </div>
+          <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+            <Input placeholder="네이버에 저장해 둔 템플릿 이름 (지우려면 비우고 저장)" defaultValue={b.template_name ?? ''}
+              autoComplete="off" disabled={!!busy}
+              onKeyDown={e => { if (e.key === 'Enter') saveTemplate(b, (e.target as HTMLInputElement).value) }}
+              onBlur={e => { if (e.target.value.trim() !== (b.template_name ?? '')) saveTemplate(b, e.target.value) }} />
+            <Button size="sm" className="h-9" disabled={!!busy} onClick={() => saveTemplate(b, b.template_name ?? '')}>
+              {busy === `tpl-${b.id}` ? '저장 중…' : '저장'}
+            </Button>
+          </div>
+        </div>
+      ))}
+    </div>}
+
+    {/* ⑥ 블로그별 고정 IP */}
+    {linked.length > 0 && <div className="space-y-2">
+      <p className="text-sm font-medium">⑥ 블로그별 고정 IP <span className="font-normal text-muted-foreground">(선택 — 여러 병원을 한 PC에서 운영할 때)</span></p>
       <p className="text-xs leading-relaxed text-muted-foreground">
         블로그마다 <b>고정된</b> 주소를 넣으세요. 계속 바꾸면 같은 계정이 여기저기서 접속하는 꼴이라
         로그인이 자꾸 풀립니다. 예) <code>123.45.67.89:8080</code> 또는 <code>http://아이디:비밀번호@123.45.67.89:8080</code>

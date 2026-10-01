@@ -38,6 +38,8 @@ export interface BlogFooter {
   footer_link_label?: string | null
   place_url?: string | null
   place_label?: string | null
+  /** 네이버 블로그 글쓰기의 [템플릿 → 내 템플릿] 에 저장해 둔 이름. 비우면 빈 글에 쓴다. */
+  template_name?: string | null
 }
 
 export interface BlogAccount extends BlogFooter {
@@ -88,6 +90,7 @@ export interface BlogInput {
   footer_link_label?: string | null
   place_url?: string | null
   place_label?: string | null
+  template_name?: string | null
 }
 
 export interface BriefFlowStep { title: string; goal?: string; min_chars?: number }

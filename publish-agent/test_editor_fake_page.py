@@ -663,3 +663,67 @@ class TestLinkCard(unittest.TestCase):
         self.assertEqual(got["cards"], [], got)
         self.assertIn(url, " ".join(got["body"]), "카드가 안 붙으면 주소 글자로 되돌아가야 한다")
         self.assertIn("오시는 길", " ".join(got["body"]), "앞 문단까지 잃으면 안 된다")
+
+
+@unittest.skipUnless(_browser_available(), "Playwright Chromium 이 설치되지 않았습니다 (playwright install chromium)")
+class TestMyTemplate(unittest.TestCase):
+    """병원이 네이버에 저장해 둔 '내 템플릿'을 깔고 원고를 그 위에 쓴다(2026-09-30 고객 제안).
+
+    지켜야 하는 것은 하나다 — **템플릿이 지워지지 않는 것**. 전체 선택으로 지우면
+    병원이 만들어 둔 주소·진료시간·해시태그가 통째로 사라진다."""
+
+    @classmethod
+    def setUpClass(cls):
+        handler = functools.partial(_Quiet, directory=str(HERE / "fake_editor"))
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.base = f"http://127.0.0.1:{cls.server.server_address[1]}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+
+    def _run(self, name, query=""):
+        from playwright.async_api import async_playwright
+
+        async def go():
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                try:
+                    ed = NaverEditor(page, write_url=f"{self.base}/write.html{query}")
+                    await ed.open_write_page()
+                    await ed.dismiss_draft_popup()
+                    loaded = await ed.load_template(name)
+                    await ed.insert_body_blocks(
+                        [{"type": "text", "content": "여드름은 피지와 각질이 모공을 막으면서 시작됩니다."}],
+                        [], keep=loaded)
+                    frame = await ed.frame()
+                    body = await frame.evaluate(
+                        """() => [...document.querySelectorAll('.se-component.se-text .se-text-paragraph')]
+                                  .map(e => e.innerText.trim()).filter(Boolean)""")
+                    return loaded, body
+                finally:
+                    await browser.close()
+
+        return asyncio.run(go())
+
+    def test_the_template_survives_and_the_manuscript_goes_above_it(self):
+        loaded, body = self._run("리베리 기본")
+        self.assertTrue(loaded)
+        self.assertIn("리베리의원 화성동탄", body, "템플릿의 고정 문단이 사라졌다")
+        self.assertIn("#동탄여드름 #리베리의원", body)
+        text = [line for line in body if "여드름은 피지" in line]
+        self.assertTrue(text, "원고가 들어가지 않았다")
+        self.assertLess(body.index(text[0]), body.index("리베리의원 화성동탄"),
+                        "원고는 병원 정보 **위**에 와야 한다")
+
+    def test_an_unknown_template_name_falls_back_to_an_empty_post(self):
+        loaded, body = self._run("없는 템플릿")
+        self.assertFalse(loaded, "못 찾은 템플릿을 불러왔다고 보고하면 안 된다")
+        self.assertNotIn("리베리의원 화성동탄", body)
+
+    def test_without_a_template_button_the_post_is_written_as_before(self):
+        loaded, body = self._run("리베리 기본", "?notemplate=1")
+        self.assertFalse(loaded)
+        self.assertTrue(any("여드름은 피지" in line for line in body))

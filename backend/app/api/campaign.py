@@ -177,6 +177,8 @@ class BlogOut(BaseModel):
     footer_link_label: Optional[str] = None
     place_url: Optional[str] = None
     place_label: Optional[str] = None
+    # 네이버에 저장해 둔 '내 템플릿' 이름. 적어 두면 실행기가 글을 쓰기 전에 불러온다.
+    template_name: Optional[str] = None
     # 실행기가 네이버 편집기에서 읽어 온 이 블로그의 카테고리 목록. 화면이 이걸로 고르게 한다.
     categories: List[Dict[str, str]] = []
     categories_synced_at: Optional[datetime] = None
@@ -241,7 +243,7 @@ def _blog_out(b: Blog) -> BlogOut:
         status=b.status or "active", status_reason=b.status_reason,
         last_published_at=b.last_published_at, proxy_label=_proxy_label(b.proxy_enc),
         footer_link_url=b.footer_link_url, footer_link_label=b.footer_link_label,
-        place_url=b.place_url, place_label=b.place_label,
+        place_url=b.place_url, place_label=b.place_label, template_name=b.template_name,
         categories=[{"id": str(c.get("id") or ""), "name": str(c.get("name") or "")}
                     for c in (b.categories or []) if isinstance(c, dict)],
         categories_synced_at=b.categories_synced_at,
@@ -367,6 +369,8 @@ class BlogIn(BaseModel):
     footer_link_label: Optional[str] = None
     place_url: Optional[str] = None
     place_label: Optional[str] = None
+    # 네이버 블로그 글쓰기의 [템플릿 → 내 템플릿] 에 저장해 둔 이름. 비우면 빈 글에 쓴다.
+    template_name: Optional[str] = None
 
 
 def _clean_footer_url(raw: Optional[str]) -> Optional[str]:
@@ -457,6 +461,7 @@ async def add_blog(client_id: str, body: BlogIn, current_user: User = Depends(ge
         footer_link_label=(body.footer_link_label or "").strip()[:100] or None,
         place_url=_clean_footer_url(body.place_url),
         place_label=(body.place_label or "").strip()[:100] or None,
+        template_name=(body.template_name or "").strip()[:100] or None,
     )
     db.add(b)
     await db.commit()
@@ -488,6 +493,7 @@ async def update_blog(blog_ref_id: str, body: BlogIn, current_user: User = Depen
     b.footer_link_label = (body.footer_link_label or "").strip()[:100] or None
     b.place_url = _clean_footer_url(body.place_url)
     b.place_label = (body.place_label or "").strip()[:100] or None
+    b.template_name = (body.template_name or "").strip()[:100] or None
     await db.commit()
     return _blog_out(b)
 
@@ -2369,6 +2375,8 @@ async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_us
                          # 옛 실행기는 이 칸을 모르고 지나가므로 네이버 기본값으로 나간다.
                          "font": point_settings.get("font") or "",
                          "size": point_settings.get("size") or 0,
+                         # 네이버에 저장해 둔 '내 템플릿'. 실행기가 글을 쓰기 전에 불러온다.
+                         "template": blog.template_name or "",
                          # 워드 원고는 글쓴이가 잡아 둔 줄바꿈이 곧 원고다. 실행기의 모바일 재정렬을 끈다.
                          "reformat": not draft.blocks,
                          "requiredLinks": [draft.checks['landing']['url']] if (draft.checks or {}).get('landing') else []},
