@@ -160,6 +160,14 @@ async def insert_rich_blocks(editor, blocks):
         if kind == 'table':
             await insert_table(editor,block)
             continue
+        # 주소만 있는 줄은 카드로 세운다(글 끝의 홈페이지·플레이스 주소가 이 모양이다).
+        # 카드가 안 되면 주소 글자로 되돌린다 — 글이 통째로 안 나가는 것보다 낫다.
+        from plan import is_bare_url
+        url = (block.get('content') or '').strip()
+        if kind == 'text' and is_bare_url(url):
+            if not await editor.insert_url_card(url):
+                await editor._insert(url)
+            continue
         if kind == 'quote':
             frame = await editor.frame()
             await frame.locator('button[data-name="quotation"][data-value="default"]').click()

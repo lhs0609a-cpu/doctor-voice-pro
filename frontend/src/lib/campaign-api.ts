@@ -293,6 +293,8 @@ export interface DocImport {
 export interface PointFormattingConfig {
   enabled: boolean; bold: boolean; quote: boolean; color: boolean; background: boolean
   text_color: string; background_color: string; phrases: string[]
+  // 본문 전체 글꼴·크기(네이버 글쓰기 툴바의 값). 빈 값·0 이면 네이버 기본.
+  font: string; size: number
 }
 export interface FormattedSpan { t: string; b?: boolean; i?: boolean; u?: boolean; color?: string; background?: string; size?: number }
 export interface FormattedBlock { type: string; content?: string; spans?: FormattedSpan[]; items?: FormattedSpan[][]; rows?: FormattedSpan[][][] }

@@ -149,6 +149,39 @@ class TitleTests(unittest.TestCase):
         self.assertEqual(parsed.title, '허리 디스크 안내')
 
 
+class QuotedSubheadingTests(unittest.TestCase):
+    """워드 원고의 따옴표 줄은 소제목이다 — 네이버 인용구로 나간다(2026-09-30 고객 확정).
+
+    고객 원고는 소제목에 '제목 1' 스타일을 쓰지 않고 따옴표로만 표시해 온다. 스타일만 보면
+    그 줄이 본문으로 흘러가 원고가 밋밋해진다."""
+
+    def _parse(self, *lines):
+        document = Document()
+        for line in lines:
+            document.add_paragraph(line)
+        return parse_docx(_save(document), name='원고.docx')
+
+    def test_a_quoted_line_becomes_a_quote_block_without_the_quotes(self):
+        parsed = self._parse('무릎 통증 원인 정리', '"어느 때 병원에 가야 할까요"', '본문입니다.')
+        self.assertEqual([b['type'] for b in parsed.blocks], ['quote', 'text'])
+        self.assertEqual(parsed.blocks[0]['content'], '어느 때 병원에 가야 할까요')
+
+    def test_curly_quotes_count_too(self):
+        parsed = self._parse('제목입니다', '“통증이 오래갈 때”', '본문입니다.')
+        self.assertEqual(parsed.blocks[0]['type'], 'quote')
+        self.assertEqual(parsed.blocks[0]['content'], '통증이 오래갈 때')
+
+    def test_a_quote_inside_a_sentence_stays_body_text(self):
+        parsed = self._parse('제목입니다', '환자분이 "언제 나아요"라고 물으십니다.', '본문입니다.')
+        self.assertEqual([b['type'] for b in parsed.blocks], ['text', 'text'])
+
+    def test_a_quoted_first_line_is_still_the_title(self):
+        """첫 줄이 따옴표면 그건 제목이다 — 소제목으로 내려보내면 제목이 파일 이름이 된다."""
+        parsed = self._parse('"무릎 통증 원인 정리"', '본문입니다.')
+        self.assertEqual(parsed.title, '무릎 통증 원인 정리')
+        self.assertEqual([b['type'] for b in parsed.blocks], ['text'])
+
+
 class RejectTests(unittest.TestCase):
     def test_broken_file_is_reported(self):
         with self.assertRaises(ValueError) as caught:

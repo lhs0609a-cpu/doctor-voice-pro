@@ -190,6 +190,22 @@ class TestTypingPlan(unittest.TestCase):
     def test_pick_emphasize(self):
         self.assertEqual(pick_emphasize(["#임플란트", "치", "  교정 ", "임플란트", 3]), ["임플란트", "교정"])
 
+    def test_a_url_only_line_becomes_a_card(self):
+        """주소만 있는 줄은 카드로. 글자로 넣으면 파란 글씨만 남는다(2026-09-30 고객 신고)."""
+        ops = plan_text("https://map.naver.com/p/entry/place/1754941463", [])
+        self.assertEqual([(o.kind, o.payload) for o in ops],
+                         [("link", "https://map.naver.com/p/entry/place/1754941463")])
+
+    def test_a_url_inside_a_sentence_is_ordinary_text(self):
+        ops = plan_text("자세한 것은 https://example.com 에서 보세요.", [])
+        self.assertEqual([o.kind for o in ops], ["text"])
+
+    def test_the_footer_url_of_a_word_manuscript_is_also_a_card(self):
+        """워드 원고(reformat=False)의 글 끝 주소도 카드다."""
+        ops = plan_blocks([{"type": "text", "content": "본문입니다.\n\nhttps://dt.reberryclinic.com"}],
+                          [], reformat=False)
+        self.assertEqual([o.payload for o in ops if o.kind == "link"], ["https://dt.reberryclinic.com"])
+
 
 class TestDataUrl(unittest.TestCase):
     def test_decode_jpeg(self):

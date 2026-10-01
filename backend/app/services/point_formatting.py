@@ -14,6 +14,11 @@ class PointFormatting(BaseModel):
     text_color: str = Field(default='#0078cb', pattern=r'^#[0-9a-fA-F]{6}$')
     background_color: str = Field(default='#fff8b2', pattern=r'^#[0-9a-fA-F]{6}$')
     phrases: List[str] = Field(default_factory=list, max_length=20)
+    # 본문 전체 글꼴·크기. 네이버 글쓰기 툴바에서 고르는 바로 그 값이고, 비워 두면 네이버 기본이다.
+    # 2026-09-30 고객 지적: "글자 폰트, 크기 설정 있었는데 사라졌습니다".
+    # 강조(위 항목들)와 달리 이건 글 전체에 걸리므로 enabled 와 무관하게 적용한다.
+    font: str = Field(default='', max_length=40)
+    size: int = Field(default=0, ge=0, le=60)
 
 
 def _text(block):

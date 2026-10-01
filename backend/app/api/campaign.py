@@ -2365,6 +2365,10 @@ async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_us
                 finalAction="draft" if drafting else "schedule",
                 schedule={"datetime": j.scheduled_at.isoformat(timespec="minutes") + "+09:00"},
                 options={"openType": j.open_type or "public", "search": True, "category": j.category,
+                         # 본문 글꼴·크기. 실행기가 본문을 넣기 전에 툴바에서 고른다.
+                         # 옛 실행기는 이 칸을 모르고 지나가므로 네이버 기본값으로 나간다.
+                         "font": point_settings.get("font") or "",
+                         "size": point_settings.get("size") or 0,
                          # 워드 원고는 글쓴이가 잡아 둔 줄바꿈이 곧 원고다. 실행기의 모바일 재정렬을 끈다.
                          "reformat": not draft.blocks,
                          "requiredLinks": [draft.checks['landing']['url']] if (draft.checks or {}).get('landing') else []},

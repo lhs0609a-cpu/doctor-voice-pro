@@ -43,6 +43,14 @@
   <!-- 인용구: 누르면 새 인용구 컴포넌트가 생기고 거기에 글을 쓴다(실제 네이버와 같은 구조).
        빠져나올 때 쓰는 '본문으로' 버튼도 실제처럼 둔다. -->
   <button data-name="quotation" data-value="default" id="quotebtn">인용구</button>
+  <!-- 링크 카드: 누르면 주소 칸이 뜨고, Enter 나 [확인] 이면 카드 컴포넌트가 붙는다. -->
+  <button data-name="oglink" id="linkbtn">링크</button>
+</div>
+
+<div class="popup" id="linklayer" style="display:none">
+  <input type="text" id="linkurl" placeholder="URL을 입력해 주세요">
+  <button id="linkok">확인</button>
+  <button id="linkcancel">취소</button>
 </div>
 
 <div class="se-content"><div class="se-components-wrap">
@@ -148,6 +156,45 @@
       document.body.appendChild(bottom);
       box.querySelector('p').focus();
     });
+  })();
+
+  // 링크 카드 — 실제 SE ONE: [링크] → 주소 칸 → Enter/확인 → se-oglink 컴포넌트.
+  //   ?nolinkbtn=1   링크 단추 자체가 없는 판(주소를 글자로 넣는 길로 되돌아가야 한다)
+  //   ?linkfails=1   주소를 넣어도 카드가 안 붙는 경우(네이버가 주소를 못 읽는 상황)
+  //   ?linkconfirm=1 Enter 로는 미리보기만, [확인] 을 눌러야 카드가 붙는 판
+  (function oglink() {
+    const btn = document.getElementById('linkbtn');
+    const layer = document.getElementById('linklayer'), input = document.getElementById('linkurl');
+    if (q.get('nolinkbtn') === '1') { btn.remove(); layer.remove(); return; }
+    const NEEDS_OK = q.get('linkconfirm') === '1';
+    btn.onclick = () => { layer.style.display = 'block'; input.value = ''; input.focus(); };
+    document.getElementById('linkcancel').onclick = () => { layer.style.display = 'none'; };
+    function addCard() {
+      const url = input.value.trim();
+      if (!url || q.get('linkfails') === '1') { return; }
+      state.cards = (state.cards || []).concat(url);
+      const wrap = document.querySelector('.se-components-wrap');
+      const card = document.createElement('div');
+      card.className = 'se-component se-oglink';
+      card.innerHTML = '<a class="se-oglink-thumbnail" href="' + url + '">' + url + '</a>';
+      wrap.appendChild(card);
+      layer.style.display = 'none';
+      // 인용구와 같은 구조: 카드 뒤 본문은 '본문으로' 단추로 만든다.
+      const bottom = document.createElement('button');
+      bottom.className = 'se-canvas-bottom-button';
+      bottom.textContent = '본문으로';
+      bottom.onclick = () => {
+        const para = document.createElement('div');
+        para.className = 'se-component se-text';
+        para.innerHTML = '<div class="se-section-text"><p class="se-text-paragraph" contenteditable="true"></p></div>';
+        wrap.appendChild(para);
+        bottom.remove();
+        para.querySelector('p').focus();
+      };
+      document.body.appendChild(bottom);
+    }
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); if (!NEEDS_OK) addCard(); } });
+    document.getElementById('linkok').onclick = addCard;
   })();
 
   // 이미지: 실제 SE ONE 처럼 컴포넌트가 붙고 그 뒤에 빈 문단이 생긴다(업로드 지연 흉내 300ms)

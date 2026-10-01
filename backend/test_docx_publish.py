@@ -261,6 +261,23 @@ class DocxUploadTests(DatabaseCase):
         self.assertTrue(any(s.get('b') for s in claimed['blocks'][0]['spans']))
         self.assertEqual(claimed['blocks'][3]['type'],'quote')
 
+    async def test_body_font_and_size_reach_the_launcher(self):
+        """글꼴·크기는 실행기가 본문을 넣기 전에 툴바에서 고른다 — 안 실어 보내면 기본값으로 나간다."""
+        draft = await self.upload()
+        async with self.sessions() as db:
+            row = await db.get(Draft, draft['id'])
+            row.checks = {**row.checks, 'formatting': {'enabled': False, 'font': '마루부리', 'size': 16}}
+            await db.commit()
+        claimed = await self.claim(draft['id'], capabilities=['rich_text_v1'])
+        self.assertEqual(claimed['options']['font'], '마루부리')
+        self.assertEqual(claimed['options']['size'], 16)
+
+    async def test_no_font_chosen_means_naver_default(self):
+        draft = await self.upload()
+        claimed = await self.claim(draft['id'], capabilities=['rich_text_v1'])
+        self.assertEqual(claimed['options']['font'], '')
+        self.assertEqual(claimed['options']['size'], 0)
+
     async def test_old_client_cannot_silently_drop_requested_points(self):
         draft = await self.upload()
         async with self.sessions() as db:

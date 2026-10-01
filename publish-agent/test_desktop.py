@@ -29,10 +29,12 @@ class DesktopTests(unittest.TestCase):
             await asyncio.wait_for(interruptible_pause(300, args), timeout=.1)
         asyncio.run(run())
 
-    def test_url_not_split_by_emphasis_and_receives_enter(self):
+    def test_url_not_split_by_emphasis_and_becomes_a_card(self):
+        """주소는 강조어로 쪼개지 않는다. 쪼개면 주소가 깨지고 카드도 못 만든다.
+        2026-09-30부터 주소 한 줄은 글자가 아니라 링크 카드로 나간다."""
         url = 'https://example.com/booking?utm_content=abc#faq'
         ops = plan_text(url, ['booking', 'abc'])
-        self.assertEqual([(o.kind, o.payload) for o in ops], [('text', url), ('enter', '')])
+        self.assertEqual([(o.kind, o.payload) for o in ops], [('link', url)])
 
 
 class SummaryNoteTests(unittest.TestCase):

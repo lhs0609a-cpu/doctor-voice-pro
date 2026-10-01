@@ -160,6 +160,10 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
 
         # 3) 제목/본문
         await editor.set_title(title)
+        # 글꼴·크기는 본문을 넣기 전에 정해 둔다 — 넣고 나서 바꾸면 이미 쓴 글은 그대로다.
+        typography = job.get("options") or {}
+        if (typography.get("font") or typography.get("size")) and hasattr(editor, "set_body_typography"):
+            await editor.set_body_typography(typography.get("font") or "", int(typography.get("size") or 0))
         blocks = job.get("blocks") or [{"type": "text", "content": job.get("content") or ""}]
         # 워드에서 올라온 원고는 서버가 reformat=False 로 내린다 — 글쓴이 줄바꿈을 다시 자르지 않는다.
         reformat = (job.get("options") or {}).get("reformat", True)

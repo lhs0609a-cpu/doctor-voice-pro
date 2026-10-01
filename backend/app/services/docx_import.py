@@ -43,6 +43,11 @@ _HEADING_RE = re.compile(r"^(heading|title)\s*(\d)?$|^제목\s*(\d)?$", re.I)
 _QUOTE_RE = re.compile(r"quote|인용", re.I)
 _LIST_RE = re.compile(r"^list|list\s*paragraph|목록|글머리|번호", re.I)
 _ORDERED_RE = re.compile(r"number|decimal|번호", re.I)
+# 줄 전체가 따옴표로 감싸인 문단 = 소제목. 네이버 인용구로 세운다.
+# 2026-09-30 고객 확정: '" " 들어가는 내용은 소제목(인용구)로 나오게'. 워드 원고는 소제목에
+# 스타일('제목 1')을 안 쓰고 따옴표로만 표시해 오는 일이 많아, 스타일이 없어도 이 모양이면 잡는다.
+# 문장 속 인용까지 올리지 않도록 **줄 전체**가 따옴표일 때만이다(publish-agent/plan.py 와 같은 규칙).
+_QUOTED_LINE_RE = re.compile(r'^\s*["“「『](?P<t>[^"”」』\n]{2,60})["”」』]\s*[.!?]?\s*$')
 
 
 @dataclass
@@ -202,7 +207,24 @@ def _paragraph_kind(paragraph) -> Tuple[str, int]:
         return "quote", 0
     if paragraph._p.find(f"{W}pPr/{W}numPr") is not None or any(_LIST_RE.search(n) for n in names):
         return "list", 0
+    # 스타일이 없어도 줄 전체가 따옴표면 소제목이다(고객이 소제목을 그렇게 적어 온다).
+    if _QUOTED_LINE_RE.match(_clean(paragraph.text)):
+        return "quote", 0
     return "text", 0
+
+
+def _unquote(spans: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """소제목 줄을 감싼 따옴표를 뗀다. 인용구 안에 따옴표까지 들어가면 두 번 인용한 꼴이다."""
+    if not spans:
+        return spans
+    match = _QUOTED_LINE_RE.match(spans_text(spans))
+    if not match:
+        return spans
+    out = [dict(s) for s in spans]
+    first, last = out[0], out[-1]
+    first["t"] = re.sub(r'^\s*["“「『]', "", first.get("t", ""), count=1)
+    last["t"] = re.sub(r'["”」』]\s*[.!?]?\s*$', "", last.get("t", ""), count=1)
+    return [s for s in out if s.get("t")]
 
 
 def _ordered_list(paragraph) -> bool:
@@ -361,6 +383,8 @@ def parse_docx(data: bytes, *, name: str = "") -> ParsedDoc:
             blocks.extend(images)
             continue
         flush_list()
+        if kind == "quote":
+            spans = _unquote(spans)
         if spans:
             block: Dict[str, Any] = {"type": kind if kind != "list" else "text", "spans": spans}
             if block["type"] == "heading":
@@ -392,7 +416,9 @@ def _split_title(blocks: List[Dict[str, Any]], name: str) -> Tuple[str, List[Dic
         text = block_text(block).strip()
         if not text:
             continue
-        if block["type"] == "heading" or (block["type"] == "text" and len(text) <= TITLE_MAX):
+        # 첫 줄이 따옴표로 감싸여 있으면 그것이 제목이다 — 소제목으로 내려보내면 제목이
+        # 파일 이름으로 떨어진다(따옴표를 소제목으로 읽기 시작한 2026-09-30 이후).
+        if block["type"] in ("heading", "quote") or (block["type"] == "text" and len(text) <= TITLE_MAX):
             return text[:200], blocks[:i] + blocks[i + 1:]
         break
     stem = re.sub(r"\.docx?$", "", name, flags=re.I).strip()

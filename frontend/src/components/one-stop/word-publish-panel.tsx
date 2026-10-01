@@ -11,8 +11,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Check, Loader2, Trash2, Upload, X } from 'lucide-react'
-import { campaignAPI, type Campaign, type Client, type Draft } from '@/lib/campaign-api'
+import { campaignAPI, type BlogAccount, type Campaign, type Client, type Draft } from '@/lib/campaign-api'
 import { PointFormattingPanel } from '@/components/campaign/point-formatting'
+import { blogBody } from './blog-step'
 import { Button } from '@/components/ui/button'
 import { errMsg } from '@/components/campaign/common'
 import { cn } from '@/lib/utils'
@@ -59,6 +60,54 @@ function flagsOf(draft: Draft): Flag[] {
   const law = Array.isArray(checks.medical_law) ? (checks.medical_law as Flag[]) : []
   const words = Array.isArray(checks.forbidden) ? (checks.forbidden as string[]) : []
   return [...law, ...words.map(w => ({ text: w, category: '병원 금칙어' }))]
+}
+
+/** 올릴 카테고리. ②블로그 연결에도 같은 칸이 있지만, 원고를 올리는 자리에서 바로 바꿀 수 있어야 한다
+ *  (2026-09-30 고객 지적: "카테고리 설정하는 부분 사라짐" — 옮겨 둔 것을 못 찾으신 것이다). */
+function CategoryPicker({ campaign, client }: { campaign: Campaign; client: Client }) {
+  const [blogs, setBlogs] = useState(() => client.blogs.filter(b => campaign.blog_ids.includes(b.id)))
+  const [busy, setBusy] = useState('')
+  const [note, setNote] = useState('')
+  const [error, setError] = useState('')
+
+  const save = async (blog: BlogAccount, value: string) => {
+    setBusy(blog.id); setError(''); setNote('')
+    try {
+      const next = await campaignAPI.updateBlog(blog.id, blogBody(blog, { default_category: value.trim() || null }))
+      setBlogs(previous => previous.map(b => (b.id === blog.id ? next : b)))
+      const picked = (blog.categories || []).find(c => c.id === value.trim())
+      setNote(value.trim()
+        ? `'${picked?.name || value.trim()}' 카테고리로 올립니다. 걸려 있는 예약도 함께 바꿨습니다.`
+        : '네이버 기본 카테고리로 올립니다.')
+    } catch (e) { setError(errMsg(e)) } finally { setBusy('') }
+  }
+
+  if (!blogs.length) return null
+  return (
+    <div className="space-y-2 rounded-lg border p-3">
+      <p className="text-sm font-medium">올릴 카테고리 <span className="font-normal text-muted-foreground">(안 고르면 네이버 기본 카테고리)</span></p>
+      {blogs.map(b => (
+        <div key={b.id} className="space-y-1">
+          <p className="text-xs text-muted-foreground">{b.label || b.blog_id}</p>
+          {(b.categories || []).length > 0 ? (
+            <select className="h-9 w-full rounded-md border bg-background px-2 text-sm" disabled={!!busy}
+              aria-label={`${b.label || b.blog_id} 카테고리`} value={b.default_category ?? ''}
+              onChange={e => void save(b, e.target.value)}>
+              <option value="">네이버 기본 카테고리</option>
+              {(b.categories || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              카테고리 목록을 아직 못 읽었습니다. <b>②블로그 연결</b>에서 [카테고리 가져오기]를 누르면
+              실행기가 1~2분 안에 읽어 옵니다.
+            </p>
+          )}
+        </div>
+      ))}
+      {note && <p role="status" className="text-xs text-success">{note}</p>}
+      {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+    </div>
+  )
 }
 
 export function WordPublishPanel({ campaign, client, onUpdated }: {
@@ -395,9 +444,10 @@ export function WordPublishPanel({ campaign, client, onUpdated }: {
       )}
 
       <details className="rounded-lg border px-3 py-2">
-        <summary className="cursor-pointer text-sm text-muted-foreground">글자 강조 설정 바꾸기</summary>
-        <div className="mt-3">
+        <summary className="cursor-pointer text-sm text-muted-foreground">글꼴·크기·강조·카테고리 설정 바꾸기</summary>
+        <div className="mt-3 space-y-3">
           <PointFormattingPanel campaignId={campaign.id} drafts={drafts} onSavedState={setSaved} />
+          <CategoryPicker campaign={campaign} client={client} />
         </div>
       </details>
 

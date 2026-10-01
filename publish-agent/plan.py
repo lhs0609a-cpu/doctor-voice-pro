@@ -40,6 +40,14 @@ def _heading_text(source: str) -> Optional[str]:
     return source if not re.search(r"[.!?…]$", source) else None
 
 
+# 줄 전체가 주소 하나뿐인 줄. 글 끝에 붙는 홈페이지·플레이스 주소가 이 모양이다.
+_BARE_URL_RE = re.compile(r"https?://\S+")
+
+
+def is_bare_url(line: str) -> bool:
+    return bool(_BARE_URL_RE.fullmatch((line or "").strip()))
+
+
 def nospace_len(text: str) -> int:
     """공백을 뺀 글자 수. 문단 길이는 이 값으로 잰다(띄어쓰기는 읽는 부담이 아니다)."""
     return len(re.sub(r"\s+", "", text or ""))
@@ -130,6 +138,7 @@ class Op:
       text   글자 넣기. `attrs` 에 서식({'b','i','u','color','size'})이 있으면 그 서식으로.
       bold   강조어 한 번 굵게(Ctrl+B 켜고 끄기). 서식 없는 글에서만 쓴다.
       quote  네이버 인용구 한 줄(소제목 자리). 넣고 나면 본문 문단으로 빠져나온다.
+      link   주소 한 줄을 링크/지도 카드로. 카드가 안 되면 주소 글자로 되돌린다.
       enter  줄바꿈
       image  사진(data URL)
       para   뒤따르는 글의 문단 종류. `attrs` {'kind': 'text'|'heading'|'quote'|'list', 'level', 'ordered'}
@@ -212,10 +221,10 @@ def plan_text(content: str, emphasize: Sequence[str]) -> List[Op]:
     for i, line in enumerate(lines):
         if not line:
             bolded, budget = set(), [NUMBERS_PER_PARAGRAPH]
-        elif re.fullmatch(r'https://\S+', line):
-            ops.append(Op('text', line))
-            if i == len(lines) - 1:
-                ops.append(Op('enter'))
+        elif is_bare_url(line):
+            # 주소만 있는 줄은 **카드**로 세운다(툴바 [링크]). 글자로 흘려 넣으면 파란 글씨로만
+            # 남는다 — 2026-09-30 고객 신고 "지도와 블로그 링크는 계속 카드로 안들어가고".
+            ops.append(Op('link', line.strip()))
         else:
             cursor = 0
             for start, end in _bold_spans(line, rx, word_set, bolded, budget):

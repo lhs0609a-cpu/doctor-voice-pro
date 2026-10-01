@@ -6,6 +6,10 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { errMsg } from './common'
 
+// 네이버 글쓰기 화면이 주는 글꼴·크기. 실행기가 이 이름 그대로 툴바에서 고른다.
+const NAVER_FONTS = ['나눔고딕', '나눔명조', '나눔바른고딕', '나눔스퀘어', '나눔스퀘어라운드', '나눔바른펜', '마루부리']
+const NAVER_SIZES = [11, 13, 15, 16, 19, 24, 28, 30, 34, 38]
+
 function Spans({ spans, fallback }: { spans?: FormattedSpan[]; fallback?: string }) {
   return <>{spans?.length ? spans.map((span, index) => <span key={index} style={{
     fontWeight: span.b ? 700 : undefined, fontStyle: span.i ? 'italic' : undefined,
@@ -56,6 +60,30 @@ export function PointFormattingPanel({ campaignId, drafts, onSavedState }: {
     <div><h3 className="font-semibold">중요 포인트 강조</h3>
       <p className="mt-1 text-sm text-muted-foreground">Word의 기존 서식은 유지하고, 중요한 문구에만 강조를 더합니다. 설정은 자동 저장되며 새로 예약하는 글에 적용됩니다.</p></div>
     {config && <>
+      {/* 글꼴·크기는 글 전체에 걸린다 — 강조를 꺼 두어도 적용된다. */}
+      <div className="space-y-2 rounded-lg border p-3">
+        <p className="text-sm font-medium">본문 글꼴과 크기</p>
+        <div className="flex flex-wrap gap-3">
+          <label className="flex items-center gap-2 text-sm">글꼴
+            <select aria-label="본문 글꼴" className="h-9 rounded-md border bg-background px-2 text-sm"
+              value={config.font || ''} onChange={e => change({ font: e.target.value })}>
+              <option value="">네이버 기본</option>
+              {NAVER_FONTS.map(f => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-sm">크기
+            <select aria-label="본문 글자 크기" className="h-9 rounded-md border bg-background px-2 text-sm"
+              value={config.size || 0} onChange={e => change({ size: Number(e.target.value) })}>
+              <option value={0}>네이버 기본</option>
+              {NAVER_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </label>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          네이버 글쓰기 화면의 글꼴·크기와 같은 값입니다. 고르지 않으면 네이버 기본값(나눔고딕 15)으로 올라갑니다.
+          Word 원고가 글자마다 정해 둔 크기는 그대로 유지됩니다.
+        </p>
+      </div>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={config.enabled} onChange={e => change({ enabled: e.target.checked })} />핵심 문구 자동 강조</label>
       <fieldset disabled={!config.enabled} className="space-y-3 disabled:opacity-50">
         <div className="flex flex-wrap gap-4">{(['bold', 'quote', 'color', 'background'] as const).map((key, i) =>

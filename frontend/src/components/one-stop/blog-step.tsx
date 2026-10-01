@@ -26,7 +26,7 @@ function loggedInBlogId(reason?: string | null): string {
 /** 블로그 수정은 전체 값을 보낸다. 비밀번호를 비우면 서버가 기존 값을 유지한다.
  *  글 끝에 붙는 링크(홈페이지·플레이스)까지 반드시 실어야 한다 — 빼면 서버가 '지웠다'로 읽어
  *  계정이나 카테고리만 저장해도 링크가 사라진다(2026-09-28). */
-function blogBody(blog: BlogAccount, extra: Partial<BlogInput> = {}): BlogInput {
+export function blogBody(blog: BlogAccount, extra: Partial<BlogInput> = {}): BlogInput {
   return {
     blog_id: blog.blog_id, label: blog.label ?? null, login_id: blog.login_id ?? null, login_pw: null, proxy_url: null,
     daily_limit: blog.daily_limit, window_start: blog.window_start, window_end: blog.window_end,

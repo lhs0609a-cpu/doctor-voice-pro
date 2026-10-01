@@ -26,6 +26,10 @@ log = logging.getLogger("editor")
 
 WRITE_URL = "https://blog.naver.com/GoBlogWrite.naver"
 
+# 주소 한 줄로 만들어지는 카드. 네이버는 보통 링크를 se-oglink 로, 플레이스(지도)를 se-placesMap
+# 으로 붙이는데 이름이 판마다 바뀐다 — '주소를 넣었더니 글 블록이 하나 늘었나'로 확인한다.
+CARD_SELECTOR = ".se-component.se-oglink, .se-component.se-placesMap, .se-component.se-map"
+
 # 예약 글 목록 — 로그인한 브라우저 안에서만 보이는 화면이다. 서버는 이 목록을 볼 길이 없어
 # 실행기가 읽어다 준다. 주소는 네이버가 언제든 바꾸므로 후보를 차례로 열어 보고, 예약 행이
 # 읽히는 첫 화면을 쓴다. 현장에서 주소가 바뀌면 DV_RESERVE_URL 로 덮어쓸 수 있다(재배포 없이).
@@ -139,7 +143,10 @@ JS_DISMISS_DRAFT = r"""
 async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(300);
-  const candidates = [...document.querySelectorAll('button, a, .se-popup-button, [class*="popup"] button')];
+  // **보이는** 단추만 누른다. 닫혀 있는 층(링크 입력창 등)에도 '취소'가 들어 있어서,
+  // 그것을 누르고 '팝업을 닫았다'고 보고하면 진짜 팝업은 열린 채로 남아 제목 입력을 가로챈다.
+  const seen = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const candidates = [...document.querySelectorAll('button, a, .se-popup-button, [class*="popup"] button')].filter(seen);
   for (const btn of candidates) {
     const t = (btn.textContent || '').trim();
     if (t === '취소' || t === '아니오' || t === '새로 작성' || t === '새글쓰기') {
@@ -800,6 +807,11 @@ class NaverEditor:
                 await self._bold(op.payload)
             elif op.kind == "quote":
                 await self.insert_quote(op.payload)
+            elif op.kind == "link":
+                if not await self.insert_url_card(op.payload):
+                    # 카드가 안 되면 주소 글자 + Enter — 네이버가 알아서 링크로 바꿀 여지는 남긴다.
+                    await self._insert(op.payload)
+                    await self._enter()
             elif op.kind == "enter":
                 await self._enter()
             elif op.kind == "image":
@@ -843,6 +855,145 @@ class NaverEditor:
             raise EditorError("인용구에 소제목이 들어갔는지 확인하지 못했습니다")
         await exit_component(self)
         log.info("인용구(소제목): %s", text[:40])
+
+    # ------------------------------------------------------------ 본문 글꼴 / 크기
+    async def set_body_typography(self, font: str = "", size: int = 0) -> None:
+        """본문 글꼴과 글자 크기를 네이버 툴바에서 고른다. 본문을 넣기 **전에** 부른다.
+
+        2026-09-30 고객 요청: "글자 폰트, 크기 설정". 못 고르면 로그만 남기고 넘어간다 —
+        글꼴 하나 때문에 원고 전체를 못 올리는 편이 훨씬 나쁘다."""
+        for control, wanted in (("font-family", (font or "").strip()),
+                                ("font-size", str(size) if size else "")):
+            if not wanted:
+                continue
+            try:
+                picked = await self._pick_toolbar_option(control, wanted)
+            except Exception as e:  # noqa: BLE001
+                picked = False
+                log.warning("%s 고르는 중 오류(네이버 기본값으로 진행): %s", control, e)
+            if picked:
+                log.info("본문 %s: %s", control, wanted)
+            else:
+                log.warning("본문 %s 를 '%s' 로 바꾸지 못했습니다 — 네이버 기본값으로 나갑니다", control, wanted)
+
+    async def _pick_toolbar_option(self, control: str, wanted: str) -> bool:
+        """툴바 드롭다운(글꼴/크기)을 열고 원하는 값을 누른다."""
+        frame = await self.frame()
+        button = frame.locator(f'button[data-name="{control}"]').first
+        if not await button.count():
+            return False
+        await button.click()
+        await asyncio.sleep(0.3)
+        clicked = await frame.evaluate(r"""({wanted}) => {
+          const seen = e => { const r = e.getBoundingClientRect(); return r.width > 4 && r.height > 4; };
+          const norm = s => (s || '').replace(/\s+/g, '').trim();
+          const want = norm(wanted);
+          const options = [...document.querySelectorAll('li, button, a, span[role="option"], [role="menuitem"]')].filter(seen);
+          const hit = options.find(e => norm(e.textContent) === want
+                                     || norm(e.getAttribute('data-value')) === want);
+          if (!hit) return false;
+          (hit.closest('button, a, li') || hit).click();
+          return true;
+        }""", {"wanted": wanted})
+        if not clicked:
+            await self.page.keyboard.press("Escape")
+        await asyncio.sleep(0.2)
+        return bool(clicked)
+
+    # ------------------------------------------------------------ 링크 / 지도 카드
+    async def insert_url_card(self, url: str) -> bool:
+        """주소 한 줄을 네이버 **카드**로 세운다. 못 만들면 False — 그때는 주소를 글자로 적는다.
+
+        2026-09-30 고객 신고: "지도와 블로그 링크는 계속 카드로 안들어가고 링크만 들어갑니다".
+        지금까지는 주소를 한 줄로 적어 두면 네이버가 알아서 카드로 바꿔 줄 것으로 보았다
+        (2026-09-22 가정). 실제로는 사람이 주소창에 **붙여 넣고 Enter 를 쳐야** 카드가 되고,
+        실행기처럼 insertText 로 글자만 흘려 넣으면 파란 링크 글자로만 남는다.
+        그래서 툴바의 [링크] 단추로 카드를 직접 만든다.
+
+        카드를 못 만들어도 발행은 멈추지 않는다 — 주소 글자라도 남는 편이, 글이 통째로
+        안 나가는 것보다 낫다."""
+        frame = await self.frame()
+        button = frame.locator('button[data-name="oglink"]').first
+        if not await button.count():
+            log.warning("링크 카드 단추가 없습니다 — 주소를 글자로 넣습니다: %s", url)
+            return False
+        before = await frame.locator(CARD_SELECTOR).count()
+        try:
+            await button.click()
+            await asyncio.sleep(0.4)
+            field = await self._layer_url_field(frame)
+            if field is None:
+                raise EditorError("링크 주소를 넣을 칸을 찾지 못했습니다")
+            await field.fill(url)
+            await field.press("Enter")
+            if not await self._wait_card(frame, before):
+                # 미리보기를 보여 주고 [확인] 을 눌러야 들어가는 화면도 있다.
+                await self._click_layer_confirm(frame)
+                if not await self._wait_card(frame, before):
+                    raise EditorError("링크 카드가 본문에 들어가지 않았습니다")
+        except Exception as e:  # noqa: BLE001 — 카드는 있으면 좋은 것이지 발행 조건이 아니다
+            log.warning("링크 카드 실패(주소를 글자로 넣습니다): %s — %s", url, e)
+            await self._close_layer(frame)
+            return False
+        from rich_editor import exit_component
+        await exit_component(self)
+        log.info("링크 카드: %s", url)
+        return True
+
+    async def _layer_url_field(self, frame: Frame):
+        """방금 열린 층에서 주소를 받는 칸. 태그 입력칸 같은 남의 칸을 잡지 않도록 표시해 둔다."""
+        marked = await frame.evaluate(r"""() => {
+          const seen = e => { const r = e.getBoundingClientRect(); return r.width > 40 && r.height > 8; };
+          const fields = [...document.querySelectorAll('input[type="text"], input[type="url"], input:not([type])')]
+            .filter(e => seen(e) && !e.disabled && !e.readOnly && e.id !== 'tag-input');
+          const hint = e => ((e.placeholder || '') + ' ' + (e.getAttribute('aria-label') || '') + ' ' + (e.name || ''));
+          const pick = fields.find(e => /url|link|링크|주소|http/i.test(hint(e))) || fields[fields.length - 1];
+          if (!pick) return false;
+          pick.setAttribute('data-dv-url-field', 'true');
+          return true;
+        }""")
+        return frame.locator('input[data-dv-url-field="true"]').first if marked else None
+
+    async def _wait_card(self, frame: Frame, before: int, timeout_sec: float = 8.0) -> bool:
+        """카드가 실제로 본문에 붙었나. 네이버가 주소를 읽어 오는 동안 몇 초 걸린다."""
+        deadline = time.monotonic() + timeout_sec
+        while time.monotonic() < deadline:
+            if await frame.locator(CARD_SELECTOR).count() > before:
+                return True
+            await asyncio.sleep(0.25)
+        return False
+
+    async def _click_layer_confirm(self, frame: Frame) -> None:
+        clicked = await frame.evaluate(r"""() => {
+          const seen = e => { const r = e.getBoundingClientRect(); return r.width > 10 && r.height > 8; };
+          const ok = [...document.querySelectorAll('button')].filter(seen)
+            .find(e => /^(확인|등록|적용|삽입|완료)$/.test((e.textContent || '').trim()));
+          if (!ok) return false;
+          ok.click();
+          return true;
+        }""")
+        if clicked:
+            await asyncio.sleep(0.6)
+
+    async def _close_layer(self, frame: Frame) -> None:
+        """열어 둔 층을 반드시 닫는다 — 열린 채로 두면 다음 글자가 그 칸으로 들어간다."""
+        try:
+            await frame.evaluate("() => document.querySelectorAll('[data-dv-url-field]')"
+                                 ".forEach(e => e.removeAttribute('data-dv-url-field'))")
+            for _ in range(2):
+                await self.page.keyboard.press("Escape")
+                await asyncio.sleep(0.2)
+            await frame.evaluate(r"""() => {
+              const seen = e => { const r = e.getBoundingClientRect(); return r.width > 10 && r.height > 8; };
+              const close = [...document.querySelectorAll('button')].filter(seen)
+                .find(e => /^(취소|닫기)$/.test((e.textContent || '').trim())
+                        || /닫기|취소/.test(e.getAttribute('aria-label') || ''));
+              if (close) close.click();
+            }""")
+            await asyncio.sleep(0.2)
+            await self._refocus_body_end()
+        except Exception as e:  # noqa: BLE001
+            log.warning("링크 층 닫기 실패(계속 진행): %s", e)
 
     async def _refocus_body_end(self) -> None:
         """이미지 삽입 후 캐럿을 본문 끝으로 되돌린다(다음 문단이 이미지 뒤에 오도록)."""

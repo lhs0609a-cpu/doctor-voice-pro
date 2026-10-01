@@ -596,3 +596,70 @@ class TestQuoteSubheading(unittest.TestCase):
         self.assertEqual(got["quote"], ["무엇을 보고 판단하는가"], got)
         self.assertIn("기계는 도구입니다.", " ".join(got["body"]),
                       "인용구를 빠져나오지 못하면 본문이 인용구 안에 갇힌다")
+
+
+@unittest.skipUnless(_browser_available(), "Playwright Chromium 이 설치되지 않았습니다 (playwright install chromium)")
+class TestLinkCard(unittest.TestCase):
+    """글 끝의 주소 한 줄은 링크/지도 **카드**로 세운다(2026-09-30 고객 신고).
+
+    주소를 글자로 흘려 넣으면 파란 글씨로만 남는다. 툴바 [링크] 로 카드를 만들되,
+    카드를 못 만드는 판에서는 주소 글자로 되돌아가야 한다 — 글이 통째로 막히면 안 된다.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        handler = functools.partial(_Quiet, directory=str(HERE / "fake_editor"))
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.base = f"http://127.0.0.1:{cls.server.server_address[1]}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+
+    def _run(self, query: str = ""):
+        from playwright.async_api import async_playwright
+
+        url = "https://map.naver.com/p/entry/place/1754941463"
+
+        async def go():
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                try:
+                    ed = NaverEditor(page, write_url=f"{self.base}/write.html{query}")
+                    await ed.open_write_page()
+                    await ed.dismiss_draft_popup()
+                    await ed.insert_body_blocks(
+                        [{"type": "text", "content": f"오시는 길은 아래 지도를 눌러 확인해 주세요.\n\n{url}"}], [])
+                    frame = await ed.frame()
+                    return await frame.evaluate("""() => ({
+                      cards: [...document.querySelectorAll('.se-component.se-oglink a')].map(e => e.getAttribute('href')),
+                      body: [...document.querySelectorAll('.se-component.se-text .se-text-paragraph')]
+                              .map(e => e.innerText.trim()).filter(Boolean),
+                    })""")
+                finally:
+                    await browser.close()
+
+        return url, asyncio.run(go())
+
+    def test_a_url_line_becomes_a_card(self):
+        url, got = self._run()
+        self.assertEqual(got["cards"], [url], got)
+        self.assertNotIn(url, " ".join(got["body"]), "카드로 들어갔으면 본문에 주소 글자가 남으면 안 된다")
+        self.assertIn("오시는 길", " ".join(got["body"]))
+
+    def test_confirm_button_layer_also_makes_a_card(self):
+        url, got = self._run("?linkconfirm=1")
+        self.assertEqual(got["cards"], [url], got)
+
+    def test_without_a_link_button_the_url_is_written_as_text(self):
+        url, got = self._run("?nolinkbtn=1")
+        self.assertEqual(got["cards"], [], got)
+        self.assertIn(url, " ".join(got["body"]), "카드를 못 만들면 주소 글자라도 남아야 한다")
+
+    def test_a_failing_card_falls_back_to_text(self):
+        url, got = self._run("?linkfails=1")
+        self.assertEqual(got["cards"], [], got)
+        self.assertIn(url, " ".join(got["body"]), "카드가 안 붙으면 주소 글자로 되돌아가야 한다")
+        self.assertIn("오시는 길", " ".join(got["body"]), "앞 문단까지 잃으면 안 된다")
