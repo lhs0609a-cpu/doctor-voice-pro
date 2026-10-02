@@ -353,6 +353,9 @@ export interface ScheduleInput {
   every_minutes?: number       // interval 전용. 글 사이 간격(분)
   /** at: start_at 부터 / after_last: 이미 예약된 글 다음부터 */
   start_mode?: 'at' | 'after_last'
+  /** 이번에 거는 건들을 어떻게 올릴지. 비우면 블로그의 상시 설정을 따른다.
+   *  schedule = 네이버에 예약 발행 | draft = 임시저장만(발행은 병원이 직접) */
+  publish_mode?: 'schedule' | 'draft'
 }
 
 /** 블로그 한 개에 이미 잡혀 있는 자리(우리 예약 + 네이버에서 읽어 온 남의 예약). */

@@ -269,6 +269,46 @@ class ReservationTests(DatabaseCase):
             self.assertTrue((draft.checks or {}).get('scheduled_unreviewed'),
                             '사람이 고른 기록이 원고에 남아야 한다')
 
+    async def test_choosing_draft_at_scheduling_time_takes_effect(self):
+        """예약을 걸 때 고른 '임시저장만'이 그 건들에 그대로 붙는다(2026-10-02 요청).
+
+        예전에는 블로그 설정(병원 관리 안쪽)에만 있어서, 예약을 거는 사람이 "이번 것만
+        임시저장"을 고를 수 없었다."""
+        from app.models.campaign import PublishJob
+        from sqlalchemy import select as sa_select
+        body = {'start_date': self.now.date().isoformat(), 'days': 60, 'draft_ids': ['d'],
+                'mode': 'interval', 'every_minutes': 120, 'start_mode': 'after_last',
+                'publish_mode': 'draft'}
+        response = await self.client.post('/campaigns/c/schedule/commit', json=body)
+        self.assertEqual(response.status_code, 200, response.text)
+        async with self.sessions() as db:
+            # 픽스처가 미리 깔아 둔 j0·j1 말고, 방금 건 예약만 본다.
+            jobs = (await db.execute(sa_select(PublishJob).where(PublishJob.draft_id == 'd'))).scalars().all()
+            self.assertTrue(jobs)
+            self.assertTrue(all(j.publish_mode == 'draft' for j in jobs))
+
+    async def test_a_draft_batch_does_not_take_a_naver_slot(self):
+        """임시저장은 네이버에 예약을 만들지 않는다 — 자리를 잡아 두면 유령 자리가 남는다."""
+        from app.models.publish_queue import ScheduleMark
+        from sqlalchemy import select as sa_select
+        body = {'start_date': self.now.date().isoformat(), 'days': 60, 'draft_ids': ['d'],
+                'mode': 'interval', 'every_minutes': 120, 'start_mode': 'after_last',
+                'publish_mode': 'draft'}
+        await self.client.post('/campaigns/c/schedule/commit', json=body)
+        async with self.sessions() as db:
+            marks = (await db.execute(sa_select(ScheduleMark).where(ScheduleMark.source == 'campaign'))).scalars().all()
+        self.assertEqual(marks, [], '임시저장 건이 예약 자리를 잡으면 안 된다')
+
+    async def test_not_choosing_anything_keeps_the_blog_setting(self):
+        """안 고르면 예전처럼 블로그의 상시 설정을 따른다(비어 있는 채로 둔다)."""
+        from app.models.campaign import PublishJob
+        from sqlalchemy import select as sa_select
+        await self.commit(['d'])
+        async with self.sessions() as db:
+            jobs = (await db.execute(sa_select(PublishJob).where(PublishJob.draft_id == 'd'))).scalars().all()
+        self.assertTrue(jobs)
+        self.assertTrue(all(j.publish_mode is None for j in jobs))
+
     async def test_two_separate_commits_never_reuse_a_slot(self):
         """따로 두 번 예약해도 시각이 겹치지 않는다 — 같은 시각 두 글은 저품질로 간다.
 

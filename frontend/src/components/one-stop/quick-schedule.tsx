@@ -20,6 +20,7 @@ import { Input } from '@/components/ui/input'
 import { campaignAPI, type BlogReservations, type Campaign, type Client, type SchedulePreview } from '@/lib/campaign-api'
 import { errMsg } from '@/components/campaign/common'
 import { wakeLauncher } from '@/lib/use-launcher-status'
+import { useAuthStore } from '@/store/auth'
 import { cn } from '@/lib/utils'
 
 /** 실행기가 예약을 걸 수 있는 가장 이른 시각(서버도 30분을 요구한다). */
@@ -83,6 +84,13 @@ export function QuickSchedule({ campaign, client, draftIds, onScheduled, onBack,
   onBack: () => void
   onUpdated: (value: Campaign) => void
 }) {
+  const myEmail = useAuthStore((s) => s.user?.email) || null
+  // 이번에 거는 건들을 어떻게 올릴지. 블로그에 '임시저장만'이 걸려 있으면 그것을 기본으로 보여 준다.
+  const defaultMode: 'schedule' | 'draft' =
+    client.blogs.filter(b => campaign.blog_ids.includes(b.id)).length
+    && client.blogs.filter(b => campaign.blog_ids.includes(b.id)).every(b => b.publish_mode === 'draft')
+      ? 'draft' : 'schedule'
+  const [publishMode, setPublishMode] = useState<'schedule' | 'draft'>(defaultMode)
   const [when, setWhen] = useState<When>('now')
   const [date, setDate] = useState(() => ymd(tomorrowMorning()))
   const [clock, setClock] = useState('09:00')
@@ -131,7 +139,8 @@ export function QuickSchedule({ campaign, client, draftIds, onScheduled, onBack,
     start_at: startAt,
     every_minutes: gap,
     start_mode: (when === 'after' ? 'after_last' : 'at') as 'after_last' | 'at',
-  }), [startAt, gap, draftIds, when])
+    publish_mode: publishMode,
+  }), [startAt, gap, draftIds, when, publishMode])
 
   // 고르는 즉시 실제 시각을 보여 준다 — '미리보기' 단추를 따로 누르게 하지 않는다.
   const load = useCallback(async () => {
@@ -155,7 +164,8 @@ export function QuickSchedule({ campaign, client, draftIds, onScheduled, onBack,
     try {
       await campaignAPI.scheduleCommit(campaign.id, input)
       // 예약을 걸었으면 네이버 등록도 지금 시작해야 한다 — 실행기의 다음 주기를 기다리지 않는다.
-      void wakeLauncher()
+      // 계정마다 실행기 창이 따로라 내 계정 창을 깨운다.
+      void wakeLauncher(myEmail)
       try { onUpdated(await campaignAPI.getCampaign(campaign.id)) } catch { /* 현황은 다음 주기에 읽힌다 */ }
       onScheduled()
     } catch (e) { setError(errMsg(e)) }
@@ -230,6 +240,28 @@ export function QuickSchedule({ campaign, client, draftIds, onScheduled, onBack,
           </p>
         ))}
       </section>
+
+      <fieldset className="space-y-2">
+        <legend className="text-sm font-medium">어떻게 올릴까요?</legend>
+        <div className="flex flex-wrap gap-2">
+          {([
+            ['schedule', '네이버에 예약 발행'] as const,
+            ['draft', '임시저장만 (발행은 직접)'] as const,
+          ]).map(([key, label]) => (
+            <button key={key} type="button" onClick={() => setPublishMode(key)}
+              aria-pressed={publishMode === key}
+              className={cn('rounded-lg border px-3 py-2 text-sm transition-colors',
+                publishMode === key ? 'border-primary bg-primary/10 font-medium' : 'hover:bg-muted/40')}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {publishMode === 'draft'
+            ? '네이버에 임시저장까지만 해 둡니다. 병원에서 글을 확인한 뒤 직접 발행합니다. 실행기가 켜져 있으면 아래 시각을 기다리지 않고 바로 저장합니다 — 아래 시각은 올리는 순서를 정합니다.'
+            : '네이버 예약 발행으로 올립니다. 아래에서 고른 시각에 글이 공개됩니다.'}
+        </p>
+      </fieldset>
 
       <fieldset className="space-y-2">
         <legend className="text-sm font-medium">언제부터 올릴까요?</legend>

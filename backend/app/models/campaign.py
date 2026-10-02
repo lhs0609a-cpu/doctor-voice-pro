@@ -294,6 +294,10 @@ class PublishJob(Base):
     result_url = Column(String(500), nullable=True)
     error = Column(Text, nullable=True)
     open_type = Column(String(20), default="public")
+    # 이 건만의 올리는 방식(schedule=네이버 예약 발행 | draft=임시저장만). 비어 있으면 블로그 설정을 따른다.
+    # 예약을 거는 화면에서 그때그때 고를 수 있어야 한다 — 블로그 설정은 상시값이라
+    # "이번 것만 임시저장"을 할 수 없었다(2026-10-02 요청).
+    publish_mode = Column(String(20), nullable=True)
     category = Column(String(100), nullable=True)
     images_ready = Column(Boolean, default=False)            # 유니크화 사전 처리 완료
     image_variants = Column(JSON, default=list)              # [{slot, pool_image_id, variant_id, path}]
@@ -313,6 +317,9 @@ class PublishAttempt(Base):
     token = Column(String(64), primary_key=True)
     job_id = Column(String(36), nullable=False, index=True)
     user_id = Column(String(36), nullable=False, index=True)
+    # 이 글을 쥐고 있는 PC(실행기). 한 계정을 PC 여러 대가 나눠 쓰므로 이것이 있어야
+    # '잠금이 만료됐다'를 **그 PC 몫만** 복구할 수 있다. 없으면(옛 실행기) 예전처럼 계정 전체.
+    device_id = Column(String(64), nullable=True, index=True)
     active_blog_id = Column(String(36), nullable=True, unique=True)
     mode = Column(String(20), nullable=False, default="live")
     stage = Column(String(20), nullable=False, default="claimed")

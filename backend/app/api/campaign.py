@@ -1534,6 +1534,9 @@ class ScheduleIn(BaseModel):
     every_minutes: Optional[int] = None      # interval 전용. 글 사이 간격(분). 비우면 120
     # at: start_at 부터 / after_last: 아는 마지막 예약 + 간격 부터(이미 예약된 글 다음에 이어 붙이기)
     start_mode: Literal["at", "after_last"] = "at"
+    # 이번에 거는 건들을 어떻게 올릴지. 비우면 블로그 설정을 따른다.
+    # schedule=네이버에 예약 발행 | draft=임시저장만(발행은 병원이 직접)
+    publish_mode: Optional[Literal["schedule", "draft"]] = None
 
 
 class ScheduleItem(BaseModel):
@@ -1825,12 +1828,13 @@ async def schedule_commit(campaign_id: str, body: ScheduleIn, current_user: User
                 db.add(PublishJob(
                     user_id=_uid(current_user), campaign_id=c.id, draft_id=d.id, blog_ref_id=ref, naver_blog_id=b.blog_id,
                     scheduled_at=at, status="queued", open_type=b.open_type or "public", category=b.default_category,
+                    publish_mode=body.publish_mode,
                 ))
                 # 예약 자리 기록(다른 경로의 간격 예약과 공유).
                 # 임시저장만 하는 블로그는 네이버에 예약을 만들지 않으므로 자리도 잡지 않는다.
                 # 잡아 두면 있지도 않은 예약이 유령 자리로 남아, 나중에 그 블로그에 진짜 예약을
                 # 걸 때 계속 뒤로 밀린다(2026-09-23 에 겪은 그 문제와 같은 모양이다).
-                if (b.publish_mode or "schedule") != "draft":
+                if (body.publish_mode or b.publish_mode or "schedule") != "draft":
                     db.add(ScheduleMark(user_id=_uid(current_user), blog_id=b.blog_id, scheduled_at=at,
                                         title=d.title[:200], source="campaign"))
                 await db.flush()
@@ -1934,6 +1938,8 @@ async def _jobs_out(db: AsyncSession, jobs: List[PublishJob]) -> List[JobOut]:
 
 @router.get("/campaigns/{campaign_id}/jobs", response_model=List[JobOut])
 async def list_jobs(campaign_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    # 화면이 목록을 읽을 때도 만료된 잠금을 정리한다. 이쪽은 어느 PC도 아니므로
+    # '어느 PC가 쥐었는지 아는 글'은 손대지 않는다 — 다른 사람이 지금 올리는 중일 수 있다.
     await protocol.recover_expired(db, _uid(current_user))
     c = await _owned(db, Campaign, campaign_id, current_user, "캠페인")
     jobs = (await db.execute(select(PublishJob).where(PublishJob.campaign_id == c.id).order_by(PublishJob.scheduled_at.asc()))).scalars().all()
@@ -2146,11 +2152,14 @@ async def start_automation(campaign_id: str, body: AutomationIn, current_user: U
 class ClaimIn(BaseModel):
     blog_ref_id: Optional[str] = None      # 특정 블로그 것만
     naver_blog_id: Optional[str] = None    # 확장이 현재 로그인된 블로그로 필터할 때
+    # 어느 PC가 묻는가. 한 계정을 PC 여러 대가 나눠 쓸 때, 잠금 만료 복구를 이 PC 몫으로
+    # 한정하는 데 쓴다(없으면 옛 실행기 — 예전처럼 계정 전체를 복구한다).
     limit: int = Field(default=1, ge=1, le=20)
     include_images: bool = True
     mode: str = Field(default="live", pattern="^(live|dry_run)$")
     protocol_version: int = 1
     capabilities: List[str] = Field(default_factory=list, max_length=20)
+    device_id: Optional[str] = Field(default=None, max_length=64)
 
 
 class JobBlock(BaseModel):
@@ -2189,7 +2198,41 @@ class ClaimedJob(BaseModel):
     lease_seconds: int = protocol.LEASE_SECONDS
 
 
-async def _doc_blocks(db: AsyncSession, draft: Draft, include_images: bool) -> List[JobBlock]:
+async def _unique_doc_image(db: AsyncSession, image: PoolImage,
+                            job: Optional[PublishJob]) -> tuple[bytes, str]:
+    """워드 원고의 사진 한 장을 '이 글에서만 쓰는 사진'으로 만든다 — (바이트, 형식).
+
+    예전에는 풀에 있는 바이트를 그대로 보냈다. 그래서 같은 사진을 두 글에 넣으면 **파일이
+    한 바이트도 다르지 않아** 네이버 중복사진 판정의 첫 층(파일 해시)에 그대로 걸렸다
+    (2026-10-01 확인). 사진 풀 경로(prepare_job_images)는 처음부터 유니크화를 거치는데
+    워드 경로만 빠져 있었다 — 대량 발행은 대부분 워드로 올린다.
+
+    움직이는 GIF 는 다시 인코딩하면 팔레트·투명이 깨져 움직임이 상한다. 그래서 GIF 는
+    넓힌 뒤 파일 지문만 바꾼다(그림은 한 비트도 손대지 않는다).
+    """
+    ctype = image.content_type or "image/jpeg"
+    if ctype == "image/gif":
+        data, kind = await run_in_threadpool(widen_image, image.data, ctype)
+        return await run_in_threadpool(uniq.uniquify_gif_bytes, data), (kind or ctype)
+    rows = (await db.execute(
+        select(ImageVariant.phash).where(ImageVariant.pool_image_id == image.id)
+        .order_by(ImageVariant.created_at.desc()).limit(uniq.SIBLING_WINDOW))).scalars().all()
+    result = await run_in_threadpool(uniq.uniquify, image.data,
+                                     sibling_hashes=[h for h in rows if h])
+    # 과거 변형으로 쌓아 둔다 — 다음 글은 이것들과 가장 먼 변형을 고른다.
+    db.add(ImageVariant(
+        pool_image_id=image.id, user_id=image.user_id, phash=result.phash, dhash=result.dhash,
+        frame_style=result.frame_style, ssim=result.ssim, min_distance=result.min_distance,
+        passed=result.passed, attempts=result.attempts, trim=result.trim,
+        post_id=(job.id if job else None)))
+    image.use_count = (image.use_count or 0) + 1
+    image.last_used_at = datetime.utcnow()
+    data, kind = await run_in_threadpool(widen_image, result.image_bytes, "image/jpeg")
+    return data, (kind or "image/jpeg")
+
+
+async def _doc_blocks(db: AsyncSession, draft: Draft, include_images: bool,
+                      job: Optional[PublishJob] = None) -> List[JobBlock]:
     """워드에서 올라온 원고 — 글쓴이가 잡아 둔 순서·서식 그대로. 사진은 풀에서 꺼내 실어 보낸다."""
     out: List[JobBlock] = []
     for block in draft.blocks or []:
@@ -2199,8 +2242,7 @@ async def _doc_blocks(db: AsyncSession, draft: Draft, include_images: bool) -> L
             image = await db.get(PoolImage, block.get("pool_image_id") or "")
             if not image or not image.data:
                 raise ValueError("문서 안 사진을 찾지 못했습니다. 원고를 다시 올려 주세요")
-            data, kind = await run_in_threadpool(
-                widen_image, image.data, image.content_type or "image/jpeg")
+            data, kind = await _unique_doc_image(db, image, job)
             out.append(JobBlock(type="image", content="",
                                 image=f"data:{kind or 'image/jpeg'};base64,"
                                       + base64.b64encode(data).decode()))
@@ -2209,9 +2251,10 @@ async def _doc_blocks(db: AsyncSession, draft: Draft, include_images: bool) -> L
     return out
 
 
-async def _assemble_blocks(db: AsyncSession, draft: Draft, variants: List[Dict[str, Any]], include_images: bool) -> List[JobBlock]:
+async def _assemble_blocks(db: AsyncSession, draft: Draft, variants: List[Dict[str, Any]],
+                           include_images: bool, job: Optional[PublishJob] = None) -> List[JobBlock]:
     if draft.blocks:
-        return await _doc_blocks(db, draft, include_images)
+        return await _doc_blocks(db, draft, include_images, job)
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", draft.body or "") if p.strip()]
     by_para: Dict[int, List[Dict[str, Any]]] = {}
     for v in variants:
@@ -2281,7 +2324,7 @@ async def _hold(db: AsyncSession, job: PublishJob, reason: str) -> None:
 async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if body.protocol_version != 2:
         raise HTTPException(status_code=426, detail="실행기와 확장프로그램을 새 버전으로 업데이트하세요")
-    await protocol.recover_expired(db, _uid(current_user))
+    await protocol.recover_expired(db, _uid(current_user), device_id=body.device_id)
     q = select(PublishJob).where(PublishJob.user_id == _uid(current_user), protocol.eligible(datetime.utcnow()))
     if body.blog_ref_id:
         q = q.where(PublishJob.blog_ref_id == body.blog_ref_id)
@@ -2309,7 +2352,8 @@ async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_us
         if not blog or blog.user_id != _uid(current_user) or blog.status != "active":
             await _hold(db, candidate, _blog_action(blog))
             continue
-        token = await protocol.claim(db, job_id, _uid(current_user), blog_id, body.mode)
+        token = await protocol.claim(db, job_id, _uid(current_user), blog_id, body.mode,
+                                     device_id=body.device_id)
         if not token:
             # 여기는 경합이다(다른 실행기가 먼저 가져갔거나, 방금 취소됐거나, '확인 필요'가
             # 이 블로그를 쥐고 있거나). 사유를 적으려고 쓰기를 더하면 그 경합을 건드린다 —
@@ -2318,7 +2362,8 @@ async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_us
         try:
             j = await db.get(PublishJob, job_id, populate_existing=True)
             # 임시저장은 네이버가 '즉시 발행'으로 바꿀 위험이 없다 — 그 검사는 예약에만 쓴다.
-            drafting = (blog.publish_mode or "schedule") == "draft"
+            # 예약을 걸 때 고른 방식이 먼저다. 안 골랐으면 블로그의 상시 설정을 따른다.
+            drafting = (j.publish_mode or blog.publish_mode or "schedule") == "draft"
             if not drafting and j.scheduled_at <= se.kst_now() + timedelta(minutes=15):
                 raise ValueError("예약 시각이 15분 안으로 다가와 네이버가 '즉시 발행'으로 처리할 위험이 있습니다. "
                                  "→ 5단계에서 더 뒤쪽 시각으로 다시 예약해 주세요.")
@@ -2346,7 +2391,7 @@ async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_us
             if body.include_images and not j.images_ready and draft.image_plan:
                 j.image_variants = await campaign_jobs.prepare_job_images(db, j, draft)
                 j.images_ready = True
-            blocks = await _assemble_blocks(db, draft, j.image_variants or [], body.include_images)
+            blocks = await _assemble_blocks(db, draft, j.image_variants or [], body.include_images, job=j)
             if body.include_images and draft.image_plan and sum(b.type == "image" for b in blocks) != len(draft.image_plan):
                 raise ValueError("필수 이미지가 누락되었습니다")
             # 워드가 본문 글자에 적어 둔 기본색은 떼어 낸다 — 팔레트에 없는 색은 실행기가

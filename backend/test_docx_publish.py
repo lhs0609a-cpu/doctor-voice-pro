@@ -16,7 +16,7 @@ from test_publish_protocol import DatabaseCase
 
 from app.api import campaign as api
 from app.models.campaign import AutopilotPolicy, Blog, Campaign, CampaignKeyword, Client, Draft, PublishJob
-from app.models.media_pool import PoolImage
+from app.models.media_pool import ImageVariant, PoolImage
 from app.models.publish_queue import QueuedPost, ScheduleMark
 from app.models.user import User
 
@@ -45,7 +45,7 @@ class DocxUploadTests(DatabaseCase):
         await super().asyncSetUp()
         async with self.engine.begin() as conn:
             for table in (Blog.__table__, Draft.__table__, Campaign.__table__,
-                          CampaignKeyword.__table__, Client.__table__, PoolImage.__table__, AutopilotPolicy.__table__, ScheduleMark.__table__, QueuedPost.__table__):
+                          CampaignKeyword.__table__, Client.__table__, PoolImage.__table__, ImageVariant.__table__, AutopilotPolicy.__table__, ScheduleMark.__table__, QueuedPost.__table__):
                 await conn.run_sync(lambda sync, t=table: t.create(sync))
         async with self.sessions() as db:
             db.add(Client(id='client', user_id='u', name='clinic'))
@@ -89,6 +89,71 @@ class DocxUploadTests(DatabaseCase):
         claimed = response.json()
         self.assertEqual(len(claimed), 1, response.text)
         return claimed[0]
+
+    async def free_the_blog(self):
+        """클레임이 쥔 블로그 자리를 비운다 — 한 블로그는 한 번에 한 건만 쥘 수 있다."""
+        from sqlalchemy import select as sa_select
+        from app.models.campaign import PublishAttempt
+        async with self.sessions() as db:
+            for attempt in (await db.execute(sa_select(PublishAttempt))).scalars().all():
+                await db.delete(attempt)
+            await db.commit()
+
+    def _bytes_of(self, claimed: dict) -> bytes:
+        import base64
+        image = next(b for b in claimed['blocks'] if b['type'] == 'image')
+        return base64.b64decode(image['image'].split(',', 1)[1])
+
+    async def test_the_same_photo_goes_out_as_a_different_file_each_time(self):
+        """같은 사진을 두 글에 쓰면 바이트가 달라야 한다.
+
+        2026-10-01까지 워드 원고의 사진은 풀의 바이트를 **그대로** 실어 보냈다. 같은 사진을
+        두 글에 넣으면 파일이 한 바이트도 다르지 않아 네이버 중복사진 판정의 첫 층(파일 해시)에
+        그대로 걸렸다. 사진 풀 경로는 처음부터 유니크화를 거쳤는데 워드 경로만 빠져 있었다.
+        """
+        draft = await self.upload()
+        first = self._bytes_of(await self.claim(draft['id'], job='j0'))
+        await self.free_the_blog()
+        second = self._bytes_of(await self.claim(draft['id'], job='j1'))
+        self.assertNotEqual(first, second, '같은 파일이 두 번 올라가면 중복으로 걸린다')
+
+        from PIL import Image
+        shapes = []
+        for data in (first, second):
+            with Image.open(io.BytesIO(data)) as im:
+                shapes.append((im.width / im.height, im.format))
+        # 모양 그대로 정책: 자르거나 비율을 바꾸지 않는다.
+        self.assertAlmostEqual(shapes[0][0], shapes[1][0], places=2)
+        self.assertEqual({s[1] for s in shapes}, {'JPEG'})
+
+    async def test_every_send_is_recorded_so_the_next_one_can_avoid_it(self):
+        """과거 변형을 쌓아 두어야 다음 글이 '가장 먼 변형'을 고를 수 있다."""
+        draft = await self.upload()
+        await self.claim(draft['id'], job='j0')
+        async with self.sessions() as db:
+            from sqlalchemy import select as sa_select
+            rows = (await db.execute(sa_select(ImageVariant))).scalars().all()
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0].phash)
+        self.assertEqual(rows[0].post_id, 'j0')
+
+    async def test_a_moving_gif_changes_its_fingerprint_without_losing_a_frame(self):
+        """GIF 는 다시 인코딩하면 팔레트·투명이 깨진다 — 파일 지문만 바꾼다."""
+        gif = _moving_gif()
+        response = await self.client.post(
+            '/campaigns/c/drafts/upload',
+            files={'files': ('움짤.docx', _doc_with_gif(gif),
+                             'application/vnd.openxmlformats-officedocument.wordprocessingml.document')})
+        draft = response.json()[0]
+        first = self._bytes_of(await self.claim(draft['id'], capabilities=['rich_text_v1'], job='j0'))
+        await self.free_the_blog()
+        second = self._bytes_of(await self.claim(draft['id'], capabilities=['rich_text_v1'], job='j1'))
+        self.assertNotEqual(first, second)
+        from PIL import Image
+        for data in (first, second):
+            with Image.open(io.BytesIO(data)) as im:
+                self.assertTrue(im.is_animated, '움직임이 살아 있어야 한다')
+                self.assertEqual(im.n_frames, 2)
 
     async def test_upload_keeps_the_document_order_and_shape(self):
         draft = await self.upload()

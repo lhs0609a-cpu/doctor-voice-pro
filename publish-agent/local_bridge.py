@@ -21,7 +21,10 @@ from typing import Callable, Dict, Optional, Tuple
 
 log = logging.getLogger("bridge")
 
-PORTS = (47815, 47816, 47817)
+# 계정마다 창이 하나씩 뜨고, 창마다 이 중 빈 포트 하나를 잡는다. 홈페이지는 이 포트들을
+# 전부 훑어 **내 계정을 맡은 창**을 찾는다 — 포트가 셋뿐이면 네 번째 계정부터는
+# 홈페이지가 찾지 못해 '다른 계정'으로만 보였다(accounts.MAX_SLOTS 와 수를 맞춘다).
+PORTS = tuple(range(47815, 47831))
 ALLOWED_ORIGINS = (
     'https://doctor-voice-pro-ghwi.vercel.app',
     'http://localhost:3000',
@@ -59,9 +62,9 @@ def allowed_origin(origin: Optional[str]) -> Optional[str]:
 
 
 class LocalBridge:
-    """status() → dict 를 돌려주고, pair(code) → (ok, message, extra) 를 처리한다."""
+    """status() → dict 를 돌려주고, pair(code, email) → (ok, message, extra) 를 처리한다."""
 
-    def __init__(self, status: Callable[[], Dict], pair: Callable[[str], Tuple[bool, str, Dict]],
+    def __init__(self, status: Callable[[], Dict], pair: Callable[..., Tuple[bool, str, Dict]],
                  wake: Optional[Callable[[], Tuple[bool, str]]] = None):
         self.status = status
         self.pair = pair
@@ -176,12 +179,16 @@ def _handler_for(bridge: LocalBridge):
             try:
                 body = json.loads(self.rfile.read(size) or b'{}')
                 code = str(body.get('code') or '').strip()
+                # 홈페이지가 '지금 로그인한 계정'을 함께 알려 준다. 이 창이 맡은 계정이
+                # 아니면 코드를 쓰지 않고 그 계정 전용 창으로 넘긴다 — 코드를 먼저 써 버리면
+                # 새 창이 쓸 코드가 없어 사람이 브라우저에서 승인해야 한다.
+                email = str(body.get('email') or '').strip()
             except (ValueError, AttributeError):
                 return self._send(400, {'error': '요청 형식이 올바르지 않습니다'})
             if not code:
                 return self._send(400, {'error': '연결 코드가 없습니다'})
             try:
-                ok, message, extra = bridge.pair(code)
+                ok, message, extra = bridge.pair(code, email)
             except Exception as error:  # noqa: BLE001
                 log.warning("자동 연결 실패: %s", error)
                 return self._send(502, {'ok': False, 'error': str(error)})

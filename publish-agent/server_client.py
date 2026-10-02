@@ -37,6 +37,7 @@ class ServerClient:
         self._email: Optional[str] = None
         self._password: Optional[str] = None
         self._reauth = None          # 재인증(비밀번호 또는 기기 키)
+        self.device_id: Optional[str] = None   # 기기 키로 로그인했을 때의 이 PC 이름(claim 에 함께 보낸다)
         self._http = httpx.Client(timeout=timeout)
 
     def _keep_token(self, token: str, expires_in: Any = None) -> None:
@@ -137,6 +138,9 @@ class ServerClient:
 
     def device_login(self, device_id: str, device_secret: str) -> Dict[str, Any]:
         """기기 키로 로그인 토큰을 받는다. 토큰이 만료되면 같은 키로 다시 받는다."""
+        # 이 PC가 누구인지 기억해 둔다 — claim 에 함께 보내면 서버가 잠금 만료 복구를
+        # 이 PC 몫으로 한정한다(한 계정을 PC 여러 대가 나눠 쓸 때 서로를 끊지 않는다).
+        self.device_id = device_id
         r = self._http.post(self.api + "/campaign/agent/device-token",
                             json={"device_id": device_id, "device_secret": device_secret},
                             headers={"Accept": "application/json"})
@@ -168,6 +172,8 @@ class ServerClient:
         """→ [ClaimedJob]. 서버가 20분 잠금을 건다(만료 후 재클레임 가능)."""
         body = {"blog_ref_id": blog_ref_id, "limit": limit, "include_images": include_images, "mode": mode, "protocol_version": 2,
                 "capabilities": ["landing_links_v1", "point_styles_v1"]}
+        if getattr(self, "device_id", None):
+            body["device_id"] = self.device_id
         return self._request("POST", "/campaign/agent/claim", json=body) or []
 
     def checkpoint(self, job_id: str, lock_token: str, stage: str = "heartbeat"):

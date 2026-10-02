@@ -28,7 +28,7 @@ def eligible(now):
     )
 
 
-async def claim(db, job_id, user_id, blog_id, mode="live", now=None):
+async def claim(db, job_id, user_id, blog_id, mode="live", now=None, device_id=None):
     now = now or datetime.utcnow()
     token = secrets.token_hex(24)
     changed = await db.execute(update(PublishJob).where(
@@ -38,7 +38,7 @@ async def claim(db, job_id, user_id, blog_id, mode="live", now=None):
     if changed.rowcount != 1:
         await db.rollback()
         return None
-    db.add(PublishAttempt(token=token, job_id=job_id, user_id=user_id,
+    db.add(PublishAttempt(token=token, job_id=job_id, user_id=user_id, device_id=device_id,
                           active_blog_id=blog_id, mode=mode, stage="claimed"))
     try:
         await db.commit()
@@ -170,11 +170,25 @@ async def result(db, job_id, user_id, token, body, now=None):
     return ack
 
 
-async def recover_expired(db, user_id, now=None):
+async def recover_expired(db, user_id, now=None, device_id=None):
+    """잠금이 만료된 글을 '확인 필요'로 접는다 — **부르는 PC가 쥐고 있던 것만**.
+
+    예전에는 계정 전체를 쓸었다. 그래서 한 계정을 PC 두 대가 쓰면, B 가 일거리를 물으러
+    오기만 해도 A 가 지금 올리고 있던 글이 "실행기 연결이 끊겼습니다"로 떨어졌다
+    (리스는 120초라 A 의 크롬이 잠깐 느려도 만료된다). '확인 필요'는 그 블로그를 쥐고 있어
+    그 뒤 예약이 전부 멈춘다 — 남의 PC 작업은 건드리지 않는다(2026-10-01).
+
+    device_id 를 모르는 옛 실행기가 물으면 예전처럼 계정 전체를 복구한다. 다만 **어느 PC가
+    쥐었는지 아는 글**은 그 PC가 물을 때만 접는다 — 옛 실행기 하나 때문에 새 실행기들의
+    진행 중인 글이 다시 끊기면 안 된다."""
     now = now or datetime.utcnow()
+    guarded = select(PublishAttempt.token).where(
+        PublishAttempt.user_id == user_id, PublishAttempt.device_id.isnot(None),
+        *([PublishAttempt.device_id != device_id] if device_id else []))
     await db.execute(update(PublishJob).where(
         PublishJob.user_id == user_id, PublishJob.status.in_(["assigned", "publishing"]),
         PublishJob.lock_expires_at <= now,
+        or_(PublishJob.lock_token.is_(None), PublishJob.lock_token.notin_(guarded)),
     ).values(status="uncertain", next_retry_at=None,
              error="실행기 연결이 끊겼습니다. 복구 결과 또는 네이버 예약 목록 확인을 기다립니다"))
     # 결과도 없이 잠금이 만료된 시도의 payload 도 버린다 — 그 권한으로는 더 받아 갈 수 없다

@@ -13,14 +13,17 @@ import os
 from pathlib import Path
 import queue
 import socket
+import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 from urllib.parse import urlparse
 import uuid
 import webbrowser
 
+import accounts
 import agent
 import browser_setup
 import credential_store
@@ -74,19 +77,67 @@ def card(parent, **pack):
 WINDOW_TITLE = '닥터보이스 프로 · PC 실행기'
 
 
-def hold_single_instance():
-    """설치 프로그램(AppMutex)이 실행 중인 실행기를 알아보게 이름 있는 뮤텍스를 잡습니다.
+def window_title(slot: str = '', email: str = '') -> str:
+    """창 제목에 맡은 계정을 적는다.
 
-    이미 잡혀 있으면 False — 두 번 켜면 크롬 프로필이 겹쳐 로그인 세션이 깨집니다."""
+    계정마다 창이 하나씩 열린다 — 제목이 다 같으면 어느 창이 어느 병원을 올리는지 알 수 없다."""
+    if not slot and not email:
+        return WINDOW_TITLE
+    return f'{WINDOW_TITLE} · {accounts.label(slot, email)}'
+
+
+def hold_shared_mutex() -> None:
+    """설치 프로그램(AppMutex)이 '실행 중인 실행기가 있다'를 알아보게 이름표를 잡는다.
+
+    계정마다 창이 열리므로 여러 창이 같이 잡는다 — 이미 있어도 실패로 보지 않는다.
+    한 자리(계정)를 두 창이 쓰지 못하게 막는 일은 hold_slot 이 한다."""
     if sys.platform != 'win32':
+        return
+    import ctypes
+    handle = ctypes.windll.kernel32.CreateMutexW(None, False, APP_MUTEX)
+    if handle:
+        hold_shared_mutex.handle = handle
+
+
+def hold_slot(slot: str) -> bool:
+    """이 자리(계정)의 이름표를 잡는다. 이미 다른 창이 잡고 있으면 False.
+
+    같은 자리를 두 창이 쓰면 크롬 프로필이 겹쳐 네이버 로그인 세션이 깨진다."""
+    if sys.platform != 'win32':
+        if slot in hold_slot.taken:
+            return False
+        hold_slot.taken.add(slot)
         return True
     import ctypes
     kernel32 = ctypes.windll.kernel32
-    handle = kernel32.CreateMutexW(None, False, APP_MUTEX)
+    handle = kernel32.CreateMutexW(None, False, f'{APP_MUTEX}.{slot}')
     if not handle or kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
         return False
-    hold_single_instance.handle = handle  # 프로세스가 끝날 때까지 유지
+    hold_slot.handles.append(handle)      # 프로세스가 끝날 때까지 유지
     return True
+
+
+hold_slot.handles = []
+hold_slot.taken = set()
+
+
+def claim_slot(account: str = ''):
+    """이 창이 맡을 자리를 잡는다 — (자리, 그 자리의 계정). 잡을 자리가 없으면 None.
+
+    계정을 지정하면 그 계정의 자리만 본다(그 창이 이미 열려 있으면 None → 그 창을 띄운다).
+    지정하지 않으면 알고 있는 자리를 차례로 본다. 하나도 없는 첫 설치에서만 새 자리를 만든다 —
+    아이콘을 두 번 눌렀다고 빈 창이 늘어나면 같은 계정에 두 번 연결될 수 있다."""
+    known = accounts.candidates(account)
+    for slot, email in known:
+        if hold_slot(slot):
+            return slot, email
+    if known:
+        return None
+    for number in range(1, accounts.MAX_SLOTS + 1):
+        name = f'slot{number}'
+        if hold_slot(name):
+            return name, ''
+    return None
 
 
 def release_single_instance():
@@ -97,27 +148,48 @@ def release_single_instance():
     띄운다. 아무도 안 눌러서 업데이트가 영영 안 됐다(2026-09-23 실측).
     이름표를 먼저 놓으면 그 창이 뜨지 않고, 파일을 붙잡고 있는 문제는 설치 프로그램이
     /FORCECLOSEAPPLICATIONS 로 알아서 닫는다."""
-    handle = getattr(hold_single_instance, 'handle', None)
-    if handle and sys.platform == 'win32':
-        import ctypes
-        ctypes.windll.kernel32.CloseHandle(handle)
-        hold_single_instance.handle = None
+    if sys.platform != 'win32':
+        return
+    import ctypes
+    close = ctypes.windll.kernel32.CloseHandle
+    for handle in hold_slot.handles:
+        close(handle)
+    hold_slot.handles = []
+    shared = getattr(hold_shared_mutex, 'handle', None)
+    if shared:
+        close(shared)
+        hold_shared_mutex.handle = None
 
 
-def raise_existing_window() -> bool:
-    """이미 열려 있는 실행기 창을 화면 앞으로 끌어온다. 찾았으면 True.
+def raise_existing_window(match: str = WINDOW_TITLE) -> bool:
+    """이미 열려 있는 실행기 창을 화면 앞으로 끌어온다(제목이 match 로 시작하는 창). 찾았으면 True.
 
     창이 다른 창에 가려져 있으면 사람은 '앱이 안 보인다'고 느끼고 아이콘을 다시 누른다.
-    그때 '이미 실행 중입니다' 쪽지만 띄우면 창은 끝내 안 보인다 — 찾아서 띄워 준다."""
+    그때 '이미 실행 중입니다' 쪽지만 띄우면 창은 끝내 안 보인다 — 찾아서 띄워 준다.
+    제목에 계정이 붙으므로 앞부분만 맞춰 본다."""
     if sys.platform != 'win32':
         return False
     import ctypes
+    from ctypes import wintypes
     user32 = ctypes.windll.user32
-    window = user32.FindWindowW(None, WINDOW_TITLE)
-    if not window:
+    found = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def visit(handle, _):
+        length = user32.GetWindowTextLengthW(handle)
+        if length:
+            buffer = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(handle, buffer, length + 1)
+            if buffer.value.startswith(match):
+                found.append(handle)
+                return False
+        return True
+
+    user32.EnumWindows(visit, 0)
+    if not found:
         return False
-    user32.ShowWindow(window, 9)        # SW_RESTORE — 최소화돼 있으면 되돌린다
-    user32.SetForegroundWindow(window)
+    user32.ShowWindow(found[0], 9)        # SW_RESTORE — 최소화돼 있으면 되돌린다
+    user32.SetForegroundWindow(found[0])
     return True
 
 
@@ -186,8 +258,10 @@ class QueueLog(logging.Handler):
 
 
 class Desktop:
-    def __init__(self, root):
+    def __init__(self, root, slot='slot1', account='', pair_code=''):
         self.root = root
+        # 이 창이 맡은 계정 자리. 폴더·기기 키·크롬 프로필·로그가 모두 자리별로 나뉜다.
+        self.slot = slot
         self.worker = None
         self.stop_event = threading.Event()
         # 예약이 새로 걸리면 기다리지 않고 바로 한 바퀴 돌게 하는 신호.
@@ -199,8 +273,9 @@ class Desktop:
         self.client_lock = threading.Lock()
         self.beat_wake = threading.Event()      # 종료할 때 하트비트 대기를 깨운다
         self.connect_thread = None              # 브라우저 승인을 기다리는 자동 연결
+        self.sibling_opened = {}                # 계정 → 그 계정 창을 띄운 시각(겹쳐 열기 방지)
         self.connect_wake = threading.Event()   # 먼저 연결되면 그 기다림을 깨운다
-        self.folder = Path(os.environ.get('LOCALAPPDATA') or Path.home()) / 'DoctorVoicePro'
+        self.folder = accounts.folder(slot)
         self.folder.mkdir(parents=True, exist_ok=True)
         self.settings_file = self.folder / 'desktop.json'
         try:
@@ -210,11 +285,13 @@ class Desktop:
         self.device_id = str(saved.get('device_id') or uuid.uuid4().hex)
         # 홈페이지 자동 연결로 받은 이 기기 전용 키(이 PC에서만 풀린다)와 연결된 계정
         self.device_secret = credential_store.load(self.folder, credential_store.DEVICE_FILE)
-        self.paired_email = str(saved.get('paired_email') or '')
+        self.paired_email = str(saved.get('paired_email') or '') or (account or '')
+        # 홈페이지가 '이 계정으로 열어라'며 함께 건넨 1회용 코드(창이 뜨는 대로 연결한다)
+        self.pair_code = pair_code
         # tkinter 변수는 다른 스레드에서 읽으면 안 된다 → 연결 창구가 읽을 사본
         self.server_url = str(saved.get('server') or SERVER)
 
-        root.title(WINDOW_TITLE)
+        root.title(window_title(slot, self.paired_email))
         root.geometry('840x850')
         root.minsize(760, 680)
         root.configure(bg=BG)
@@ -388,7 +465,12 @@ class Desktop:
         threading.Thread(target=self.beat_loop, daemon=True).start()
         if updater.installed_build():
             threading.Thread(target=self.check_update, daemon=True).start()
-        if self.device_secret:
+        if self.pair_code:
+            # 홈페이지가 건넨 코드를 들고 태어난 창이다(다른 계정 창이 넘겨 줬다).
+            # 그 코드로 스스로 연결한다 — 사람이 브라우저에서 다시 승인할 일이 없다.
+            self.set_link(False, '홈페이지에서 받은 코드로 이 계정에 연결하는 중…')
+            threading.Thread(target=self.redeem_pair_code, daemon=True).start()
+        elif self.device_secret:
             self.set_link(False, '홈페이지 계정으로 연결하는 중…')
             self.connect_device_async()
             if self.auto_start.get():
@@ -553,16 +635,46 @@ class Desktop:
         self.ui.put(('autostart', None))
         return True, '자동 발행을 시작합니다'
 
+    def redeem_pair_code(self):
+        """넘겨받은 1회용 코드로 이 창을 내 계정에 연결한다(백그라운드 스레드).
+
+        코드를 쓰지 못하면(만료·이미 사용) 평소대로 브라우저를 열어 승인을 청한다."""
+        code, self.pair_code = self.pair_code, ''
+        try:
+            ok, message, _extra = self.bridge_pair(code)
+        except Exception as error:  # noqa: BLE001
+            ok, message = False, str(error)
+        if ok:
+            return
+        logging.getLogger().info('넘겨받은 연결 코드를 쓰지 못했습니다(%s) — 브라우저로 연결합니다', message)
+        self.ui.put(('link', (False, '홈페이지를 열어 이 PC를 연결하는 중…')))
+        self.ui.put(('reconnect', None))
+
     def bridge_status(self):
-        """홈페이지가 '이 PC에 실행기가 있나, 누구로 연결돼 있나'를 묻는다."""
+        """홈페이지가 '이 PC에 실행기가 있나, 누구로 연결돼 있나'를 묻는다.
+
+        이 창이 맡은 계정만 답하면 홈페이지는 다른 아이디로 들어왔을 때 '다른 계정'만 보고
+        멈춘다. 이 PC가 맡고 있는 계정 전체(accounts)를 함께 알려 주어, 홈페이지가
+        '내 계정 자리가 이 PC에 있다 → 그 창을 찾으면 된다'를 알 수 있게 한다."""
         with self.client_lock:
             connected = self.client is not None
+        try:
+            known = accounts.emails()
+        except Exception:  # noqa: BLE001  목록을 못 읽어도 상태는 답해야 한다
+            known = []
         return {'app': 'doctorvoice-launcher', 'version': VERSION, 'device_id': self.device_id,
                 'paired': bool(self.device_secret), 'email': self.paired_email or None,
-                'connected': connected, 'running': bool(self.worker and self.worker.is_alive())}
+                'connected': connected, 'running': bool(self.worker and self.worker.is_alive()),
+                'slot': self.slot, 'accounts': known}
 
-    def bridge_pair(self, code):
-        """로그인된 홈페이지가 건넨 1회용 코드로 이 PC를 그 계정에 연결한다(창구 스레드에서 불린다)."""
+    def bridge_pair(self, code, email=''):
+        """로그인된 홈페이지가 건넨 1회용 코드로 이 PC를 그 계정에 연결한다(창구 스레드에서 불린다).
+
+        홈페이지가 어느 계정인지(email) 함께 알려 준다. 이 창이 맡은 계정이 아니면 코드를
+        쓰지 않고 그 계정 전용 창을 새로 띄운다 — 새 창이 같은 코드로 스스로 연결한다."""
+        if email and not self.may_switch_to(email):
+            opened, message = self.open_sibling(email, code)
+            return False, message, {'spawned': opened, 'email': self.paired_email or None}
         if not valid_server(self.server_url):
             return False, '실행기의 서버 주소가 올바르지 않습니다', {}
         client = ServerClient(self.server_url.rstrip('/'), timeout=20.0)
@@ -575,16 +687,55 @@ class Desktop:
             return False, f'연결하지 못했습니다: {detail}', {}
         email = data.get('email') or claim.get('email') or ''
         if not self.may_switch_to(email):
-            # 발행 도중 계정이 바뀌면 엉뚱한 계정의 글을 올릴 수 있다. 중단한 뒤 다시 연결하게 한다.
+            # 홈페이지가 계정을 알려 주지 않은 옛 화면 — 코드는 이미 썼으니 새 창은 다시 연결한다.
             client.close()
-            return False, '발행 중에는 다른 계정으로 바꿀 수 없습니다. 실행기에서 중단한 뒤 새로고침하세요', {}
+            opened, message = self.open_sibling(email)
+            return False, message, {'spawned': opened, 'email': self.paired_email or None}
         self.adopt_pairing(claim['device_secret'], email, client)
         return True, '연결됨', {'email': email}
 
     def may_switch_to(self, email):
-        """발행 중에 다른 계정으로 갈아타지 않는다 — 엉뚱한 계정의 블로그에 글이 올라간다."""
-        running = bool(self.worker and self.worker.is_alive())
-        return not (running and self.paired_email and email and email != self.paired_email)
+        """이 창은 맡은 계정만 올린다. 다른 계정이면 그 계정 전용 창을 따로 연다(open_sibling).
+
+        한 창이 계정을 갈아타면 크롬에 남은 네이버 로그인 세션은 그대로라 엉뚱한 계정의
+        블로그에 글이 올라간다. 그래서 갈아타는 대신 창을 하나 더 띄운다(2026-09-30)."""
+        if not email or not self.paired_email:
+            return True
+        return email.strip().lower() == self.paired_email.strip().lower()
+
+    # 같은 계정의 창을 이만큼은 다시 띄우지 않는다. 홈페이지는 주기적으로 연결을 청하므로
+    # 상한이 없으면 새 창이 뜨는 동안 요청이 또 와서 창이 겹쳐 열린다.
+    SIBLING_COOLDOWN = 180
+
+    def open_sibling(self, email, code=''):
+        """그 계정 전용 실행기 창을 하나 더 띄운다 — (열었나, 안내 문구).
+
+        계정마다 실행기가 따로 돌아야 한다. 홈페이지에서 다른 아이디로 들어왔다고
+        '이미 a@naver.com 으로 연결되어 있습니다'로 막으면 그 계정은 아무것도 올릴 수 없다."""
+        key = (email or '').strip().lower()
+        waited = time.time() - self.sibling_opened.get(key, 0)
+        if key and waited < self.SIBLING_COOLDOWN:
+            return True, f'{email} 전용 실행기 창이 이미 열리는 중입니다(잠시만 기다려 주세요)'
+        if key:
+            self.sibling_opened[key] = time.time()
+        if getattr(sys, 'frozen', False):
+            command = [sys.executable]
+        else:
+            command = [sys.executable, str(Path(__file__).resolve())]
+        command += ['--account', email]
+        if code:
+            command += ['--pair-code', code]      # 새 창이 이 코드로 스스로 연결한다
+        try:
+            if sys.platform == 'win32':
+                # 콘솔 창 없이, 이 창을 닫아도 같이 죽지 않게 새 그룹으로 띄운다
+                subprocess.Popen(command, creationflags=0x08000000 | 0x00000200)
+            else:
+                subprocess.Popen(command)
+        except OSError as error:
+            logging.getLogger().warning('%s 용 실행기를 열지 못했습니다: %s', email, error)
+            return False, f'{email} 용 실행기를 열지 못했습니다. 시작 메뉴에서 [닥터보이스 프로 자동 발행]을 한 번 더 켜 주세요'
+        logging.getLogger().info('%s 전용 실행기 창을 새로 열었습니다', email)
+        return True, f'{email} 전용 실행기 창을 새로 열었습니다. 그 창이 잠시 뒤 이 계정으로 연결됩니다'
 
     def adopt_pairing(self, device_secret, email, client):
         """연결 성공 뒤 공통 처리 — 창구로 받았든 실행기가 직접 물어서 받았든 같다."""
@@ -647,7 +798,8 @@ class Desktop:
             email = answer.get('email') or ''
             if not self.may_switch_to(email):
                 client.close()
-                self.ui.put(('link', (False, '발행 중에는 다른 계정으로 바꿀 수 없습니다. [실행 중단] 후 다시 연결하세요')))
+                opened, message = self.open_sibling(email)
+                self.ui.put(('link', (opened, message)))
                 return
             try:
                 client.device_login(self.device_id, answer['device_secret'])
@@ -893,6 +1045,9 @@ class Desktop:
                 self.paired_email = value or self.paired_email
                 if value:
                     self.email.set(value)
+                    # 이 자리가 이 계정을 맡았다고 적어 둔다 → 다음에 켜면 같은 자리로 돌아온다
+                    accounts.remember(self.slot, value)
+                    self.root.title(window_title(self.slot, value))
                 self.save_settings()
             elif kind == 'summary':
                 self.summary.set(value)
@@ -950,6 +1105,15 @@ def hand_over_to_installed() -> bool:
     return True
 
 
+def launch_options():
+    """명령줄에서 맡을 계정을 받는다 — 홈페이지가 다른 계정으로 들어오면 그 계정 창을 이렇게 띄운다."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('--account', default='')      # 이 창이 맡을 계정(이메일)
+    parser.add_argument('--pair-code', dest='pair_code', default='')
+    known, _ = parser.parse_known_args()
+    return known
+
+
 def main():
     if len(sys.argv) == 3 and sys.argv[1] == '--self-check':
         import naver_editor, journal, rich_editor, html_clipboard, browser_setup
@@ -960,19 +1124,26 @@ def main():
         return
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    options = launch_options()
     # 뮤텍스를 잡기 전에 확인한다 — 넘겨줄 참이면 이 복사본이 자리를 차지하지 않아야 한다.
     if hand_over_to_installed():
         return
-    if not hold_single_instance():
+    hold_shared_mutex()
+    claimed = claim_slot(options.account)
+    if not claimed:
         # 사람이 아이콘을 다시 누른 이유는 창이 안 보여서다. 쪽지가 아니라 그 창을 띄워 준다.
-        if raise_existing_window():
+        want = window_title(accounts.slot_of(options.account) or '', options.account)
+        if raise_existing_window(want) or raise_existing_window():
             return
         root = tk.Tk()
         root.withdraw()
-        messagebox.showinfo('닥터보이스 자동 발행', '이미 실행 중입니다. 작업 표시줄에서 열려 있는 창을 확인하세요.')
+        messagebox.showinfo('닥터보이스 자동 발행',
+                            '이미 실행 중입니다. 작업 표시줄에서 열려 있는 창을 확인하세요. '
+                            '계정을 더 쓰려면 홈페이지에 그 계정으로 로그인하세요 — 그 계정 창이 자동으로 열립니다.')
         return
+    slot, account = claimed
     root = tk.Tk()
-    Desktop(root)
+    Desktop(root, slot=slot, account=options.account or account, pair_code=options.pair_code)
     root.mainloop()
 
 

@@ -123,7 +123,7 @@ async def main():
         await expect(page.get_by_text('증상 개선',exact=False).first).to_be_visible()
         await expect(page.get_by_text('(문장 삭제)',exact=False)).to_be_visible()
 
-        await page.get_by_text('글자 강조 설정 바꾸기',exact=True).click()
+        await page.get_by_text('글꼴·크기·강조·카테고리 설정 바꾸기',exact=True).click()
         await page.get_by_label('핵심 문구 자동 강조').check()
         await page.get_by_label('특히 강조할 문구',exact=False).fill('핵심 기준')
         await expect(page.get_by_text('설정 저장됨',exact=True)).to_be_visible()
@@ -134,7 +134,7 @@ async def main():
         await page.screenshot(path=str(OUTPUT/'homepage-word-formatting.png'),full_page=True)
         await page.reload()
         await page.get_by_role('button',name='Word 원고 올리기').click()
-        await page.get_by_text('글자 강조 설정 바꾸기',exact=True).click()
+        await page.get_by_text('글꼴·크기·강조·카테고리 설정 바꾸기',exact=True).click()
         await expect(page.get_by_label('핵심 문구 자동 강조')).to_be_checked()
         await expect(page.get_by_label('특히 강조할 문구',exact=False)).to_have_value('핵심 기준')
         # 전체 선택 한 번으로 고를 수 있는 원고가 모두 잡힌다(하나씩 체크하지 않는다).

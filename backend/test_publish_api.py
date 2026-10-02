@@ -286,6 +286,30 @@ class DraftModeTests(ApiTests):
             claimed = await self.client.post('/agent/claim', json={'blog_ref_id': 'b', 'protocol_version': 2})
         self.assertEqual(claimed.json()[0]['finalAction'], 'schedule')
 
+    async def test_the_choice_made_while_scheduling_beats_the_blog_setting(self):
+        """예약을 걸 때 고른 방식이 블로그 상시 설정을 이긴다(2026-10-02 요청).
+
+        블로그는 '예약 발행'인데 이번 건만 임시저장으로 걸 수 있어야 한다."""
+        async with self.sessions() as db:
+            job = await db.get(PublishJob, 'j0')
+            job.publish_mode = 'draft'
+            await db.commit()
+        from unittest.mock import patch
+        with patch('app.services.editorial_quality.approved', return_value=True):
+            claimed = await self.client.post('/agent/claim', json={'blog_ref_id': 'b', 'protocol_version': 2})
+        self.assertEqual(claimed.json()[0]['finalAction'], 'draft')
+
+    async def test_a_scheduled_batch_still_schedules_on_a_draft_only_blog(self):
+        """반대도 된다 — 블로그가 '임시저장만'이어도 이번 건은 예약으로 걸 수 있다."""
+        async with self.sessions() as db:
+            (await db.get(Blog, 'b')).publish_mode = 'draft'
+            (await db.get(PublishJob, 'j0')).publish_mode = 'schedule'
+            await db.commit()
+        from unittest.mock import patch
+        with patch('app.services.editorial_quality.approved', return_value=True):
+            claimed = await self.client.post('/agent/claim', json={'blog_ref_id': 'b', 'protocol_version': 2})
+        self.assertEqual(claimed.json()[0]['finalAction'], 'schedule')
+
     async def test_an_imminent_time_does_not_block_a_draft(self):
         """임시저장은 네이버가 '즉시 발행'으로 바꿀 위험이 없다 — 그 검사는 예약에만 쓴다."""
         async with self.sessions() as db:

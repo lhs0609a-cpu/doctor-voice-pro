@@ -612,6 +612,28 @@ def _uniquify_preserve(base: Image.Image, orig_ph: int, siblings: set, rng: rand
 # ============================================================
 # 공개 API
 # ============================================================
+GIF_TRAILER = 0x3B
+
+
+def uniquify_gif_bytes(data: bytes, rng: random.Random | None = None) -> bytes:
+    """움직이는 GIF 의 **파일 지문만** 바꾼다 — 프레임은 한 비트도 건드리지 않는다.
+
+    GIF 디코더는 트레일러(0x3B) 뒤의 바이트를 읽지 않는다. 그래서 그 뒤에 주석을 붙이면
+    파일 해시는 달라지고 그림·팔레트·투명·프레임 간격은 그대로 남는다. 다시 인코딩하면
+    팔레트와 투명이 깨져 움직임이 상하므로(워드에 넣은 GIF 는 움직이는 채로 올라가야 한다)
+    이 방법만 쓴다.
+
+    한계: 네이버가 업로드를 다시 인코딩하면 이 차이는 사라지고, 지각 해시는 애초에 그대로다.
+    같은 GIF 를 여러 글에 쓰는 것 자체를 줄이는 편이 안전하다.
+    """
+    if not data or data[-1] != GIF_TRAILER:
+        return data                     # GIF 가 아니거나 잘린 파일 — 손대지 않는다
+    rng = rng or random.Random()
+    note = ("dvp-" + "".join(rng.choice("0123456789abcdef") for _ in range(24))).encode("ascii")
+    # 주석 확장 블록 모양(0x21 0xFE · 길이 · 내용 · 0x00)으로 붙여 둔다.
+    return data + bytes((0x21, 0xFE, len(note))) + note + bytes((0x00,))
+
+
 def uniquify(
     src_bytes: bytes,
     *,

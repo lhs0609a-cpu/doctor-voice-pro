@@ -22,6 +22,11 @@ export interface LocalLauncher {
   email?: string | null
   connected: boolean
   running?: boolean
+  /** 이 PC가 맡고 있는 계정 전체. 새 실행기만 알려 준다(옛 실행기는 undefined). */
+  accounts?: string[]
+  slot?: string
+  /** 계정별 창을 띄울 수 있는 실행기인가(accounts 를 알려 주면 그렇다). */
+  multiAccount: boolean
 }
 
 export interface LauncherStatus {
@@ -45,7 +50,9 @@ export interface LauncherStatus {
 }
 
 const MANIFEST_URL = '/downloads/launcher-version.json'
-const LOCAL_PORTS = [47815, 47816, 47817]
+// 계정마다 실행기 창이 하나씩 뜨고 창마다 포트 하나를 잡는다(실행기의 local_bridge.PORTS 와 같다).
+// 셋만 보면 네 번째 계정부터는 찾지 못해 '다른 계정'으로만 보인다.
+const LOCAL_PORTS = Array.from({ length: 16 }, (_, i) => 47815 + i)
 const POLL_MS = 15000
 const PAIR_COOLDOWN_MS = 30000
 
@@ -79,31 +86,57 @@ export function isNewer(a: string | null | undefined, b: string | null | undefin
   return false
 }
 
-/** 이 PC에서 실행기를 찾는다. 없거나 브라우저가 막으면 null. */
-async function probeLocal(): Promise<LocalLauncher | null> {
-  for (const port of LOCAL_PORTS) {
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), 800)
-    try {
-      const res = await fetch(`http://127.0.0.1:${port}/status`, { signal: ctrl.signal, cache: 'no-store' })
-      if (!res.ok) continue
-      const body = await res.json()
-      if (body?.app !== 'doctorvoice-launcher') continue
-      return {
-        port, version: body.version, paired: !!body.paired, email: body.email ?? null,
-        connected: !!body.connected, running: !!body.running,
-      }
-    } catch {
-      // 실행기가 없거나 브라우저가 로컬 접근을 막았다 — 다음 포트
-    } finally {
-      clearTimeout(timer)
+/** 포트 하나를 들여다본다. 실행기가 없거나 브라우저가 막으면 null. */
+async function probePort(port: number): Promise<LocalLauncher | null> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 800)
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/status`, { signal: ctrl.signal, cache: 'no-store' })
+    if (!res.ok) return null
+    const body = await res.json()
+    if (body?.app !== 'doctorvoice-launcher') return null
+    const accounts = Array.isArray(body.accounts)
+      ? body.accounts.filter((a: unknown): a is string => typeof a === 'string' && !!a)
+      : undefined
+    return {
+      port, version: body.version, paired: !!body.paired, email: body.email ?? null,
+      connected: !!body.connected, running: !!body.running,
+      accounts, slot: typeof body.slot === 'string' ? body.slot : undefined,
+      multiAccount: accounts !== undefined,
     }
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
   }
-  return null
 }
 
-/** 로그인된 이 페이지가 1회용 코드를 받아 실행기에 건넨다. */
-function pairWith(local: LocalLauncher): Promise<{ ok: boolean; error?: string }> {
+/** 이 PC에 떠 있는 실행기 창 전부. 계정마다 창이 하나씩이라 여러 개가 나온다. */
+export async function probeLocalAll(): Promise<LocalLauncher[]> {
+  const found = await Promise.all(LOCAL_PORTS.map(probePort))
+  return found.filter((l): l is LocalLauncher => !!l)
+}
+
+/** 지금 로그인한 계정을 맡은 창을 고른다.
+ *  ① 내 계정 창 → ② 아직 계정이 안 붙은 창 → ③ 남의 계정 창(그 창이 내 계정 창을 띄워 준다). */
+export function pickLocal(all: LocalLauncher[], myEmail?: string | null): LocalLauncher | null {
+  return all.find((l) => sameAccount(l.email, myEmail))
+    || all.find((l) => !l.paired || !l.email)
+    || all[0]
+    || null
+}
+
+/** 한 포트만 보고 멈추던 옛 호출을 위해 남겨 둔다. */
+async function probeLocal(myEmail?: string | null): Promise<LocalLauncher | null> {
+  return pickLocal(await probeLocalAll(), myEmail)
+}
+
+/** 로그인된 이 페이지가 1회용 코드를 받아 실행기에 건넨다.
+ *
+ *  계정(email)을 함께 보내는 것이 핵심이다. 실행기는 그 계정이 자기 자리가 아니면 코드를
+ *  쓰지 않고 **그 계정 전용 창을 새로 띄워** 넘긴다(spawned). 계정을 알려 주지 않으면
+ *  실행기가 코드를 먼저 써 버리고, 새 창은 쓸 코드가 없어 사람이 브라우저에서 승인해야 한다. */
+function pairWith(local: LocalLauncher, myEmail?: string | null): Promise<{ ok: boolean; spawned?: boolean; error?: string }> {
   if (pairInFlight) return pairInFlight
   lastPairAt = Date.now()
   pairInFlight = (async () => {
@@ -111,10 +144,13 @@ function pairWith(local: LocalLauncher): Promise<{ ok: boolean; error?: string }
       const { code } = await campaignAPI.agentPair()
       const res = await fetch(`http://127.0.0.1:${local.port}/pair`, {
         signal: AbortSignal.timeout(25000),
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, email: myEmail || undefined }),
       })
       const body = await res.json().catch(() => ({}))
       if (res.ok && body?.ok) return { ok: true }
+      // 내 계정 전용 창을 띄웠다 — 실패가 아니다. 그 창이 잠시 뒤 스스로 연결한다.
+      if (body?.spawned) return { ok: true, spawned: true }
       return { ok: false, error: body?.message || body?.error || '실행기가 연결을 받지 못했습니다' }
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : '연결하지 못했습니다' }
@@ -127,8 +163,11 @@ function pairWith(local: LocalLauncher): Promise<{ ok: boolean; error?: string }
 
 /** 예약을 걸자마자 이 PC의 실행기에게 '지금 가져가라'고 알린다.
  *  실행기가 없거나 브라우저가 로컬 접근을 막으면 조용히 넘어간다 — 그래도 다음 주기에 가져간다. */
-export async function wakeLauncher(): Promise<boolean> {
-  for (const port of LOCAL_PORTS) {
+export async function wakeLauncher(myEmail?: string | null): Promise<boolean> {
+  // 계정마다 창이 따로다 — 아무 창이나 깨우면 남의 계정 창이 헛걸음한다.
+  const mine = pickLocal(await probeLocalAll(), myEmail)
+  const ports = mine ? [mine.port] : LOCAL_PORTS
+  for (const port of ports) {
     try {
       const res = await fetch(`http://127.0.0.1:${port}/wake`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
@@ -153,13 +192,16 @@ export function useLauncherStatus(pollMs: number = POLL_MS): LauncherStatus {
   })
   const latestRef = useRef<string | null>(null)
   const checkRef = useRef<() => Promise<void>>(async () => {})
+  const myEmailRef = useRef<string | null>(myEmail)
+  useEffect(() => { myEmailRef.current = myEmail }, [myEmail])
 
   const runPair = useCallback(async (local: LocalLauncher) => {
     setState((s) => ({ ...s, pairing: true, pairError: null, light: 'connecting', label: LIGHT_LABEL.connecting }))
-    const result = await pairWith(local)
+    const result = await pairWith(local, myEmailRef.current)
     setState((s) => ({ ...s, pairing: false, pairError: result.ok ? null : (result.error || '연결하지 못했습니다') }))
     // 실행기가 서버에 첫 신호를 보낼 시간을 준 뒤 다시 본다.
-    setTimeout(() => { void checkRef.current() }, result.ok ? 1500 : 0)
+    // 새 창을 띄운 경우(spawned)는 창이 뜨고 스스로 연결할 시간이 더 걸린다.
+    setTimeout(() => { void checkRef.current() }, result.spawned ? 6000 : result.ok ? 1500 : 0)
   }, [])
 
   const check = useCallback(async () => {
@@ -186,7 +228,9 @@ export function useLauncherStatus(pollMs: number = POLL_MS): LauncherStatus {
     }
 
     // 서버가 '켜짐'이면 로컬을 찾을 필요가 없다(브라우저의 로컬 접근 확인도 띄우지 않는다).
-    const local = status.online ? null : await probeLocal()
+    const all = status.online ? [] : await probeLocalAll()
+    const local = pickLocal(all, myEmail)
+    // 내 계정을 맡은 창이 이 PC에 없다. 남의 계정 창만 떠 있는 상태다.
     const other = !!local && local.paired && !!local.email && !!myEmail && !sameAccount(local.email, myEmail)
 
     const live = status.devices.filter((d) => d.seconds_ago <= 150)
@@ -203,9 +247,16 @@ export function useLauncherStatus(pollMs: number = POLL_MS): LauncherStatus {
       pairError: status.online ? null : s.pairError,
     }))
 
-    // 자동 연결: 실행기가 아직 연결 전이거나 연결이 끊긴 경우. 다른 계정에 붙어 있으면 몰래 바꾸지 않는다.
-    if (myEmail && local && !other && (!local.paired || !local.connected) && Date.now() - lastPairAt > PAIR_COOLDOWN_MS) {
-      void runPair(local)
+    // 자동 연결.
+    //  · 내 계정 창이거나 아직 주인이 없는 창이면 그대로 연결한다.
+    //  · 남의 계정 창만 있으면 **그 창에 내 계정을 알려 준다** — 창이 계정을 갈아타는 게 아니라
+    //    내 계정 전용 창을 하나 더 띄운다(계정마다 크롬 로그인 세션이 따로여야 한다).
+    //    계정별 창을 띄울 수 있는 실행기(accounts 를 알려 주는 새 버전)에만 맡긴다. 옛 버전은
+    //    코드를 먼저 써 버려 사람이 브라우저에서 승인해야 하므로 [지금 연결하기] 단추로 남긴다.
+    const canAsk = !!local && (!other || local.multiAccount)
+    const needPair = !!local && (other || !local.paired || !local.connected)
+    if (myEmail && canAsk && needPair && Date.now() - lastPairAt > PAIR_COOLDOWN_MS) {
+      void runPair(local as LocalLauncher)
     }
   }, [myEmail, runPair])
 
@@ -224,7 +275,7 @@ export function useLauncherStatus(pollMs: number = POLL_MS): LauncherStatus {
 
   const pairNow = useCallback(() => {
     void (async () => {
-      const local = state.local || await probeLocal()
+      const local = state.local || await probeLocal(myEmailRef.current)
       if (!local) {
         setState((s) => ({ ...s, pairError: '홈페이지에서 연결 가능한 실행기를 찾지 못했습니다. 다운로드 폴더의 옛 ZIP 실행기를 닫고 Windows 시작 메뉴의 [닥터보이스 프로 자동 발행]을 여세요. 설치본의 [지금 연결하기]를 누르면 연결을 시작합니다.' }))
         return

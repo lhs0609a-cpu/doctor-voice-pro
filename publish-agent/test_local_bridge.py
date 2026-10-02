@@ -16,8 +16,8 @@ class BridgeTests(unittest.TestCase):
         self.saved_ports = local_bridge.PORTS
         local_bridge.PORTS = (0,)   # 테스트에서는 비어 있는 아무 포트나
 
-        def pair(code):
-            self.pairs.append(code)
+        def pair(code, email=''):
+            self.pairs.append((code, email))
             return (code == 'GOODCODE', '연결됨' if code == 'GOODCODE' else '코드가 틀렸습니다', {'email': 'a@naver.com'})
 
         self.bridge = local_bridge.LocalBridge(
@@ -55,12 +55,22 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(res.status, 200)
         self.assertTrue(body['ok'])
         self.assertEqual(body['email'], 'a@naver.com')
-        self.assertEqual(self.pairs, ['GOODCODE'])
+        self.assertEqual(self.pairs, [('GOODCODE', '')])
+
+    def test_the_site_tells_the_launcher_which_account_logged_in(self):
+        """계정을 함께 받아야 '이 창이 맡은 계정이 아니다'를 코드를 쓰기 전에 알 수 있다.
+
+        모르면 코드를 먼저 써 버리고, 그 계정 전용 창은 쓸 코드가 없어 사람이 브라우저에서
+        승인해야 한다(2026-10-01)."""
+        res, body = self.call('POST', '/pair', {'code': 'GOODCODE', 'email': 'b@naver.com'})
+        self.assertEqual(res.status, 200)
+        self.assertEqual(self.pairs, [('GOODCODE', 'b@naver.com')])
 
     def test_bad_code_is_reported_not_swallowed(self):
         res, body = self.call('POST', '/pair', {'code': 'WRONG'})
         self.assertEqual(res.status, 409)
         self.assertFalse(body['ok'])
+        self.assertEqual(self.pairs, [('WRONG', '')])
 
     def test_other_sites_are_refused(self):
         for origin in ('https://evil.example.com', None,
