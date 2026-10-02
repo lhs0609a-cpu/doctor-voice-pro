@@ -30,13 +30,26 @@ class IntervalAllocationTest(unittest.TestCase):
         first_day = [at for _, at in assigned if at.date() == start.date()]
         self.assertEqual(len(first_day), 6)
 
-    def test_rolls_past_window_end_to_next_day(self):
+    def test_keeps_going_through_the_night(self):
+        """발행 시간대를 보지 않는다 — 고른 간격대로 밤을 넘어 쭉 간다(2026-10-02 요청).
+
+        예전에는 시간대 밖이면 다음 날 시작 시각으로 밀었다. 그 바람에 09:00~21:00 에
+        3시간 간격이면 하루 4건에서 끊겼다("3시간씩 걸면 하루 8건 아닌가요?")."""
         start = datetime(2026, 9, 23, 20, 0)
         assigned, _ = se.allocate_interval(3, [_plan()], start, 120, earliest=start)
         times = [at for _, at in assigned]
-        self.assertEqual(times[0], datetime(2026, 9, 23, 20, 0))
-        self.assertEqual(times[1], datetime(2026, 9, 24, 9, 0))    # 22시는 시간대 밖 → 다음 날 시작
-        self.assertEqual(times[2], datetime(2026, 9, 24, 11, 0))
+        self.assertEqual(times, [datetime(2026, 9, 23, 20, 0),
+                                 datetime(2026, 9, 23, 22, 0),
+                                 datetime(2026, 9, 24, 0, 0)])
+
+    def test_three_hours_gives_eight_a_day(self):
+        """운영에서 기대하는 숫자 그대로 — 24시간을 3시간으로 나누면 여덟 건이다."""
+        start = datetime(2026, 9, 23, 9, 0)
+        assigned, remaining = se.allocate_interval(8, [_plan()], start, 180, earliest=start)
+        self.assertEqual(remaining, 0)
+        times = [at for _, at in assigned]
+        self.assertEqual(times[-1], datetime(2026, 9, 24, 6, 0))
+        self.assertEqual(sum(1 for t in times if t < datetime(2026, 9, 24, 9, 0)), 8)
 
     def test_keeps_min_gap_around_existing_reservations(self):
         """이미 걸린 예약 앞뒤 min_gap 안에는 못 들어간다 — 같은 칸만 피하는 게 아니다."""

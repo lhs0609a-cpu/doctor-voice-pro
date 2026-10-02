@@ -236,11 +236,16 @@ def allocate_interval(
 ) -> Tuple[List[Tuple[str, datetime]], int]:
     """첫 글을 start_at 에 두고 every_minutes 간격으로 차례차례 배정한다.
 
-    allocate() 가 '기간 안에 흩뿌리기'라면 이쪽은 '몇 분마다 하나씩' — 초보자가 화면에서 고른
+    allocate() 가 '기간 안에 흩뿌리기'라면 이쪽은 '몇 분마다 하나씩' — 사용자가 화면에서 고른
     간격을 그대로 지키는 것이 목적이라 하루 한도(daily_limit)로 잘라내지 않는다(호출자가 경고만 띄운다).
-    지키는 것은 넷. 발행 시간대 밖으로 나가지 않고, 이미 잡힌 자리를 비켜 가고,
-    기존 예약 앞뒤로 min_gap_minutes 만큼 띄우고, 10분 단위에 맞춘다.
-    블로그가 여러 개면 한 개씩 돌아가며 준다.
+
+    **발행 시간대(window)도 보지 않는다**(2026-10-02 요청: "항상 예약할 때는 시간대 제한 두지 마").
+    예전에는 시간대 밖이면 다음 날 시작 시각으로 밀었다. 그래서 09:00~21:00 에 3시간 간격이면
+    09·12·15·18 네 건에서 끊기고 저녁 6시부터 다음 날 아침까지 비었다 — 운영에서는 24시간 쭉
+    돌리고 있어서 "3시간이면 하루 8건 아니냐"는 말이 맞다. 시간대는 흩뿌리기(allocate)에만 남는다.
+
+    지키는 것은 셋. 이미 잡힌 자리를 비켜 가고, 기존 예약 앞뒤로 min_gap_minutes 만큼 띄우고,
+    10분 단위에 맞춘다. 블로그가 여러 개면 한 개씩 돌아가며 준다.
     """
     if not blogs or count <= 0:
         return [], max(0, count)
@@ -255,9 +260,9 @@ def allocate_interval(
     remaining = count
     for i in range(count):
         b = blogs[i % len(blogs)]
-        at = _into_window(cursor, b)
+        at = cursor
         while at.date() <= limit and not _slot_free(at, b, reserved[b.ref_id]):
-            at = _into_window(at + timedelta(minutes=SLOT_MINUTES), b)
+            at = at + timedelta(minutes=SLOT_MINUTES)
         if at.date() > limit:
             break
         b.taken.add(at)

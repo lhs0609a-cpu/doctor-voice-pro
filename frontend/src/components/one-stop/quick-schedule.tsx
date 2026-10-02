@@ -31,9 +31,18 @@ const GAPS = [
   { minutes: 60, label: '1시간' },
   { minutes: 120, label: '2시간' },
   { minutes: 180, label: '3시간' },
+  { minutes: 240, label: '4시간' },
+  { minutes: 300, label: '5시간' },
   { minutes: 360, label: '6시간' },
+  { minutes: 420, label: '7시간' },
+  { minutes: 480, label: '8시간' },
   { minutes: 1440, label: '하루 1개' },
 ]
+
+/** 고른 간격이면 하루 몇 건이 되는가. 시간대 제한이 없으므로 24시간을 간격으로 나눈 값이다. */
+function perDay(minutes: number): number {
+  return Math.max(1, Math.floor((24 * 60) / Math.max(1, minutes)))
+}
 
 /** 브라우저가 어느 시간대에 있든 한국 시각으로 본다. 서버·네이버가 모두 KST 기준이다. */
 function kstNow() {
@@ -312,9 +321,8 @@ export function QuickSchedule({ campaign, client, draftIds, onScheduled, onBack,
           ))}
         </div>
         <p className="text-xs text-muted-foreground">
-          {blogs.length > 1
-            ? `블로그 ${blogs.length}개에 번갈아 올립니다. 발행 시간대 밖으로는 나가지 않습니다.`
-            : `발행 시간대(${blogs[0]?.window_start || '09:00'}~${blogs[0]?.window_end || '21:00'}) 밖이면 다음 날 같은 시간대로 넘어갑니다.`}
+          고른 간격대로 <b>밤에도 쉬지 않고</b> 이어 갑니다 — 하루 {perDay(gap)}건꼴입니다.
+          {blogs.length > 1 && ` 블로그 ${blogs.length}개에 번갈아 올립니다.`}
         </p>
       </fieldset>
 
