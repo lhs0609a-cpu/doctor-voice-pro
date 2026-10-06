@@ -276,6 +276,7 @@ export function BlogAccounts({ clientId, blogs, onChanged }: BlogAccountsProps) 
               <div className="space-y-1">
                 <Label htmlFor="b-blog">블로그 ID *</Label>
                 <Input id="b-blog" value={form.blog_id} onChange={(e) => set('blog_id', e.target.value)} placeholder="blog.naver.com/ 뒤의 ID" />
+                <p className="text-xs text-muted-foreground">다른 병원에 등록한 공용 블로그라면 같은 ID를 그대로 넣으세요. 로그인 정보·프록시는 먼저 등록한 곳에서 가져옵니다.</p>
               </div>
               <div className="space-y-1">
                 <Label htmlFor="b-label">별칭</Label>

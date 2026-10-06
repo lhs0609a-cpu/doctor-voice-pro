@@ -62,30 +62,44 @@ def kst_now() -> datetime:
 
 
 async def load_taken_slots(db: AsyncSession, user_id: str, blogs: Iterable[BlogPlan]) -> None:
-    """블로그별로 이미 잡힌 자리를 채운다(활성 발행건 + 예약 기록 + 옛 대량 큐)."""
-    by_ref = {b.ref_id: b for b in blogs}
-    by_naver = {b.naver_blog_id: b for b in blogs}
+    """블로그별로 이미 잡힌 자리를 채운다(활성 발행건 + 예약 기록 + 옛 대량 큐).
+
+    같은 네이버 블로그를 병원마다 따로 등록할 수 있다(공용 블로그). 줄은 둘이어도 글이
+    올라가는 곳은 **한 곳**이므로, 한쪽이 잡은 자리는 다른 쪽에도 찬 자리로 보여야 한다 —
+    그러지 않으면 같은 시각에 두 글이 겹쳐 예약된다. 그래서 자리는 줄(ref_id)이 아니라
+    네이버 블로그 주소를 기준으로 묶는다."""
+    plans = list(blogs)
+    by_ref = {b.ref_id: b for b in plans}
+    by_naver: Dict[str, List[BlogPlan]] = {}
+    for b in plans:
+        by_naver.setdefault((b.naver_blog_id or "").lower(), []).append(b)
 
     rows = (await db.execute(
-        select(PublishJob.blog_ref_id, PublishJob.scheduled_at).where(
-            PublishJob.user_id == user_id, PublishJob.status.in_(list(JOB_ACTIVE)),
-        )
+        select(PublishJob.blog_ref_id, PublishJob.scheduled_at, Blog.blog_id)
+        .join(Blog, Blog.id == PublishJob.blog_ref_id, isouter=True)
+        .where(PublishJob.user_id == user_id, PublishJob.status.in_(list(JOB_ACTIVE)))
     )).all()
-    for ref, at in rows:
-        if ref in by_ref and at:
-            by_ref[ref].taken.add(floor_slot(at))
+    for ref, at, naver in rows:
+        if not at:
+            continue
+        # 블로그 줄이 지워진 옛 발행건은 주소를 모른다 — 그때만 줄 기준으로 되돌아간다.
+        targets = by_naver.get((naver or "").lower()) if naver else None
+        if not targets:
+            targets = [by_ref[ref]] if ref in by_ref else []
+        for b in targets:
+            b.taken.add(floor_slot(at))
 
     marks = (await db.execute(
         select(ScheduleMark.blog_id, ScheduleMark.scheduled_at).where(ScheduleMark.user_id == user_id)
     )).all()
     for bid, at in marks:
-        b = by_naver.get(bid or "")
-        if b and at:
+        if not at:
+            continue
+        for b in by_naver.get((bid or "").lower(), []):
             b.taken.add(floor_slot(at))
 
     # 옛 대량 큐(블로그 정보 없음) — 블로그가 하나뿐일 때만 그 블로그 자리로 친다
-    if len(by_ref) == 1:
-        only = next(iter(by_ref.values()))
+    if len(by_naver) == 1:
         qrows = (await db.execute(
             select(QueuedPost.scheduled_at).where(
                 QueuedPost.user_id == user_id, QueuedPost.status.in_(["queued", "registered"]),
@@ -93,7 +107,8 @@ async def load_taken_slots(db: AsyncSession, user_id: str, blogs: Iterable[BlogP
         )).all()
         for (at,) in qrows:
             if at:
-                only.taken.add(floor_slot(at))
+                for b in plans:
+                    b.taken.add(floor_slot(at))
 
 
 def _day_slots(day: date, b: BlogPlan, earliest: datetime, rng: random.Random) -> List[datetime]:
@@ -132,6 +147,15 @@ def _day_slots(day: date, b: BlogPlan, earliest: datetime, rng: random.Random) -
             last = cand
             break
     return picks
+
+
+def _mark_taken(blogs: Iterable[BlogPlan], b: BlogPlan, at: datetime) -> None:
+    """자리를 잡았다고 적는다. 같은 네이버 블로그를 가리키는 다른 줄에도 같이 적는다 —
+    공용 블로그를 병원마다 등록해 두면 줄은 여럿이어도 올라가는 곳은 한 곳이다."""
+    key = (b.naver_blog_id or "").lower()
+    for other in blogs:
+        if other is b or (other.naver_blog_id or "").lower() == key:
+            other.taken.add(at)
 
 
 def allocate(
@@ -180,7 +204,7 @@ def allocate(
                 if picks:
                     at = picks.pop(0)
                     assigned.append((ref, at))
-                    next(b for b in blogs if b.ref_id == ref).taken.add(at)
+                    _mark_taken(blogs, next(b for b in blogs if b.ref_id == ref), at)
                     remaining -= 1
                     progress = True
     assigned.sort(key=lambda x: x[1])
@@ -265,7 +289,7 @@ def allocate_interval(
             at = at + timedelta(minutes=SLOT_MINUTES)
         if at.date() > limit:
             break
-        b.taken.add(at)
+        _mark_taken(blogs, b, at)
         assigned.append((b.ref_id, at))
         remaining -= 1
         cursor = at + timedelta(minutes=step)

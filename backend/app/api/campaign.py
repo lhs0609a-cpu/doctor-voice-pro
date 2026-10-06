@@ -425,38 +425,78 @@ def _clean_blog_id(raw: str) -> str:
     return bid
 
 
-async def _check_blog_address(db: AsyncSession, user_id: str, blog_id: str, *, skip: Optional[str] = None) -> None:
-    """같은 주소를 두 번 등록하거나, 주소 칸에 로그인 아이디를 적는 것을 막는다.
+async def _check_blog_address(db: AsyncSession, user_id: str, blog_id: str, *,
+                              client_id: str, skip: Optional[str] = None) -> Optional[Blog]:
+    """주소 칸에 로그인 아이디를 적는 것과, **같은 병원에** 같은 주소를 두 번 넣는 것을 막는다.
+    반환: 다른 병원에 이미 등록돼 있는 같은 블로그(없으면 None).
+
+    병원이 달라도 블로그는 한 개일 수 있다 — 여러 병원이 같이 쓰는 공용 블로그가 그렇다.
+    예전에는 사용자 전체에서 한 번만 등록할 수 있어서, 공용 블로그를 두 번째 병원에 붙이려면
+    방법이 없었다(2026-10-02 사용자 신고: "병원을 다 삭제해도 똑같이 뜬다" — 병원을 지워도
+    그 블로그 줄은 남으니까 영영 막혔다). 이제는 병원이 다르면 통과시킨다.
 
     네이버는 **로그인 아이디와 블로그 주소가 다를 수 있다**(lhs0609c 로 로그인하면 열리는
     블로그는 blog.naver.com/platonmarketing). 아이디를 주소 칸에 적으면 실행기가 로그인해
     보고 "예상과 다른 블로그"라며 영영 멈춘다 — 예약은 쌓이는데 한 건도 올라가지 않는다.
-    오늘 하루에만 세 번 같은 일이 났다(2026-09-28)."""
-    rows = (await db.execute(select(Blog).where(Blog.user_id == user_id))).scalars().all()
+    하루에만 세 번 같은 일이 났다(2026-09-28). 그래서 이 검사는 그대로 둔다.
+
+    **지운 병원의 블로그는 세지 않는다.** 병원 삭제는 active=False 로만 표시하므로(delete_client)
+    그 아래 블로그 줄은 그대로 남는데, 화면에는 병원도 블로그도 안 보인다. 그 줄을 계속 세면
+    사용자는 **보이지도 지울 수도 없는 것** 때문에 등록을 거절당한다 — 빠져나갈 길이 없다
+    (2026-10-03 사용자 신고: 병원을 모두 지운 뒤에도 "'juhdbg58' 는 이미 등록된 블로그
+    'ansoj305' 의 로그인 아이디입니다"로 막혔다. 그 ansoj305 는 지운 병원에 달려 있었다)."""
+    rows = (await db.execute(
+        select(Blog).join(Client, Client.id == Blog.client_id)
+        .where(Blog.user_id == user_id, Client.active.isnot(False))
+    )).scalars().all()
+    twin: Optional[Blog] = None
+    login_clash: Optional[Blog] = None
     for other in rows:
         if skip and other.id == skip:
             continue
         if (other.blog_id or "").lower() == blog_id.lower():
-            raise HTTPException(status_code=400, detail=(
-                f"'{blog_id}' 는 이미 등록된 블로그입니다. 목록에서 그 블로그를 고르세요."))
-        if (other.login_id or "").lower() == blog_id.lower():
-            raise HTTPException(status_code=400, detail=(
-                f"'{blog_id}' 는 이미 등록된 블로그 '{other.blog_id}' 의 **로그인 아이디**입니다. "
-                f"여기에는 blog.naver.com/ 뒤에 오는 **블로그 주소**를 넣어 주세요. "
-                f"같은 계정의 블로그라면 '{other.blog_id}' 를 그대로 쓰시면 됩니다."))
+            if other.client_id == client_id:
+                raise HTTPException(status_code=400, detail=(
+                    f"'{blog_id}' 는 이 병원에 이미 등록된 블로그입니다. 목록에서 그 블로그를 고르세요."))
+            twin = twin or other
+        elif (other.login_id or "").lower() == blog_id.lower():
+            login_clash = login_clash or other
+    # 같은 주소로 등록된 블로그가 이미 있다면, 적어 넣은 값은 '주소'가 맞다. 그때는
+    # 남의 로그인 아이디와 글자가 같다는 이유로 막지 않는다.
+    if twin is None and login_clash is not None:
+        raise HTTPException(status_code=400, detail=(
+            f"'{blog_id}' 는 이미 등록된 블로그 '{login_clash.blog_id}' 의 **로그인 아이디**입니다. "
+            f"여기에는 blog.naver.com/ 뒤에 오는 **블로그 주소**를 넣어 주세요. "
+            f"같은 계정의 블로그라면 '{login_clash.blog_id}' 를 그대로 쓰시면 됩니다."))
+    return twin
 
 
 @router.post("/clients/{client_id}/blogs", response_model=BlogOut)
 async def add_blog(client_id: str, body: BlogIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    await _owned(db, Client, client_id, current_user, "병원")
-    await _check_blog_address(db, _uid(current_user), _clean_blog_id(body.blog_id))
+    client = await _owned(db, Client, client_id, current_user, "병원")
+    blog_id = _clean_blog_id(body.blog_id)
+    twin = await _check_blog_address(db, _uid(current_user), blog_id, client_id=client_id)
+    # 공용 블로그는 목록에 같은 이름이 두 번 뜬다 — 어느 줄이 어느 병원인지 알 수 없다.
+    # 별칭을 안 적었으면 병원 이름을 붙여 둔다.
+    label = body.label or (f"{blog_id} ({client.name})" if twin else None)
+    # 공용 블로그를 두 번째 병원에 붙이는 경우. 들어가는 곳은 **같은 블로그 한 개**이므로
+    # 로그인·프록시·카테고리는 먼저 등록해 둔 줄에서 그대로 가져온다. 안 가져오면 로그인
+    # 정보가 빈 줄이 생겨 실행기가 "로그인 필요"로 멈춘다 — 예약은 쌓이는데 한 건도 안 올라간다.
+    # 반대로 글 끝 링크·지도·템플릿은 병원마다 다르므로 가져오지 않는다.
+    login_pw_enc = crypto.encrypt(body.login_pw) or (twin.login_pw_enc if twin else None)
+    proxy_enc = crypto.encrypt(_clean_proxy(body.proxy_url))
+    if proxy_enc is None and twin and (body.proxy_url or "").strip() != "-":
+        proxy_enc = twin.proxy_enc            # "-" 하나만 적었으면 '프록시 없이'라는 뜻이다
     b = Blog(
-        user_id=_uid(current_user), client_id=client_id, blog_id=_clean_blog_id(body.blog_id), label=body.label,
-        login_id=body.login_id, login_pw_enc=crypto.encrypt(body.login_pw), daily_limit=body.daily_limit,
+        user_id=_uid(current_user), client_id=client_id, blog_id=blog_id, label=label,
+        login_id=body.login_id or (twin.login_id if twin else None),
+        login_pw_enc=login_pw_enc, daily_limit=body.daily_limit,
         window_start=body.window_start, window_end=body.window_end, min_gap_minutes=body.min_gap_minutes,
         default_category=body.default_category, open_type=body.open_type,
+        categories=(twin.categories if twin else None),
+        categories_synced_at=(twin.categories_synced_at if twin else None),
         publish_mode=body.publish_mode if body.publish_mode in ("schedule", "draft") else "schedule",
-        proxy_enc=crypto.encrypt(_clean_proxy(body.proxy_url)),
+        proxy_enc=proxy_enc,
         footer_link_url=_clean_footer_url(body.footer_link_url),
         footer_link_label=(body.footer_link_label or "").strip()[:100] or None,
         place_url=_clean_footer_url(body.place_url),
@@ -472,7 +512,8 @@ async def add_blog(client_id: str, body: BlogIn, current_user: User = Depends(ge
 async def update_blog(blog_ref_id: str, body: BlogIn, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     b = await _owned(db, Blog, blog_ref_id, current_user, "블로그")
     if _clean_blog_id(body.blog_id).lower() != (b.blog_id or "").lower():
-        await _check_blog_address(db, _uid(current_user), _clean_blog_id(body.blog_id), skip=b.id)
+        await _check_blog_address(db, _uid(current_user), _clean_blog_id(body.blog_id),
+                                  client_id=b.client_id, skip=b.id)
     b.blog_id = _clean_blog_id(body.blog_id)
     b.label, b.login_id = body.label, body.login_id
     if body.login_pw:

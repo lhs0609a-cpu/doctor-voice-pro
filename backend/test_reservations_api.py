@@ -390,10 +390,67 @@ class ReservationTests(DatabaseCase):
         self.assertIn('로그인 아이디', refused.json()['detail'])
         self.assertIn('testblog', refused.json()['detail'])        # 쓸 수 있는 블로그를 짚어 준다
 
-    async def test_the_same_address_is_never_registered_twice(self):
+    async def test_the_same_address_is_never_registered_twice_under_one_hospital(self):
         refused = await self.add_blog('testblog')
         self.assertEqual(refused.status_code, 400)
         self.assertIn('이미 등록된', refused.json()['detail'])
+
+    async def test_one_blog_can_belong_to_two_hospitals(self):
+        """병원이 여럿이어도 블로그는 하나일 수 있다 — 같이 쓰는 공용 블로그가 그렇다.
+
+        예전에는 사용자 전체에서 한 번만 등록돼서, 두 번째 병원에 붙일 방법이 아예 없었다.
+        병원을 지워도 그 블로그 줄은 남으니 '병원을 다 지우고 다시'도 통하지 않았다
+        (2026-10-02 사용자 신고). 로그인 정보는 먼저 등록한 줄에서 가져온다 — 안 가져오면
+        로그인 없는 줄이 생겨 실행기가 '로그인 필요'로 멈춘다."""
+        async with self.sessions() as db:
+            b = await db.get(Blog, 'b')
+            b.login_id, b.login_pw_enc = 'egpebee947', 'enc'
+            db.add(Client(id='other', user_id='u', name='다른 병원'))
+            await db.commit()
+        added = await self.client.post('/clients/other/blogs', json={
+            'blog_id': 'testblog', 'daily_limit': 2, 'window_start': '09:00',
+            'window_end': '21:00', 'min_gap_minutes': 120, 'open_type': 'public'})
+        self.assertEqual(added.status_code, 200, added.text)
+        self.assertEqual(added.json()['blog_id'], 'testblog')
+        self.assertEqual(added.json()['login_id'], 'egpebee947')
+        self.assertTrue(added.json()['has_password'])
+        # 목록에 같은 이름이 두 번 뜨면 어느 줄이 어느 병원인지 알 수 없다.
+        self.assertEqual(added.json()['label'], 'testblog (다른 병원)')
+
+    async def test_a_deleted_hospital_never_blocks_a_new_registration(self):
+        """지운 병원에 달려 있던 블로그는 등록을 막지 않는다.
+
+        병원 삭제는 active=False 로만 표시하므로 그 아래 블로그 줄은 남는다. 그런데 화면에는
+        병원도 블로그도 안 보이니, 그 줄 때문에 거절당하면 사용자는 **보이지도 지울 수도 없는
+        것** 때문에 영영 막힌다 — 2026-10-03 사용자 신고: 병원을 모두 지운 뒤에도
+        "'juhdbg58' 는 이미 등록된 블로그 'testblog' 의 로그인 아이디입니다"로 거절당했다."""
+        async with self.sessions() as db:
+            (await db.get(Blog, 'b')).login_id = 'juhdbg58'
+            db.add(Client(id='fresh', user_id='u', name='새 병원'))
+            await db.commit()
+        removed = await self.client.delete('/clients/client')
+        self.assertEqual(removed.status_code, 200, removed.text)
+        for blog_id in ('juhdbg58', 'testblog'):      # 로그인 아이디로도, 주소 그대로도
+            added = await self.client.post('/clients/fresh/blogs', json={
+                'blog_id': blog_id, 'daily_limit': 2, 'window_start': '09:00',
+                'window_end': '21:00', 'min_gap_minutes': 120, 'open_type': 'public'})
+            self.assertEqual(added.status_code, 200, added.text)
+            self.assertEqual(added.json()['blog_id'], blog_id)
+
+    async def test_one_blog_in_two_hospitals_never_gets_two_posts_at_once(self):
+        """같은 블로그가 두 줄이어도 글이 올라가는 곳은 한 곳이다.
+
+        한쪽 병원이 잡아 둔 자리를 다른 쪽이 빈 자리로 보면 같은 시각에 두 글이 겹친다."""
+        async with self.sessions() as db:
+            db.add(Client(id='other', user_id='u', name='다른 병원'))
+            db.add(Blog(id='b2', user_id='u', client_id='other', blog_id='testblog', status='active',
+                        window_start='00:00', window_end='23:50', min_gap_minutes=120))
+            await db.commit()
+            plans = [se.blog_plan_from_model(await db.get(Blog, ref)) for ref in ('b', 'b2')]
+            await se.load_taken_slots(db, 'u', plans)
+        # j0 는 'b' 에 걸린 발행건이다. 'b2' 도 같은 블로그이므로 그 자리를 알아야 한다.
+        for plan in plans:
+            self.assertIn(self.future, plan.taken, plan.ref_id)
 
     async def test_a_new_address_is_accepted(self):
         added = await self.add_blog('https://blog.naver.com/newblog?x=1')

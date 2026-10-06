@@ -43,6 +43,47 @@ async def set_color(editor, color, background=False):
     return True
 
 
+READ_BACK = r'''text => {
+      // 네이버는 띄어쓰기를 nbsp 로 바꾸고, HTML 로 붙여 넣은 연속 공백은 한 칸으로 합친다.
+      // 글자 그대로 비교하면 방금 넣은 문구를 못 찾아 글 전체가 막힌다(2026-09-28).
+      const norm=s=>s.replace(/\s+/g,' ').trim();
+      const wanted=norm(text);
+      const body=[...document.querySelectorAll('.se-component:not(.se-documentTitle) .se-text-paragraph')];
+      const ends=p=>norm(p.textContent).endsWith(wanted);
+      // 글자가 들어간 곳은 **캐럿이 있는 문단**이다. 템플릿을 불러온 글에서는 쓰는 자리 아래로
+      // 템플릿 문단이 계속 남아 있어, 문서를 뒤에서부터 훑으면 엉뚱한 줄의 서식을 읽을 수 있다.
+      let paragraph=null;
+      const focus=(document.getSelection()||{}).focusNode;
+      if(focus){
+        const near=focus.nodeType===1?focus:focus.parentElement;
+        const caret=near&&near.closest('.se-text-paragraph');
+        if(caret&&body.includes(caret)&&ends(caret)) paragraph=caret;
+      }
+      if(!paragraph) paragraph=[...body].reverse().find(ends);
+      if(!paragraph) return null;
+      // 방금 넣은 글자가 어느 텍스트 노드인지는 **뒤에서부터** 센다. 문단 길이에서 글자 수를
+      // 빼서 자리를 잡으면, 편집기가 공백을 합쳤을 때(HTML 붙여넣기는 연속 공백을 한 칸으로
+      // 만든다 — 바로 위 주석) 검사 범위가 앞으로 밀려 **바로 앞 문구의 서식**을 보게 된다.
+      // 그래서 멀쩡한 원고가 '서식이 요청과 다릅니다'로 막혔다(2026-10-02 사용자 신고).
+      const walker=document.createTreeWalker(paragraph,NodeFilter.SHOW_TEXT);
+      const nodes=[]; let node;
+      while((node=walker.nextNode())) if(node.length) nodes.push(node);
+      const mine=[]; let tail='';
+      for(let i=nodes.length-1;i>=0;i--){
+        mine.unshift(nodes[i]); tail=nodes[i].data+tail;
+        if(norm(tail).length>=wanted.length) break;      // 꼬리 쪽 최소한의 노드만 집는다
+      }
+      return mine.map(n=>{
+        const s=getComputedStyle(n.parentElement);
+        let bg=s.backgroundColor, parent=n.parentElement;
+        while(bg==='rgba(0, 0, 0, 0)' && parent!==paragraph){parent=parent.parentElement;bg=getComputedStyle(parent).backgroundColor;}
+        const under=n.parentElement.closest('u');
+        return {quote:!!paragraph.closest('.se-quotation'),bold:parseInt(s.fontWeight)>=600,italic:s.fontStyle==='italic',
+          underline:!!under||s.textDecorationLine.includes('underline'),color:s.color,background:bg};
+      });
+    }'''
+
+
 async def styled_text(editor, text, attrs=None, *, in_quote=False):
     """Set the native typing style, insert text, then read the rendered run back.
 
@@ -94,31 +135,7 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
             await asyncio.sleep(.5)
     else:
         await editor._insert(text)
-    read_back = r'''text => {
-      // 네이버는 띄어쓰기를 nbsp 로 바꾸고, HTML 로 붙여 넣은 연속 공백은 한 칸으로 합친다.
-      // 글자 그대로 비교하면 방금 넣은 문구를 못 찾아 글 전체가 막힌다(2026-09-28).
-      const norm=s=>s.replace(/\s+/g,' ').trim();
-      const wanted=norm(text);
-      const paragraphs=[...document.querySelectorAll('.se-component:not(.se-documentTitle) .se-text-paragraph')].reverse();
-      const paragraph=paragraphs.find(p=>norm(p.textContent).endsWith(wanted));
-      if(!paragraph) return null;
-      const start=Math.max(0,paragraph.textContent.length-text.length);
-      const walker=document.createTreeWalker(paragraph,NodeFilter.SHOW_TEXT);
-      let node, offset=0; const styles=[];
-      while((node=walker.nextNode())){
-        const end=offset+node.length;
-        if(end>start && node.length){
-          const s=getComputedStyle(node.parentElement);
-          let bg=s.backgroundColor, parent=node.parentElement;
-          while(bg==='rgba(0, 0, 0, 0)' && parent!==paragraph){parent=parent.parentElement;bg=getComputedStyle(parent).backgroundColor;}
-          const under=node.parentElement.closest('u');
-          styles.push({quote:!!paragraph.closest('.se-quotation'),bold:parseInt(s.fontWeight)>=600,italic:s.fontStyle==='italic',
-            underline:!!under||s.textDecorationLine.includes('underline'),color:s.color,background:bg});
-        }
-        offset=end;
-      }
-      return styles;
-    }'''
+    read_back = READ_BACK
     # 편집기가 화면에 반영하기 전에 읽으면 없는 것처럼 보인다 — 한 번 더 기다려 본다.
     actual = None
     for wait in (.15, .5):
@@ -130,15 +147,19 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
         return
     if not actual:
         raise EditorError('입력한 강조 문구가 본문에 표시되지 않았습니다')
+    # 어디가 틀렸는지 못 적으면, 받는 사람은 원고 어디를 고쳐야 하는지 알 수 없다 —
+    # 화면에는 이 문장이 그대로 '손봐야 할 글'의 이유로 뜬다(2026-10-02).
+    where = text.strip()[:30]
     for style in actual:
         if style.get('quote') != in_quote:
-            raise EditorError('일반 본문과 인용구 위치가 요청한 구조와 다릅니다')
-        for key, prop in [('b','bold'),('i','italic'),('u','underline')]:
+            raise EditorError(f'일반 본문과 인용구 위치가 요청한 구조와 다릅니다 — "{where}"')
+        for key, prop, name in [('b','bold','굵게'),('i','italic','기울임'),('u','underline','밑줄')]:
             if bool(attrs.get(key)) != style[prop] and not (style.get('quote') and not attrs.get(key)):
-                raise EditorError('문구의 굵기/기울임/밑줄 서식이 요청과 다릅니다')
+                asked = '넣어 달라고' if attrs.get(key) else '빼 달라고'
+                raise EditorError(f'"{where}" 에 {name}을(를) {asked} 했는데 편집기에는 그렇게 들어가지 않았습니다')
         for key in ('color','background'):
             if attrs.get(key) and style[key] != rgb(attrs[key]):
-                raise EditorError(f'{key} 적용 값이 요청한 색상과 다릅니다')
+                raise EditorError(f'"{where}" 의 {key} 적용 값이 요청한 색상과 다릅니다')
 
 
 async def insert_rich_blocks(editor, blocks):
