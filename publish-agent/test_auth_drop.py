@@ -32,7 +32,11 @@ class StopsOnAuthLossTest(unittest.IsolatedAsyncioTestCase):
         self.calls = 0
 
     def _patch(self, error):
-        async def fake_run_once(client, pool, args):
+        # run_once 는 키워드 인자를 받는다(first_run). 가짜가 그걸 모르면 TypeError 가 나고,
+        # 그 TypeError 는 메인 루프의 `except Exception` 이 삼켜 버린다 — 테스트는 실패하는
+        # 대신 **영원히 돈다**. 2026-09-30 에 first_run 이 생긴 뒤로 이 가드는 죽어 있었다.
+        # 하필 이 테스트가 지키는 것이 '초록불인데 아무 일도 안 한다'는 바로 그 사고다.
+        async def fake_run_once(client, pool, args, **kw):
             self.calls += 1
             raise error
 
@@ -79,7 +83,7 @@ class StopsOnAuthLossTest(unittest.IsolatedAsyncioTestCase):
         """서버가 잠깐 흔들린 것은 다시 해 보면 된다 — 인증 문제와 섞지 않는다."""
         args = self._patch(ServerError(500, '서버 오류'))
 
-        async def fake_run_once(client, pool, args):
+        async def fake_run_once(client, pool, args, **kw):
             self.calls += 1
             if self.calls >= 2:          # 두 번째까지 돌았으면 충분하다
                 args.stop_event.set()
