@@ -14,7 +14,7 @@ import docx
 from docx import Document
 from docx.oxml.shared import OxmlElement, qn
 
-from app.api.campaign import JobBlock, _with_footer
+from app.api.campaign import JobBlock, _with_footer, _with_header
 from app.models.campaign import Blog
 from app.services import docx_import
 
@@ -94,6 +94,54 @@ class SavedFooterTest(unittest.TestCase):
         blocks = [JobBlock(type="text", content="본문입니다.")]
         blog = _blog(place_url="https://naver.me/abcd1234")
         self.assertEqual(self.body(_with_footer(blocks, blog)), ["본문입니다.", "https://naver.me/abcd1234"])
+
+
+class HeaderTests(unittest.IsolatedAsyncioTestCase):
+    """글 **맨 위** 고정 — 첫 문장 → 대표 사진 → 링크 카드.
+
+    2026-10-07 요청: "원고 맨 윗부분 문구 고정(또는 사진 삽입), 해당 링크 고정으로 카드만
+    삽입되도록". 글 끝과 달리 링크 앞에 라벨 줄을 두지 않는다 — 카드 하나만 서야 한다."""
+
+    class _DB:
+        async def get(self, *_a):
+            return None            # 사진 없음(사진 경로는 발행 E2E 에서 본다)
+
+    def body(self, blocks):
+        return [b.content for b in blocks]
+
+    async def head(self, blocks, blog):
+        return await _with_header(self._DB(), blocks, blog, None)
+
+    async def test_the_first_line_and_the_link_card_go_on_top(self):
+        blocks = [JobBlock(type="text", content="본문입니다.")]
+        blog = _blog(header_text="오늘 위례해오름한의원에서는",
+                     header_link_url="https://clinic.example.com/reserve")
+        self.assertEqual(self.body(await self.head(blocks, blog)),
+                         ["오늘 위례해오름한의원에서는", "https://clinic.example.com/reserve", "본문입니다."])
+
+    async def test_the_header_link_never_gets_a_label_line(self):
+        """글 끝은 '예약은 여기서' 같은 줄을 먼저 두지만, 맨 위는 카드 하나만 선다."""
+        blocks = [JobBlock(type="text", content="본문입니다.")]
+        blog = _blog(header_link_url="https://clinic.example.com/reserve",
+                     footer_link_label="예약은 여기서")
+        self.assertEqual(self.body(await self.head(blocks, blog)),
+                         ["https://clinic.example.com/reserve", "본문입니다."])
+
+    async def test_nothing_is_added_when_nothing_is_saved(self):
+        blocks = [JobBlock(type="text", content="본문입니다.")]
+        self.assertEqual(self.body(await self.head(blocks, _blog())), ["본문입니다."])
+
+    async def test_an_address_already_in_the_manuscript_is_not_added_twice(self):
+        blocks = [JobBlock(type="text", content="예약: https://clinic.example.com/reserve")]
+        blog = _blog(header_link_url="https://clinic.example.com/reserve")
+        self.assertEqual(self.body(await self.head(blocks, blog)),
+                         ["예약: https://clinic.example.com/reserve"])
+
+    async def test_a_deleted_header_image_does_not_block_the_post(self):
+        """머리 사진이 지워졌다고 글 전체가 안 나가면 안 된다 — 머리글은 글의 본체가 아니다."""
+        blocks = [JobBlock(type="text", content="본문입니다.")]
+        blog = _blog(header_text="첫 문장", header_image_id="사라진-사진")
+        self.assertEqual(self.body(await self.head(blocks, blog)), ["첫 문장", "본문입니다."])
 
 
 if __name__ == "__main__":

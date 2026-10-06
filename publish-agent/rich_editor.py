@@ -184,6 +184,7 @@ async def insert_rich_blocks(editor, blocks):
         if kind == 'image':
             await editor._insert_image_verified(block['image'],index=images)
             images += 1
+            await editor.center_last_image()      # 사진만 가운데로. 글자는 그대로 둔다.
             await editor._refocus_body_end()
             continue
         if kind == 'table':

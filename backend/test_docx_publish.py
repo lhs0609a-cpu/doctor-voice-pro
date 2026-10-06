@@ -267,11 +267,18 @@ class DocxUploadTests(DatabaseCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('워드 파일을 읽지 못했습니다', response.json()['detail'])
 
+    @staticmethod
+    def _tomorrow() -> str:
+        """예약은 **앞으로 올 자리**에만 걸린다. 날짜를 적어 두면 그날이 지나는 순간부터
+        이 테스트는 매일 실패한다 — 2026-10-01 로 박아 둔 탓에 10/04 부터 빨간불이었다."""
+        from datetime import date, timedelta
+        return (date.today() + timedelta(days=1)).isoformat()
+
     async def test_uploaded_manuscript_can_be_scheduled(self):
         """워드로 올린 완성 원고도 예약 대상이다(변형의 원본만 빠진다)."""
         draft = await self.upload()
         response = await self.client.post('/campaigns/c/schedule/preview', json={
-            'start_date': '2026-10-01', 'days': 3, 'draft_ids': [draft['id']]})
+            'start_date': self._tomorrow(), 'days': 3, 'draft_ids': [draft['id']]})
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual([i['draft_id'] for i in response.json()['assigned']], [draft['id']])
 
@@ -282,7 +289,7 @@ class DocxUploadTests(DatabaseCase):
                          parent_draft_id=draft['id'], title='변형', body='변형 본문', status='ready'))
             await db.commit()
         response = await self.client.post('/campaigns/c/schedule/preview', json={
-            'start_date': '2026-10-01', 'days': 3, 'draft_ids': [draft['id']]})
+            'start_date': self._tomorrow(), 'days': 3, 'draft_ids': [draft['id']]})
         self.assertEqual(response.status_code, 400, response.text)   # 원본만 고르면 예약할 것이 없다
 
     async def test_editing_the_body_drops_the_word_formatting(self):

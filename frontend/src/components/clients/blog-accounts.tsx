@@ -48,6 +48,9 @@ const EMPTY_BLOG: BlogInput = {
   default_category: '',
   open_type: 'public',
   publish_mode: 'schedule',
+  header_text: '',
+  header_image_id: '',
+  header_link_url: '',
   footer_link_url: '',
   footer_link_label: '',
   place_url: '',
@@ -67,6 +70,9 @@ function toInput(b: BlogAccount): BlogInput {
     default_category: b.default_category ?? '',
     open_type: b.open_type,
     publish_mode: b.publish_mode ?? 'schedule',
+    header_text: b.header_text ?? '',
+    header_image_id: b.header_image_id ?? '',
+    header_link_url: b.header_link_url ?? '',
     footer_link_url: b.footer_link_url ?? '',
     footer_link_label: b.footer_link_label ?? '',
     place_url: b.place_url ?? '',
@@ -107,6 +113,9 @@ export function BlogAccounts({ clientId, blogs, onChanged }: BlogAccountsProps) 
         login_pw: form.login_pw ? form.login_pw : null,
         default_category: form.default_category?.trim() || null,
         // 비우면 지운다는 뜻이다(서버가 '-' 와 빈 값을 같게 본다).
+        header_text: form.header_text?.trim() || null,
+        header_image_id: form.header_image_id?.trim() || null,
+        header_link_url: form.header_link_url?.trim() || null,
         footer_link_url: form.footer_link_url?.trim() || null,
         footer_link_label: form.footer_link_label?.trim() || null,
         place_url: form.place_url?.trim() || null,
@@ -314,6 +323,31 @@ export function BlogAccounts({ clientId, blogs, onChanged }: BlogAccountsProps) 
                 <Label htmlFor="b-we">종료 시각</Label>
                 <Input id="b-we" type="time" value={form.window_end} onChange={(e) => set('window_end', e.target.value)} />
               </div>
+            </div>
+            {/* 글 맨 위에 늘 붙는 것들. 링크는 라벨 없이 주소만 넣어 카드 하나로 세운다. */}
+            <div className="space-y-3 rounded-lg border p-3">
+              <p className="text-sm font-medium">글 맨 위에 늘 넣을 것 <span className="font-normal text-muted-foreground">(이 아이디 전용)</span></p>
+              <div className="space-y-1">
+                <Label htmlFor="b-head-text">첫 문장</Label>
+                <Input id="b-head-text" value={form.header_text ?? ''} onChange={(e) => set('header_text', e.target.value)}
+                  placeholder="예: 오늘 위례해오름한의원에서는" />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label htmlFor="b-head-image">대표 사진 (사진 풀 ID)</Label>
+                  <Input id="b-head-image" value={form.header_image_id ?? ''} onChange={(e) => set('header_image_id', e.target.value)}
+                    placeholder="비우면 사진 없이" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="b-head-link">고정 링크 (카드로)</Label>
+                  <Input id="b-head-link" value={form.header_link_url ?? ''} onChange={(e) => set('header_link_url', e.target.value)}
+                    placeholder="https://..." />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                첫 문장 → 사진 → 링크 카드 순서로 글 맨 위에 들어갑니다. 링크는 앞에 붙는 글자 없이
+                카드 하나로만 들어갑니다. 사진은 글마다 다르게 처리되어 중복사진 판정을 피합니다.
+              </p>
             </div>
             {/* 글 끝에 늘 붙는 것들 — 한 번 저장해 두면 원고마다 넣지 않아도 된다.
                 네이버는 한 줄짜리 주소를 링크 카드·지도 카드로 바꿔 준다. */}

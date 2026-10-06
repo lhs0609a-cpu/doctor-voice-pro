@@ -99,6 +99,12 @@ class Blog(Base):
     device_profile = Column(String(100), nullable=True)      # 에이전트 브라우저 프로필 키
     # 이 아이디로 올리는 글 끝에 늘 붙는 것들. 한 번 저장해 두면 매번 안 넣어도 된다.
     # 주소를 한 줄로 넣으면 네이버가 링크 카드(플레이스는 지도 카드)로 만들어 준다.
+    # 모든 글 **맨 위**에 늘 똑같이 들어가는 것들. 병원이 정해 둔 인사말·대표 사진·링크다.
+    # 2026-10-07 요청: "원고 맨 윗부분 문구 고정(또는 사진 삽입), 해당 링크 고정으로 카드만".
+    # 링크는 라벨 없이 주소만 한 줄로 넣는다 — 그래야 네이버가 카드 하나로 세운다.
+    header_text = Column(String(300), nullable=True)
+    header_image_id = Column(String(36), nullable=True)      # pool_images.id (움직이는 GIF 도 된다)
+    header_link_url = Column(String(500), nullable=True)
     footer_link_url = Column(String(500), nullable=True)     # 예약·홈페이지 링크
     footer_link_label = Column(String(100), nullable=True)   # 그 앞에 붙일 한 줄 ("예약은 여기서")
     place_url = Column(String(500), nullable=True)           # 네이버 플레이스(지도) 주소

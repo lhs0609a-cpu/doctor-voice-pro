@@ -272,6 +272,9 @@ class TestEditorOnFakePage(unittest.TestCase):
         self.assertEqual(pub["date"], "2026. 11. 05")
         self.assertEqual((pub["hour"], pub["minute"]), ("14", "30"), "분은 10분 단위 내림")
         self.assertEqual(pub["images"], 1)
+        # 사진만 가운데로. 글자 문단은 건드리지 않는다(2026-10-07 요청).
+        self.assertEqual(pub["centeredImages"], 1, "사진이 가운데 정렬되지 않았습니다")
+        self.assertEqual(pub["centeredTexts"], 0, "글자 문단까지 정렬을 건드렸습니다")
         self.assertEqual(st["imageFiles"], 1, "파일 선택창 경로로 업로드")
         self.assertEqual(st["lastImage"]["type"], "image/jpeg")
         self.assertEqual(st["lastImage"]["size"], len(JPEG_1PX))

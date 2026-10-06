@@ -45,6 +45,9 @@
   <button data-name="quotation" data-value="default" id="quotebtn">인용구</button>
   <!-- 링크 카드: 누르면 주소 칸이 뜨고, Enter 나 [확인] 이면 카드 컴포넌트가 붙는다. -->
   <button data-name="oglink" id="linkbtn">링크</button>
+  <!-- 정렬: 사진 컴포넌트를 고른 뒤에만 보인다(실제 SE ONE 도 선택 뒤 뜬다).
+       누르면 그 컴포넌트에 se-align-center 가 붙는다. -->
+  <button data-name="align" data-value="center" id="aligncenter" style="display:none">가운데</button>
   <!-- 내 템플릿: 누르면 패널이 열리고, 템플릿을 고르면 본문에 고정 문단이 깔린다. -->
   <button id="tplbtn">템플릿</button>
 </div>
@@ -235,6 +238,11 @@
   const wrap = document.querySelector('.se-components-wrap');
     const c = document.createElement('div');
     c.className = 'se-component se-image';
+    // 사진을 고르면 정렬 단추가 뜬다. 그 단추는 고른 사진에만 작용한다.
+    c.addEventListener('click', () => {
+      window.__selectedImage = c;
+      document.getElementById('aligncenter').style.display = '';
+    });
     // 진짜 SE ONE 처럼 먼저 '전송중' 자리만 잡고, 바이트가 다 올라간 뒤에 그림이 들어온다.
     c.innerHTML = '<div class="se-image-uploading">전송중...</div>';
     wrap.appendChild(c);
@@ -246,6 +254,9 @@
     t.innerHTML = '<div class="se-section-text"><p class="se-text-paragraph" contenteditable="true"></p></div>';
     wrap.appendChild(t);
   }
+  document.getElementById('aligncenter').onclick = () => {
+    if (window.__selectedImage) window.__selectedImage.classList.add('se-align-center');
+  };
   document.getElementById('imgbtn').onclick = () => document.getElementById('imgfile').click();
   document.getElementById('imgfile').onchange = (e) => {
     for (const f of e.target.files) {
@@ -374,6 +385,9 @@
       bodyHtml: [...document.querySelectorAll('.se-component.se-text .se-text-paragraph')].map((p) => p.innerHTML).join('<!--PARA-->'),
       bodyText: [...document.querySelectorAll('.se-component.se-text .se-text-paragraph')].map((p) => p.innerText).join('\n'),
       images: document.querySelectorAll('.se-component.se-image').length,
+      // 사진만 가운데로 갔는지. 글자 문단까지 건드렸으면 centeredTexts 가 0 이 아니다.
+      centeredImages: document.querySelectorAll('.se-component.se-image.se-align-center').length,
+      centeredTexts: document.querySelectorAll('.se-component.se-text.se-align-center').length,
     };
     layer.classList.remove('open');
     // 예약으로 올리면 네이버에 예약 한 건이 는다. 다만 **지금 이 화면의 칩은 그대로다** —

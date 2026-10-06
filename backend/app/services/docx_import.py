@@ -213,6 +213,15 @@ def _paragraph_kind(paragraph) -> Tuple[str, int]:
     return "text", 0
 
 
+def quoted_line_text(line: str) -> Optional[str]:
+    """줄 전체가 따옴표로 감싸여 있으면 따옴표를 뗀 알맹이를, 아니면 None.
+
+    '줄 전체'일 때만 센다 — 문장 안의 대화 따옴표까지 인용구로 세우면 글이 망가진다.
+    워드 경로(_block_kind/_unquote)와 AI 원고 경로(_assemble_blocks)가 이 하나만 본다."""
+    match = _QUOTED_LINE_RE.match(_clean(line or ""))
+    return match.group("t").strip() if match else None
+
+
 def _unquote(spans: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """소제목 줄을 감싼 따옴표를 뗀다. 인용구 안에 따옴표까지 들어가면 두 번 인용한 꼴이다."""
     if not spans:

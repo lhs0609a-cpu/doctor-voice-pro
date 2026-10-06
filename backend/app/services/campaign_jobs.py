@@ -615,6 +615,18 @@ async def prepare_job_images(db, job: PublishJob, draft: Draft) -> List[Dict[str
             .order_by(ImageVariant.created_at.desc()).limit(uniq.SIBLING_WINDOW)
         )).all()
         siblings = [h for (h, _t) in srows if h]
+        # 움직이는 GIF 는 다시 인코딩하면 첫 장면만 남아 **멈춘 그림**이 된다. 워드 경로는
+        # 이미 비켜 갔는데(_unique_doc_image) 사진 풀 경로만 그대로 JPEG 로 눌러 왔다 —
+        # 2026-10-07 사용자 신고: "원고 자동화 프로그램 작업 건 GIF가 재생이 안 되어서요".
+        # 여기서는 파일 지문만 바꾸고 프레임은 한 비트도 건드리지 않는다.
+        if (pimg.content_type or "") == "image/gif":
+            path = folder / f"{int(s['slot']):02d}.gif"
+            path.write_bytes(await run_in_threadpool(uniq.uniquify_gif_bytes, pimg.data))
+            pimg.use_count = (pimg.use_count or 0) + 1
+            pimg.last_used_at = datetime.utcnow()
+            out.append({"slot": s["slot"], "after_paragraph": s.get("after_paragraph", 0),
+                        "pool_image_id": pimg.id, "path": str(path), "phash": None, "passed": True})
+            continue
         result = await run_in_threadpool(uniq.uniquify, pimg.data, sibling_hashes=siblings, trim_start=(srows[0][1] if srows else None))
         path = folder / f"{int(s['slot']):02d}.jpg"
         path.write_bytes(result.image_bytes)
@@ -678,9 +690,15 @@ async def sheet_append(ctx: JobContext) -> dict:
     return {"appended": n}
 
 
+#: 실행기는 data URL 의 형식을 그대로 믿고 그 확장자로 파일을 만든다(ext_for_mime).
+#: 그래서 여기서 형식을 틀리면 GIF 를 올려도 네이버에는 jpg 로 올라가 움직임이 죽는다.
+_MIME_BY_SUFFIX = {".gif": "image/gif", ".png": "image/png", ".webp": "image/webp"}
+
+
 def image_as_data_url(path: str) -> Optional[str]:
     try:
         b = Path(path).read_bytes()
     except Exception:  # noqa: BLE001
         return None
-    return "data:image/jpeg;base64," + base64.b64encode(b).decode()
+    mime = _MIME_BY_SUFFIX.get(Path(path).suffix.lower(), "image/jpeg")
+    return f"data:{mime};base64," + base64.b64encode(b).decode()

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 import re
 import secrets
 from pathlib import Path
@@ -22,6 +23,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, delete, func, inspect, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from app.api.deps import get_current_user, get_db
 from app.core.config import settings
@@ -172,6 +175,10 @@ class BlogOut(BaseModel):
     status_reason: Optional[str] = None
     last_published_at: Optional[datetime] = None
     proxy_label: Optional[str] = None         # 화면 표시용. 비밀번호는 지운 주소만 보낸다.
+    # 이 아이디로 올리는 글 **맨 위**에 늘 붙는 것들
+    header_text: Optional[str] = None
+    header_image_id: Optional[str] = None
+    header_link_url: Optional[str] = None
     # 이 아이디로 올리는 글 끝에 늘 붙는 것들
     footer_link_url: Optional[str] = None
     footer_link_label: Optional[str] = None
@@ -242,6 +249,8 @@ def _blog_out(b: Blog) -> BlogOut:
         open_type=b.open_type or "public", publish_mode=b.publish_mode or "schedule",
         status=b.status or "active", status_reason=b.status_reason,
         last_published_at=b.last_published_at, proxy_label=_proxy_label(b.proxy_enc),
+        header_text=b.header_text, header_image_id=b.header_image_id,
+        header_link_url=b.header_link_url,
         footer_link_url=b.footer_link_url, footer_link_label=b.footer_link_label,
         place_url=b.place_url, place_label=b.place_label, template_name=b.template_name,
         categories=[{"id": str(c.get("id") or ""), "name": str(c.get("name") or "")}
@@ -364,6 +373,10 @@ class BlogIn(BaseModel):
     # schedule = 네이버에 예약 발행 | draft = 임시저장만 하고 발행은 병원이 직접 한다.
     # 2026-09-30 키네스 요청: "원고 키네스 측에서 검토 후 발행을 원하셔서요".
     publish_mode: str = "schedule"
+    # 이 아이디로 올리는 글 **맨 위**에 늘 붙일 것들. 링크는 라벨 없이 카드 하나로만 들어간다.
+    header_text: Optional[str] = None
+    header_image_id: Optional[str] = None
+    header_link_url: Optional[str] = None
     # 이 아이디로 올리는 글 끝에 늘 붙일 것들. 한 번 저장해 두면 매번 안 넣어도 된다.
     footer_link_url: Optional[str] = None
     footer_link_label: Optional[str] = None
@@ -497,6 +510,9 @@ async def add_blog(client_id: str, body: BlogIn, current_user: User = Depends(ge
         categories_synced_at=(twin.categories_synced_at if twin else None),
         publish_mode=body.publish_mode if body.publish_mode in ("schedule", "draft") else "schedule",
         proxy_enc=proxy_enc,
+        header_text=(body.header_text or "").strip()[:300] or None,
+        header_image_id=(body.header_image_id or "").strip() or None,
+        header_link_url=_clean_footer_url(body.header_link_url),
         footer_link_url=_clean_footer_url(body.footer_link_url),
         footer_link_label=(body.footer_link_label or "").strip()[:100] or None,
         place_url=_clean_footer_url(body.place_url),
@@ -530,6 +546,9 @@ async def update_blog(blog_ref_id: str, body: BlogIn, current_user: User = Depen
         await db.execute(update(PublishJob).where(
             PublishJob.blog_ref_id == b.id, PublishJob.status.in_(["queued", "failed"]),
         ).values(category=b.default_category))
+    b.header_text = (body.header_text or "").strip()[:300] or None
+    b.header_image_id = (body.header_image_id or "").strip() or None
+    b.header_link_url = _clean_footer_url(body.header_link_url)
     b.footer_link_url = _clean_footer_url(body.footer_link_url)
     b.footer_link_label = (body.footer_link_label or "").strip()[:100] or None
     b.place_url = _clean_footer_url(body.place_url)
@@ -2303,19 +2322,75 @@ async def _assemble_blocks(db: AsyncSession, draft: Draft, variants: List[Dict[s
     blocks: List[JobBlock] = []
     # 문단은 '두 문장마다 빈 줄' 규칙으로 이미 잘게 나뉘어 있으므로, 사진 사이 텍스트는 합쳐서 하나의 블록으로
     buf: List[str] = []
+
+    def flush() -> None:
+        """모아 둔 문단을 블록으로 내보낸다. 줄 전체가 따옴표인 줄은 인용구로 세운다.
+
+        워드 원고는 이미 그렇게 올라간다(docx_import 의 같은 규칙). 그런데 AI 가 쓴 원고는
+        여기서 전부 type="text" 로만 나가서, 사용자가 원고를 고치며 넣은 따옴표 줄이
+        블로그에서도 그냥 따옴표 글자로 보였다(2026-10-07 요청: "저 원고 내용은 꼭 블로그
+        인용구로 지정되게"). 두 경로가 같은 규칙을 쓰게 맞춘다 — 판별도 따옴표 떼기도
+        워드 쪽 함수를 그대로 부른다."""
+        nonlocal buf
+        run: List[str] = []
+        for line in buf:
+            quoted = docx_import.quoted_line_text(line)
+            if quoted is None:
+                run.append(line)
+                continue
+            if run:
+                blocks.append(JobBlock(type="text", content="\n\n".join(run)))
+                run = []
+            blocks.append(JobBlock(type="quote", content=quoted, spans=[{"t": quoted}]))
+        if run:
+            blocks.append(JobBlock(type="text", content="\n\n".join(run)))
+        buf = []
+
     for i, p in enumerate(paragraphs):
         buf.append(p)
         if i in by_para:
-            blocks.append(JobBlock(type="text", content="\n\n".join(buf)))
-            buf = []
+            flush()
             if include_images:
                 for v in sorted(by_para[i], key=lambda x: x.get("slot", 0)):
                     data_url = campaign_jobs.image_as_data_url(v.get("path", ""))
                     if data_url:
                         blocks.append(JobBlock(type="image", image=data_url))
-    if buf:
-        blocks.append(JobBlock(type="text", content="\n\n".join(buf)))
+    flush()
     return blocks
+
+
+async def _with_header(db: AsyncSession, blocks: List[JobBlock], b: Blog,
+                       job: Optional[PublishJob]) -> List[JobBlock]:
+    """이 아이디에 저장해 둔 인사말·대표 사진·링크를 글 **맨 위**에 붙인다.
+
+    2026-10-07 요청: "원고 맨 윗부분 '오늘 위례해오름한의원 ~' 문구 고정(또는 사진 삽입),
+    해당 링크 고정으로 카드만 삽입되도록". 순서는 적어 주신 그대로 문구(사진) → 링크 카드다.
+
+    링크는 **라벨 없이 주소만 한 줄**로 넣는다. 글 끝(_with_footer)은 "예약은 여기서" 같은
+    라벨 줄을 먼저 두지만, 여기서는 카드 하나만 서야 한다 — 주소 한 줄이면 네이버가 알아서
+    카드로 세운다(실행기의 is_bare_url 분기).
+
+    사진은 발행건마다 다시 유니크화한다 — 모든 글 맨 위에 같은 파일이 그대로 들어가면
+    네이버 중복사진 판정의 첫 층(파일 해시)에 그대로 걸린다. 움직이는 GIF 는 프레임을
+    건드리지 않고 지나간다(_unique_doc_image)."""
+    head: List[JobBlock] = []
+    if (b.header_text or "").strip():
+        head.append(JobBlock(type="text", content=b.header_text.strip()))
+    if (b.header_image_id or "").strip():
+        image = await db.get(PoolImage, b.header_image_id)
+        if image and image.data:
+            data, kind = await _unique_doc_image(db, image, job)
+            head.append(JobBlock(type="image", content="",
+                                 image=f"data:{kind or 'image/jpeg'};base64,"
+                                       + base64.b64encode(data).decode()))
+        else:
+            # 사진이 지워졌다고 글 전체를 막지는 않는다 — 머리글은 글의 본체가 아니다.
+            logger.warning("블로그 %s 의 머리 사진(%s)을 찾지 못해 건너뜁니다", b.id, b.header_image_id)
+    if (b.header_link_url or "").strip():
+        body = "\n".join(x.content or "" for x in blocks)
+        if b.header_link_url not in body:
+            head.append(JobBlock(type="text", content=b.header_link_url.strip()))
+    return head + list(blocks)
 
 
 def _with_footer(blocks: List[JobBlock], b: Blog) -> List[JobBlock]:
@@ -2444,6 +2519,7 @@ async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_us
                     [b.model_dump(exclude_none=True) for b in blocks], point_settings,
                     [draft.keyword or '', *(draft.emphasize or [])])]
             # 저장해 둔 링크·플레이스는 강조를 입힌 뒤에 붙인다 — 적어 둔 그대로 나가야 한다.
+            blocks = await _with_header(db, blocks, blog, j)
             blocks = _with_footer(blocks, blog)
             if "rich_text_v1" not in body.capabilities and 'point_styles_v1' not in body.capabilities:
                 # 서식을 모르는 실행기 — 굵게·표·목록을 평문으로 눌러서 보낸다(사진은 그대로).

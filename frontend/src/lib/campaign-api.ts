@@ -34,6 +34,10 @@ export interface AutopilotState {
 // ───────────────────────── 타입 ─────────────────────────
 /** 이 아이디로 올리는 글 끝에 늘 붙는 것들(예약 링크·플레이스 지도). */
 export interface BlogFooter {
+  /** 글 맨 위 고정: 첫 문장 → 대표 사진 → 링크 카드 순서로 들어간다. */
+  header_text?: string | null
+  header_image_id?: string | null
+  header_link_url?: string | null
   footer_link_url?: string | null
   footer_link_label?: string | null
   place_url?: string | null
@@ -86,6 +90,9 @@ export interface BlogInput {
   open_type: string
   /** schedule = 네이버 예약 발행 | draft = 임시저장만(발행은 병원이 직접) */
   publish_mode?: string
+  header_text?: string | null
+  header_image_id?: string | null
+  header_link_url?: string | null
   footer_link_url?: string | null
   footer_link_label?: string | null
   place_url?: string | null

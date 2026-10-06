@@ -837,6 +837,7 @@ class NaverEditor:
                 await self._insert_image_verified(op.payload, index=inserted)
                 inserted += 1
                 await asyncio.sleep(0.6)
+                await self.center_last_image()
                 await self._refocus_body_end()
         if inserted < n_img:
             raise EditorError(f"이미지 {n_img}장 중 {inserted}장만 삽입됨")
@@ -1119,6 +1120,45 @@ class NaverEditor:
                 return
             await asyncio.sleep(.5)
         raise EditorError('랜딩 URL이 클릭 가능한 링크로 확인되지 않았습니다. 발행을 보류합니다')
+
+    async def center_last_image(self) -> bool:
+        """방금 넣은 사진을 가운데로 맞춘다. **글자는 건드리지 않는다.**
+
+        2026-10-07 요청: "원고 자동화 프로그램 작업 시 (글자는 X) 사진만 중앙정렬".
+        사진 컴포넌트를 고르면 네이버가 정렬 단추를 띄운다 — 그 단추를 누르는 것 말고는
+        하지 않는다. DOM 클래스를 직접 바꾸면 편집기 화면만 가운데로 보이고 실제로 올라간
+        글은 그대로여서, 눈으로 확인한 사람까지 속게 된다.
+
+        단추를 못 찾으면 경고만 남기고 지나간다 — 정렬 하나 때문에 글 전체를 막지 않는다
+        (인용구·링크 카드도 같은 규칙으로 되돌아간다)."""
+        frame = await self.frame()
+        image = frame.locator('.se-component.se-image').last
+        if not await image.count():
+            return False
+        try:
+            await image.click()
+            await asyncio.sleep(0.3)
+        except Exception as e:  # noqa: BLE001
+            log.debug("사진을 고르지 못했습니다(정렬 건너뜀): %s", e)
+            return False
+        # 네이버는 버전에 따라 정렬 단추의 이름이 달랐다. 아는 모양을 차례로 눌러 본다.
+        for selector in ('button[data-name="align"][data-value="center"]',
+                         'button[data-name="align-center"]',
+                         'button[data-value="center"][class*="align" i]',
+                         '.se-toolbar-item-align button[data-value="center"]'):
+            button = frame.locator(selector).first
+            try:
+                if await button.count() and await button.is_visible():
+                    await button.click()
+                    await asyncio.sleep(0.2)
+                    return True
+            except Exception as e:  # noqa: BLE001
+                log.debug("정렬 단추 %s 실패: %s", selector, e)
+        # 드롭다운 안에 숨어 있는 경우 — 글꼴·크기와 같은 길로 한 번 더 본다.
+        if await self._pick_toolbar_option("align", "center"):
+            return True
+        log.warning("가운데 정렬 단추를 찾지 못했습니다 — 사진은 네이버 기본 정렬로 들어갑니다")
+        return False
 
     async def image_count(self) -> int:
         f = await self.frame()
