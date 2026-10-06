@@ -72,6 +72,49 @@ class DeviceScopeTests(unittest.IsolatedAsyncioTestCase):
         await self.recover(device='pc-B')
         self.assertEqual(await self.status('j0'), 'uncertain')
 
+    async def held_blogs(self):
+        async with self.sessions() as db:
+            from sqlalchemy import select
+            return set((await db.execute(select(PublishAttempt.active_blog_id).where(
+                PublishAttempt.active_blog_id.isnot(None)))).scalars().all())
+
+    async def test_a_cancelled_job_lets_go_of_its_blog(self):
+        """취소된 글이 블로그를 쥐고 있으면 그 블로그는 영영 다음 글을 받지 못한다.
+
+        active_blog_id 는 유니크라, 쥔 줄이 하나 남으면 claim 이 전부 조용히 실패한다 —
+        사유조차 안 남아서 화면에는 '대기 N건'만 뜬다. 실행기는 "서버가 내주지 않았습니다"만
+        외친다. 놓아 주는 자리가 result()·mark_published()·reconcile() 뿐이었는데, 발행건은
+        release_job·자리 비우기·일괄 취소로도 끝난다 — 그 길들은 상태를 가리지 않으므로
+        실행기가 글을 쓰는 중(assigned)이어도 취소되고, 그때 쥔 손이 펴지지 않았다.
+        2026-10-06 실측: 'juhdbg58' 이 10/05 00:46 부터, 'rimq8164' 는 09/28 부터 막혀 있었다."""
+        await self.hold('j0', 'b0', 'pc-A')
+        self.assertEqual(await self.held_blogs(), {'b0'})
+        async with self.sessions() as db:                 # release_job / 자리 비우기가 하는 일
+            (await db.get(PublishJob, 'j0')).status = 'cancelled'
+            await db.commit()
+        await self.recover(device='pc-A')
+        self.assertEqual(await self.held_blogs(), set())
+        async with self.sessions() as db:                 # 그리고 다시 내준다
+            self.assertIsNotNone(await p.claim(db, 'j1', 'u', 'b0', device_id='pc-A'))
+
+    async def test_an_uncertain_job_keeps_holding_its_blog(self):
+        """'확인 필요'는 결과를 모르는 상태다. 쥔 채로 둬야 같은 글이 두 번 올라가지 않는다."""
+        await self.hold('j0', 'b0', 'pc-A')
+        await self.recover(device='pc-A')                 # 잠금 만료 → uncertain
+        self.assertEqual(await self.status('j0'), 'uncertain')
+        self.assertEqual(await self.held_blogs(), {'b0'})
+        await self.recover(device='pc-A')                 # 몇 번을 쓸어도 놓지 않는다
+        self.assertEqual(await self.held_blogs(), {'b0'})
+
+    async def test_a_job_that_vanished_does_not_keep_the_blog(self):
+        """발행건이 통째로 사라져도(캠페인 삭제) 그 손은 펴진다."""
+        await self.hold('j0', 'b0', 'pc-A')
+        async with self.sessions() as db:
+            await db.delete(await db.get(PublishJob, 'j0'))
+            await db.commit()
+        await self.recover(device='pc-A')
+        self.assertEqual(await self.held_blogs(), set())
+
     async def test_the_website_reading_the_list_does_not_cut_anyone_off(self):
         """사람이 발행 목록 화면을 열어 두기만 해도 남의 PC 작업이 끊기면 안 된다."""
         await self.hold('j0', 'b0', 'pc-A')

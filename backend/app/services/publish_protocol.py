@@ -198,4 +198,36 @@ async def recover_expired(db, user_id, now=None, device_id=None):
         PublishAttempt.payload.isnot(None),
         PublishAttempt.updated_at <= now - timedelta(seconds=LEASE_SECONDS * 4),
     ).values(payload=None))
+    await release_finished_blogs(db, user_id)
+
+
+#: 이 상태일 때만 그 시도가 블로그를 쥐고 있을 이유가 있다.
+#: uncertain 은 결과를 모르니 쥔 채로 둔다 — 사람이 네이버 목록과 대조해야 풀린다.
+HOLDS_BLOG = ("assigned", "publishing", "uncertain")
+
+
+async def release_finished_blogs(db, user_id):
+    """끝난 일이 쥐고 있는 블로그를 놓아 준다.
+
+    active_blog_id 는 유니크다 — 한 블로그에 미해결 시도는 하나뿐이라는 뜻이고, 그래서
+    쥔 줄이 하나라도 남으면 그 블로그의 claim 은 전부 조용히 실패한다. agent_claim 은 그
+    실패를 '경합'으로 보고 사유조차 남기지 않으므로(쓰기를 더하면 진짜 경합을 건드린다),
+    화면에는 '대기 N건'만 뜨고 아무 설명이 없다. 실행기는 "서버가 내주지 않았습니다"만 외친다.
+
+    놓아 주는 자리가 세 군데뿐이었던 것이 문제였다 — result(), mark_published(), reconcile().
+    그런데 발행건은 그 밖의 길로도 끝난다: release_job('네이버에서 직접 지웠습니다'),
+    자리 비우기(slot release), 일괄 취소. 이들은 상태를 가리지 않고 cancelled 로 바꾸므로
+    실행기가 글을 쓰고 있는 중(assigned)이어도 취소되고, 그때 쥔 손은 영영 펴지지 않았다.
+    2026-10-06 실측: 'juhdbg58' 이 10/05 00:46 부터, 'rimq8164' 는 09/28 부터 막혀 있었다.
+
+    그래서 이제는 길을 하나하나 막는 대신, 물으러 올 때마다 쓸어 준다 — 발행건이 더 이상
+    HOLDS_BLOG 가 아니거나 아예 사라졌으면 그 손을 편다. 새로 잡는 중인 건은 claim 이 같은
+    트랜잭션에서 assigned 로 바꾼 뒤에야 보이므로 여기 걸리지 않는다."""
+    await db.execute(update(PublishAttempt).where(
+        PublishAttempt.user_id == user_id, PublishAttempt.active_blog_id.isnot(None),
+        ~select(PublishJob.id).where(
+            PublishJob.id == PublishAttempt.job_id,
+            PublishJob.status.in_(list(HOLDS_BLOG)),
+        ).exists(),
+    ).values(active_blog_id=None))
     await db.commit()
