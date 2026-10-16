@@ -146,6 +146,10 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
         # 2) 글쓰기 페이지 + 계정 확인
         await editor.open_write_page()
         await editor.dismiss_draft_popup()
+        # 글감·링크·템플릿 같은 선택창이 떠 있으면 아래 모든 클릭이 거기에 막힌다.
+        # 지난 글이 남겨 둔 창도 있다 — 쓰기 시작하기 전에 화면을 비운다.
+        if hasattr(editor, "clear_blocking_layers"):
+            await editor.clear_blocking_layers("글쓰기 화면 진입")
         expected = (job.get("expectedBlogId") or "").strip().lower()
         current = (await editor.read_blog_id() or "").strip().lower()
         if not expected or not current:

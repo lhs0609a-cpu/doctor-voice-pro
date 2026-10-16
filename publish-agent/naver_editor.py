@@ -184,6 +184,137 @@ JS_UPLOAD_BUSY_TEXT = r"""
 () => !!document.body && /전송중|업로드 준비|업로드 중/.test(document.body.innerText || '')
 """
 
+# ---------------------------------------------------------------- 선택창(레이어/팝업)
+# 네이버 에디터는 글감·링크·템플릿·장소를 전부 **선택창**으로 띄운다. 그 창이 하나라도 열린
+# 채 남으면 뒤따르는 글자·사진·발행 클릭이 전부 그 창에 가로막힌다 — 그런데 로그에는
+# "클릭했다"만 남아서 화면을 안 보면 그냥 멈춘 것처럼 보인다.
+#
+# 2026-10-14 고객 신고: "선택창에서 선택이 안 되고 스킵이 돼서 ... 원고 올라가는 걸 보면서
+# 수동 클릭을 하면 오류가 안 나고 발행이 됩니다. 대신 발행된 원고에 들어가서 선택한 팝업을
+# 지워야 합니다." → 사람이 아무거나 고르면 창은 닫히지만 **글감 카드가 본문에 박힌다**.
+# 그래서 두 가지를 바꿨다.
+#   ① 열려 있는지를 '본문 첫 줄이 가려졌나'로 **직접** 확인하고, 닫은 뒤 **닫혔는지 다시 본다**.
+#   ② 확인/삽입 단추는 **우리가 연 창 안에서만** 누른다(남의 창에서 누르면 카드가 박힌다).
+LAYER_SELECTOR = ('[role="dialog"], .se-popup, [class*="se-popup"], [class*="se-layer"], '
+                  '[class*="popup"], [class*="modal"], [class*="layer"]')
+# 우리가 일부러 열어 두는 것(발행 레이어)과 클릭을 막지 않는 것(토스트·툴팁)은 뺀다.
+LAYER_IGNORE = ('.layer_publish, [class*="layer_publish"], [class*="toast"], [class*="tooltip"], '
+                '[class*="tip_"], [class*="autosave"]')
+
+# 아래 JS 조각들이 함께 쓰는 보조 함수. 보이는 것만, 본문을 품은 것(=에디터 자신)은 빼고.
+JS_LAYER_FN = r"""
+  const _vis = (e) => {
+    const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+    return r.width > 1 && r.height > 1 && s.visibility !== 'hidden' && s.display !== 'none'
+        && parseFloat(s.opacity || '1') > 0.05;
+  };
+  const _layers = (sel, ignore, bodySel, minW, minH) => {
+    const all = [...document.querySelectorAll(sel)].filter(_vis)
+      .filter((e) => !e.closest(ignore))
+      // 본문을 품고 있으면 그것은 창이 아니라 에디터 그 자체다. 닫으면 글이 사라진다.
+      .filter((e) => !e.querySelector(bodySel) && !e.querySelector('.se-components-wrap'));
+    const big = all.filter((e) => {
+      const r = e.getBoundingClientRect();
+      return r.width >= minW && r.height >= minH;
+    });
+    return big.filter((e) => !big.some((o) => o !== e && o.contains(e)));
+  };
+  const _name = (e) => {
+    const t = e.getAttribute('aria-label')
+      || (e.querySelector('h1,h2,h3,h4,strong,[class*="title"]') || {}).textContent
+      || (e.textContent || '');
+    return String(t).replace(/\s+/g, ' ').trim().slice(0, 50);
+  };
+"""
+
+# 지금 본문을 막고 있는 창을 찾아 [data-dv-blocking] 으로 표시하고, 사람이 읽을 이름을 돌려준다.
+JS_LAYER_SCAN = r"""
+({sel, ignore, bodySel}) => {
+""" + JS_LAYER_FN + r"""
+  document.querySelectorAll('[data-dv-blocking]').forEach((e) => e.removeAttribute('data-dv-blocking'));
+  const picked = _layers(sel, ignore, bodySel, 240, 160);
+
+  // **직접 확인**: 본문 첫 줄 자리에 무엇이 떠 있나. 크기 기준에 안 걸리는 창도 여기서 잡힌다.
+  let covered = false;
+  const p = document.querySelector(bodySel);
+  if (p) {
+    const r = p.getBoundingClientRect();
+    if (r.width > 2 && r.height > 2 && r.top > 0 && r.top < innerHeight) {
+      const top = document.elementFromPoint(r.x + r.width / 2, r.top + Math.min(r.height / 2, 12));
+      if (top && !p.contains(top) && !top.contains(p) && !top.closest('.se-content, .se-components-wrap')) {
+        const box = top.closest(sel) || top;
+        if (!box.querySelector(bodySel) && !box.closest(ignore)) {
+          covered = true;
+          if (!picked.some((e) => e === box || e.contains(box))) picked.push(box);
+        }
+      }
+    }
+  }
+  picked.forEach((e) => e.setAttribute('data-dv-blocking', 'true'));
+  return {covered, layers: picked.map((e) => ({name: _name(e), cls: String(e.className || '').slice(0, 90)}))};
+}
+"""
+
+# 표시해 둔 창 하나를 **그 창 안의 닫기 단추로** 닫는다. 밖에서 아무 '취소'나 누르면
+# 엉뚱한 창이 닫히고 진짜 창은 그대로 남는다.
+JS_LAYER_CLOSE_STEP = r"""
+() => {
+""" + JS_LAYER_FN + r"""
+  const boxes = [...document.querySelectorAll('[data-dv-blocking]')].filter(_vis);
+  if (!boxes.length) return 'none';
+  const box = boxes[boxes.length - 1];   // 본문을 가린 것이 마지막에 들어간다
+  const hint = (e) => ((e.getAttribute('aria-label') || '') + ' ' + (e.getAttribute('title') || '')
+                       + ' ' + String(e.className || ''));
+  const btns = [...box.querySelectorAll('button, a, [role="button"]')].filter(_vis);
+  const close = btns.find((e) => /닫기|close/i.test(hint(e)))
+             || btns.find((e) => /^(닫기|취소|아니오|×|✕|X)$/i.test((e.textContent || '').trim()))
+             || btns.find((e) => /취소|cancel/i.test(hint(e)));
+  if (close) { close.click(); return 'button'; }
+  return 'nobutton';
+}
+"""
+
+# 마지막 수단. 창을 못 닫으면 화면에서 치우고라도 글은 올린다 — 가림막(dimmer)까지 같이 치운다.
+# 창만 숨기면 투명한 막이 클릭을 계속 먹는다.
+JS_LAYER_HIDE = r"""
+() => {
+  let n = 0;
+  document.querySelectorAll('[data-dv-blocking]').forEach((e) => {
+    e.style.setProperty('display', 'none', 'important'); n += 1;
+  });
+  for (const e of document.querySelectorAll('[class*="dim"], [class*="mask"], [class*="overlay"], [class*="backdrop"]')) {
+    const r = e.getBoundingClientRect();
+    if (r.width > innerWidth * 0.8 && r.height > innerHeight * 0.8) {
+      e.style.setProperty('display', 'none', 'important'); n += 1;
+    }
+  }
+  return n;
+}
+"""
+
+# 단추를 누르기 **전에** 떠 있던 창에 표시를 해 둔다. 누른 뒤 표시 없는 창이 '우리가 연 창'이다.
+JS_LAYER_TAG_OLD = r"""
+({sel, ignore, bodySel}) => {
+""" + JS_LAYER_FN + r"""
+  document.querySelectorAll('[data-dv-layer-old], [data-dv-layer]')
+    .forEach((e) => { e.removeAttribute('data-dv-layer-old'); e.removeAttribute('data-dv-layer'); });
+  _layers(sel, ignore, bodySel, 80, 40).forEach((e) => e.setAttribute('data-dv-layer-old', 'true'));
+  return true;
+}
+"""
+
+JS_LAYER_MARK_NEW = r"""
+({sel, ignore, bodySel}) => {
+""" + JS_LAYER_FN + r"""
+  const fresh = _layers(sel, ignore, bodySel, 80, 40)
+    .filter((e) => !e.hasAttribute('data-dv-layer-old') && !e.closest('[data-dv-layer-old]'));
+  if (!fresh.length) return null;
+  fresh[0].setAttribute('data-dv-layer', 'true');
+  return _name(fresh[0]);
+}
+"""
+
+
 # 폴백: 합성 DragEvent 드롭 (naver-poster dropImage). File 은 base64 로 만든다.
 JS_DROP_IMAGE = r"""
 async ({ b64, mime, name, atCaret }) => {
@@ -687,6 +818,119 @@ class NaverEditor:
                     pass
         raise LoginRequired("자동 로그인 후에도 로그인 페이지에 머물러 있습니다(아이디/비밀번호 확인 필요)")
 
+    # ------------------------------------------------------------ 선택창(레이어) 감시
+    async def _layer_args(self) -> Dict[str, str]:
+        return {"sel": LAYER_SELECTOR, "ignore": LAYER_IGNORE, "bodySel": S["body_para"]}
+
+    async def _scan_layers(self) -> Dict[str, Any]:
+        """열려 있는 선택창과, **본문 첫 줄이 실제로 가려졌는지**(covered).
+
+        covered 가 핵심이다. 이름에 'layer/popup' 이 들어간 요소는 에디터에도 늘 있어서
+        그것만 보고 손대면 멀쩡한 화면을 망가뜨린다. 치우는 결정은 '가려졌다'일 때만 한다."""
+        try:
+            frame = await self.frame()
+            out = await frame.evaluate(JS_LAYER_SCAN, await self._layer_args())
+        except Exception as e:  # noqa: BLE001
+            log.debug("선택창 확인 실패(무시): %s", e)
+            return {"covered": False, "layers": []}
+        return {"covered": bool((out or {}).get("covered")), "layers": list((out or {}).get("layers") or [])}
+
+    async def scan_blocking_layers(self) -> List[Dict[str, str]]:
+        """지금 떠 있는 선택창 목록. 못 읽으면 빈 목록(확인 실패로 발행을 막지는 않는다)."""
+        return (await self._scan_layers())["layers"]
+
+    async def clear_blocking_layers(self, where: str = "", *, tries: int = 4) -> bool:
+        """열려 있는 선택창을 닫고 **정말 닫혔는지 다시 본다**.
+
+        예전에는 Escape 두 번 누르고 '닫았다'고 적기만 했다. 네이버 글감 창처럼 Escape 를
+        안 받는 창이 뜨면 그 뒤의 글자·사진·발행 클릭이 전부 막히는데 로그는 멀쩡해 보였다.
+        닫을 때는 **그 창 안의 닫기 단추**만 누른다 — 밖에서 아무 '취소'나 누르면 엉뚱한
+        창이 닫히고 진짜 창은 남는다."""
+        state = await self._scan_layers()
+        if not state["layers"]:
+            return True
+        tail = f"({where})" if where else ""
+        names = lambda rows: " / ".join((x.get("name") or x.get("cls") or "?") for x in rows)[:200]
+        log.warning("선택창이 열려 있습니다%s: %s%s", tail, names(state["layers"]),
+                    " — 본문을 가리고 있습니다" if state["covered"] else "")
+        frame = await self.frame()
+        for _ in range(tries):
+            try:
+                step = await frame.evaluate(JS_LAYER_CLOSE_STEP)
+            except Exception as e:  # noqa: BLE001
+                log.debug("선택창 닫기 실패(무시): %s", e)
+                step = "nobutton"
+            if step == "none":
+                break
+            if step != "button":
+                await self.page.keyboard.press("Escape")
+            await asyncio.sleep(0.35)
+            state = await self._scan_layers()
+            if not state["layers"]:
+                log.info("선택창을 닫았습니다%s", tail)
+                return True
+        if not state["covered"]:
+            # 이름에 layer/popup 이 들어갔을 뿐 본문을 가리지는 않는다. 손대지 않는다 —
+            # 멀쩡한 에디터 요소를 숨기면 글이 통째로 망가진다.
+            log.info("선택창이 남아 있지만 본문을 가리지 않습니다%s: %s", tail, names(state["layers"]))
+            return True
+        # 마지막 수단: 화면에서 치우고라도 글은 올린다. 아무 항목이나 고르면 글감 카드가
+        # 본문에 박혀 사람이 발행된 글에서 지워야 한다 — 그럴 바에는 치우는 쪽이 낫다.
+        try:
+            hidden = int(await frame.evaluate(JS_LAYER_HIDE) or 0)
+        except Exception as e:  # noqa: BLE001
+            log.debug("선택창 숨기기 실패: %s", e)
+            hidden = 0
+        await asyncio.sleep(0.25)
+        state = await self._scan_layers()
+        if not state["covered"]:
+            log.warning("선택창을 닫지 못해 화면에서 치우고 계속합니다%s (%d개). "
+                        "네이버가 창 모양을 바꿨을 수 있습니다 — 로그의 이름을 알려 주세요.", tail, hidden)
+            return True
+        log.error("선택창이 본문을 가린 채 닫히지 않습니다%s: %s", tail, names(state["layers"]))
+        return False
+
+    async def require_clear_screen(self, where: str) -> None:
+        """선택창을 치우지 못하면 거기서 멈춘다. 가려진 화면에 대고 계속 누르면
+        글자가 엉뚱한 칸으로 들어가거나 빈 글이 발행된다."""
+        if not await self.clear_blocking_layers(where):
+            raise EditorError(
+                f"네이버 선택창이 떠 있어 {where}를 할 수 없습니다. "
+                f"→ 이 프로그램이 띄운 크롬 창에서 그 창의 [X](닫기)를 눌러 주세요. 그러면 이어집니다")
+
+    async def _tag_existing_layers(self) -> None:
+        """단추를 누르기 전, 이미 떠 있던 창에 표시를 해 둔다."""
+        try:
+            frame = await self.frame()
+            await frame.evaluate(JS_LAYER_TAG_OLD, await self._layer_args())
+        except Exception as e:  # noqa: BLE001
+            log.debug("기존 선택창 표시 실패(무시): %s", e)
+
+    async def _mark_new_layer(self, timeout_sec: float = 3.0) -> bool:
+        """방금 새로 뜬 창 하나를 [data-dv-layer] 로 표시한다. 그 창 안에서만 누르기 위해서."""
+        frame = await self.frame()
+        deadline = time.monotonic() + timeout_sec
+        while time.monotonic() < deadline:
+            try:
+                name = await frame.evaluate(JS_LAYER_MARK_NEW, await self._layer_args())
+            except Exception as e:  # noqa: BLE001
+                log.debug("새 선택창 찾기 실패(무시): %s", e)
+                return False
+            if name is not None:
+                log.debug("새로 열린 창: %s", name)
+                return True
+            await asyncio.sleep(0.2)
+        return False
+
+    async def _forget_marked_layer(self) -> None:
+        try:
+            frame = await self.frame()
+            await frame.evaluate("() => document.querySelectorAll('[data-dv-layer], [data-dv-layer-old]')"
+                                 ".forEach(e => { e.removeAttribute('data-dv-layer');"
+                                 " e.removeAttribute('data-dv-layer-old'); })")
+        except Exception:  # noqa: BLE001
+            pass
+
     # ------------------------------------------------------------ 팝업 / 식별
     async def dismiss_draft_popup(self) -> bool:
         f = await self.frame()
@@ -770,6 +1014,7 @@ class NaverEditor:
         그래도 안 들어가면 EditorError — 제목 없는 글이 발행되면 안 된다
         (2026-09-11 실제 네이버: 입력칸이 '제목' 그대로인 채 경고만 남기고 발행까지 진행됐다)."""
         want = title.strip()
+        await self.clear_blocking_layers("제목 입력")
         for attempt in (1, 2):
             log.info("제목 입력: %s", title[:60])
             await self._click_paragraph(S["title_para"])
@@ -784,6 +1029,8 @@ class NaverEditor:
                         " → 팝업을 닫고 다시 입력" if attempt == 1 else "")
             if attempt == 1:
                 await self.dismiss_draft_popup()
+                # 드래프트 팝업이 아니라 글감·링크 같은 선택창이 입력을 먹고 있을 수 있다.
+                await self.clear_blocking_layers("제목 입력")
         raise EditorError("제목이 입력되지 않았습니다. 제목 없는 글이 올라가지 않도록 발행하지 않고 중단합니다")
 
     async def insert_body_blocks(self, blocks: Sequence[Dict[str, Any]], emphasize: Sequence[str], *,
@@ -793,6 +1040,8 @@ class NaverEditor:
 
         keep 이면 이미 들어 있는 글(불러온 템플릿)을 지우지 않고 **그 위에** 쓴다."""
         self.keep_tail = keep
+        # 선택창이 떠 있으면 문단 클릭부터 가로막힌다 — 서식 원고·평문 원고 모두 먼저 치운다.
+        await self.require_clear_screen("본문 입력")
         if has_formatting(blocks):
             from rich_editor import insert_rich_blocks
             return await insert_rich_blocks(self, blocks)
@@ -897,11 +1146,15 @@ class NaverEditor:
             # 패널은 '추천 템플릿 / 부분 템플릿 / 내 템플릿' 으로 나뉜다. 내 것을 고른다.
             await self._click_by_text(frame, ("내 템플릿", "내템플릿"), tags="button, a, li, span")
             await asyncio.sleep(0.5)
+            # 템플릿을 고르면 "현재 내용이 사라집니다" 확인 창이 뜰 수 있다. 그 창을 가려내
+            # 두고, **그 창 안에서만** [확인]을 누른다.
+            await self._tag_existing_layers()
             if not await self._click_by_text(frame, (wanted,), tags="button, a, li, strong, span, p"):
                 raise EditorError(f"'{wanted}' 템플릿을 목록에서 찾지 못했습니다")
             await asyncio.sleep(0.8)
-            # "현재 내용이 사라집니다" 같은 확인 창이 뜨면 받는다.
-            await self._click_layer_confirm(frame)
+            if await self._mark_new_layer(timeout_sec=1.5):
+                await self._click_layer_confirm(frame)
+            await self._forget_marked_layer()
             # 템플릿이 **실제로 깔렸는지**는 글 덩어리가 늘었는지로 본다. 늘지 않았는데
             # 불러왔다고 보고하면, 빈 글에 쓰면서도 전체 선택을 건너뛰어 엉뚱한 글이 된다.
             for _ in range(25):
@@ -913,7 +1166,12 @@ class NaverEditor:
         except Exception as e:  # noqa: BLE001
             log.warning("템플릿 '%s' 불러오기 실패(빈 글로 진행): %s", wanted, e)
             await self.page.keyboard.press("Escape")
+            await self._forget_marked_layer()
+            # 열어 둔 템플릿 패널을 그대로 두면 제목·본문 입력이 거기에 막힌다.
+            await self.clear_blocking_layers("템플릿 패널 닫기")
             return False
+        # 성공해도 패널이 남아 있을 수 있다.
+        await self.clear_blocking_layers("템플릿 패널 닫기")
         log.info("내 템플릿 '%s' 을 불러왔습니다", wanted)
         return True
 
@@ -998,9 +1256,15 @@ class NaverEditor:
             log.warning("링크 카드 단추가 없습니다 — 주소를 글자로 넣습니다: %s", url)
             return False
         before = await frame.locator(CARD_SELECTOR).count()
+        # 단추를 누르기 전에 떠 있던 창을 적어 둔다 — 그래야 '우리가 연 창'을 가려낼 수 있다.
+        await self._tag_existing_layers()
         try:
             await button.click()
             await asyncio.sleep(0.4)
+            # 우리가 연 창을 못 찾으면 아무 칸에도 쓰지 않는다. 예전에는 화면의 **마지막
+            # 입력칸**에 주소를 쳐 넣었는데, 링크 창 대신 글감·검색창이 떠 있으면 거기에
+            # 주소를 넣고 Enter 를 쳐서 그 창이 열린 채로 남았다(2026-10-14 고객 신고).
+            opened = await self._mark_new_layer()
             field = await self._layer_url_field(frame)
             if field is None:
                 raise EditorError("링크 주소를 넣을 칸을 찾지 못했습니다")
@@ -1008,26 +1272,48 @@ class NaverEditor:
             await field.press("Enter")
             if not await self._wait_card(frame, before):
                 # 미리보기를 보여 주고 [확인] 을 눌러야 들어가는 화면도 있다.
-                await self._click_layer_confirm(frame)
+                # **우리가 연 창 안에서만** 누른다 — 남의 창에서 [삽입]을 누르면 엉뚱한
+                # 글감 카드가 본문에 박혀 사람이 발행된 글에서 지워야 한다.
+                if opened:
+                    await self._click_layer_confirm(frame)
                 if not await self._wait_card(frame, before):
                     raise EditorError("링크 카드가 본문에 들어가지 않았습니다")
         except Exception as e:  # noqa: BLE001 — 카드는 있으면 좋은 것이지 발행 조건이 아니다
             log.warning("링크 카드 실패(주소를 글자로 넣습니다): %s — %s", url, e)
             await self._close_layer(frame)
             return False
+        finally:
+            await self._forget_marked_layer()
+        # 카드가 들어갔어도 창이 남아 있을 수 있다. 남으면 다음 글자가 그 창으로 들어간다.
+        await self._close_layer(frame)
         from rich_editor import exit_component
         await exit_component(self)
         log.info("링크 카드: %s", url)
         return True
 
     async def _layer_url_field(self, frame: Frame):
-        """방금 열린 층에서 주소를 받는 칸. 태그 입력칸 같은 남의 칸을 잡지 않도록 표시해 둔다."""
+        """방금 연 창에서 주소를 받는 칸. 그 창을 특정하지 못했으면 **주소 칸임이 분명한
+        칸만** 쓴다.
+
+        예전에는 못 찾으면 화면의 마지막 입력칸을 썼다. 링크 창 대신 글감·검색창이 떠 있던
+        날에는 거기에 주소를 쳐 넣고 Enter 까지 눌러서, 그 창이 열린 채 남아 다음 동작을
+        전부 가로막았다(2026-10-14). 모르면 아무 데도 쓰지 않는 편이 낫다 — 주소는 글자로
+        남기면 된다."""
         marked = await frame.evaluate(r"""() => {
           const seen = e => { const r = e.getBoundingClientRect(); return r.width > 40 && r.height > 8; };
-          const fields = [...document.querySelectorAll('input[type="text"], input[type="url"], input:not([type])')]
+          const scope = document.querySelector('[data-dv-layer]');
+          const root = scope || document;
+          const fields = [...root.querySelectorAll('input[type="text"], input[type="url"], input:not([type])')]
             .filter(e => seen(e) && !e.disabled && !e.readOnly && e.id !== 'tag-input');
           const hint = e => ((e.placeholder || '') + ' ' + (e.getAttribute('aria-label') || '') + ' ' + (e.name || ''));
-          const pick = fields.find(e => /url|link|링크|주소|http/i.test(hint(e))) || fields[fields.length - 1];
+          const hinted = fields.find(e => /url|link|링크|주소|http/i.test(hint(e)));
+          // 주소 칸임이 안 적혀 있으면, **그 창이 링크 창일 때만** 마지막 칸을 쓴다.
+          // 링크 단추를 눌렀는데 글감 창이 뜨는 날이 있다 — 거기 검색칸에 주소를 쳐 넣으면
+          // 글감 검색이 돌고 창은 그대로 남는다(2026-10-14).
+          const text = scope ? ((scope.getAttribute('aria-label') || '') + ' ' + String(scope.className || '')
+                                + ' ' + (scope.textContent || '').slice(0, 200)) : '';
+          const linkish = !!scope && /링크|url|주소|http/i.test(text);
+          const pick = hinted || (linkish ? fields[fields.length - 1] : null);
           if (!pick) return false;
           pick.setAttribute('data-dv-url-field', 'true');
           return true;
@@ -1043,34 +1329,52 @@ class NaverEditor:
             await asyncio.sleep(0.25)
         return False
 
-    async def _click_layer_confirm(self, frame: Frame) -> None:
-        clicked = await frame.evaluate(r"""() => {
+    async def _click_layer_confirm(self, frame: Frame, *, scope_selector: str = '[data-dv-layer]') -> bool:
+        """[확인]을 누른다. **그 창 안에서만** 누른다.
+
+        예전에는 화면 전체에서 '확인/등록/적용/삽입/완료' 중 첫 번째를 눌렀다. 링크 창이
+        안 뜨고 글감 창이 떠 있던 날에는 글감 목록의 [삽입]을 눌러, 엉뚱한 책·음악 카드가
+        본문에 박힌 채 발행됐다(사람이 발행된 글에서 지워야 했다 — 2026-10-14)."""
+        clicked = await frame.evaluate(r"""(sel) => {
           const seen = e => { const r = e.getBoundingClientRect(); return r.width > 10 && r.height > 8; };
-          const ok = [...document.querySelectorAll('button')].filter(seen)
+          const scope = sel ? document.querySelector(sel) : null;
+          if (sel && !scope) return false;
+          const ok = [...(scope || document).querySelectorAll('button')].filter(seen)
             .find(e => /^(확인|등록|적용|삽입|완료)$/.test((e.textContent || '').trim()));
           if (!ok) return false;
           ok.click();
           return true;
-        }""")
+        }""", scope_selector)
         if clicked:
             await asyncio.sleep(0.6)
+        return bool(clicked)
 
     async def _close_layer(self, frame: Frame) -> None:
-        """열어 둔 층을 반드시 닫는다 — 열린 채로 두면 다음 글자가 그 칸으로 들어간다."""
+        """열어 둔 창을 닫고 **닫혔는지 확인한다** — 열린 채로 두면 다음 글자가 그 칸으로
+        들어가고, 사진·발행 클릭까지 전부 그 창에 막힌다."""
         try:
             await frame.evaluate("() => document.querySelectorAll('[data-dv-url-field]')"
                                  ".forEach(e => e.removeAttribute('data-dv-url-field'))")
-            for _ in range(2):
-                await self.page.keyboard.press("Escape")
-                await asyncio.sleep(0.2)
-            await frame.evaluate(r"""() => {
+            # 우리가 연 창이면 그 창 안의 닫기 단추부터. 없으면 Escape.
+            closed = await frame.evaluate(r"""() => {
               const seen = e => { const r = e.getBoundingClientRect(); return r.width > 10 && r.height > 8; };
-              const close = [...document.querySelectorAll('button')].filter(seen)
-                .find(e => /^(취소|닫기)$/.test((e.textContent || '').trim())
-                        || /닫기|취소/.test(e.getAttribute('aria-label') || ''));
-              if (close) close.click();
+              const scope = document.querySelector('[data-dv-layer]');
+              if (!scope) return false;
+              const hint = e => ((e.getAttribute('aria-label') || '') + ' ' + String(e.className || ''));
+              const btns = [...scope.querySelectorAll('button, a, [role="button"]')].filter(seen);
+              const close = btns.find(e => /닫기|close/i.test(hint(e)))
+                         || btns.find(e => /^(취소|닫기|×|✕)$/.test((e.textContent || '').trim()));
+              if (!close) return false;
+              close.click();
+              return true;
             }""")
+            if not closed:
+                for _ in range(2):
+                    await self.page.keyboard.press("Escape")
+                    await asyncio.sleep(0.2)
             await asyncio.sleep(0.2)
+            # 그래도 남아 있으면 일반 감시가 끝까지 치운다(화면에서 치우는 것까지 포함).
+            await self.clear_blocking_layers("링크 창 닫기")
             await self._refocus_body_end()
         except Exception as e:  # noqa: BLE001
             log.warning("링크 층 닫기 실패(계속 진행): %s", e)
@@ -1249,6 +1553,8 @@ class NaverEditor:
     async def open_publish_layer(self, timeout_ms: int = 8000) -> None:
         # 사진이 아직 전송 중이면 발행 레이어로 넘어가지 않는다.
         await self.wait_upload_settled()
+        # 선택창이 [발행] 단추를 덮고 있으면 눌러도 아무 일이 안 일어난다 — 먼저 치운다.
+        await self.require_clear_screen("발행")
         f = await self.frame()
         btn = f.locator(S["publish_open"]).first
         if not await btn.count():

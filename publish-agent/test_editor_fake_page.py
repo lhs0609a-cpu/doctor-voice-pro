@@ -669,6 +669,91 @@ class TestLinkCard(unittest.TestCase):
 
 
 @unittest.skipUnless(_browser_available(), "Playwright Chromium 이 설치되지 않았습니다 (playwright install chromium)")
+class TestBlockingLayer(unittest.TestCase):
+    """네이버 '글감' 같은 선택창이 떠 있을 때.
+
+    2026-10-14 고객 신고: "선택창에서 선택이 안 되고 스킵이 돼서 ... 원고 올라가는 걸 보면서
+    수동 클릭을 하면 오류가 안 나고 발행이 됩니다. 대신 발행된 원고에 들어가서 선택한 팝업을
+    지워야 합니다." — 사람이 아무거나 고르면 창은 닫히지만 글감 카드가 본문에 박힌다.
+
+    그래서 지켜야 하는 것은 두 가지다.
+      ① 창이 떠 있으면 **닫고** 간다(사람 손을 기다리며 멈추지 않는다).
+      ② 창 안의 [삽입] 을 누르지 않는다(본문에 카드를 박지 않는다)."""
+
+    @classmethod
+    def setUpClass(cls):
+        handler = functools.partial(_Quiet, directory=str(HERE / "fake_editor"))
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.base = f"http://127.0.0.1:{cls.server.server_address[1]}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+
+    URL = "https://map.naver.com/p/entry/place/1754941463"
+
+    def _run(self, query: str, *, with_link: bool):
+        from playwright.async_api import async_playwright
+
+        text = "오시는 길은 아래 지도를 눌러 확인해 주세요."
+        if with_link:
+            text += f"\n\n{self.URL}"
+
+        async def go():
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                try:
+                    ed = NaverEditor(page, write_url=f"{self.base}/write.html{query}")
+                    await ed.open_write_page()
+                    await ed.dismiss_draft_popup()
+                    await ed.clear_blocking_layers("글쓰기 화면 진입")
+                    await ed.set_title("혈독 치료 안내")
+                    await ed.insert_body_blocks([{"type": "text", "content": text}], [])
+                    await ed.open_publish_layer()
+                    frame = await ed.frame()
+                    return await frame.evaluate("""() => ({
+                      glgamOpen: !!(window.__state || {}).glgamOpen,
+                      glgamCards: (window.__state || {}).glgamCards || [],
+                      glgamSearched: (window.__state || {}).glgamSearched || [],
+                      cards: [...document.querySelectorAll('.se-component.se-oglink')].length,
+                      title: (document.querySelector('.se-documentTitle .se-text-paragraph') || {}).innerText || '',
+                      body: [...document.querySelectorAll('.se-component.se-text .se-text-paragraph')]
+                              .map(e => e.innerText.trim()).filter(Boolean),
+                      publishLayerOpen: document.getElementById('layer').classList.contains('open'),
+                    })""")
+                finally:
+                    await browser.close()
+
+        return asyncio.run(go())
+
+    def test_a_glgam_window_left_open_does_not_stop_the_post(self):
+        """떠 있던 글감 창은 닫고 간다 — 제목·본문·발행까지 그대로 이어져야 한다.
+
+        예전에는 창이 본문을 덮고 있어 문단 클릭부터 막혔고, 사람이 손으로 닫아 줘야 했다."""
+        got = self._run("?glgam=1", with_link=False)
+        self.assertFalse(got["glgamOpen"], "글감 창이 열린 채 남았다")
+        self.assertEqual(got["glgamCards"], [], "아무것도 고르면 안 된다 — 고르면 본문에 카드가 박힌다")
+        self.assertIn("혈독", got["title"])
+        self.assertIn("오시는 길", " ".join(got["body"]))
+        self.assertTrue(got["publishLayerOpen"], "발행 레이어까지 열려야 한다")
+
+    def test_a_glgam_window_instead_of_the_link_window_falls_back_to_text(self):
+        """[링크] 를 눌렀는데 글감 창이 뜨면: 거기에 주소를 쳐 넣지도, 아무것도 고르지도 않는다.
+
+        주소는 글자로 남기고 창은 닫는다. 글 전체가 멈추거나 엉뚱한 카드가 박히는 것보다 낫다."""
+        got = self._run("?linkglgam=1", with_link=True)
+        self.assertFalse(got["glgamOpen"], "글감 창이 열린 채 남았다")
+        self.assertEqual(got["glgamCards"], [], "글감 목록의 [삽입] 을 누르면 안 된다")
+        self.assertEqual(got["glgamSearched"], [], "글감 검색칸에 주소를 쳐 넣으면 안 된다")
+        self.assertEqual(got["cards"], 0)
+        self.assertIn(self.URL, " ".join(got["body"]), "카드를 못 만들면 주소 글자라도 남아야 한다")
+        self.assertIn("오시는 길", " ".join(got["body"]))
+        self.assertTrue(got["publishLayerOpen"])
+
+
+@unittest.skipUnless(_browser_available(), "Playwright Chromium 이 설치되지 않았습니다 (playwright install chromium)")
 class TestMyTemplate(unittest.TestCase):
     """병원이 네이버에 저장해 둔 '내 템플릿'을 깔고 원고를 그 위에 쓴다(2026-09-30 고객 제안).
 
