@@ -1,0 +1,83 @@
+"""지운 병원은 실행기 눈에서도 사라져야 한다.
+
+2026-10-20 신고: "여기 병원들을 삭제할 수 있는 방법이 있나요? 닥터보이스 시작 시 창이
+여러개가 떠서 조금 느려지네요. 아마 현석님께 2단계 알림도 계속 가는듯합니다."
+
+병원 삭제는 active=False 로만 표시한다(delete_client). 그런데 실행기에게 블로그 목록을
+내주는 agent_summary 는 그 표시를 보지 않고 **사용자의 모든 블로그**를 내줬다. 화면에는
+병원도 블로그도 안 보이는데, 실행기는 매 바퀴 그 블로그까지 들러 크롬 창을 하나 더 열고
+네이버에 로그인한다 → 창이 늘고, 블로그 주인에게 2단계 인증 알림이 계속 간다.
+"""
+from datetime import datetime, timedelta
+from pathlib import Path
+import tempfile
+import unittest
+
+import httpx
+from fastapi import FastAPI
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app.api import campaign as api
+from app.models.campaign import Blog, Client, PublishJob
+from app.models.user import User
+
+
+class DeletedClientTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.engine = create_async_engine('sqlite+aiosqlite:///' + str(Path(self.tmp.name) / 'clients.db'))
+        async with self.engine.begin() as conn:
+            for table in (Client.__table__, Blog.__table__, PublishJob.__table__):
+                await conn.run_sync(lambda sync, t=table: t.create(sync))
+        self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
+        async with self.sessions() as db:
+            for key, name in (('keep', '위례한의원'), ('gone', '안 쓰는 병원')):
+                db.add(Client(id=key, user_id='u', name=name, active=True))
+                db.add(Blog(id=f'b-{key}', user_id='u', client_id=key, blog_id=f'blog-{key}'))
+                db.add(PublishJob(id=f'j-{key}', user_id='u', campaign_id='c', draft_id='d',
+                                  blog_ref_id=f'b-{key}', scheduled_at=datetime.utcnow() + timedelta(days=1),
+                                  status='queued'))
+            await db.commit()
+
+        app = FastAPI()
+        app.include_router(api.router)
+
+        async def db_override():
+            async with self.sessions() as db:
+                yield db
+        app.dependency_overrides[api.get_db] = db_override
+        app.dependency_overrides[api.get_current_user] = lambda: User(id='u')
+        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test')
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+        await self.engine.dispose()
+        self.tmp.cleanup()
+
+    async def blogs_the_launcher_sees(self):
+        response = await self.client.get('/agent/summary')
+        self.assertEqual(response.status_code, 200, response.text)
+        return sorted(row['naver_blog_id'] for row in response.json())
+
+    async def test_a_deleted_hospitals_blog_is_no_longer_handed_to_the_launcher(self):
+        self.assertEqual(await self.blogs_the_launcher_sees(), ['blog-gone', 'blog-keep'])
+
+        removed = await self.client.delete('/clients/gone')
+        self.assertEqual(removed.status_code, 200, removed.text)
+
+        # 크롬 창도, 네이버 로그인도 더는 일어나지 않는다.
+        self.assertEqual(await self.blogs_the_launcher_sees(), ['blog-keep'])
+
+    async def test_the_leftover_reservations_are_collected_not_left_waiting_forever(self):
+        """올릴 자리가 없어진 예약을 그대로 두면 '대기'로 영영 쌓이고,
+        웹 신호등은 "실행기가 한참째 안 가져갑니다"로 켜진 채 남는다."""
+        removed = await self.client.delete('/clients/gone')
+        self.assertEqual(removed.json().get('cancelled'), 1, removed.text)
+
+        async with self.sessions() as db:
+            self.assertEqual((await db.get(PublishJob, 'j-gone')).status, 'cancelled')
+            self.assertEqual((await db.get(PublishJob, 'j-keep')).status, 'queued')  # 남은 병원은 그대로
+
+
+if __name__ == '__main__':
+    unittest.main()

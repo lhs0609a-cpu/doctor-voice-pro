@@ -120,7 +120,7 @@ class ApiTests(DatabaseCase):
     async def test_bulk_discovers_without_selected_keywords_and_reuses_active_task(self):
         from unittest.mock import patch, AsyncMock
         async with self.sessions() as db:
-            db.add(Client(id='client', user_id='u', name='clinic', diseases=['eczema']))
+            (await db.get(Client, 'client')).diseases = ['eczema']    # 병원 줄은 setUp 에 있다
             await db.commit()
         body = {'max_keywords': 30, 'discover_keywords': True, 'start_date': '2026-10-01',
                 'days': 90, 'quality': {'image_count': 0, 'landing_url': 'https://example.com/guide'}}
@@ -159,6 +159,9 @@ class ApiTests(DatabaseCase):
                       ScheduleMark.__table__):
                 await conn.run_sync(lambda c, table=t: table.create(c))
         async with self.sessions() as db:
+            # 블로그는 늘 병원에 달려 있다(client_id 는 NOT NULL). 서버는 '지운 병원'을
+            # 가려내려고 그 줄을 보므로, 테스트도 실제와 같은 모양으로 둔다.
+            db.add(Client(id='client', user_id='u', name='clinic'))
             db.add(Campaign(id='c', user_id='u', client_id='client', name='test', blog_ids=['b']))
             db.add(Blog(id='b', user_id='u', client_id='client', blog_id='testblog', status='active'))
             db.add(Draft(id='d', user_id='u', client_id='client', campaign_id='c', title='title', body='body', status='ready'))

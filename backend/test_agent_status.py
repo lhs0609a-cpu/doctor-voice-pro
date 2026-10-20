@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import campaign as api
-from app.models.campaign import AgentSession, Blog, PublishAttempt, PublishJob
+from app.models.campaign import AgentSession, Blog, Client, PublishAttempt, PublishJob
 from app.models.user import User
 
 
@@ -19,9 +19,15 @@ class AgentStatusTests(unittest.IsolatedAsyncioTestCase):
         self.engine = create_async_engine('sqlite+aiosqlite:///' + str(Path(self.tmp.name) / 'agent.db'))
         async with self.engine.begin() as conn:
             await conn.run_sync(lambda sync: AgentSession.__table__.create(sync))
-            for table in (PublishJob.__table__, PublishAttempt.__table__, Blog.__table__):
+            for table in (PublishJob.__table__, PublishAttempt.__table__, Blog.__table__, Client.__table__):
                 await conn.run_sync(lambda sync, t=table: t.create(sync))
         self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
+        # 블로그는 늘 병원에 달려 있다(client_id 는 NOT NULL). 지운 병원의 블로그를 내주지
+        # 않으려면 서버가 병원 줄을 봐야 하므로, 테스트도 실제와 같은 모양으로 둔다.
+        async with self.sessions() as db:
+            for key in ('c', 'client'):
+                db.add(Client(id=key, user_id='u', name='테스트 병원', active=True))
+            await db.commit()
         app = FastAPI()
         app.include_router(api.router)
 

@@ -319,8 +319,21 @@ async def update_client(client_id: str, body: ClientIn, current_user: User = Dep
 async def delete_client(client_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     c = await _owned(db, Client, client_id, current_user, "병원")
     c.active = False
+    # 지운 병원의 블로그는 이제 실행기 눈에서 사라진다(agent_summary). 남은 예약을 그대로 두면
+    # 아무도 가져가지 않는 '대기'로 영영 쌓이고, 웹 신호등은 "실행기가 한참째 안 가져갑니다"로
+    # 바뀐다(_stalled). 화면에서도 "블로그·브리프·캠페인 정보도 함께 지워집니다"라고 약속하므로
+    # 올릴 자리가 없어진 예약은 여기서 함께 거둔다. 실행기가 쥐고 있는 건(assigned)과 사람이
+    # 확인해야 하는 건(uncertain)은 손대지 않는다 — 그건 이미 올라갔을 수도 있다.
+    blog_ids = [row for row in (await db.execute(
+        select(Blog.id).where(Blog.client_id == c.id))).scalars().all()]
+    cancelled = 0
+    if blog_ids:
+        done = await db.execute(update(PublishJob).where(
+            PublishJob.blog_ref_id.in_(blog_ids),
+            PublishJob.status.in_(["queued", "failed", "dry_run"])).values(status="cancelled"))
+        cancelled = int(done.rowcount or 0)
     await db.commit()
-    return {"success": True}
+    return {"success": True, "cancelled": cancelled}
 
 
 # 인터뷰에 나온 병원들을 예시로 넣어 주는 시드(초보자 온보딩)
@@ -2686,7 +2699,15 @@ class AgentBlogSummary(BaseModel):
 
 @router.get("/agent/summary", response_model=List[AgentBlogSummary])
 async def agent_summary(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    blogs = (await db.execute(select(Blog).where(Blog.user_id == _uid(current_user)).order_by(Blog.created_at))).scalars().all()
+    # **지운 병원의 블로그는 내주지 않는다.** 병원 삭제는 active=False 로만 표시하므로
+    # (delete_client) 그 아래 블로그 줄은 그대로 남는다. 그걸 그대로 내주면 실행기가 매 바퀴
+    # 그 블로그까지 들러 **크롬 창을 하나 더 열고 네이버에 로그인한다** — 화면에는 병원도
+    # 블로그도 안 보이는데 창은 늘어나고 네이버 2단계 인증 알림이 계속 간다
+    # (2026-10-20 신고: "창이 여러개가 떠서 느려지네요 … 2단계 알림도 계속 가는듯합니다").
+    blogs = (await db.execute(
+        select(Blog).join(Client, Client.id == Blog.client_id)
+        .where(Blog.user_id == _uid(current_user), Client.active.isnot(False))
+        .order_by(Blog.created_at))).scalars().all()
     out = []
     for b in blogs:
         # '대기'는 아직 올라갈 수 있는 건만 센다. 여러 번 실패해 재시도가 끝난 건까지 대기로 세면
@@ -2993,8 +3014,14 @@ STALL_MINUTES = 12
 async def _stalled(db: AsyncSession, user_id: str) -> bool:
     """올릴 글이 밀려 있는데 실행기가 한참째 아무것도 청하지 않았는가."""
     now = datetime.utcnow()
+    # 지운 병원에 달려 있던 예약은 세지 않는다 — 올릴 자리가 없어 영영 '대기'로 남는데,
+    # 그걸 세면 신호등이 "실행기가 안 가져갑니다"로 계속 켜져 있다(옛 자료도 스스로 풀리게).
+    # **빼기로** 거른다(조인이 아니라) — 조인으로 걸면 블로그 줄이 사라진 예약까지 조용히
+    # 빠져서, 진짜로 멈춰 있을 때 아무 말도 못 하게 된다.
+    hidden = select(Blog.id).join(Client, Client.id == Blog.client_id).where(Client.active.is_(False))
     oldest = (await db.execute(select(func.min(PublishJob.created_at)).where(
-        PublishJob.user_id == user_id, PublishJob.status == "queued"))).scalar()
+        PublishJob.user_id == user_id, PublishJob.status == "queued",
+        PublishJob.blog_ref_id.notin_(hidden)))).scalar()
     if not oldest or (now - oldest) < timedelta(minutes=STALL_MINUTES):
         return False
     last_try = (await db.execute(select(func.max(PublishAttempt.created_at)).where(
@@ -3023,8 +3050,10 @@ async def _agent_status(db: AsyncSession, user_id: str) -> AgentStatusOut:
             # 블로그가 막혀 있으면 실행기를 다시 켜도 소용없다 — 진짜 이유를 그대로 전한다.
             # 이유를 못 읽어도 '멈춰 있다'는 사실 자체는 알려야 한다.
             try:
-                blocked = (await db.execute(select(Blog).where(
-                    Blog.user_id == user_id, Blog.status != "active"))).scalars().first()
+                blocked = (await db.execute(
+                    select(Blog).join(Client, Client.id == Blog.client_id).where(
+                        Blog.user_id == user_id, Client.active.isnot(False),
+                        Blog.status != "active"))).scalars().first()
             except Exception:  # noqa: BLE001
                 blocked = None
             if blocked:
