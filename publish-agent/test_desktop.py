@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import tkinter as tk
@@ -162,6 +163,37 @@ class UpdateNoticeTests(unittest.TestCase):
             self.assertIn('9.9.9', text)
             asked.assert_not_called()       # 묻지 않는다
             install.assert_not_called()     # 읽을 시간을 준 뒤에 설치한다
+            app.install_update('9.9.9', 'setup.exe')
+            install.assert_called_once_with('setup.exe')
+
+    def test_an_update_waits_until_the_post_being_written_is_finished(self):
+        """발행 한복판에 설치하면 창이 닫히고 크롬까지 같이 꺼진다 — 그 글이 통째로 날아간다.
+
+        2026-10-20 고객 신고: "글감 선택 창에서 멈춰버리고, 조금 기다리니 창이 아예
+        꺼져버리네요(실행기도 꺼집니다)". 창이 스스로 닫히는 길은 업데이트 설치뿐이었다."""
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.dict('os.environ', {'LOCALAPPDATA': folder}),
+            patch('desktop.LocalBridge.start'),
+            patch('desktop.threading.Thread.start'),
+            patch('desktop.updater.installed_build', return_value=False),
+            patch('desktop.updater.install') as install,
+        ):
+            app = Desktop(self.root)
+            app.worker = SimpleNamespace(is_alive=lambda: True)   # 자동 발행이 돌고 있고
+            app.busy_event.set()                                  # 지금 글을 올리는 중이다
+            app.offer_update('9.9.9', 'setup.exe')
+            self.assertEqual([w for w in self.root.winfo_children() if isinstance(w, tk.Toplevel)], [],
+                             '올리는 중에는 알림도 띄우지 않는다')
+            install.assert_not_called()
+            self.assertFalse(app.stop_event.is_set(), '발행을 끊지 않는다')
+            self.assertIn('끝낸 뒤', app.status.get())
+            app.install_update('9.9.9', 'setup.exe')              # 3초 뒤 길로 들어와도
+            install.assert_not_called()                           # 아직은 설치하지 않는다
+
+            app.busy_event.clear()                                # 그 글이 끝났다
+            app.offer_update('9.9.9', 'setup.exe')
+            self.assertEqual(len([w for w in self.root.winfo_children() if isinstance(w, tk.Toplevel)]), 1)
             app.install_update('9.9.9', 'setup.exe')
             install.assert_called_once_with('setup.exe')
 

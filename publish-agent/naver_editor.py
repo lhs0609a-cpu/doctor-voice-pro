@@ -1102,16 +1102,16 @@ class NaverEditor:
 
         인용구를 넣고 나면 **반드시 본문 문단으로 빠져나온다** — 안 그러면 뒤따르는 글이
         전부 인용구 안에 들어간다."""
-        from rich_editor import exit_component
+        from rich_editor import exit_component, press_toolbar
 
         frame = await self.frame()
         button = frame.locator('button[data-name="quotation"]').first
-        if not await button.count():
-            # 인용구 버튼을 못 찾으면 굵은 글씨로 대신한다 — 소제목이 아예 사라지는 것보다 낫다.
-            log.warning("인용구 버튼을 찾지 못해 굵은 글씨로 넣습니다: %s", text[:30])
+        if not await button.count() or not await press_toolbar(self, button, "인용구"):
+            # 인용구 버튼을 못 찾거나 못 누르면 굵은 글씨로 대신한다 — 소제목이 아예
+            # 사라지는 것보다 낫다.
+            log.warning("인용구 버튼을 쓰지 못해 굵은 글씨로 넣습니다: %s", text[:30])
             await self._bold(text)
             return
-        await button.click()
         await asyncio.sleep(0.3)
         box = frame.locator('.se-component.se-quotation').last.locator('.se-quote .se-text-paragraph').first
         if await box.count():
@@ -1216,11 +1216,15 @@ class NaverEditor:
 
     async def _pick_toolbar_option(self, control: str, wanted: str) -> bool:
         """툴바 드롭다운(글꼴/크기)을 열고 원하는 값을 누른다."""
+        from rich_editor import press_toolbar
+
         frame = await self.frame()
         button = frame.locator(f'button[data-name="{control}"]').first
         if not await button.count():
             return False
-        await button.click()
+        # 선택창이 툴바를 덮고 있으면 15초를 기다렸다 터진다 — 빨리 치우고 다시 누른다.
+        if not await press_toolbar(self, button, control):
+            return False
         await asyncio.sleep(0.3)
         clicked = await frame.evaluate(r"""({wanted}) => {
           const seen = e => { const r = e.getBoundingClientRect(); return r.width > 4 && r.height > 4; };
@@ -1440,7 +1444,8 @@ class NaverEditor:
         if not await image.count():
             return False
         try:
-            await image.click()
+            # 짧게 끊는다 — 정렬은 모양일 뿐인데 선택창에 막히면 15초씩 멈춰 선다.
+            await image.click(timeout=5000)
             await asyncio.sleep(0.3)
         except Exception as e:  # noqa: BLE001
             log.debug("사진을 고르지 못했습니다(정렬 건너뜀): %s", e)
@@ -1453,7 +1458,7 @@ class NaverEditor:
             button = frame.locator(selector).first
             try:
                 if await button.count() and await button.is_visible():
-                    await button.click()
+                    await button.click(timeout=4000)
                     await asyncio.sleep(0.2)
                     return True
             except Exception as e:  # noqa: BLE001

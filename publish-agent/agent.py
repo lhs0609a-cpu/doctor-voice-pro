@@ -18,6 +18,7 @@ import asyncio
 import logging
 import os
 import random
+import re
 import sys
 import time
 import traceback
@@ -50,10 +51,51 @@ def waking(args):
     return bool(event and event.is_set())
 
 
+def mark_busy(args, busy: bool) -> None:
+    """'지금 글을 올리는 중'을 실행기 창에 알린다.
+
+    실행기는 이 신호가 꺼진 사이에만 업데이트를 설치한다. '자동 발행 켬'과는 다른 말이다 —
+    켜 두면 발행 스레드는 며칠이고 살아 있어서, 그걸 보고 미루면 업데이트가 영영 안 간다.
+    반대로 보지 않고 설치하면 글을 올리는 한복판에 크롬이 꺼진다(2026-10-20 고객 신고)."""
+    event = getattr(args, 'busy_event', None)
+    if event is None:
+        return
+    if busy:
+        event.set()
+    else:
+        event.clear()
+
+
 async def interruptible_pause(seconds, args):
     deadline = time.monotonic() + seconds
     while not stopping(args) and not waking(args) and time.monotonic() < deadline:
         await asyncio.sleep(min(1, max(0, deadline - time.monotonic())))
+
+
+# ---------------------------------------------------------------- 사람이 읽는 오류 한 줄
+# 화면의 '손봐야 할 글'에는 이 문장이 **그대로** 뜬다. 2026-10-20 고객 화면에는 다섯 건이
+# 전부 이렇게 떠 있었다:
+#   TimeoutError: : Timeout 15000ms exceeded. Call log: - waiting for locator("button[data-
+#   name=\"font-color\"]") - locator resolved to <button title="" type="button" data-log=...
+# 받는 사람은 무엇을 어떻게 해야 하는지 알 수 없다. 로그에는 원문이 그대로 남는다.
+BUTTON_NAMES = {
+    "font-color": "글자색", "background-color": "글자 배경색", "bold": "굵게",
+    "italic": "기울임", "underline": "밑줄", "font-family": "글꼴", "font-size": "글자 크기",
+    "quotation": "인용구", "oglink": "링크 카드", "image": "사진", "align": "정렬",
+}
+
+
+def plain_reason(error: Exception) -> str:
+    """브라우저가 내놓은 영어 오류를 사람이 읽을 한 줄로 바꾼다."""
+    text = str(error).strip()
+    name = type(error).__name__
+    if "Timeout" in name or text.lstrip(": ").startswith("Timeout"):
+        found = re.search(r'data-name=\\?"([a-z-]+)\\?"', text) or re.search(r'locator\("([^"]{1,60})', text)
+        target = BUTTON_NAMES.get(found.group(1)) if found else None
+        what = f"'{target}' 단추를" if target else "편집기 화면을"
+        return (f"네이버 편집기에서 {what} 제때 누르지 못했습니다"
+                f"(선택창이 떠 있었거나 네이버 화면이 바뀌었습니다). → [다시 시도]를 눌러 주세요")
+    return f"{name}: {text}"[:400]
 
 
 # ---------------------------------------------------------------- 결과
@@ -267,7 +309,7 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
         return JobResult(ok=False, uncertain=clicked_publish, message=str(e))
     except Exception as e:  # noqa: BLE001
         log.error("예상 못한 오류: %s\n%s", e, traceback.format_exc())
-        return JobResult(ok=False, uncertain=clicked_publish, message=f"{type(e).__name__}: {e}"[:400])
+        return JobResult(ok=False, uncertain=clicked_publish, message=plain_reason(e))
 
 
 # ---------------------------------------------------------------- 브라우저
@@ -895,6 +937,7 @@ async def main_async(args: argparse.Namespace) -> int:
             first_run = True
             while not stopping(args):
                 started = time.monotonic()
+                mark_busy(args, True)
                 try:
                     await run_once(client, pool, args, first_run=first_run)
                     first_run = False
@@ -908,6 +951,9 @@ async def main_async(args: argparse.Namespace) -> int:
                     log.error("서버 오류: %s", e)
                 except Exception as e:  # noqa: BLE001
                     log.error("주기 실행 오류: %s\n%s", e, traceback.format_exc())
+                finally:
+                    # 한 바퀴가 끝났다 — 이 틈에 업데이트가 설치될 수 있다.
+                    mark_busy(args, False)
                 if args.once:
                     break
                 event = getattr(args, 'wake_event', None)

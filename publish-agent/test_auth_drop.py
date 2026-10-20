@@ -28,8 +28,21 @@ def _args(**over):
 
 
 class StopsOnAuthLossTest(unittest.IsolatedAsyncioTestCase):
+    # agent 의 전역을 갈아끼우고 되돌리지 않으면, 뒤에 도는 다른 파일의 테스트가 가짜
+    # run_once 를 그대로 물려받아 엉뚱한 곳에서 터진다(전체 실행에서만 보이던 실패).
+    PATCHED = ('run_once', 'BrowserPool', 'ServerClient', 'async_playwright')
+
     async def asyncSetUp(self):
         self.calls = 0
+        # async_playwright 는 main_async 안에서 늦게 import 된다 — 아직 없을 수 있다.
+        self.original = {name: getattr(agent, name, None) for name in self.PATCHED}
+
+    async def asyncTearDown(self):
+        for name, value in self.original.items():
+            if value is None:
+                delattr(agent, name)
+            else:
+                setattr(agent, name, value)
 
     def _patch(self, error):
         # run_once 는 키워드 인자를 받는다(first_run). 가짜가 그걸 모르면 TypeError 가 나고,

@@ -1,8 +1,73 @@
 """Native SmartEditor toolbar formatting with DOM read-back before publication."""
 import asyncio
+import logging
 import re
 import html
 import sys
+
+log = logging.getLogger('editor')
+
+# 툴바 단추는 금방 눌려야 한다. 15초(브라우저 기본값)를 기다렸다 포기하면, 그 사이 글 하나가
+# 통째로 버려진다 — 빨리 포기하고 덮고 있는 창을 치운 뒤 다시 누르는 편이 낫다.
+TOOLBAR_CLICK_MS = 4000
+
+
+async def blocked(editor):
+    """지금 네이버 선택창(글감 등)이 떠 있나. 못 보면 '없다'로 친다."""
+    scan = getattr(editor, 'scan_blocking_layers', None)
+    if scan is None:
+        return False
+    try:
+        return bool(await scan())
+    except Exception:       # noqa: BLE001  확인에 실패했다고 글을 막을 이유는 없다
+        return False
+
+
+async def unblock(editor, where):
+    """툴바를 덮고 있는 선택창을 치운다. 못 치워도 그냥 진행한다."""
+    clear = getattr(editor, 'clear_blocking_layers', None)
+    if clear is None:
+        return False
+    try:
+        return bool(await clear(where))
+    except Exception:       # noqa: BLE001
+        return False
+
+
+async def press_toolbar(editor, button, where):
+    """툴바 단추를 누른다. 막히면 선택창을 치우고 한 번 더 — 그래도 안 되면 False.
+
+    2026-10-20 고객 신고: 위례 원고 5건이 전부
+    `TimeoutError: Timeout 15000ms exceeded ... button[data-name="font-color"]` 로 실패했다.
+    단추를 **찾기는 했는데 눌리지 않는다**(글감 선택창이 툴바를 덮고 있으면 이렇게 된다).
+    색은 모양일 뿐인데 그것 때문에 글 전체가 '손봐야 할 글'로 떨어졌다."""
+    try:
+        await button.click(timeout=TOOLBAR_CLICK_MS)
+        return True
+    except Exception as first:      # noqa: BLE001
+        log.warning('%s 단추가 눌리지 않습니다(%s) — 선택창을 치우고 다시 눌러 봅니다',
+                    where, str(first).splitlines()[0][:80])
+    await unblock(editor, where)
+    try:
+        await button.click(timeout=TOOLBAR_CLICK_MS * 2)
+        return True
+    except Exception as again:      # noqa: BLE001
+        log.warning('%s 단추를 끝내 누르지 못했습니다: %s', where, str(again).splitlines()[0][:80])
+        return False
+
+
+async def toggled(button):
+    """툴바 단추가 켜져 있나(굵게·기울임·밑줄)."""
+    return 'se-is-selected' in (await button.get_attribute('class') or '')
+
+
+async def toggle_changed(button, before):
+    """방금 누른 것이 먹혔나. 편집기가 단추 모양을 바꾸는 데 한 박자 걸린다."""
+    for _ in range(4):
+        await asyncio.sleep(.06)
+        if await toggled(button) != before:
+            return True
+    return False
 
 
 def rgb(hex_color):
@@ -14,7 +79,9 @@ def rgb(hex_color):
 async def set_color(editor, color, background=False):
     frame = await editor.frame()
     name = '글자 배경색 변경' if background else '글자색 변경'
-    await frame.locator('button[data-name="background-color"]' if background else 'button[data-name="font-color"]').click()
+    picker = frame.locator('button[data-name="background-color"]' if background else 'button[data-name="font-color"]')
+    if not await press_toolbar(editor, picker, name):
+        return False        # 색은 못 넣어도 글은 올린다 — 아래 붙여넣기 길로 넘어간다
     # Read the live palette. Its hash class names change between Naver releases.
     value = await frame.evaluate(r'''wanted => {
       const rgb='rgb('+[1,3,5].map(i=>parseInt(wanted.slice(i,i+2),16)).join(', ')+')';
@@ -36,7 +103,7 @@ async def set_color(editor, color, background=False):
         await field.press('Enter')
         await field.evaluate("e => e.removeAttribute('data-dv-color-input')")
     elif value is None:
-        await frame.locator('button[data-name="background-color"]' if background else 'button[data-name="font-color"]').click()
+        await press_toolbar(editor, picker, f'{name}(팔레트 닫기)')
         await editor.page.keyboard.press('Escape')
         return False
     await asyncio.sleep(.1)
@@ -98,10 +165,24 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
     verify = bool(text.strip())
     frame = await editor.frame()
     from naver_editor import EditorError
-    for key, name, shortcut in [('b','bold','Control+b'),('i','italic','Control+i'),('u','underline','Control+u')]:
+    for key, name, shortcut, label in [('b','bold','Control+b','굵게'),
+                                       ('i','italic','Control+i','기울임'),
+                                       ('u','underline','Control+u','밑줄')]:
         button = frame.locator(f'button[data-name="{name}"]')
-        selected = 'se-is-selected' in (await button.get_attribute('class') or '')
-        if bool(attrs.get(key)) != selected:
+        selected = await toggled(button)
+        wanted = bool(attrs.get(key))
+        if wanted == selected:
+            continue
+        await editor.page.keyboard.press(shortcut)
+        if await toggle_changed(button, selected):
+            continue
+        # 단축키를 편집기가 못 받았다. 선택창이 떠 있을 때만 손을 댄다 — 창이 없는데 다시
+        # 누르면 서식이 거꾸로 들어간다. (2026-10-20: "기울임을 빼 달라고 했는데 편집기에는
+        # 그렇게 들어가지 않았습니다" 로 글 한 건이 막혔다.)
+        if not await blocked(editor):
+            continue
+        await unblock(editor, f'{label} 서식')
+        if await toggled(button) != wanted:
             await editor.page.keyboard.press(shortcut)
     paste_needed = False
     for key, name, default in [('color','font-color','#000000'),('background','background-color','#ffffff')]:
@@ -111,7 +192,11 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
         indicator = frame.locator(f'button[data-name="{name}"] [data-role="color"]')
         if not await indicator.count():
             if attrs.get(key):
-                raise EditorError(f'이 문단에서 {key} 서식을 적용할 수 없습니다')
+                # 사진·링크 카드 바로 뒤처럼 색 툴바가 없는 자리가 있다. 글을 버리지 말고
+                # 색을 입힌 채로 붙여 넣는다(2026-10-20).
+                log.warning('%s 툴바가 없는 자리입니다 — 색을 입힌 채 붙여 넣습니다: "%s"',
+                            name, text.strip()[:20])
+                paste_needed = True
             continue
         current = await indicator.evaluate('e => getComputedStyle(e).backgroundColor')
         if current != rgb(desired):
@@ -201,7 +286,10 @@ async def insert_rich_blocks(editor, blocks):
             continue
         if kind == 'quote':
             frame = await editor.frame()
-            await frame.locator('button[data-name="quotation"][data-value="default"]').click()
+            # 못 누르면 여기서 멈춘다. 그냥 진행하면 **앞에 있던 인용구**에 글이 들어가고,
+            # 확인은 '인용구 안에 있다'만 보므로 엉뚱한 자리에 박힌 채 통과한다.
+            if not await press_toolbar(editor, frame.locator('button[data-name="quotation"][data-value="default"]'), '인용구'):
+                raise EditorError('인용구 단추를 누르지 못했습니다 — 네이버 선택창이 떠 있는지 확인해 주세요')
             quote = frame.locator('.se-component.se-quotation').last.locator('.se-quote .se-text-paragraph').first
             await quote.click()
             await asyncio.sleep(.3)

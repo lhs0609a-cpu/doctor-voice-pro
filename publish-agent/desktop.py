@@ -40,6 +40,7 @@ BEAT_SECONDS = 60          # 서버가 150초 침묵을 '꺼짐'으로 본다 �
 CONNECT_POLL_SECONDS = 2   # 승인됐는지 묻는 간격
 CONNECT_WAIT_SECONDS = 600 # 요청이 살아 있는 동안만 기다린다(서버와 같은 값)
 UPDATE_EVERY_BEATS = 60    # 하트비트 60번 = 1시간마다 새 버전을 다시 본다
+UPDATE_WAIT_MS = 20000     # 발행 중이면 이만큼 뒤에 다시 본다(끝나면 그때 설치)
 
 
 # ── 화면 색과 모양 ──────────────────────────────────────────────
@@ -223,14 +224,14 @@ def start_file_log(folder: Path) -> None:
     root.info('실행기 %s 시작 — 로그 %s', VERSION, path)
 
 
-def make_args(server, email, password, folder, stop_event, wake_event=None):
+def make_args(server, email, password, folder, stop_event, wake_event=None, busy_event=None):
     if not valid_server(server):
         raise ValueError('서버 주소는 HTTPS 주소 또는 로컬 서버여야 합니다')
     return argparse.Namespace(server=server.rstrip('/'), email=email, password=password,
         profiles_dir=str(folder / 'profiles'), log_dir=str(folder / 'logs'), blog=None,
         once=False, dry_run=False, headless=False, window_pos=None, interval=60,
         max_per_blog=5, min_gap=20, max_gap=60, captcha_wait=180, no_images=False,
-        verbose=False, stop_event=stop_event, wake_event=wake_event)
+        verbose=False, stop_event=stop_event, wake_event=wake_event, busy_event=busy_event)
 
 
 def summary_note(blogs) -> str:
@@ -266,6 +267,9 @@ class Desktop:
         self.stop_event = threading.Event()
         # 예약이 새로 걸리면 기다리지 않고 바로 한 바퀴 돌게 하는 신호.
         self.wake_event = threading.Event()
+        # 발행 스레드가 '지금 글을 올리는 중'이라고 켜 두는 신호 — 업데이트는 이게 꺼진 틈에만 한다.
+        self.busy_event = threading.Event()
+        self.update_waiting = False             # '끝나면 설치합니다' 를 한 번만 적기 위한 표시
         self.output = queue.Queue(maxsize=500)
         self.ui = queue.Queue(maxsize=100)      # 백그라운드 스레드 → 화면 갱신
         self.closing = False
@@ -853,6 +857,11 @@ class Desktop:
     # ------------------------------------------------------------ 업데이트
     def check_update(self, manual=False):
         """새 버전을 확인하고 받아 둔 뒤, 설치 여부는 사용자에게 묻는다."""
+        if self.update_waiting:
+            # 이미 받아 두고 발행이 끝나기를 기다리는 중이다. 또 받으면 같은 설치가 겹친다.
+            if manual:
+                self.ui.put(('status', '새 버전을 받아 두었습니다 — 지금 올리는 글을 끝낸 뒤 설치합니다'))
+            return
         if not updater.installed_build():
             if manual:
                 self.ui.put(('status', '개발용 실행에서는 업데이트를 확인하지 않습니다'))
@@ -874,15 +883,31 @@ class Desktop:
             return
         self.ui.put(('update', (update['version'], installer)))
 
+    def publishing(self) -> bool:
+        """지금 **글을 올리는 중**인가.
+
+        '자동 발행 켬'과는 다른 말이다 — 켜 두면 발행 스레드는 며칠이고 살아 있다. 그걸 보고
+        업데이트를 미루면 고친 것이 영영 안 간다. 그래서 발행 스레드가 한 바퀴를 도는 동안만
+        켜 두는 신호(busy_event)를 따로 본다."""
+        return bool(self.worker and self.worker.is_alive() and self.busy_event.is_set())
+
     def offer_update(self, version, installer):
         """새 버전은 묻지 않고 설치하되, 무슨 일이 벌어지는지는 팝업으로 알린다.
 
         '지금 설치할까요?'를 띄워 두면 아무도 누르지 않아 고친 것이 영영 닿지 않는다. 그렇다고
         말없이 창이 닫혔다 열리면 사람은 프로그램이 꺼진 줄 안다 — 실제로 오늘 그랬다.
         그래서 묻지는 않고 **알리기만** 한다(2026-09-23 사용자 요청: "자동업데이트 되게끔해
-        팝업창뜨면서"). 팝업은 답을 기다리지 않는다 — 3초 뒤 설치가 알아서 시작된다."""
+        팝업창뜨면서"). 팝업은 답을 기다리지 않는다 — 3초 뒤 설치가 알아서 시작된다.
+
+        **글을 올리는 중이면 그 글을 끝낼 때까지 기다린다**(2026-10-20 고객 신고: "글감 창에서
+        멈추더니 조금 기다리니 창이 아예 꺼져버리네요 — 실행기도 꺼집니다"). 설치는 실행기를
+        닫고 크롬까지 같이 끄기 때문에, 발행 한복판에 하면 그 글이 통째로 날아간다."""
         if self.closing:
             return
+        if self.publishing():
+            self.wait_for_idle_update(version, installer)
+            return
+        self.update_waiting = False
         self.status.set(f'새 버전 {version} 을 설치합니다. 잠시 뒤 실행기가 다시 열립니다.')
         self.update_popup(version)
         # 사람이 팝업을 읽을 시간을 준 뒤 설치한다. 답을 기다리지는 않는다.
@@ -908,8 +933,21 @@ class Desktop:
         except Exception as error:  # noqa: BLE001  알림을 못 띄웠다고 업데이트를 멈출 이유는 없다
             logging.getLogger().info('업데이트 알림 창을 띄우지 못했습니다: %s', error)
 
+    def wait_for_idle_update(self, version, installer) -> None:
+        """올리던 글이 끝날 때까지 설치를 미룬다. 미루는 동안 무엇을 기다리는지 적어 둔다."""
+        if not self.update_waiting:
+            self.update_waiting = True
+            self.status.set(f'새 버전 {version} 을 받아 두었습니다 — 지금 올리는 글을 끝낸 뒤 '
+                            f'설치합니다. 그대로 두셔도 됩니다.')
+            logging.getLogger().info('업데이트 %s: 발행이 끝나기를 기다립니다', version)
+        self.root.after(UPDATE_WAIT_MS, self.offer_update, version, installer)
+
     def install_update(self, version, installer) -> None:
         if self.closing:
+            return
+        if self.publishing():
+            # 알림을 띄운 3초 사이에 다음 글이 시작됐다. 그 글도 끝까지 올리게 둔다.
+            self.wait_for_idle_update(version, installer)
             return
         release_single_instance()      # 설치 프로그램이 '실행 중'이라고 묻지 않게 이름표를 먼저 놓는다
         try:
@@ -938,7 +976,7 @@ class Desktop:
         try:
             account = self.paired_email if use_device else self.email.get().strip()
             args = make_args(self.server.get().strip(), account, self.password.get(), self.folder,
-                             self.stop_event, self.wake_event)
+                             self.stop_event, self.wake_event, self.busy_event)
             if use_device:
                 args.device_id, args.device_secret = self.device_id, self.device_secret
         except (ValueError, OSError) as error:
