@@ -680,7 +680,9 @@ async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, 
     pool.remember_profile(profile, naver_id, (blog.get("naver_blog_id") or "").strip())
     page = await pool.page_for(profile, proxy)
     # DV_WRITE_URL: 테스트용(가짜 에디터 페이지). 평소엔 비워 두면 네이버 글쓰기 URL.
-    editor = NaverEditor(page, captcha_wait_sec=args.captcha_wait, write_url=os.environ.get("DV_WRITE_URL") or WRITE_URL)
+    editor = NaverEditor(page, captcha_wait_sec=args.captcha_wait,
+                         write_url=os.environ.get("DV_WRITE_URL") or WRITE_URL,
+                         should_stop=lambda: stopping(args))
 
     ok, why = await ensure_login(editor, client, blog)
     if not ok:

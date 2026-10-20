@@ -41,6 +41,7 @@ CONNECT_POLL_SECONDS = 2   # 승인됐는지 묻는 간격
 CONNECT_WAIT_SECONDS = 600 # 요청이 살아 있는 동안만 기다린다(서버와 같은 값)
 UPDATE_EVERY_BEATS = 60    # 하트비트 60번 = 1시간마다 새 버전을 다시 본다
 UPDATE_WAIT_MS = 20000     # 발행 중이면 이만큼 뒤에 다시 본다(끝나면 그때 설치)
+FORCE_QUIT_AFTER_MS = 90000  # [X] 를 누른 뒤 마무리를 이만큼까지만 기다린다(그 뒤엔 그냥 닫는다)
 
 
 # ── 화면 색과 모양 ──────────────────────────────────────────────
@@ -1038,6 +1039,17 @@ class Desktop:
         self.status.set('기록을 복사했습니다. 문의할 때 붙여넣어 주세요.')
 
     def close(self):
+        """창의 [X]. 올리던 글을 마무리한 뒤 닫는 것이 원칙이지만, **기다리는 동안 아무 일도
+        안 일어나는 것처럼 보이면 안 된다.**
+
+        2026-10-20 신고: "창에 x표시를 눌러도 화면이 꺼지지 않아서요". 원고 한 건은 사진까지
+        올리면 몇 분이 걸린다. 그동안 창은 그대로 있고 [실행 중단]은 이미 눌려 꺼져 있어서,
+        사람이 할 수 있는 일이 없다 — 결국 작업 관리자로 강제 종료하게 된다(그게 더 나쁘다).
+        그래서 ① 무엇을 기다리는지 적고 ② [X]를 한 번 더 누르면 바로 끄고 ③ 그래도 안 끝나면
+        스스로 닫는다."""
+        if self.closing:            # 두 번째 [X] — 기다리지 않고 지금 끈다
+            self.force_quit('사용자가 [X]를 다시 눌렀습니다')
+            return
         self.closing = True
         self.beat_wake.set()
         self.connect_wake.set()
@@ -1056,9 +1068,42 @@ class Desktop:
             except Exception:  # noqa: BLE001
                 pass
         self.stop()
+        if self.worker and self.worker.is_alive():
+            self.status.set('올리던 글을 마무리하는 중입니다 — 끝나면 창이 저절로 닫힙니다. '
+                            '지금 바로 끄려면 [X]를 한 번 더 누르세요.')
+            # 마무리가 끝없이 길어져도 창은 닫힌다. 사진이 많은 원고 한 건이 몇 분씩 걸린다.
+            self.root.after(FORCE_QUIT_AFTER_MS, self.force_quit, '마무리를 더 기다리지 않습니다')
+
+    def force_quit(self, why: str = '') -> None:
+        """기다리지 않고 지금 끈다.
+
+        발행 스레드는 창 밖에서 돈다 — 창만 닫으면 작업 관리자에만 보이는 유령이 남아, 다음에
+        아이콘을 눌러도 "이미 실행 중입니다"로 막힌다. 그래서 프로세스째 끝낸다. 올리던 글의
+        자취는 실행기 저널(sqlite)에 이미 적혀 있어 다음에 켤 때 서버와 맞춘다."""
+        logging.getLogger().warning('실행기를 바로 끕니다: %s', why or '사용자 요청')
+        try:
+            self.root.destroy()
+        except Exception:  # noqa: BLE001
+            pass
+        os._exit(0)
 
     # ------------------------------------------------------------ 화면 갱신
     def poll(self):
+        """300ms 마다 화면을 갱신하고, 발행이 끝났으면 (닫는 중일 때) 창을 닫는다.
+
+        **무슨 일이 있어도 다음 바퀴를 예약한다.** 여기서 예외가 한 번 나면 그걸로 끝이라
+        기록도 멈추고 [X]를 눌러도 창이 닫히지 않는다 — 화면은 멀쩡해 보이는데 아무것도
+        안 듣는 상태가 된다."""
+        try:
+            self._poll_once()
+        except Exception as error:  # noqa: BLE001
+            logging.getLogger().warning('화면 갱신 중 오류(계속 돕니다): %s', error)
+        try:
+            self.root.after(300, self.poll)
+        except tk.TclError:
+            pass        # 창이 이미 닫혔다 — 더 돌 필요가 없다
+
+    def _poll_once(self):
         while True:
             try:
                 line = self.output.get_nowait()
@@ -1106,8 +1151,6 @@ class Desktop:
                 self.status.set('실행이 종료되었습니다. 작업 결과는 위 기록과 웹 발행 현황에서 확인하세요.')
             if self.closing:
                 self.root.destroy()
-                return
-        self.root.after(300, self.poll)
 
 
 def hand_over_to_installed() -> bool:

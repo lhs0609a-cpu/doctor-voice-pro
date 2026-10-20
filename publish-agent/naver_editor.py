@@ -680,9 +680,13 @@ class PublishOutcome:
 
 # ================================================================ 에디터
 class NaverEditor:
-    def __init__(self, page: Page, *, captcha_wait_sec: int = 180, write_url: str = WRITE_URL):
+    def __init__(self, page: Page, *, captcha_wait_sec: int = 180, write_url: str = WRITE_URL,
+                 should_stop=None):
         self.page = page
         self.captcha_wait_sec = captcha_wait_sec
+        # '실행 중단'·창 닫기를 사람이 눌렀나. 긴 기다림은 이걸 보고 일찍 포기한다 —
+        # 안 보면 캡차 대기 3분이 끝날 때까지 창이 안 닫힌다(2026-10-20 신고).
+        self.should_stop = should_stop or (lambda: False)
         self.write_url = write_url  # 테스트용 가짜 에디터 페이지로 바꿀 수 있다
         self._frame: Optional[Frame] = None
         self.dialogs: List[str] = []
@@ -1897,6 +1901,9 @@ class NaverEditor:
         deadline = time.monotonic() + timeout_sec
         while time.monotonic() < deadline:
             await asyncio.sleep(0.8)
+            if self.should_stop():
+                log.info("중단 요청 — 캡차 기다리기를 멈춥니다")
+                return False
             if not await self.detect_captcha():
                 await asyncio.sleep(0.6)
                 log.info("캡차 해결됨")

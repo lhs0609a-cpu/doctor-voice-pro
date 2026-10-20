@@ -197,6 +197,45 @@ class UpdateNoticeTests(unittest.TestCase):
             app.install_update('9.9.9', 'setup.exe')
             install.assert_called_once_with('setup.exe')
 
+    def test_the_close_button_answers_right_away_and_a_second_press_quits(self):
+        """2026-10-20 신고: "창에 x표시를 눌러도 화면이 꺼지지 않아서요".
+
+        원고 한 건은 사진까지 올리면 몇 분이 걸린다. 그동안 창은 그대로 있고 [실행 중단]은
+        이미 꺼져 있어 사람이 할 수 있는 일이 없었다 — 결국 작업 관리자로 강제 종료하게 된다."""
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.dict('os.environ', {'LOCALAPPDATA': folder}),
+            patch('desktop.LocalBridge.start'),
+            patch('desktop.threading.Thread.start'),
+            patch('desktop.updater.installed_build', return_value=False),
+            patch('desktop.os._exit') as quit_now,
+        ):
+            app = Desktop(self.root)
+            app.worker = SimpleNamespace(is_alive=lambda: True)   # 올리는 중이라 바로는 못 끝낸다
+            app.close()
+            self.assertTrue(app.stop_event.is_set())              # 마무리를 요청하고
+            self.assertIn('한 번 더', app.status.get())            # 무엇을 하면 되는지 적는다
+            quit_now.assert_not_called()                          # 아직 끄지는 않는다
+
+            with patch.object(app.root, 'destroy') as closed:     # 창은 tearDown 이 닫는다
+                app.close()                                       # [X] 두 번째
+            closed.assert_called_once()
+            quit_now.assert_called_once_with(0)
+
+    def test_the_screen_keeps_refreshing_even_if_one_update_blows_up(self):
+        """화면 갱신이 한 번 터지면 그걸로 끝이라, 기록도 멈추고 [X]도 안 듣는 상태가 된다."""
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.dict('os.environ', {'LOCALAPPDATA': folder}),
+            patch('desktop.LocalBridge.start'),
+            patch('desktop.threading.Thread.start'),
+            patch('desktop.updater.installed_build', return_value=False),
+        ):
+            app = Desktop(self.root)
+            with patch.object(Desktop, '_poll_once', side_effect=RuntimeError('화면 갱신 실패')):
+                app.poll()                                        # 터져도 조용히 넘어가고
+            self.assertTrue(self.root.tk.call('after', 'info'), '다음 바퀴가 예약돼 있어야 한다')
+
     def test_a_failed_install_leaves_the_launcher_running_on_the_old_version(self):
         """설치가 막혀도(서명 없는 파일 차단 등) 실행기를 죽이지 않는다."""
         with (
