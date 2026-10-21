@@ -151,6 +151,60 @@ READ_BACK = r'''text => {
     }'''
 
 
+IN_BODY = r'''text => {
+      const norm=s=>s.replace(/\s+/g,' ').trim();
+      const wanted=norm(text);
+      return [...document.querySelectorAll('.se-component:not(.se-documentTitle) .se-text-paragraph')]
+        .some(p=>norm(p.textContent).includes(wanted));
+    }'''
+
+TOGGLES = [('b','bold','Control+b','굵게'), ('i','italic','Control+i','기울임'), ('u','underline','Control+u','밑줄')]
+FIX_MAX_CHARS = 400     # 이보다 긴 조각은 한 글자씩 골라 고치지 않는다(너무 오래 걸린다)
+
+
+async def _read_back(frame, text):
+    # 편집기가 화면에 반영하기 전에 읽으면 없는 것처럼 보인다 — 한 번 더 기다려 본다.
+    actual = None
+    for wait in (.15, .5):
+        await asyncio.sleep(wait)
+        actual = await frame.evaluate(READ_BACK, text)
+        if actual:
+            break
+    return actual
+
+
+def _wrong_toggles(attrs, actual, in_quote):
+    wrong = []
+    for key, prop, shortcut, label in TOGGLES:
+        if any(bool(attrs.get(key)) != s[prop] and not (s.get('quote') and not attrs.get(key)) for s in actual):
+            wrong.append((key, prop, shortcut, label))
+    return wrong
+
+
+async def _fix_toggles(editor, frame, text, attrs, actual, in_quote):
+    """방금 넣은 글자의 굵게·기울임·밑줄이 틀렸으면, 그 글자만 뒤로 골라 단축키로 고친다.
+
+    툴바 단추 모양만 믿고 치면, 단추가 늦게 바뀌거나 선택창이 닫힌 자리에서 서식이 거꾸로
+    들어간다(2026-10-20·21 위례·kibundang). 고친 뒤에는 다시 읽어 확인하고 돌려준다 —
+    그래도 틀리면 아래 확인이 막는다."""
+    wrong = _wrong_toggles(attrs, actual, in_quote)
+    if not wrong or len(text) > FIX_MAX_CHARS:
+        return actual
+    keyboard = editor.page.keyboard
+    for key, prop, shortcut, label in wrong:
+        for _ in range(2):          # 섞여 있으면 첫 번째 누름에 '전부 켜짐'이 될 수 있다
+            log.warning('"%s" 의 %s 이(가) 요청과 달라 글자를 골라 고칩니다', text.strip()[:20], label)
+            for _ in range(len(text)):
+                await keyboard.press('Shift+ArrowLeft')
+            await keyboard.press(shortcut)
+            await asyncio.sleep(.1)
+            await keyboard.press('ArrowRight')      # 고른 것을 풀고 캐럿을 글 끝으로
+            actual = await _read_back(frame, text) or actual
+            if not any(k == key for k, *_ in _wrong_toggles(attrs, actual, in_quote)):
+                break
+    return actual
+
+
 async def styled_text(editor, text, attrs=None, *, in_quote=False):
     """Set the native typing style, insert text, then read the rendered run back.
 
@@ -179,7 +233,7 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
             continue
         # 단축키가 먹었는지 단추 모양으로 확인하지 못했다. 다시 누르면 서식이 거꾸로 들어갈 수
         # 있다(2026-10-20). 선택창이 떠 있으면 치우고 한 번 더 보되, 그래도 모르면 **누르지 않고**
-        # 서식을 글자에 직접 입혀 붙여 넣는다(아래 paste). 2026-10-21 위례 원고: 링크 카드 뒤에
+        # 넣은 뒤 읽어 보고 고친다(아래 _fix_toggles). 2026-10-21 위례 원고: 링크 카드 뒤에
         # 글감 창이 떠 있다가 닫힌 자리에서 "기울임을 빼 달라고 했는데 편집기에는 그렇게
         # 들어가지 않았습니다"로 글 한 건이 또 막혔다.
         if await blocked(editor):
@@ -187,10 +241,15 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
             if await toggle_changed(button, not wanted):
                 continue
         unsure.append(label)
-    paste_needed = bool(unsure) and sys.platform == 'win32'
-    if paste_needed:
-        log.warning('%s 서식이 툴바에 반영됐는지 확인하지 못했습니다 — 서식을 입힌 채 붙여 넣습니다: "%s"',
+    if unsure:
+        # 붙여 넣지 않고 그대로 친 뒤, 틀린 서식만 글자를 골라 고친다(아래 _fix_toggles).
+        # 1.7.8 은 여기서 서식을 입혀 붙여 넣었는데, 선택창을 치운 자리에서는 붙여넣기가
+        # 본문에 들어가지 않아 "입력한 강조 문구가 본문에 표시되지 않았습니다"로 글이 또
+        # 막혔다(2026-10-21 kibundang).
+        log.warning('%s 서식이 툴바에 반영됐는지 확인하지 못했습니다 — 넣은 뒤 읽어 보고 고칩니다: "%s"',
                     '·'.join(unsure), text.strip()[:20])
+    paste_needed = False
+    colorless = False   # 색을 못 입히고 글자만 넣었다 — 색 확인은 건너뛴다
     for key, name, default in [('color','font-color','#000000'),('background','background-color','#ffffff')]:
         if in_quote and key == 'background' and not attrs.get(key):
             continue
@@ -226,14 +285,18 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
             await asyncio.sleep(.5)
     else:
         await editor._insert(text)
-    read_back = READ_BACK
-    # 편집기가 화면에 반영하기 전에 읽으면 없는 것처럼 보인다 — 한 번 더 기다려 본다.
-    actual = None
-    for wait in (.15, .5):
-        await asyncio.sleep(wait)
-        actual = await frame.evaluate(read_back, text)
-        if actual:
-            break
+    actual = await _read_back(frame, text)
+    if not actual and paste_needed:
+        # 붙여넣기가 본문에 안 들어갔다. 어딘가 엉뚱한 곳에 들어갔으면 또 치면 글이 두 번
+        # 들어가므로 멈추고, 아무 데도 없으면 그냥 친다(색은 못 입혀도 글은 올린다).
+        if await frame.evaluate(IN_BODY, text):
+            raise EditorError(f'붙여 넣은 문구가 엉뚱한 자리에 들어갔습니다 — "{text.strip()[:30]}"')
+        log.warning('붙여넣기가 본문에 들어가지 않았습니다 — 색 없이 글자로 칩니다: "%s"', text.strip()[:20])
+        await editor._insert(text)
+        actual = await _read_back(frame, text)
+        colorless = True
+    if verify and actual:
+        actual = await _fix_toggles(editor, frame, text, attrs, actual, in_quote)
     if not verify:
         return
     if not actual:
@@ -249,7 +312,7 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
                 asked = '넣어 달라고' if attrs.get(key) else '빼 달라고'
                 raise EditorError(f'"{where}" 에 {name}을(를) {asked} 했는데 편집기에는 그렇게 들어가지 않았습니다')
         for key in ('color','background'):
-            if attrs.get(key) and style[key] != rgb(attrs[key]):
+            if attrs.get(key) and style[key] != rgb(attrs[key]) and not colorless:
                 raise EditorError(f'"{where}" 의 {key} 적용 값이 요청한 색상과 다릅니다')
 
 
