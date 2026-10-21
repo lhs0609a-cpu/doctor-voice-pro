@@ -754,8 +754,9 @@ class TestBlogTemplate(unittest.TestCase):
         editor = FakeEditor()
         self.run_job(editor, _job(options={"font": "마루부리", "size": 16}))
         self.assertEqual(editor.typography, ("마루부리", 16))
-        self.assertLess(editor.calls.index("set_body_typography"), editor.calls.index("insert_body_blocks"),
-                        "본문을 넣은 뒤에 글꼴을 바꾸면 이미 쓴 글은 그대로다")
+        # 본문을 다 넣고 **본문 전체를 골라** 바꾼다. 제목 바로 뒤에 고르면 캐럿이 제목에 있어
+        # 네이버가 목록을 열지 않았다(2026-10-21 위례: "font-family 를 '나눔명조' 로 바꾸지 못했습니다").
+        self.assertGreater(editor.calls.index("set_body_typography"), editor.calls.index("insert_body_blocks"))
 
 
 class TestFinalActions(unittest.TestCase):

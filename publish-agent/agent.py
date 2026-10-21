@@ -212,15 +212,17 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
         if settings.get("template") and hasattr(editor, "load_template"):
             templated = await editor.load_template(settings["template"])
         await editor.set_title(title)
-        # 글꼴·크기는 본문을 넣기 전에 정해 둔다 — 넣고 나서 바꾸면 이미 쓴 글은 그대로다.
-        # 템플릿을 불러왔으면 템플릿의 글꼴을 그대로 둔다(병원이 정해 둔 것이 이긴다).
-        if not templated and (settings.get("font") or settings.get("size")) and hasattr(editor, "set_body_typography"):
-            await editor.set_body_typography(settings.get("font") or "", int(settings.get("size") or 0))
         blocks = job.get("blocks") or [{"type": "text", "content": job.get("content") or ""}]
         # 워드에서 올라온 원고는 서버가 reformat=False 로 내린다 — 글쓴이 줄바꿈을 다시 자르지 않는다.
         reformat = settings.get("reformat", True)
         await editor.insert_body_blocks(blocks, pick_emphasize(job.get("emphasize") or []),
                                         reformat=bool(reformat), keep=templated)
+        # 글꼴·크기는 본문을 다 넣은 뒤 **본문 전체를 골라** 바꾼다(사람이 하는 그대로).
+        # 예전에는 제목 바로 뒤에 골랐는데 캐럿이 제목에 있어 네이버가 목록을 열지 않았다 —
+        # "본문 font-family 를 '나눔명조' 로 바꾸지 못했습니다"(2026-10-21 위례).
+        # 템플릿을 불러왔으면 템플릿의 글꼴을 그대로 둔다(병원이 정해 둔 것이 이긴다).
+        if not templated and (settings.get("font") or settings.get("size")) and hasattr(editor, "set_body_typography"):
+            await editor.set_body_typography(settings.get("font") or "", int(settings.get("size") or 0))
 
         # 4) 임시저장은 발행 레이어를 열지 않는다 — 글만 저장하고 끝낸다.
         opts = job.get("options") or {}

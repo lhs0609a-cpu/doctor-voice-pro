@@ -1200,14 +1200,24 @@ class NaverEditor:
 
     # ------------------------------------------------------------ 본문 글꼴 / 크기
     async def set_body_typography(self, font: str = "", size: int = 0) -> None:
-        """본문 글꼴과 글자 크기를 네이버 툴바에서 고른다. 본문을 넣기 **전에** 부른다.
+        """본문 글꼴과 글자 크기를 네이버 툴바에서 고른다. 본문을 **다 넣은 뒤** 부른다 —
+        본문 전체를 골라(Ctrl+A) 그 선택에 입힌다.
 
         2026-09-30 고객 요청: "글자 폰트, 크기 설정". 못 고르면 로그만 남기고 넘어간다 —
         글꼴 하나 때문에 원고 전체를 못 올리는 편이 훨씬 나쁘다."""
-        for control, wanted in (("font-family", (font or "").strip()),
-                                ("font-size", str(size) if size else "")):
-            if not wanted:
-                continue
+        pairs = [(c, w) for c, w in (("font-family", (font or "").strip()),
+                                     ("font-size", str(size) if size else "")) if w]
+        if not pairs:
+            return
+        try:
+            # 캐럿이 제목에 있으면 네이버가 글꼴 목록을 열지 않는다. 본문으로 옮겨 전체를 고른다
+            # (본문의 Ctrl+A 는 제목을 건드리지 않는다 — insert_rich_blocks 가 같은 길로 비운다).
+            await self._click_paragraph(S["body_para"])
+            await self._ctrl_a()
+        except Exception as e:  # noqa: BLE001
+            log.warning("본문을 고르지 못했습니다(글꼴·크기는 네이버 기본값으로): %s", e)
+            return
+        for control, wanted in pairs:
             try:
                 picked = await self._pick_toolbar_option(control, wanted)
             except Exception as e:  # noqa: BLE001
@@ -1217,6 +1227,8 @@ class NaverEditor:
                 log.info("본문 %s: %s", control, wanted)
             else:
                 log.warning("본문 %s 를 '%s' 로 바꾸지 못했습니다 — 네이버 기본값으로 나갑니다", control, wanted)
+        # 선택을 풀고 캐럿을 글 끝에 둔다 — 다음 단계(링크 확인·발행)가 선택에 걸리지 않게.
+        await self.page.keyboard.press("Control+End")
 
     async def _pick_toolbar_option(self, control: str, wanted: str) -> bool:
         """툴바 드롭다운(글꼴/크기)을 열고 원하는 값을 누른다."""
@@ -1229,19 +1241,36 @@ class NaverEditor:
         # 선택창이 툴바를 덮고 있으면 15초를 기다렸다 터진다 — 빨리 치우고 다시 누른다.
         if not await press_toolbar(self, button, control):
             return False
-        await asyncio.sleep(0.3)
-        clicked = await frame.evaluate(r"""({wanted}) => {
-          const seen = e => { const r = e.getBoundingClientRect(); return r.width > 4 && r.height > 4; };
-          const norm = s => (s || '').replace(/\s+/g, '').trim();
-          const want = norm(wanted);
-          const options = [...document.querySelectorAll('li, button, a, span[role="option"], [role="menuitem"]')].filter(seen);
-          const hit = options.find(e => norm(e.textContent) === want
-                                     || norm(e.getAttribute('data-value')) === want);
-          if (!hit) return false;
-          (hit.closest('button, a, li') || hit).click();
-          return true;
-        }""", {"wanted": wanted})
+        # 목록이 늦게 뜰 수 있다 — 한 번 보고 포기하지 않는다.
+        clicked = None
+        for _ in range(6):
+            await asyncio.sleep(0.25)
+            clicked = await frame.evaluate(r"""({wanted, control}) => {
+              const seen = e => { const r = e.getBoundingClientRect(); return r.width > 4 && r.height > 4; };
+              const norm = s => (s || '').replace(/\s+/g, '').trim().toLowerCase();
+              const want = norm(wanted);
+              const options = [...document.querySelectorAll('li, button, a, span[role="option"], [role="menuitem"]')]
+                .filter(seen).filter(e => !e.closest('.se-toolbar-item-' + control + ' > button, button[data-name="' + control + '"]'));
+              // 글자가 그대로인 항목이 먼저, 그다음 data-value·클래스(fs19 · nanummyeongjo 같은 코드).
+              const hit = options.find(e => norm(e.textContent) === want || norm(e.getAttribute('data-value')) === want)
+                || options.find(e => /^\d+$/.test(want)
+                                    ? new RegExp('(^|[^0-9])fs' + want + '([^0-9]|$)').test(e.className || '')
+                                    : norm(e.textContent).startsWith(want));
+              if (!hit) return null;
+              (hit.closest('button, a, li') || hit).click();
+              return true;
+            }""", {"wanted": wanted, "control": control})
+            if clicked:
+                break
         if not clicked:
+            # 다음에 같은 일이 나면 **무엇이 보였는지**로 바로 고칠 수 있게 적어 둔다.
+            try:
+                seen = await frame.evaluate(r"""() => [...document.querySelectorAll('li, [role="option"], [role="menuitem"]')]
+                  .filter(e => { const r = e.getBoundingClientRect(); return r.width > 4 && r.height > 4; })
+                  .map(e => (e.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 15)""")
+                log.info("%s 목록에 보인 항목: %s", control, " | ".join(seen) or "(목록이 열리지 않음)")
+            except Exception:  # noqa: BLE001
+                pass
             await self.page.keyboard.press("Escape")
         await asyncio.sleep(0.2)
         return bool(clicked)
