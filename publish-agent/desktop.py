@@ -831,7 +831,7 @@ class Desktop:
             note = summary_note(blogs)
             self.ui.put(('summary', ('발행 중 · ' if running else '') + note))
             # 올릴 글이 있으면 다음 주기를 기다리지 않는다 — 예약은 걸리는 즉시 네이버에 등록해야 한다.
-            if running and any((b.get('pending') or 0) > 0 for b in blogs):
+            if running and any((b.get('pending') or 0) > 0 or (b.get('queued') or 0) > 0 for b in blogs):
                 self.wake_event.set()
         except Exception:  # noqa: BLE001
             pass

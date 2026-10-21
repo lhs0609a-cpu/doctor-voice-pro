@@ -90,6 +90,10 @@ def blog_status(blog: Dict[str, Any], *, idle: bool = False) -> Tuple[str, str]:
             f"[{ACTION}] '{label}' — 여러 번 실패해 멈춘 글이 {stalled}건 있습니다. "
             f"→ 홈페이지 [발행 현황]에서 사유를 보고 [재시도]를 누르거나, 새 시각으로 다시 예약해 주세요.")
 
+    queued = _int(blog, "queued")
+    if queued and not pending:
+        return OK, f"[{OK}] '{label}' — 대량 발행 글 {queued}건을 네이버에 차례로 예약 등록합니다."
+
     nxt = (blog.get("next_at") or "").replace("T", " ")[5:16]
     if pending and nxt:
         return OK, (f"[{OK}] '{label}' — 대기 {pending}건, 다음 글은 {nxt} 에 올라갑니다. "

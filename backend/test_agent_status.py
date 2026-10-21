@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import campaign as api
 from app.models.campaign import AgentSession, Blog, Client, PublishAttempt, PublishJob
+from app.models.publish_queue import QueuedPost
 from app.models.user import User
 
 
@@ -19,7 +20,8 @@ class AgentStatusTests(unittest.IsolatedAsyncioTestCase):
         self.engine = create_async_engine('sqlite+aiosqlite:///' + str(Path(self.tmp.name) / 'agent.db'))
         async with self.engine.begin() as conn:
             await conn.run_sync(lambda sync: AgentSession.__table__.create(sync))
-            for table in (PublishJob.__table__, PublishAttempt.__table__, Blog.__table__, Client.__table__):
+            for table in (PublishJob.__table__, PublishAttempt.__table__, Blog.__table__, Client.__table__,
+                          QueuedPost.__table__):
                 await conn.run_sync(lambda sync, t=table: t.create(sync))
         self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
         # 블로그는 늘 병원에 달려 있다(client_id 는 NOT NULL). 지운 병원의 블로그를 내주지
@@ -89,6 +91,20 @@ class AgentStatusTests(unittest.IsolatedAsyncioTestCase):
             db.add(PublishAttempt(token='t1', job_id='stuck2', user_id='u', stage='claimed'))
             await db.commit()
         self.assertFalse((await self.client.get('/agent/status')).json()['stalled'])
+
+    async def test_summary_counts_bulk_posts_so_the_launcher_opens_the_blog(self):
+        """대량 발행 글은 PublishJob 이 아니라 QueuedPost 에 있다 — 그 수를 따로 알린다(2026-10-21 실측)."""
+        async with self.sessions() as db:
+            db.add(Blog(id='b5', user_id='u', client_id='c', blog_id='myblog', status='active'))
+            for title, ref in (('하나', 'b5'), ('둘', 'b5'), ('지정 없음', None)):
+                db.add(QueuedPost(user_id='u', title=title, blocks=[], blog_ref_id=ref, status='queued',
+                                  scheduled_at=datetime.utcnow() + timedelta(days=1)))
+            db.add(QueuedPost(user_id='u', title='끝난 글', blocks=[], blog_ref_id='b5', status='registered',
+                              scheduled_at=datetime.utcnow() + timedelta(days=1)))
+            await db.commit()
+        row = (await self.client.get('/agent/summary')).json()[0]
+        self.assertEqual(row['pending'], 0)          # 캠페인 대기와 섞지 않는다
+        self.assertEqual(row['queued'], 3)           # 블로그가 하나뿐이면 지정 없는 글도 그 몫이다
 
     async def test_summary_says_how_many_uncertain_jobs_hold_the_blog(self):
         """'확인 필요' 한 건은 그 블로그의 나머지 예약을 전부 멈춘다 — 그 숫자를 실행기에 알린다.

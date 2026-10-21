@@ -34,7 +34,7 @@ from app.models.campaign import (
     JOB_ACTIVE, AgentDevice, AgentPairCode, AgentPairRequest, AgentSession, AutopilotPolicy, AutomationRun, Blog, BriefPreset, Campaign, CampaignKeyword, Client, Draft, PublishJob, PublishAttempt, SerpSnapshot,
 )
 from app.models.media_pool import ImageVariant, PoolCollection, PoolCollectionMember, PoolImage
-from app.models.publish_queue import ScheduleMark
+from app.models.publish_queue import QueuedPost, ScheduleMark
 from app.services import campaign_crypto as crypto
 from app.services import campaign_jobs
 from app.services import campaign_writer as writer
@@ -2744,6 +2744,10 @@ class AgentBlogSummary(BaseModel):
     # (2026-10-21 요청: "현재 작업할 블로그만 뜨도록 … 앱에서 로그인 등록한 블로그만").
     auto_login: bool = False
     scan_requested: bool = False
+    # 대량 발행 큐(붙여넣기 대량·저장글에서 담은 글) 가운데 아직 안 가져간 것. pending 은 캠페인 잡만
+    # 세므로 이게 없으면 대량 발행 글만 있는 블로그는 실행기가 **열지도 않았다**(2026-10-21 실측:
+    # '쓰는 블로그만 연다'를 넣은 1.7.8 부터 대량 발행이 멈췄다).
+    queued: int = 0
 
 
 @router.get("/agent/summary", response_model=List[AgentBlogSummary])
@@ -2803,6 +2807,16 @@ async def agent_summary(current_user: User = Depends(get_current_user), db: Asyn
                                     wants_categories=bool(b.categories_scan_requested_at) or not b.categories
                                     or not b.categories_synced_at
                                     or (datetime.utcnow() - b.categories_synced_at) > timedelta(days=CATEGORY_STALE_DAYS)))
+    # 대량 발행 큐. 블로그가 하나뿐이면 실행기가 대상 지정 없는 예전 글도 그 블로그 몫으로
+    # 가져가므로(claim_unassigned) 그것도 함께 센다.
+    if out:
+        counts = dict((await db.execute(select(QueuedPost.blog_ref_id, func.count()).where(
+            QueuedPost.user_id == _uid(current_user), QueuedPost.status == "queued",
+        ).group_by(QueuedPost.blog_ref_id))).all())
+        for item in out:
+            item.queued = int(counts.get(item.blog_ref_id) or 0)
+        if len(out) == 1:
+            out[0].queued += int(counts.get(None) or 0)
     return out
 
 

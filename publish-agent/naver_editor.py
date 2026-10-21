@@ -484,6 +484,19 @@ JS_RESERVE_CHIP = r"""
 """
 
 
+# 칩 안의 단추(없으면 칩 자체)를 누른다. JS_RESERVE_CHIP 이 표시해 둔 것을 쓴다.
+JS_OPEN_RESERVE_CHIP = r"""
+() => {
+  const chip = document.querySelector('[data-dv-reserve-chip="1"]');
+  if (!chip) return false;
+  (chip.querySelector('button') || chip).click();
+  return true;
+}
+"""
+
+RESERVE_CHIP_SETTLE_SEC = 3.0
+
+
 JS_READ_RESERVE_LAYER = r"""
 () => {
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
@@ -1742,12 +1755,28 @@ class NaverEditor:
                 return None
         try:
             for scope in (await self.frame(), self.page):
-                chip = await scope.evaluate(JS_RESERVE_CHIP)
+                chip = await self._settled_reserve_chip(scope)
                 if chip and chip.get("found"):
                     return int(chip.get("count") or 0)
         except Exception as e:  # noqa: BLE001 — 숫자를 못 본 것뿐이다
             log.info("예약 건수를 읽지 못했습니다: %s", e)
         return None
+
+    async def _settled_reserve_chip(self, scope, wait_sec: float = RESERVE_CHIP_SETTLE_SEC) -> Optional[Dict[str, Any]]:
+        """'예약 발행 N건'을 네이버가 다 채운 뒤의 값으로 읽는다.
+
+        글쓰기 화면을 연 직후에는 예약이 있어도 잠깐 '0건'으로 그려졌다가 바뀐다(2026-10-21 실측:
+        0.6초까지 0건, 0.8초부터 2건). 그 0 을 그대로 믿으면 예약 2건을 '0건'으로 서버에 알려
+        서버가 이미 걸린 시각에 또 잡는다. 0 이 아닌 값이 보이면 그게 답이고, 기다려도 0 이면 0 이다."""
+        deadline = time.monotonic() + wait_sec
+        chip = None
+        while True:
+            chip = await scope.evaluate(JS_RESERVE_CHIP)
+            if not chip or not chip.get("found"):
+                return chip
+            if int(chip.get("count") or 0) > 0 or time.monotonic() >= deadline:
+                return chip
+            await asyncio.sleep(0.25)
 
     async def read_reservations_in_editor(self) -> Optional[List[Dict[str, Any]]]:
         """글쓰기 화면의 '예약 발행 N건' 칩을 눌러 목록을 읽는다.
@@ -1762,14 +1791,16 @@ class NaverEditor:
         try:
             await self.open_write_page()
             for scope in (await self.frame(), self.page):
-                chip = await scope.evaluate(JS_RESERVE_CHIP)
+                chip = await self._settled_reserve_chip(scope)
                 if not chip or not chip.get("found"):
                     continue
                 declared = int(chip.get("count") or 0)
                 if declared == 0:
                     log.info("예약 0건(글쓰기 화면 표시)")
                     return []
-                await scope.locator('[data-dv-reserve-chip="1"]').first.click()
+                # 단추를 직접 누른다. Playwright 클릭은 목록 창이 열려도 끝났다고 보지 않고 시간 초과를
+                # 냈다 — 목록은 떠 있는데 '못 읽음'으로 처리됐다(2026-10-21 실측).
+                await scope.evaluate(JS_OPEN_RESERVE_CHIP)
                 await asyncio.sleep(1.2)
                 answer = await scope.evaluate(JS_READ_RESERVE_LAYER)
                 await self.page.keyboard.press("Escape")

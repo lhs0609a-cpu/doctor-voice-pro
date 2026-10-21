@@ -153,6 +153,7 @@ async def bulk_create(
     # round-robin 으로 풀 이미지 배정(고르게)
     ptr = 0
     items: List[QueuedItem] = []
+    rows = []
     for i, chunk in enumerate(chunks):
         p = fmt.format_post(chunk, top_keywords=req.top_keywords)
         sched = req.start_at + timedelta(minutes=req.interval_minutes * i)
@@ -174,6 +175,12 @@ async def bulk_create(
             status="queued", order_index=i,
         )
         db.add(row)
+        rows.append((row, p, sched))
+
+    # id 는 flush 때 붙는다. 그 전에 응답을 만들면 id=None 이라 응답 검증이 터져 500 이 났고,
+    # 커밋도 안 돼 **대량 발행 글이 한 건도 저장되지 않았다**(2026-10-21 실측).
+    await db.flush()
+    for i, (row, p, sched) in enumerate(rows):
         items.append(QueuedItem(
             id=row.id, title=p.title, keywords=p.keywords, image_slots=p.image_slots,
             scheduled_at=sched, status="queued", order_index=i, blog_ref_id=req.blog_ref_id,

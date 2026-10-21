@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import campaign as api
 from app.models.campaign import Blog, BriefPreset, Client, PublishJob
+from app.models.publish_queue import QueuedPost
 from app.models.user import User
 
 
@@ -27,7 +28,8 @@ class DeletedClientTests(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.engine = create_async_engine('sqlite+aiosqlite:///' + str(Path(self.tmp.name) / 'clients.db'))
         async with self.engine.begin() as conn:
-            for table in (Client.__table__, Blog.__table__, BriefPreset.__table__, PublishJob.__table__):
+            for table in (Client.__table__, Blog.__table__, BriefPreset.__table__, PublishJob.__table__,
+                          QueuedPost.__table__):
                 await conn.run_sync(lambda sync, t=table: t.create(sync))
         self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
         async with self.sessions() as db:

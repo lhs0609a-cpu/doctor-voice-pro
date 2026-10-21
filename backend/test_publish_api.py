@@ -7,7 +7,7 @@ from test_publish_protocol import DatabaseCase
 from app.api import campaign as api
 from app.models.campaign import Blog, Draft, Campaign, AutopilotPolicy, AutomationRun, Client, PublishJob
 from app.models.background_job import BackgroundJob
-from app.models.publish_queue import ScheduleMark
+from app.models.publish_queue import QueuedPost, ScheduleMark
 from app.models.user import User
 
 
@@ -156,7 +156,7 @@ class ApiTests(DatabaseCase):
         await super().asyncSetUp()
         async with self.engine.begin() as conn:
             for t in (Blog.__table__, Draft.__table__, Campaign.__table__, AutopilotPolicy.__table__, AutomationRun.__table__, BackgroundJob.__table__, Client.__table__,
-                      ScheduleMark.__table__):
+                      ScheduleMark.__table__, QueuedPost.__table__):
                 await conn.run_sync(lambda c, table=t: table.create(c))
         async with self.sessions() as db:
             # 블로그는 늘 병원에 달려 있다(client_id 는 NOT NULL). 서버는 '지운 병원'을

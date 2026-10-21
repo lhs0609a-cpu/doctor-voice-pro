@@ -58,6 +58,19 @@ class QueueApiTests(unittest.IsolatedAsyncioTestCase):
         body.update(overrides)
         return body
 
+    async def test_bulk_paste_saves_every_post(self):
+        """2026-10-21 실측: id 가 붙기 전에 응답을 만들어 500 이 났고 한 건도 저장되지 않았다."""
+        text = '첫 글 제목\n\n첫 글 본문입니다.\n\n\n둘째 글 제목\n\n둘째 글 본문입니다.'
+        response = await self.client.post('/queue/bulk', json={
+            'text': text, 'start_at': (datetime.utcnow() + timedelta(days=2)).isoformat(),
+            'assign_images': False, 'blog_ref_id': 'blog-1'})
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body['created'], 2)
+        self.assertTrue(all(item['id'] for item in body['items']))
+        jobs = await self.client.get('/queue/jobs', params={'blog_ref_id': 'blog-1'})
+        self.assertEqual(sorted(j['id'] for j in jobs.json()), sorted(item['id'] for item in body['items']))
+
     # ---------------------------------------------------------------- 블로그별 수령
     async def test_agent_only_takes_jobs_for_its_own_blog(self):
         mine = await self.add_post(blog_ref_id='blog-1')

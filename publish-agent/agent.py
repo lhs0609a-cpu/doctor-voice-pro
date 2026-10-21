@@ -142,7 +142,7 @@ def _in_use(blog: Dict[str, Any]) -> bool:
     """이 블로그를 지금 쓰고 있나. 서버가 auto_login 을 모르면(옛 서버) 예전처럼 쓴다고 본다."""
     if "auto_login" not in blog:
         return True
-    return bool((blog.get("pending") or 0) > 0 or (blog.get("blocked") or 0) > 0
+    return bool((blog.get("pending") or 0) > 0 or (blog.get("queued") or 0) > 0 or (blog.get("blocked") or 0) > 0
                 or blog.get("auto_login") or blog.get("scan_requested"))
 
 
@@ -174,7 +174,8 @@ def select_blogs(summary: List[Dict[str, Any]], want: Optional[str], *,
     # 올릴 글이 다 예약된 뒤(pending=0)가 바로 그 상황이라, 이걸 빼면 지운 예약을 영영 모른다.
     return [b for b in summary
             if (b.get("status") or "active") in RETRYABLE_BLOG_STATUS
-            and ((b.get("pending") or 0) > 0 or (b.get("status") or "active") != "active"
+            and ((b.get("pending") or 0) > 0 or (b.get("queued") or 0) > 0
+                 or (b.get("status") or "active") != "active"
                  or b.get("wants_scan") or b.get("scan_requested"))]
 
 
@@ -673,14 +674,15 @@ async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, 
     from naver_editor import WRITE_URL, NaverEditor
 
     label, ref, naver_id = blog.get("label") or blog.get("naver_blog_id"), blog["blog_ref_id"], blog["naver_blog_id"]
-    log.info("=== 블로그 '%s' (%s) 대기 %s건, 확인 필요 %s건, 상태 %s ===",
-             label, naver_id, blog.get("pending"), blog.get("blocked") or 0, blog.get("status"))
+    log.info("=== 블로그 '%s' (%s) 대기 %s건, 대량 발행 %s건, 확인 필요 %s건, 상태 %s ===",
+             label, naver_id, blog.get("pending"), blog.get("queued") or 0, blog.get("blocked") or 0, blog.get("status"))
 
     # 서버가 '이래서 못 준다'고 이미 말해 뒀고 달리 볼 일도 없으면 브라우저를 열지 않는다.
     # 막힌 줄 알면서 주기마다 글쓰기 화면을 여는 것은 사용자 화면만 어지럽힌다
     # (2026-09-29 신고: "아무것도 안 해도 자꾸 블로그로 이동해").
     # 사람이 원인을 고치면 서버가 그 즉시 보류를 지우므로(_clear_holds) 다음 주기에 바로 이어진다.
-    if (blog.get("hold_reason") or "").strip() and not blog.get("wants_scan") \
+    # 대량 발행 글(queued)은 이 보류와 상관없다 — 보류 사유는 캠페인 잡의 것이다.
+    if (blog.get("hold_reason") or "").strip() and not blog.get("wants_scan") and not blog.get("queued") \
             and (blog.get("status") or "active") == "active":
         explain_idle(label, blog)
         return
@@ -750,7 +752,7 @@ async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, 
         jobs = await asyncio.to_thread(client.claim, ref, limit=1, include_images=not args.no_images,
                                        mode="dry_run" if args.dry_run else "live")
         if not jobs:
-            if i == 0:
+            if i == 0 and not blog.get("queued"):     # 대량 발행 글은 바로 아래에서 올린다
                 explain_idle(label, blog)
             break
         job = jobs[0]

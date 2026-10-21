@@ -1015,6 +1015,18 @@ class TestSelectBlogs(unittest.TestCase):
         later = [b["blog_ref_id"] for b in agent.select_blogs(s, None)]
         self.assertEqual(later, ["saved", "busy", "asked"])
 
+    def test_a_blog_with_only_bulk_posts_is_opened(self):
+        """대량 발행 글(queued)만 있는 블로그도 연다.
+
+        2026-10-21 실측: pending 은 캠페인 잡만 센다. '쓰는 블로그만 연다'(1.7.8) 뒤로
+        자동 로그인을 넣지 않은 블로그는 대량 발행 글이 쌓여도 크롬이 열리지 않았다."""
+        import agent
+
+        s = [{"blog_ref_id": "bulk", "naver_blog_id": "bulk", "label": "bulk", "status": "active", "pending": 0,
+              "blocked": 0, "auto_login": False, "scan_requested": False, "wants_scan": False, "queued": 2}]
+        self.assertEqual([b["blog_ref_id"] for b in agent.select_blogs(s, None, first_run=True)], ["bulk"])
+        self.assertEqual([b["blog_ref_id"] for b in agent.select_blogs(s, None)], ["bulk"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
