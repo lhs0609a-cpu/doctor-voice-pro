@@ -18,7 +18,7 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api import campaign as api
-from app.models.campaign import Blog, Client, PublishJob
+from app.models.campaign import Blog, BriefPreset, Client, PublishJob
 from app.models.user import User
 
 
@@ -27,7 +27,7 @@ class DeletedClientTests(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.engine = create_async_engine('sqlite+aiosqlite:///' + str(Path(self.tmp.name) / 'clients.db'))
         async with self.engine.begin() as conn:
-            for table in (Client.__table__, Blog.__table__, PublishJob.__table__):
+            for table in (Client.__table__, Blog.__table__, BriefPreset.__table__, PublishJob.__table__):
                 await conn.run_sync(lambda sync, t=table: t.create(sync))
         self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
         async with self.sessions() as db:
@@ -77,6 +77,21 @@ class DeletedClientTests(unittest.IsolatedAsyncioTestCase):
         async with self.sessions() as db:
             self.assertEqual((await db.get(PublishJob, 'j-gone')).status, 'cancelled')
             self.assertEqual((await db.get(PublishJob, 'j-keep')).status, 'queued')  # 남은 병원은 그대로
+
+    async def test_a_restored_hospital_is_handed_back_and_visited_on_the_next_round(self):
+        """2026-10-21 신고: 지운 병원의 캠페인이 웹에서는 '정상'으로 보이는데 실행기는 그 블로그를
+        받지 못해 크롬 창이 안 열렸다. 되살리면 실행기가 다시 받고, 대기 글이 없어도 다음 바퀴에
+        들러야 한다(wants_scan) — 안 그러면 실행기를 껐다 켤 때까지 크롬이 안 열린다."""
+        await self.client.delete('/clients/gone')
+        self.assertEqual(await self.blogs_the_launcher_sees(), ['blog-keep'])
+
+        restored = await self.client.post('/clients/gone/restore')
+        self.assertEqual(restored.status_code, 200, restored.text)
+        self.assertTrue(restored.json()['active'])
+
+        rows = {row['naver_blog_id']: row for row in (await self.client.get('/agent/summary')).json()}
+        self.assertEqual(sorted(rows), ['blog-gone', 'blog-keep'])
+        self.assertTrue(rows['blog-gone']['wants_scan'])
 
 
 if __name__ == '__main__':

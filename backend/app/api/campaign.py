@@ -336,6 +336,26 @@ async def delete_client(client_id: str, current_user: User = Depends(get_current
     return {"success": True, "cancelled": cancelled}
 
 
+@router.post("/clients/{client_id}/restore", response_model=ClientOut)
+async def restore_client(client_id: str, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """지운 병원을 되살린다. 블로그·로그인·카테고리는 그 아래 그대로 남아 있어 바로 다시 쓴다.
+
+    지운 병원의 캠페인도 웹 홈에서는 여전히 열린다(캠페인 → get_client 는 active 를 보지 않는다).
+    그 화면에서는 블로그가 '정상'으로 보이는데 실행기는 그 블로그를 받지 못해 크롬 창도 안
+    열리고 "처리할 블로그 없음"만 되풀이한다(2026-10-21 신고: 1.7.6 이후 자동로그인 크롬 탭이
+    안 뜸). 다시 쓰려는 병원이면 지우기 전 상태로 돌려놓는 길이 있어야 한다.
+    삭제 때 거둔 예약(cancelled)은 되살리지 않는다 — 그 사이 시각이 지났을 수 있다. 다시 건다."""
+    c = await _owned(db, Client, client_id, current_user, "병원")
+    c.active = True
+    # 실행기는 첫 바퀴가 지나면 일이 있는 블로그만 연다. 예약 목록을 읽어 달라고 걸어 두면
+    # 다음 확인 때 바로 들러 로그인 상태까지 맞춘다 — 실행기를 껐다 켤 필요가 없다.
+    now = datetime.utcnow()
+    for b in (await db.execute(select(Blog).where(Blog.client_id == c.id))).scalars().all():
+        b.reservations_scan_requested_at = now
+    await db.commit()
+    return await _client_out(db, c)
+
+
 # 인터뷰에 나온 병원들을 예시로 넣어 주는 시드(초보자 온보딩)
 SEED_CLIENTS = [
     {"name": "로담한의원", "specialty": "한의원", "diseases": ["여드름흉터", "수두자국", "대상포진"], "regions": ["강남"]},

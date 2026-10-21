@@ -472,6 +472,7 @@ export const campaignAPI = {
   getClient: async (id: string): Promise<Client> => (await api.get(`${C}/clients/${id}`)).data,
   updateClient: async (id: string, body: ClientInput): Promise<Client> => (await api.put(`${C}/clients/${id}`, body)).data,
   deleteClient: async (id: string): Promise<{ success: boolean }> => (await api.delete(`${C}/clients/${id}`)).data,
+  restoreClient: async (id: string): Promise<Client> => (await api.post(`${C}/clients/${id}/restore`)).data,
   seedExampleClients: async (): Promise<Client[]> => (await api.post(`${C}/clients/seed-examples`)).data,
 
   // 블로그 계정

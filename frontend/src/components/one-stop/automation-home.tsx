@@ -123,6 +123,7 @@ export function AutomationHome() {
   const [readError, setReadError] = useState('')
   const [acting, setActing] = useState('')
   const [actionMsg, setActionMsg] = useState('')
+  const [restoreMsg, setRestoreMsg] = useState('')
   const [opened, setOpened] = useState<number | null>(null)   // 사용자가 직접 연 칸(없으면 지금 할 차례가 열린다)
   const [showSetup, setShowSetup] = useState(false)           // 준비가 끝난 뒤 [준비 다시 하기]
 
@@ -131,7 +132,11 @@ export function AutomationHome() {
     try {
       const [rows, hospitals] = await Promise.all([campaignAPI.listCampaigns(), campaignAPI.listClients()])
       setCampaigns(rows); setClients(hospitals)
-      setSelected(value => rows.some(row => row.id === value) ? value : rows[0]?.id || '')
+      // 처음 고르는 캠페인은 살아 있는 병원 것으로. 지운 병원의 캠페인이 맨 위에 오면 블로그가
+      // '정상'으로 보이는데 실행기는 그 블로그를 받지 않는다 — 크롬도 안 열리고 "처리할 블로그
+      // 없음"만 되풀이한다(2026-10-21 신고).
+      const live = rows.find(row => hospitals.some(h => h.id === row.client_id)) || rows[0]
+      setSelected(value => rows.some(row => row.id === value) ? value : live?.id || '')
     } catch (e) { setError(errMsg(e)) }
     finally { setLoading(false) }
   }, [])
@@ -139,7 +144,7 @@ export function AutomationHome() {
   useEffect(() => {
     if (!selected) return
     let alive = true
-    setCampaign(null); setJobs([]); setReadError(''); setActionMsg('')
+    setCampaign(null); setJobs([]); setReadError(''); setActionMsg(''); setRestoreMsg('')
     const load = async () => {
       try {
         const next = await campaignAPI.getCampaign(selected)
@@ -292,6 +297,25 @@ export function AutomationHome() {
             </select>
           )}
           {readError && <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">현황을 갱신하지 못했습니다. {readError}</p>}
+
+          {/* 지운 병원의 캠페인. 실행기는 이 병원의 블로그를 받지 않으므로 여기 걸린 글은 올라가지 않는다. */}
+          {client && client.id === campaign?.client_id && !client.active && (
+            <div role="alert" className="space-y-2 rounded-xl bg-warning-soft p-4 text-sm text-warning">
+              <p><b className="block">'{client.name}' 은(는) 삭제된 병원입니다.</b>
+                실행기는 지운 병원의 블로그로 글을 올리지 않습니다 — 크롬 창도 열리지 않고 &quot;처리할 블로그 없음&quot;만 나옵니다.
+                계속 쓰실 병원이면 되살려 주세요. 블로그·로그인·카테고리는 그대로 돌아옵니다(삭제 때 취소된 예약은 다시 걸어야 합니다).</p>
+              <Button size="sm" disabled={!!acting} onClick={async () => {
+                setActing('restore'); setRestoreMsg('')
+                try {
+                  setClient(await campaignAPI.restoreClient(client.id))
+                  setRestoreMsg(`'${client.name}' 을(를) 되살렸습니다. 실행기가 다음 확인(1분 이내) 때 이 병원의 블로그를 크롬으로 엽니다.`)
+                  void loadList()
+                } catch (e) { setRestoreMsg(errMsg(e)) }
+                finally { setActing('') }
+              }}>병원 되살리기</Button>
+            </div>
+          )}
+          {restoreMsg && <p role="status" className="rounded-lg bg-success-soft p-3 text-sm">{restoreMsg}</p>}
 
           {/* 초록불인데 일을 안 하는 상태. 실행기 안에서 신호를 보내는 쪽과 글을 올리는 쪽이
               따로 돌기 때문에 생긴다 — 사용자는 '켜져 있는데 왜 안 올라가지'만 보인다. */}
