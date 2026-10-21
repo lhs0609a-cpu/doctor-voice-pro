@@ -1231,49 +1231,74 @@ class NaverEditor:
         await self.page.keyboard.press("Control+End")
 
     async def _pick_toolbar_option(self, control: str, wanted: str) -> bool:
-        """툴바 드롭다운(글꼴/크기)을 열고 원하는 값을 누른다."""
+        """툴바 드롭다운(글꼴/크기)을 열고 원하는 값을 누른 뒤, 툴바 표시로 바뀌었는지 확인한다.
+
+        2026-10-21 실제 네이버에서 읽은 모양(platonmarketing 글쓰기 화면):
+          · 여는 단추   button[data-type="label-select"][data-name="font-family" | "font-size-code"]
+          · 목록 항목   button[data-role="option"][data-name="font-family" | "font-size"]
+                        data-value = nanummyeongjo · fs19 …, 보이는 이름은 .se-toolbar-option-label
+        예전 코드는 **여는 단추와 이름이 같은 것은 빼고** 항목을 찾았는데, 항목도 같은
+        data-name 을 달고 있어 목록 전체가 빠졌다 — 글꼴이 한 번도 안 바뀐 까닭이다. 크기는
+        여는 단추 이름이 font-size-code 라 목록이 아예 열리지 않았다."""
         from rich_editor import press_toolbar
 
         frame = await self.frame()
-        button = frame.locator(f'button[data-name="{control}"]').first
+        # 목록 상자 이름. 크기는 단추가 font-size, 상자가 font-size-code 다(실측).
+        opener = {"font-size": "font-size-code"}.get(control, control)
+        open_sel = f'button[data-name="{control}"][data-type="label-select"]:not([data-role="option"])'
+        button = frame.locator(open_sel).first
         if not await button.count():
+            log.info("%s 단추가 툴바에 없습니다", control)
             return False
         # 선택창이 툴바를 덮고 있으면 15초를 기다렸다 터진다 — 빨리 치우고 다시 누른다.
         if not await press_toolbar(self, button, control):
             return False
         # 목록이 늦게 뜰 수 있다 — 한 번 보고 포기하지 않는다.
         clicked = None
-        for _ in range(6):
+        for _ in range(8):
             await asyncio.sleep(0.25)
-            clicked = await frame.evaluate(r"""({wanted, control}) => {
+            clicked = await frame.evaluate(r"""({wanted, opener}) => {
               const seen = e => { const r = e.getBoundingClientRect(); return r.width > 4 && r.height > 4; };
               const norm = s => (s || '').replace(/\s+/g, '').trim().toLowerCase();
               const want = norm(wanted);
-              const options = [...document.querySelectorAll('li, button, a, span[role="option"], [role="menuitem"]')]
-                .filter(seen).filter(e => !e.closest('.se-toolbar-item-' + control + ' > button, button[data-name="' + control + '"]'));
-              // 글자가 그대로인 항목이 먼저, 그다음 data-value·클래스(fs19 · nanummyeongjo 같은 코드).
-              const hit = options.find(e => norm(e.textContent) === want || norm(e.getAttribute('data-value')) === want)
-                || options.find(e => /^\d+$/.test(want)
-                                    ? new RegExp('(^|[^0-9])fs' + want + '([^0-9]|$)').test(e.className || '')
-                                    : norm(e.textContent).startsWith(want));
+              const options = [...document.querySelectorAll('button[data-role="option"]')].filter(seen)
+                .filter(e => e.closest('.se-toolbar-option-' + opener) || e.getAttribute('data-name') === opener);
+              const label = e => norm((e.querySelector('.se-toolbar-option-label') || e).textContent);
+              const value = e => norm(e.getAttribute('data-value'));
+              const hit = options.find(e => label(e) === want || value(e) === want || value(e) === 'fs' + want)
+                || options.find(e => label(e).startsWith(want) || ('nanum' + want) === value(e));
               if (!hit) return null;
-              (hit.closest('button, a, li') || hit).click();
-              return true;
-            }""", {"wanted": wanted, "control": control})
+              hit.click();
+              return hit.getAttribute('data-value') || true;
+            }""", {"wanted": wanted, "opener": opener})
             if clicked:
                 break
         if not clicked:
             # 다음에 같은 일이 나면 **무엇이 보였는지**로 바로 고칠 수 있게 적어 둔다.
             try:
-                seen = await frame.evaluate(r"""() => [...document.querySelectorAll('li, [role="option"], [role="menuitem"]')]
+                seen = await frame.evaluate(r"""() => [...document.querySelectorAll('button[data-role="option"]')]
                   .filter(e => { const r = e.getBoundingClientRect(); return r.width > 4 && r.height > 4; })
-                  .map(e => (e.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 15)""")
+                  .map(e => (e.getAttribute('data-value') || '') + ':' + (e.textContent || '').replace(/\s+/g, ' ').trim())
+                  .slice(0, 20)""")
                 log.info("%s 목록에 보인 항목: %s", control, " | ".join(seen) or "(목록이 열리지 않음)")
             except Exception:  # noqa: BLE001
                 pass
             await self.page.keyboard.press("Escape")
-        await asyncio.sleep(0.2)
-        return bool(clicked)
+            await asyncio.sleep(0.2)
+            return False
+        await asyncio.sleep(0.3)
+        # 눌렀다고 끝이 아니다 — 툴바 표시가 바뀌었는지 본다(글자를 안 고른 채 누르면 안 바뀐다).
+        shown = await frame.evaluate(r"""(sel) => {
+          const b = document.querySelector(sel);
+          const l = b && b.querySelector('[data-role="label"], .se-toolbar-label');
+          return ((l || b || {}).textContent || '').trim();
+        }""", open_sel)
+        want = re.sub(r"\s+", "", wanted)
+        ok = bool(shown) and (re.sub(r"\s+", "", shown) == want or want.startswith(re.sub(r"\s+", "", shown))
+                              or re.sub(r"\s+", "", shown).startswith(want))
+        if not ok:
+            log.warning("%s 를 눌렀는데 툴바에는 '%s' 로 보입니다(원한 값 '%s')", control, shown, wanted)
+        return ok
 
     # ------------------------------------------------------------ 링크 / 지도 카드
     async def insert_url_card(self, url: str) -> bool:

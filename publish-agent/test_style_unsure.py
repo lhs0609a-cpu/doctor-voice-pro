@@ -45,9 +45,13 @@ class Frame:
             return mock.Mock(evaluate=mock.AsyncMock())
         return Indicator()
 
-    async def evaluate(self, script, text):
-        if script is rich_editor.IN_BODY:
-            return False
+    async def evaluate(self, script, text=None):
+        if script is rich_editor.BODY_LEN:
+            return len(self.text or '')
+        if script is rich_editor.CARET_AT:
+            return 0
+        if script is rich_editor.END_POINT:
+            return {'x': 10, 'y': 10}
         if self.text != text:
             return None
         return [{'quote': False, 'bold': False, 'italic': self.italic, 'underline': False,
@@ -58,12 +62,29 @@ class Keyboard:
     def __init__(self, frame):
         self.pressed = []
         self.frame = frame
+        self.shift = False
+        self.selected = 0
+
+    async def down(self, key):
+        self.shift = key == 'Shift' or self.shift
+        self.pressed.append('down ' + key)
+
+    async def up(self, key):
+        if key == 'Shift':
+            self.shift = False
+        self.pressed.append('up ' + key)
 
     async def press(self, key):
         self.pressed.append(key)
-        # 글자를 고른 채로 Ctrl+I 를 누르면 그 글자의 기울임이 뒤집힌다.
-        if key == 'Control+i' and self.pressed[-2:-1] == ['Shift+ArrowLeft']:
-            self.frame.italic = not self.frame.italic
+        if key == 'ArrowLeft' and self.shift:
+            self.selected += 1
+        elif key == 'Shift+ArrowLeft':
+            self.selected = 1          # 실제 네이버: 따로 누르면 매번 한 글자만 고른다
+        # 글자를 고른 채로 Ctrl+I 를 누르면 그 글자의 기울임이 뒤집힌다(다 골랐을 때만 전부).
+        if key == 'Control+i' and self.selected:
+            if self.selected >= len(self.frame.text or ''):
+                self.frame.italic = not self.frame.italic
+            self.selected = 0
         if key == 'Control+v' and self.frame.landed:
             self.frame.text = self.frame.pasting
 
@@ -73,6 +94,8 @@ class Editor:
         self._frame = frame
         self.page = mock.Mock()
         self.page.keyboard = Keyboard(frame)
+        self.page.main_frame = frame
+        self.page.mouse = mock.Mock(click=mock.AsyncMock())
         self.typed = []
 
     async def frame(self):
@@ -112,7 +135,8 @@ class UnsureToggleTest(unittest.IsolatedAsyncioTestCase):
         pressed = editor.page.keyboard.pressed
         self.assertEqual(pasted, [])                              # 붙여 넣지 않는다
         self.assertEqual(editor.typed, [text])                    # 그대로 친다
-        self.assertEqual(pressed.count('Shift+ArrowLeft'), len(text))   # 친 글자만 고른다
+        self.assertEqual(pressed.count('ArrowLeft'), len(text))   # 친 글자만, Shift 를 누른 채로 고른다
+        self.assertLess(pressed.index('down Shift'), pressed.index('ArrowLeft'))
         self.assertEqual(pressed.count('Control+i'), 2)           # 처음 한 번 + 고른 글자에 한 번
         self.assertFalse(frame.italic)
 
@@ -120,7 +144,7 @@ class UnsureToggleTest(unittest.IsolatedAsyncioTestCase):
         frame = Frame({'bold': Button(False), 'italic': Button(True), 'underline': Button(False)}, italic=False)
         editor = Editor(frame)
         await self.run_styled(editor, frame, '그대로 둡니다', {}, [])
-        self.assertNotIn('Shift+ArrowLeft', editor.page.keyboard.pressed)
+        self.assertNotIn('ArrowLeft', editor.page.keyboard.pressed)
 
     async def test_a_paste_that_does_not_land_is_typed(self):
         # 색 툴바가 없는 자리라 붙여 넣었는데, 붙여넣기가 본문에 들어가지 않았다.
@@ -138,6 +162,34 @@ class UnsureToggleTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(Exception):      # 가짜 편집기는 색을 안 입히므로 색 확인에서 걸린다
             await self.run_styled(editor, frame, '빨간 문구', {'color': '#ff0000'}, pasted)
         self.assertEqual(editor.typed, [])
+
+
+class LostCaretTest(unittest.IsolatedAsyncioTestCase):
+    async def test_text_that_lands_nowhere_is_typed_again_at_the_paragraph_end(self):
+        # 2026-10-21 실측: '작성 중인 글' 창을 닫은 뒤 캐럿이 빠져 친 글자가 어디에도 안 들어갔다.
+        frame = Frame({'bold': Button(False), 'italic': Button(False), 'underline': Button(False)})
+        editor = Editor(frame)
+        typed = []
+
+        async def insert(text):
+            typed.append(text)
+            if len(typed) > 1:          # 첫 번째는 사라지고, 다시 눌러 친 두 번째만 들어간다
+                frame.text = text
+
+        editor._insert = insert
+        with mock.patch.object(rich_editor.asyncio, 'sleep', mock.AsyncMock()):
+            await rich_editor.styled_text(editor, '사라진 문구', {})
+        self.assertEqual(typed, ['사라진 문구', '사라진 문구'])
+        editor.page.mouse.click.assert_awaited()
+        self.assertIn('End', editor.page.keyboard.pressed)
+
+    async def test_text_that_landed_is_not_typed_twice(self):
+        frame = Frame({'bold': Button(False), 'italic': Button(False), 'underline': Button(False)})
+        editor = Editor(frame)
+        with mock.patch.object(rich_editor.asyncio, 'sleep', mock.AsyncMock()):
+            await rich_editor.styled_text(editor, '들어간 문구', {})
+        self.assertEqual(editor.typed, ['들어간 문구'])
+        editor.page.mouse.click.assert_not_awaited()
 
 
 if __name__ == '__main__':

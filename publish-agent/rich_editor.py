@@ -151,11 +151,28 @@ READ_BACK = r'''text => {
     }'''
 
 
-IN_BODY = r'''text => {
-      const norm=s=>s.replace(/\s+/g,' ').trim();
-      const wanted=norm(text);
-      return [...document.querySelectorAll('.se-component:not(.se-documentTitle) .se-text-paragraph')]
-        .some(p=>norm(p.textContent).includes(wanted));
+BODY_LEN = r'''() => [...document.querySelectorAll('.se-component:not(.se-documentTitle) .se-text-paragraph')]
+      .reduce((n, p) => n + p.textContent.length, 0)'''
+
+# 글자를 넣기 직전 캐럿이 있는 본문 문단의 순번(못 찾으면 -1).
+CARET_AT = r'''() => {
+      const body=[...document.querySelectorAll('.se-component:not(.se-documentTitle) .se-text-paragraph')];
+      const sel=document.getSelection(); const f=sel&&sel.focusNode;
+      if(!f) return -1;
+      const near=f.nodeType===1?f:f.parentElement;
+      const p=near&&near.closest('.se-text-paragraph');
+      return p?body.indexOf(p):-1;
+    }'''
+
+# 그 문단의 **마지막 글자 바로 뒤** 좌표(프레임 기준). 빈 문단이면 문단 자리.
+END_POINT = r'''(i) => {
+      const p=[...document.querySelectorAll('.se-component:not(.se-documentTitle) .se-text-paragraph')][i];
+      if(!p) return null;
+      p.scrollIntoView({block:'center'});
+      const r=document.createRange(); r.selectNodeContents(p);
+      const rects=[...r.getClientRects()].filter(x=>x.width||x.height);
+      const box=rects.length?rects[rects.length-1]:p.getBoundingClientRect();
+      return {x:Math.max(box.left+1, box.right-1), y:box.top+Math.min(box.height/2, 12)};
     }'''
 
 TOGGLES = [('b','bold','Control+b','굵게'), ('i','italic','Control+i','기울임'), ('u','underline','Control+u','밑줄')]
@@ -171,6 +188,28 @@ async def _read_back(frame, text):
         if actual:
             break
     return actual
+
+
+async def _refocus(editor, frame, index):
+    """글자가 본문에 안 들어갔다 — 캐럿을 놓쳤다. 쓰던 문단 끝을 다시 눌러 캐럿을 되돌린다.
+
+    2026-10-21 실측(platonmarketing): '작성 중인 글이 있습니다' 창을 닫은 직후 편집기가 다시
+    그려지며 캐럿이 빠졌고, 그 뒤로 친 글자는 어디에도 들어가지 않았다. 고객 화면의
+    '입력한 강조 문구가 본문에 표시되지 않았습니다'가 이 모양이다."""
+    point = await frame.evaluate(END_POINT, index) if index >= 0 else None
+    if not point:
+        await editor._refocus_body_end()
+        return
+    dx = dy = 0
+    if frame != editor.page.main_frame:
+        holder = await frame.frame_element()
+        box = await holder.bounding_box()
+        if box:
+            dx, dy = box['x'], box['y']
+    await editor.page.mouse.click(point['x'] + dx, point['y'] + dy)
+    await asyncio.sleep(.25)
+    await editor.page.keyboard.press('End')
+    await asyncio.sleep(.1)
 
 
 def _wrong_toggles(attrs, actual, in_quote):
@@ -194,8 +233,15 @@ async def _fix_toggles(editor, frame, text, attrs, actual, in_quote):
     for key, prop, shortcut, label in wrong:
         for _ in range(2):          # 섞여 있으면 첫 번째 누름에 '전부 켜짐'이 될 수 있다
             log.warning('"%s" 의 %s 이(가) 요청과 달라 글자를 골라 고칩니다', text.strip()[:20], label)
-            for _ in range(len(text)):
-                await keyboard.press('Shift+ArrowLeft')
+            # Shift 를 **누른 채로** ← 를 친다. 'Shift+ArrowLeft' 를 따로따로 누르면 네이버가 매번
+            # 고르기를 새로 시작해 한 글자만 골라진다(2026-10-21 실측: '굵은 문구' 중 '구'만 굵어졌다).
+            await keyboard.down('Shift')
+            try:
+                for _ in range(len(text)):
+                    await keyboard.press('ArrowLeft')
+            finally:
+                await keyboard.up('Shift')
+            await asyncio.sleep(.05)
             await keyboard.press(shortcut)
             await asyncio.sleep(.1)
             await keyboard.press('ArrowRight')      # 고른 것을 풀고 캐럿을 글 끝으로
@@ -267,6 +313,8 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
         if current != rgb(desired):
             if not await set_color(editor,desired,key == 'background'):
                 paste_needed = True
+    caret = await frame.evaluate(CARET_AT)
+    before = await frame.evaluate(BODY_LEN)
     if paste_needed:
         if sys.platform != 'win32':
             raise EditorError('사용자 지정 Word 색상은 Windows 실행기에서 지원합니다')
@@ -286,15 +334,15 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
     else:
         await editor._insert(text)
     actual = await _read_back(frame, text)
-    if not actual and paste_needed:
-        # 붙여넣기가 본문에 안 들어갔다. 어딘가 엉뚱한 곳에 들어갔으면 또 치면 글이 두 번
-        # 들어가므로 멈추고, 아무 데도 없으면 그냥 친다(색은 못 입혀도 글은 올린다).
-        if await frame.evaluate(IN_BODY, text):
-            raise EditorError(f'붙여 넣은 문구가 엉뚱한 자리에 들어갔습니다 — "{text.strip()[:30]}"')
-        log.warning('붙여넣기가 본문에 들어가지 않았습니다 — 색 없이 글자로 칩니다: "%s"', text.strip()[:20])
+    if not actual and await frame.evaluate(BODY_LEN) == before:
+        # 아무 글자도 안 들어갔다(캐럿을 놓쳤거나 붙여넣기가 안 먹었다). 쓰던 자리를 다시 눌러
+        # 글자로 친다 — 색은 못 입혀도 글은 올린다. 글자가 **어딘가 들어갔으면** 또 치지 않는다
+        # (두 번 들어간다) — 그때는 아래 확인이 막는다.
+        log.warning('글자가 본문에 들어가지 않았습니다 — 쓰던 자리를 다시 눌러 칩니다: "%s"', text.strip()[:20])
+        await _refocus(editor, frame, caret)
         await editor._insert(text)
         actual = await _read_back(frame, text)
-        colorless = True
+        colorless = paste_needed
     if verify and actual:
         actual = await _fix_toggles(editor, frame, text, attrs, actual, in_quote)
     if not verify:
