@@ -10,6 +10,12 @@ import { mediaPoolAPI } from '@/lib/api'
 import { errMsg } from '@/components/campaign/common'
 import { naverBlogId } from './blog-step'
 
+/** 목록에 보일 이름. 블로그 아이디로 저장한 것은 아이디 그대로, 병원 이름으로 저장한 것은 '병원 · 아이디'. */
+export function clientLabel(c: Client) {
+  const ids = c.blogs.map(b => b.blog_id)
+  return ids.length && !ids.includes(c.name) ? `${c.name} · ${ids.join(', ')}` : c.name
+}
+
 export function QuickAutomationSetup({ clients, onCreated, onCancel }: {
   clients: Client[]; onCreated: (campaign: Campaign) => void; onCancel?: () => void
 }) {
@@ -41,8 +47,11 @@ export function QuickAutomationSetup({ clients, onCreated, onCancel }: {
     try {
       let client = saved.current.client || hospital
       if (!client) {
-        setMessage('병원 정보를 저장합니다')
-        client = await campaignAPI.createClient({ name: name.trim(), diseases: subjects.split(',').map(s => s.trim()).filter(Boolean),
+        // 병원 이름은 적지 않아도 된다 — 블로그 아이디로 저장한다. 공용 블로그로 여러 병원의 글을
+        // 올리는 곳은 '병원'이 아니라 '블로그'가 단위다(2026-10-21 요청: "병원 등록을 없애고
+        // 블로그 아이디 명으로만 저장되게").
+        setMessage('블로그 정보를 저장합니다')
+        client = await campaignAPI.createClient({ name: name.trim() || cleanBlogId, diseases: subjects.split(',').map(s => s.trim()).filter(Boolean),
           treatments: [], regions: region.split(',').map(s => s.trim()).filter(Boolean), region_expand_level: 1,
           suffixes: [], min_volume_region: 20, min_volume_national: 100, forbidden_words: [] })
         saved.current.client = client
@@ -90,15 +99,19 @@ export function QuickAutomationSetup({ clients, onCreated, onCancel }: {
 
   return <Card className="mx-auto max-w-2xl p-6 sm:p-8">
     <form className="space-y-5" onSubmit={submit}>
-      <div><p className="text-xs font-medium text-primary">처음 한 번만 설정</p><h2 className="mt-2 text-xl font-semibold">어떤 병원의 블로그를 운영할까요?</h2><p className="mt-2 text-sm text-muted-foreground">키워드와 원고 형식은 진료 항목에 맞춰 자동으로 준비합니다.</p></div>
-      {!!clients.length && <div><Label htmlFor="setup-client">병원 선택</Label><select id="setup-client" className="mt-1 h-11 w-full rounded-lg border bg-background px-3" disabled={busy || !!saved.current.campaign || !!saved.current.client} value={clientId}
-        onChange={e => { setClientId(e.target.value); saved.current = {} }}><option value="">새 병원 등록</option>{clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>}
-      {!hospital && <>
-        <div><Label htmlFor="setup-name">병원 이름</Label><Input id="setup-name" required maxLength={100} placeholder="예: 서울봄의원" value={name} disabled={busy || !!saved.current.client} onChange={e => setName(e.target.value)} /></div>
-        <div><Label htmlFor="setup-subjects">진료 항목</Label><Input id="setup-subjects" required placeholder="예: 아토피, 습진, 여드름" value={subjects} disabled={busy || !!saved.current.client} onChange={e => setSubjects(e.target.value)} /><p className="mt-1 text-xs text-muted-foreground">쉼표로 구분하세요. 글의 주제를 찾는 기준으로 사용합니다.</p></div>
-        <div><Label htmlFor="setup-region">지역</Label><Input id="setup-region" placeholder="예: 강남, 역삼" value={region} disabled={busy || !!saved.current.client} onChange={e => setRegion(e.target.value)} /></div>
-      </>}
-      {!hasBlogs && <div><Label htmlFor="setup-blog">네이버 블로그 아이디</Label><Input id="setup-blog" required placeholder="예: abc123 또는 블로그 주소" value={blogId} disabled={busy || !!saved.current.blog} onChange={e => setBlogId(e.target.value)} /><p className="mt-1 text-xs text-muted-foreground">blog.naver.com/ 뒤에 있는 영어 아이디입니다. 블로그 주소를 통째로 붙여 넣어도 됩니다.<br />여러 병원이 같이 쓰는 공용 블로그라면 다른 병원에 넣은 아이디를 그대로 또 넣으셔도 됩니다. 로그인 정보는 먼저 등록한 곳에서 가져옵니다.</p></div>}
+      <div><p className="text-xs font-medium text-primary">처음 한 번만 설정</p><h2 className="mt-2 text-xl font-semibold">어떤 블로그를 운영할까요?</h2><p className="mt-2 text-sm text-muted-foreground">네이버 블로그 아이디만 넣으면 됩니다. 병원 정보는 필요할 때만 적으세요.</p></div>
+      {!!clients.length && <div><Label htmlFor="setup-client">등록된 블로그</Label><select id="setup-client" className="mt-1 h-11 w-full rounded-lg border bg-background px-3" disabled={busy || !!saved.current.campaign || !!saved.current.client} value={clientId}
+        onChange={e => { setClientId(e.target.value); saved.current = {} }}><option value="">새 블로그 등록</option>{clients.map(c => <option key={c.id} value={c.id}>{clientLabel(c)}</option>)}</select></div>}
+      {!hasBlogs && <div><Label htmlFor="setup-blog">네이버 블로그 아이디</Label><Input id="setup-blog" required placeholder="예: abc123 또는 블로그 주소" value={blogId} disabled={busy || !!saved.current.blog} onChange={e => setBlogId(e.target.value)} /><p className="mt-1 text-xs text-muted-foreground">blog.naver.com/ 뒤에 있는 영어 아이디입니다. 블로그 주소를 통째로 붙여 넣어도 됩니다.<br />공용 블로그를 또 넣으셔도 됩니다. 로그인 정보는 먼저 등록한 곳에서 가져옵니다.</p></div>}
+      {!hospital && <details className="rounded-lg border p-3">
+        <summary className="cursor-pointer text-sm font-medium">병원 정보 (선택)</summary>
+        <p className="mt-2 text-xs text-muted-foreground">AI 가 원고를 쓰게 할 때만 씁니다. 워드 원고를 올리는 데는 필요 없습니다. 비워 두면 블로그 아이디로 저장합니다.</p>
+        <div className="mt-3 space-y-3">
+          <div><Label htmlFor="setup-name">병원 이름</Label><Input id="setup-name" maxLength={100} placeholder="예: 서울봄의원" value={name} disabled={busy || !!saved.current.client} onChange={e => setName(e.target.value)} /></div>
+          <div><Label htmlFor="setup-subjects">진료 항목</Label><Input id="setup-subjects" placeholder="예: 아토피, 습진, 여드름" value={subjects} disabled={busy || !!saved.current.client} onChange={e => setSubjects(e.target.value)} /><p className="mt-1 text-xs text-muted-foreground">쉼표로 구분하세요.</p></div>
+          <div><Label htmlFor="setup-region">지역</Label><Input id="setup-region" placeholder="예: 강남, 역삼" value={region} disabled={busy || !!saved.current.client} onChange={e => setRegion(e.target.value)} /></div>
+        </div>
+      </details>}
       {hasBlogs && <p className="rounded-lg bg-primary/5 p-3 text-sm">등록된 정상 상태 블로그 {hospital?.blogs.filter(b => b.status === 'active').length}개를 연결합니다. 다음 화면에서 변경할 수 있습니다.</p>}
       {error && <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}<br />저장된 단계는 유지됩니다. 다시 시도하면 이어서 진행합니다.</p>}
       {message && <p role="status" className="text-sm">{message}</p>}

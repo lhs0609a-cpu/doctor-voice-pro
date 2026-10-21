@@ -171,7 +171,7 @@ export default function ClientsPage() {
 
   const remove = async () => {
     if (!selected) return
-    if (!confirm(`'${selected.name}' 병원을 삭제할까요? 블로그 계정·브리프·캠페인 정보도 함께 지워집니다.`)) return
+    if (!confirm(`'${selected.name}' 을(를) 삭제할까요?\n\n여기 연결된 블로그(${selected.blogs.map(b => b.blog_id).join(', ') || '없음'})로는 더 이상 글이 올라가지 않고, 대기 중인 예약은 취소됩니다.\n그 블로그를 계속 쓰려면 원스톱 자동화에서 블로그 아이디로 다시 등록하세요 — 로그인·카테고리는 그대로 가져옵니다.`)) return
     try {
       await campaignAPI.deleteClient(selected.id)
       const rest = clients.filter((c) => c.id !== selected.id)

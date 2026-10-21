@@ -97,7 +97,8 @@ async def keyword_expand(ctx: JobContext) -> dict:
         raise ValueError("캠페인을 찾을 수 없습니다")
     client = await ctx.db.get(Client, camp.client_id)
 
-    regions = p.get("regions") or (client.regions if client else []) or []
+    # regions=[] 은 '지역 없이'라는 뜻이다(키워드 직접 검색). 비었다고 병원 지역으로 채우면 안 된다.
+    regions = p["regions"] if p.get("regions") is not None else ((client.regions if client else []) or [])
     diseases = p.get("diseases") or (client.diseases if client else []) or []
     seeds = p.get("seeds") or []
     level = int(p.get("level", client.region_expand_level if client else 1) or 0)

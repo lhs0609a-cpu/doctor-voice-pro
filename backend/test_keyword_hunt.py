@@ -233,6 +233,16 @@ class QuotaHuntTests(HuntCase):
     async def test_without_seeds_the_clinic_subjects_are_used(self):
         _, expand_payload, _ = await self._run({})
         self.assertEqual(expand_payload['diseases'], ['아토피'])
+        self.assertNotIn('regions', expand_payload)          # 병원 지역 조합은 그대로 쓴다
+
+    async def test_asked_seeds_are_not_tied_to_the_clinic_regions(self):
+        """2026-10-21 요청: '산후보약'을 찾았는데 등록한 지역 때문에 '위례 산후보약' 같은 검색량 10짜리
+        지역 조합만 나왔다. 직접 넣은 키워드는 지역을 지어 붙이지 않고, 지역·전국을 같은 기준으로 거른다."""
+        _, expand_payload, seed_call = await self._run({'seeds': ['산후보약']})
+        self.assertEqual(expand_payload['regions'], [])
+        self.assertEqual(expand_payload['level'], 0)
+        self.assertEqual(expand_payload['min_volume_region'], expand_payload['min_volume_national'])
+        self.assertNotIn('강남 산후보약', seed_call.args[0])   # 등록 지역(강남)을 붙인 탐색어가 없다
 
     async def test_blank_seeds_are_ignored(self):
         _, expand_payload, _ = await self._run({'seeds': ['  ', '']})

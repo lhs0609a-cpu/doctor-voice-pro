@@ -380,13 +380,18 @@ async def keyword_hunt(ctx: JobContext) -> dict:
             Draft.keyword.isnot(None)))).scalars())
         known = list((await ctx.db.execute(select(CampaignKeyword.keyword).where(
             CampaignKeyword.campaign_id == campaign.id))).scalars())
-        topics = await _claude_topics(focus, client.regions or [], used + known,
+        # 직접 넣은 키워드가 있으면 등록해 둔 지역을 섞지 않는다. 섞으면 '산후보약'을 찾았는데
+        # '위례 산후보약'·'문정 산후보약' 같은 검색량 10짜리 지역 조합만 남았다(2026-10-21 요청:
+        # "산후보약 연관된 지역키워드가 모두 떴으면 … 지역 등록 때문에 그런 듯"). 지역이 붙은
+        # 연관어는 네이버가 알려 주는 대로 들어온다 — 우리가 지역을 지어내지 않을 뿐이다.
+        regions = [] if asked else (client.regions or [])
+        topics = await _claude_topics(focus, regions, used + known,
                                       want=max(30, target // 2))
         await ctx.progress(0, total, f"네이버 연관검색어·자동완성 수집 (주제 {len(topics)}개)")
         # 항목 자체와 '항목+접미어'를 모두 자동완성에 걸어 사용자가 실제로 치는 말을 긁는다.
         # 지역이 붙은 검색어는 이 조합에서만 나온다. '강남 아토피' 를 자동완성에 걸면
         # 네이버가 '강남 아토피 피부과', '강남 아토피 잘보는 곳' 을 돌려준다 — 내원 직전의 말이다.
-        near = [f"{r} {s}" for r in (client.regions or [])[:3] for s in focus]
+        near = [f"{r} {s}" for r in regions[:3] for s in focus]
         probes = list(dict.fromkeys(
             list(focus)
             + [f"{s} {suf}" for s in focus for suf in SEED_SUFFIXES if suf]
@@ -400,10 +405,17 @@ async def keyword_hunt(ctx: JobContext) -> dict:
             logger.warning("[발굴] 외부 씨앗 원천이 모두 비었다(Claude %d, 네이버 %d) — 진료 항목만으로 진행",
                            len(topics), len(naver))
         await ctx.progress(1, total, f"검색량 조회 (후보 {len(seeds)}개)")
+        free = {}
+        if asked:
+            # 지역 조합을 만들지 않고, 지역·전국 연관어를 같은 검색량 기준으로 거른다(전국 100 /
+            # 지역 20 으로 나누면 검색량 50짜리 전국 키워드는 버리고 10짜리 지역 조합만 남긴다).
+            floor = int(client.min_volume_region or 20)
+            free = {"regions": [], "level": 0, "min_volume_region": floor, "min_volume_national": floor}
         await jobs.keyword_expand(StageContext(ctx, {
             **p, "seeds": seeds, "diseases": focus,
             "suffixes": ["", "원인", "증상", "치료", "관리", "진료"],
             "max_candidates": min(1200, max(400, target * 4)), "include_related": True,
+            **free,
         }))
         await _tag_categories(ctx, campaign.id, client.regions or [], subjects)
         await mark("seed", {"seeded": len(seeds), "asked": asked})

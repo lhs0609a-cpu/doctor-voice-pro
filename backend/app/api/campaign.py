@@ -525,6 +525,16 @@ async def add_blog(client_id: str, body: BlogIn, current_user: User = Depends(ge
     # 공용 블로그는 목록에 같은 이름이 두 번 뜬다 — 어느 줄이 어느 병원인지 알 수 없다.
     # 별칭을 안 적었으면 병원 이름을 붙여 둔다.
     label = body.label or (f"{blog_id} ({client.name})" if twin else None)
+    # 지운 병원에 달려 있던 같은 블로그. 병원을 지운 뒤 블로그 아이디로 다시 등록하면 로그인·
+    # 카테고리·글 끝 링크를 처음부터 다시 넣어야 했다 — 그래서 사람들은 '병원을 지우면 안 된다'고
+    # 배웠다(2026-10-21: "닥터보이스 작업을 하려면 무조건 이렇게 등록을 해야하는 시스템"). 같은 블로그
+    # 이므로 그 줄에 적어 둔 것을 그대로 되살린다. 살아 있는 쌍둥이(twin)가 있으면 그쪽이 먼저다.
+    old = None
+    if twin is None:
+        old = (await db.execute(select(Blog).where(
+            Blog.user_id == _uid(current_user), func.lower(Blog.blog_id) == blog_id.lower())
+            .order_by(Blog.created_at.desc()).limit(1))).scalars().first()
+    twin = twin or old
     # 공용 블로그를 두 번째 병원에 붙이는 경우. 들어가는 곳은 **같은 블로그 한 개**이므로
     # 로그인·프록시·카테고리는 먼저 등록해 둔 줄에서 그대로 가져온다. 안 가져오면 로그인
     # 정보가 빈 줄이 생겨 실행기가 "로그인 필요"로 멈춘다 — 예약은 쌓이는데 한 건도 안 올라간다.
@@ -552,6 +562,12 @@ async def add_blog(client_id: str, body: BlogIn, current_user: User = Depends(ge
         place_label=(body.place_label or "").strip()[:100] or None,
         template_name=(body.template_name or "").strip()[:100] or None,
     )
+    if old is not None:
+        # 다시 등록한 같은 블로그 — 비워 둔 칸은 예전 값으로 채운다.
+        for field in ("header_text", "header_image_id", "header_link_url", "footer_link_url",
+                      "footer_link_label", "place_url", "place_label", "template_name", "default_category"):
+            if not getattr(b, field):
+                setattr(b, field, getattr(old, field))
     db.add(b)
     await db.commit()
     return _blog_out(b)
@@ -2722,6 +2738,12 @@ class AgentBlogSummary(BaseModel):
     retry_at: Optional[str] = None        # 가장 이른 다음 시도 시각(KST)
     retry_reason: Optional[str] = None    # 그 건이 실패한 이유
     working: int = 0
+    # 실행기가 '쓰는 블로그'를 가려내는 데 쓴다. 홈페이지에서 네이버 아이디·비밀번호를 넣어 둔
+    # 블로그(auto_login)와 사람이 [새로 읽기]를 누른 블로그(scan_requested)만 일이 없어도 연다.
+    # 예전에는 켜자마자 등록된 블로그를 **전부** 열어 창이 여러 개 뜨고 로그인이 한꺼번에 됐다
+    # (2026-10-21 요청: "현재 작업할 블로그만 뜨도록 … 앱에서 로그인 등록한 블로그만").
+    auto_login: bool = False
+    scan_requested: bool = False
 
 
 @router.get("/agent/summary", response_model=List[AgentBlogSummary])
@@ -2773,6 +2795,9 @@ async def agent_summary(current_user: User = Depends(get_current_user), db: Asyn
                                     # next_retry_at 은 UTC 로 적힌다 — 사람에게는 한국 시각으로.
                                     retry_at=(waits[0][0] + timedelta(hours=9)).isoformat(timespec="minutes") if waits else None,
                                     retry_reason=(waits[0][1] or None) if waits else None,
+                                    auto_login=bool(b.login_pw_enc),
+                                    # [예약 목록 새로 읽기]·[카테고리 새로 읽기] — 사람이 지금 보겠다고 한 것
+                                    scan_requested=bool(b.reservations_scan_requested_at or b.categories_scan_requested_at),
                                     wants_scan=bool(b.reservations_scan_requested_at or (stale and not give_up)),
                                     reservations_scanned_at=scanned.isoformat(timespec="minutes") if scanned else None,
                                     wants_categories=bool(b.categories_scan_requested_at) or not b.categories

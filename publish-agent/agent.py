@@ -138,6 +138,14 @@ def setup_logging(log_dir: Path, verbose: bool) -> None:
 
 
 # ---------------------------------------------------------------- 블로그 선택
+def _in_use(blog: Dict[str, Any]) -> bool:
+    """이 블로그를 지금 쓰고 있나. 서버가 auto_login 을 모르면(옛 서버) 예전처럼 쓴다고 본다."""
+    if "auto_login" not in blog:
+        return True
+    return bool((blog.get("pending") or 0) > 0 or (blog.get("blocked") or 0) > 0
+                or blog.get("auto_login") or blog.get("scan_requested"))
+
+
 def select_blogs(summary: List[Dict[str, Any]], want: Optional[str], *,
                  first_run: bool = False) -> List[Dict[str, Any]]:
     """--blog 가 있으면 라벨/네이버ID/blog_ref_id 일치 1개, 없으면 pending>0 이고 재시도 가능한 상태인 것 전부.
@@ -153,6 +161,11 @@ def select_blogs(summary: List[Dict[str, Any]], want: Optional[str], *,
         w = want.strip().lower()
         hit = [b for b in summary if w in {str(b.get("label", "")).lower(), str(b.get("naver_blog_id", "")).lower(), str(b.get("blog_ref_id", "")).lower()}]
         return hit[:1]
+    # **쓰는 블로그만** 연다. 올릴 글·확인할 글이 있거나, 홈페이지에 네이버 로그인을 넣어 뒀거나,
+    # 사람이 [새로 읽기]를 누른 블로그다. 예전에는 켜자마자 등록된 블로그를 전부 열어 창이 여러
+    # 개 뜨고 자동 로그인이 한꺼번에 됐다(2026-10-21 요청). 예약 목록이 오래됐다는 이유만으로
+    # 안 쓰는 블로그를 여는 것도 같은 소란이라 함께 막는다.
+    summary = [b for b in summary if _in_use(b)]
     if first_run:
         return [b for b in summary if (b.get("status") or "active") in RETRYABLE_BLOG_STATUS]
     # 대기 글이 있거나, 상태가 막혀 있는 블로그(로그인·보안확인)는 한 번 들여다본다.
@@ -162,7 +175,7 @@ def select_blogs(summary: List[Dict[str, Any]], want: Optional[str], *,
     return [b for b in summary
             if (b.get("status") or "active") in RETRYABLE_BLOG_STATUS
             and ((b.get("pending") or 0) > 0 or (b.get("status") or "active") != "active"
-                 or b.get("wants_scan"))]
+                 or b.get("wants_scan") or b.get("scan_requested"))]
 
 
 # ---------------------------------------------------------------- 잡 1건

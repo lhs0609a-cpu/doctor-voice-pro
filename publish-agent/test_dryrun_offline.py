@@ -993,6 +993,28 @@ class TestSelectBlogs(unittest.TestCase):
              {"blog_ref_id": "b2", "naver_blog_id": "bbb", "label": "서브", "status": "active", "pending": 0}]
         self.assertEqual([b["blog_ref_id"] for b in agent.select_blogs(s, "서브", first_run=True)], ["b2"])
 
+    def test_only_blogs_in_use_are_opened(self):
+        """2026-10-21 요청: "앱을 여는 순간 작업했던 블로그들이 한꺼번에 자동로그인되면서 창이 여러개
+        뜹니다 … 현재 작업할 블로그만(앱에서 로그인 등록한 블로그만)"."""
+        import agent
+
+        def row(ref, **over):
+            base = {"blog_ref_id": ref, "naver_blog_id": ref, "label": ref, "status": "active", "pending": 0,
+                    "blocked": 0, "auto_login": False, "scan_requested": False, "wants_scan": True}
+            base.update(over)
+            return base
+
+        s = [row("saved", auto_login=True),          # 홈페이지에 네이버 로그인을 넣어 둔 블로그
+             row("busy", pending=2),                   # 올릴 글이 있는 블로그
+             row("asked", scan_requested=True),        # 사람이 [새로 읽기]를 누른 블로그
+             row("idle"),                              # 예전에 쓰던 블로그 — 열지 않는다
+             row("idle-locked", status="login_required")]
+        first = [b["blog_ref_id"] for b in agent.select_blogs(s, None, first_run=True)]
+        self.assertEqual(first, ["saved", "busy", "asked"])
+        # 예약 목록이 오래됐다는 것(wants_scan)만으로 안 쓰는 블로그를 열지 않는다.
+        later = [b["blog_ref_id"] for b in agent.select_blogs(s, None)]
+        self.assertEqual(later, ["saved", "busy", "asked"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

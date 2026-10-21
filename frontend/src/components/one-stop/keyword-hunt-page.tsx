@@ -6,12 +6,11 @@
 // 그래서 발행 마법사에서 빼내어 따로 둔다. 찾은 결과는 원스톱 화면에도 그대로 보인다.
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, Plus } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import Link from 'next/link'
-import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { PageHeader } from '@/components/app-shell/page-header'
-import { EmptyState } from '@/components/app-shell/ui-kit'
+import { FreeKeywordSearch } from './free-keyword-search'
 import { campaignAPI, type Campaign, type Client, type Keyword } from '@/lib/campaign-api'
 import { errMsg } from '@/components/campaign/common'
 import { KeywordStep } from './keyword-step'
@@ -70,24 +69,27 @@ export function KeywordHuntPage() {
     <div className="mx-auto max-w-3xl space-y-4 pb-10">
       <PageHeader
         title="키워드 찾기"
-        description="우리 블로그로 뚫리는 키워드를 찾아 둡니다. 여기서 찾아 두면 원스톱 화면에서 원고를 올릴 때 그대로 보입니다."
+        description="자유 검색은 병원 등록 없이 연관 키워드를 검색량과 함께 보여 줍니다. 블로그를 등록했다면 아래에서 우리 블로그로 뚫리는 키워드도 찾을 수 있습니다."
       />
 
       {loading ? (
         <div className="flex items-center gap-2 py-10 text-sm" role="status">
           <Loader2 className="h-4 w-4 animate-spin" />불러오는 중…
         </div>
-      ) : campaigns.length === 0 ? (
-        <EmptyState
-          icon={<Plus className="h-8 w-8" />}
-          title="운영할 병원이 아직 없습니다"
-          description="원스톱 자동화에서 병원과 블로그를 먼저 등록해 주세요."
-          action={<Button asChild><Link href="/dashboard/one-stop">원스톱 자동화로 가기</Link></Button>}
-        />
       ) : (
         <>
+          {/* 병원 등록 없이 쓰는 검색이 맨 위다(2026-10-21 요청: "키워드 찾기는 병원 등록을 연동 해제"). */}
+          <FreeKeywordSearch campaigns={campaigns} />
+
+          {campaigns.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              블로그를 등록하면 아래에 &lsquo;우리 블로그로 뚫리는 키워드&rsquo; 발굴도 열립니다.{' '}
+              <Link href="/dashboard/one-stop" className="underline">원스톱 자동화에서 블로그 등록</Link>
+            </p>
+          ) : <>
+          <h2 className="pt-2 text-base font-semibold">우리 블로그 기준 발굴</h2>
           {campaigns.length > 1 && (
-            <select aria-label="운영할 병원" className="h-10 w-full rounded-lg border bg-background px-3 text-sm"
+            <select aria-label="운영할 블로그" className="h-10 w-full rounded-lg border bg-background px-3 text-sm"
               value={selected} onChange={e => setSelected(e.target.value)}>
               {campaigns.map(c => <option key={c.id} value={c.id}>{c.client_name || c.name} · {c.name}</option>)}
             </select>
@@ -104,6 +106,7 @@ export function KeywordHuntPage() {
           {keywords.length > 0 && (
             <KeywordSummary keywords={keywords} campaignId={selected} onChanged={() => { void reload() }} />
           )}
+          </>}
         </>
       )}
     </div>

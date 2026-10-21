@@ -78,6 +78,25 @@ class DeletedClientTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await db.get(PublishJob, 'j-gone')).status, 'cancelled')
             self.assertEqual((await db.get(PublishJob, 'j-keep')).status, 'queued')  # 남은 병원은 그대로
 
+    async def test_registering_the_same_blog_again_brings_back_its_login(self):
+        """2026-10-21: 병원을 지운 뒤 블로그만 다시 쓰려면 로그인·카테고리·링크를 처음부터 넣어야 했다 —
+        "작업을 하려면 무조건 이렇게 등록을 해야 하는 시스템". 같은 블로그이므로 예전 값을 되살린다."""
+        async with self.sessions() as db:
+            old = await db.get(Blog, 'b-gone')
+            old.login_id, old.login_pw_enc = 'gone-login', 'encrypted-secret'
+            old.categories = [{'id': '7', 'name': '위례'}]
+            old.footer_link_url = 'https://example.com/booking'
+            await db.commit()
+        await self.client.delete('/clients/gone')
+
+        added = await self.client.post('/clients/keep/blogs', json={'blog_id': 'blog-gone'})
+        self.assertEqual(added.status_code, 200, added.text)
+        body = added.json()
+        self.assertEqual(body['login_id'], 'gone-login')
+        self.assertTrue(body['has_password'])
+        self.assertEqual(body['categories'], [{'id': '7', 'name': '위례'}])
+        self.assertEqual(body['footer_link_url'], 'https://example.com/booking')
+
     async def test_a_failed_post_waiting_for_its_retry_is_told_apart_from_a_refusal(self):
         """2026-10-21 kibundang: 재시도 시각을 기다리는 실패 건을 pending 으로만 세서, 실행기가
         "[조치 필요] 대기 1건을 서버가 내주지 않았습니다"라고 잘못 알렸다."""

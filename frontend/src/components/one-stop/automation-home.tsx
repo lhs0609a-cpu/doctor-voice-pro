@@ -113,6 +113,8 @@ export function AutomationHome() {
   const launcher = useLauncherStatus()
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [clients, setClients] = useState<Client[]>([])
+  // listClients 는 지우지 않은 것만 준다 — 거기 없으면 지운 항목의 캠페인이다.
+  const isLive = (c: Campaign) => clients.some(h => h.id === c.client_id)
   const [selected, setSelected] = useState('')
   const [campaign, setCampaign] = useState<Campaign | null>(null)
   const [client, setClient] = useState<Client | null>(null)
@@ -202,7 +204,7 @@ export function AutomationHome() {
     launcher.online
       ? (launcher.running ? `발행 대기 중${launcher.version ? ` · v${launcher.version}` : ''}` : '켜졌지만 쉬는 중 — 시작을 눌러야 합니다')
       : '홈페이지 연결이 확인되지 않았습니다',
-    !hasCampaign ? '병원과 블로그를 등록하세요'
+    !hasCampaign ? '블로그 아이디를 등록하세요'
       : !ready ? '불러오는 중…'
         : login.length ? `네이버 로그인 필요: ${login.map(b => b.label || b.blog_id).join(', ')}`
           : blogs.length ? `${client?.name} · 블로그 ${blogs.length}개` : '올릴 블로그를 고르세요',
@@ -253,7 +255,7 @@ export function AutomationHome() {
       ? <div className="space-y-3">
           <BlogStep campaign={campaign} client={client} setCampaign={setCampaign} onChanged={() => { void reloadClient() }} />
           <Button variant="ghost" size="sm" onClick={() => { setCreating(true); setOpened(2) }}>
-            <Plus className="mr-1 h-4 w-4" />다른 병원 추가
+            <Plus className="mr-1 h-4 w-4" />다른 블로그 추가
           </Button>
         </div>
       : null
@@ -291,9 +293,11 @@ export function AutomationHome() {
       ) : (
         <>
           {hasCampaign && campaigns.length > 1 && (
-            <select aria-label="운영할 병원" className="h-10 w-full rounded-lg border bg-background px-3 text-sm"
+            <select aria-label="운영할 블로그" className="h-10 w-full rounded-lg border bg-background px-3 text-sm"
               value={selected} onChange={e => { setSelected(e.target.value); setOpened(null); setShowSetup(false) }}>
-              {campaigns.map(c => <option key={c.id} value={c.id}>{c.client_name || c.name} · {c.name}</option>)}
+              {/* 지운 병원의 것은 뒤로 보내고 표시한다 — 멀쩡한 것처럼 골라 두면 실행기가 안 가져간다. */}
+              {[...campaigns].sort((a, b) => Number(!isLive(a)) - Number(!isLive(b))).map(c =>
+                <option key={c.id} value={c.id}>{c.client_name || c.name} · {c.name}{isLive(c) ? '' : ' (삭제됨)'}</option>)}
             </select>
           )}
           {readError && <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">현황을 갱신하지 못했습니다. {readError}</p>}
@@ -301,18 +305,20 @@ export function AutomationHome() {
           {/* 지운 병원의 캠페인. 실행기는 이 병원의 블로그를 받지 않으므로 여기 걸린 글은 올라가지 않는다. */}
           {client && client.id === campaign?.client_id && !client.active && (
             <div role="alert" className="space-y-2 rounded-xl bg-warning-soft p-4 text-sm text-warning">
-              <p><b className="block">'{client.name}' 은(는) 삭제된 병원입니다.</b>
-                실행기는 지운 병원의 블로그로 글을 올리지 않습니다 — 크롬 창도 열리지 않고 &quot;처리할 블로그 없음&quot;만 나옵니다.
-                계속 쓰실 병원이면 되살려 주세요. 블로그·로그인·카테고리는 그대로 돌아옵니다(삭제 때 취소된 예약은 다시 걸어야 합니다).</p>
+              <p><b className="block">'{client.name}' 은(는) 지운 항목입니다.</b>
+                지운 항목의 블로그로는 글이 올라가지 않습니다. 둘 중 하나를 고르세요.<br />
+                · 이대로 쓰려면 <b>[되살리기]</b> — 블로그·로그인·카테고리가 그대로 돌아옵니다.<br />
+                · 블로그만 쓰려면 <b>[다른 블로그 추가]</b>에서 블로그 아이디만 다시 넣으세요 — 로그인·카테고리·글 끝 링크는 예전 것을 그대로 가져옵니다.<br />
+                (지울 때 취소된 예약은 다시 걸어야 합니다)</p>
               <Button size="sm" disabled={!!acting} onClick={async () => {
                 setActing('restore'); setRestoreMsg('')
                 try {
                   setClient(await campaignAPI.restoreClient(client.id))
-                  setRestoreMsg(`'${client.name}' 을(를) 되살렸습니다. 실행기가 다음 확인(1분 이내) 때 이 병원의 블로그를 크롬으로 엽니다.`)
+                  setRestoreMsg(`'${client.name}' 을(를) 되살렸습니다. 실행기가 다음 확인(1분 이내) 때 이 블로그를 크롬으로 엽니다.`)
                   void loadList()
                 } catch (e) { setRestoreMsg(errMsg(e)) }
                 finally { setActing('') }
-              }}>병원 되살리기</Button>
+              }}>되살리기</Button>
             </div>
           )}
           {restoreMsg && <p role="status" className="rounded-lg bg-success-soft p-3 text-sm">{restoreMsg}</p>}
