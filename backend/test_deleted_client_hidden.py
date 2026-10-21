@@ -78,6 +78,20 @@ class DeletedClientTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await db.get(PublishJob, 'j-gone')).status, 'cancelled')
             self.assertEqual((await db.get(PublishJob, 'j-keep')).status, 'queued')  # 남은 병원은 그대로
 
+    async def test_a_failed_post_waiting_for_its_retry_is_told_apart_from_a_refusal(self):
+        """2026-10-21 kibundang: 재시도 시각을 기다리는 실패 건을 pending 으로만 세서, 실행기가
+        "[조치 필요] 대기 1건을 서버가 내주지 않았습니다"라고 잘못 알렸다."""
+        async with self.sessions() as db:
+            job = await db.get(PublishJob, 'j-keep')
+            job.status, job.attempts, job.max_attempts = 'failed', 1, 3
+            job.next_retry_at = datetime.utcnow() + timedelta(minutes=10)
+            job.error = '기울임을(를) 빼 달라고 했는데'
+            await db.commit()
+        row = next(r for r in (await self.client.get('/agent/summary')).json() if r['naver_blog_id'] == 'blog-keep')
+        self.assertEqual((row['pending'], row['retrying'], row['working']), (1, 1, 0))
+        self.assertIn('기울임', row['retry_reason'])
+        self.assertTrue(row['retry_at'])
+
     async def test_a_restored_hospital_is_handed_back_and_visited_on_the_next_round(self):
         """2026-10-21 신고: 지운 병원의 캠페인이 웹에서는 '정상'으로 보이는데 실행기는 그 블로그를
         받지 못해 크롬 창이 안 열렸다. 되살리면 실행기가 다시 받고, 대기 글이 없어도 다음 바퀴에

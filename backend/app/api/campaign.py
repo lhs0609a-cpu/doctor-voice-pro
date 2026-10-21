@@ -2715,6 +2715,13 @@ class AgentBlogSummary(BaseModel):
     reservations_scanned_at: Optional[str] = None
     # 카테고리 목록을 읽어 보내야 하는가(한 번도 없거나 오래됨). 화면의 카테고리 선택이 이걸로 채워진다.
     wants_categories: bool = False
+    # pending 가운데 **지금은 내줄 수 없는 것**. 실패해 다음 시도 시각을 기다리는 건(retrying)과
+    # 실행기가 지금 쥐고 있는 건(working). claim 은 이것들을 내주지 않는데 pending 에는 들어 있어,
+    # 실행기가 "대기 1건을 서버가 내주지 않았습니다 [조치 필요]"라고 잘못 알렸다(2026-10-21 kibundang).
+    retrying: int = 0
+    retry_at: Optional[str] = None        # 가장 이른 다음 시도 시각(KST)
+    retry_reason: Optional[str] = None    # 그 건이 실패한 이유
+    working: int = 0
 
 
 @router.get("/agent/summary", response_model=List[AgentBlogSummary])
@@ -2746,6 +2753,14 @@ async def agent_summary(current_user: User = Depends(get_current_user), db: Asyn
         hold_reason = (await db.execute(select(PublishJob.error).where(
             PublishJob.blog_ref_id == b.id, PublishJob.status == "queued", PublishJob.error.isnot(None),
         ).order_by(PublishJob.scheduled_at.asc()).limit(1))).scalar()
+        # claim(protocol.eligible)과 같은 잣대로 '지금은 못 내주는 대기'를 따로 센다.
+        now = datetime.utcnow()
+        waits = (await db.execute(select(PublishJob.next_retry_at, PublishJob.error).where(
+            PublishJob.blog_ref_id == b.id, PublishJob.status == "failed",
+            PublishJob.attempts < PublishJob.max_attempts, PublishJob.next_retry_at > now,
+        ).order_by(PublishJob.next_retry_at.asc()))).all()
+        working = (await db.execute(select(func.count()).select_from(PublishJob).where(
+            PublishJob.blog_ref_id == b.id, PublishJob.status.in_(["assigned", "publishing"])))).scalar() or 0
         scanned = b.reservations_scanned_at
         stale = not scanned or (datetime.utcnow() - scanned) > timedelta(hours=RESERVATION_STALE_HOURS)
         # 한 번 못 읽은 블로그는 계속 못 읽는다(주소를 모르는 것이지 일시적인 실패가 아니다).
@@ -2754,6 +2769,10 @@ async def agent_summary(current_user: User = Depends(get_current_user), db: Asyn
         out.append(AgentBlogSummary(blog_ref_id=b.id, naver_blog_id=b.blog_id, label=b.label or b.blog_id, status=b.status or "active", status_reason=b.status_reason,
                                     pending=len(rows), next_at=rows[0][0].isoformat(timespec="minutes") if rows else None, login_id=b.login_id,
                                     blocked=int(blocked), stalled=int(stalled), hold_reason=hold_reason,
+                                    retrying=len(waits), working=int(working),
+                                    # next_retry_at 은 UTC 로 적힌다 — 사람에게는 한국 시각으로.
+                                    retry_at=(waits[0][0] + timedelta(hours=9)).isoformat(timespec="minutes") if waits else None,
+                                    retry_reason=(waits[0][1] or None) if waits else None,
                                     wants_scan=bool(b.reservations_scan_requested_at or (stale and not give_up)),
                                     reservations_scanned_at=scanned.isoformat(timespec="minutes") if scanned else None,
                                     wants_categories=bool(b.categories_scan_requested_at) or not b.categories

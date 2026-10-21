@@ -78,6 +78,24 @@ class GuidanceTests(unittest.TestCase):
         self.assertEqual(level, ACTION)
         self.assertIn('서브', text)
 
+    def test_a_failed_post_waiting_for_its_retry_is_not_an_alarm(self):
+        """2026-10-21 kibundang: 실패해 다음 시도 시각을 기다리는 1건을 서버가 (당연히) 안 줬는데
+        "[조치 필요] 대기 1건을 서버가 내주지 않았습니다"라고 알렸다. 손댈 것이 없다."""
+        level, text = blog_status(blog(pending=1, retrying=1, retry_at='2026-10-21T13:48',
+                                       retry_reason='"일주일에" 에 기울임을(를) 빼 달라고 했는데'), idle=True)
+        self.assertEqual(level, OK)
+        self.assertIn('13:48', text)
+        self.assertIn('기울임', text)          # 왜 실패했는지는 보여 준다
+
+    def test_a_post_being_uploaded_right_now_is_not_an_alarm(self):
+        level, _ = blog_status(blog(pending=1, working=1), idle=True)
+        self.assertEqual(level, OK)
+
+    def test_an_unexplained_refusal_is_still_an_alarm(self):
+        """기다리는 건을 빼고도 남는 대기가 있으면 그건 진짜로 봐야 한다."""
+        level, text = blog_status(blog(pending=2, retrying=1, retry_at='2026-10-21T13:48'), idle=True)
+        self.assert_actionable(level, text)
+
     def test_no_blogs_is_actionable_not_a_dead_end(self):
         level, text = overall([])
         self.assert_actionable(level, text)

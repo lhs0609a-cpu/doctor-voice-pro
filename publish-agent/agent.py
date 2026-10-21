@@ -905,6 +905,13 @@ async def run_once(client: ServerClient, pool: BrowserPool, args: argparse.Names
             # 블로그가 하나뿐이면 대상 지정 없는 예전 큐도 이 블로그 몫으로 본다.
             await process_blog(client, pool, b, args, claim_unassigned=len(summary) <= 1)
         except Exception as e:  # noqa: BLE001
+            if isinstance(e, ServerError) and e.status >= 500:
+                # 서버 쪽 문제다 — 크롬은 멀쩡하다. 창을 닫으면 사람 눈에는 실행기가 고장 난 것처럼
+                # 보이고, 다음 바퀴에 다시 열며 네이버 로그인까지 새로 한다(2026-10-21 신고: "멈춰
+                # 있다가 창이 저절로 닫히네요" — 서버가 메모리 부족으로 잠깐 죽어 HTTP 502 였다).
+                log.error("블로그 '%s' 처리 중 서버 오류: %s — 크롬 창은 그대로 두고 다음 확인 때 이어 갑니다",
+                          b.get("label"), e)
+                continue
             log.error("블로그 '%s' 처리 중 오류: %s\n%s", b.get("label"), e, traceback.format_exc())
             await pool.close((b.get("login_id") or "").strip() or b["naver_blog_id"])
     return len(blogs)

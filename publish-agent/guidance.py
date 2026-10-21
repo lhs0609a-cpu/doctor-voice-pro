@@ -66,6 +66,19 @@ def blog_status(blog: Dict[str, Any], *, idle: bool = False) -> Tuple[str, str]:
     if pending and reason:
         return ACTION, f"[{ACTION}] '{label}' — 대기 {pending}건이 멈춰 있습니다. {reason}"
 
+    # 서버가 안 준 대기가 전부 '다시 시도할 시각을 기다리는 실패 건'이거나 '지금 올리고 있는 건'
+    # 이면 고장이 아니다. 예전에는 이것도 [조치 필요]로 알려, 사람이 [발행 현황]을 뒤져도 손댈
+    # 것이 없었다(2026-10-21 kibundang: "대기 1건을 서버가 내주지 않았습니다").
+    retrying, working = _int(blog, "retrying"), _int(blog, "working")
+    if pending and idle and retrying + working >= pending:
+        if retrying:
+            when = (blog.get("retry_at") or "").replace("T", " ")[11:16]
+            why = (blog.get("retry_reason") or "").strip()
+            return OK, (f"[{OK}] '{label}' — 실패한 글 {retrying}건을 "
+                        f"{when + ' 에 ' if when else '잠시 뒤 '}알아서 다시 올려 봅니다."
+                        + (f" (지난번 실패 사유: {why[:120]})" if why else ""))
+        return OK, f"[{OK}] '{label}' — 대기 {pending}건은 지금 올리는 중입니다."
+
     if pending and idle:
         return ACTION, (
             f"[{ACTION}] '{label}' — 대기 {pending}건을 서버가 내주지 않았습니다. "

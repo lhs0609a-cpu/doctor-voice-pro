@@ -23,6 +23,13 @@ class ServerError(RuntimeError):
 RENEW_BEFORE_SECONDS = 300
 DEFAULT_TOKEN_SECONDS = 1800
 
+# 서버가 잠깐 내려가 있는 동안의 응답. 앱까지 닿지 못한 것이라(Fly 프록시가 대신 답한다)
+# 같은 요청을 다시 보내도 두 번 처리되지 않는다. 2026-10-21 13:29: 서버가 메모리 부족으로
+# 죽었다가 약 20초 뒤 다시 떴는데, 그 사이 claim 한 번이 HTTP 502 로 떨어져 실행기가 그
+# 블로그를 통째로 접고 크롬 창까지 닫았다. 다시 뜰 때까지 기다렸다 보내면 사람 눈에는 아무 일도 없다.
+TRANSIENT_STATUS = (502, 503, 504)
+RETRY_WAITS = (3, 10, 20)
+
 
 class ServerClient:
     """토큰은 login() 에서 받아 Authorization: Bearer 로 보낸다.
@@ -76,11 +83,29 @@ class ServerClient:
         except Exception:  # noqa: BLE001
             return r.text[:300]
 
+    def _send(self, method: str, url: str, json: Any) -> httpx.Response:
+        """한 번 보낸다. 서버가 잠깐 내려가 있으면(TRANSIENT_STATUS·연결 거절) 기다렸다 다시.
+
+        읽기 시간 초과는 다시 보내지 않는다 — 서버가 그 요청을 아직 처리하고 있을 수 있다."""
+        for wait in (*RETRY_WAITS, None):
+            try:
+                r = self._http.request(method, url, json=json, headers=self._headers())
+            except httpx.ConnectError as error:
+                if wait is None:
+                    raise
+                log.warning("서버에 닿지 않습니다(%s) — %d초 뒤 다시 보냅니다", error, wait)
+            else:
+                if r.status_code not in TRANSIENT_STATUS or wait is None:
+                    return r
+                log.warning("서버가 잠시 응답하지 않습니다(HTTP %d) — %d초 뒤 다시 보냅니다", r.status_code, wait)
+            time.sleep(wait)
+        raise AssertionError("unreachable")
+
     def _request(self, method: str, path: str, *, json: Any = None, _retry: bool = True) -> Any:
         url = self.api + path
         if _retry:
             self._renew_if_stale()
-        r = self._http.request(method, url, json=json, headers=self._headers())
+        r = self._send(method, url, json)
         if r.status_code == 401 and _retry and self._reauth:
             # 미리 갱신하므로 여기까지 오는 일은 드물다(서버 재시작·시계 차이 등).
             log.debug("토큰이 거절되어 다시 로그인합니다")

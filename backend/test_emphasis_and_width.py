@@ -86,7 +86,7 @@ class EmphasisTest(unittest.TestCase):
 
 def gif(width, height, frames=3) -> bytes:
     # 장면이 서로 달라야 한다 — 똑같은 장면은 Pillow 가 한 장으로 합쳐 버린다.
-    images = [Image.new('RGB', (width, height), (30 * i, 90, 200 - 30 * i)).convert('P')
+    images = [Image.new('RGB', (width, height), (30 * (i % 7), 90, 200 - 30 * (i % 7))).convert('P')
               for i in range(frames)]
     buf = io.BytesIO()
     images[0].save(buf, 'GIF', save_all=True, append_images=images[1:], duration=80, loop=0)
@@ -116,6 +116,12 @@ class WidenTest(unittest.TestCase):
         Image.new('RGB', (80, 80), 'white').save(buf, 'PNG')
         data, _ = widen(buf.getvalue(), 'image/png')
         self.assertEqual(Image.open(io.BytesIO(data)).width, 80)
+
+    def test_a_long_animation_is_sent_as_is_rather_than_exhausting_the_server(self):
+        """2026-10-21: 위례 원고를 내주다 서버(1GB)가 메모리 부족으로 죽었다. 프레임이 많은 GIF 를
+        통째로 펼쳐 넓히면 수백 MB 를 먹는다 — 넓히기는 모양일 뿐이라 원본을 그대로 보낸다."""
+        original = gif(400, 225, frames=200)        # 넓히면 800×450×200 = 7200만 픽셀
+        self.assertEqual(widen(original, 'image/gif'), (original, 'image/gif'))
 
     def test_a_broken_file_is_passed_through_instead_of_failing_the_post(self):
         self.assertEqual(widen(b'not an image', 'image/png'), (b'not an image', 'image/png'))

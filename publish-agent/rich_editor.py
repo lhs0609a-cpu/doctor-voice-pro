@@ -165,6 +165,7 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
     verify = bool(text.strip())
     frame = await editor.frame()
     from naver_editor import EditorError
+    unsure = []         # 단추 모양으로는 들어갔는지 확인하지 못한 서식
     for key, name, shortcut, label in [('b','bold','Control+b','굵게'),
                                        ('i','italic','Control+i','기울임'),
                                        ('u','underline','Control+u','밑줄')]:
@@ -176,15 +177,20 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
         await editor.page.keyboard.press(shortcut)
         if await toggle_changed(button, selected):
             continue
-        # 단축키를 편집기가 못 받았다. 선택창이 떠 있을 때만 손을 댄다 — 창이 없는데 다시
-        # 누르면 서식이 거꾸로 들어간다. (2026-10-20: "기울임을 빼 달라고 했는데 편집기에는
-        # 그렇게 들어가지 않았습니다" 로 글 한 건이 막혔다.)
-        if not await blocked(editor):
-            continue
-        await unblock(editor, f'{label} 서식')
-        if await toggled(button) != wanted:
-            await editor.page.keyboard.press(shortcut)
-    paste_needed = False
+        # 단축키가 먹었는지 단추 모양으로 확인하지 못했다. 다시 누르면 서식이 거꾸로 들어갈 수
+        # 있다(2026-10-20). 선택창이 떠 있으면 치우고 한 번 더 보되, 그래도 모르면 **누르지 않고**
+        # 서식을 글자에 직접 입혀 붙여 넣는다(아래 paste). 2026-10-21 위례 원고: 링크 카드 뒤에
+        # 글감 창이 떠 있다가 닫힌 자리에서 "기울임을 빼 달라고 했는데 편집기에는 그렇게
+        # 들어가지 않았습니다"로 글 한 건이 또 막혔다.
+        if await blocked(editor):
+            await unblock(editor, f'{label} 서식')
+            if await toggle_changed(button, not wanted):
+                continue
+        unsure.append(label)
+    paste_needed = bool(unsure) and sys.platform == 'win32'
+    if paste_needed:
+        log.warning('%s 서식이 툴바에 반영됐는지 확인하지 못했습니다 — 서식을 입힌 채 붙여 넣습니다: "%s"',
+                    '·'.join(unsure), text.strip()[:20])
     for key, name, default in [('color','font-color','#000000'),('background','background-color','#ffffff')]:
         if in_quote and key == 'background' and not attrs.get(key):
             continue
