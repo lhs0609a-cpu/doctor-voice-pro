@@ -355,6 +355,13 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
     # 공백만 있는 조각(워드가 남긴 빈칸)은 눈에 보이는 서식이 없다. 확인을 요구하면
     # 글 전체가 '강조 문구가 본문에 표시되지 않았습니다'로 막힌다(2026-09-28 실측).
     verify = bool(text.strip())
+    # **강조를 하나도 요청하지 않은 조각은 서식을 고치려 들지 않는다.**
+    # 2026-10-22 고객 확인: "워드 원고에 강조 문구 색상 다 빼고 닥터보이스에도 강조 문구를
+    # 다 빼 보았는데 그대로 똑같은 오류가 뜨네요". 요청한 강조가 없어도, 편집기에 남아 있던
+    # 기울임 때문에 '요청과 다르다'가 되어 **고치기가 돌았고** 그 고치기가 글을 쪼갰다.
+    # 요청한 것이 없으면 고칠 것도 없다 — 툴바를 끄는 데까지만 하고 본문은 건드리지 않는다.
+    # (어긋난 자리는 적어 둔다. 블로그에서 손으로 고치는 편이 빠르다는 것이 고객 판단이다.)
+    wants_format = any(attrs.get(key) for key in ('b', 'i', 'u', 'color', 'background'))
     frame = await editor.frame()
     from naver_editor import EditorError
     unsure = []         # 단추 모양으로는 들어갔는지 확인하지 못한 서식
@@ -440,7 +447,7 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
         await editor._insert(text)
         actual = await _read_back(frame, text)
         colorless = paste_needed
-    if verify and actual:
+    if verify and actual and wants_format:
         actual = await _fix_toggles(editor, frame, text, attrs, actual, in_quote)
     if not verify:
         return

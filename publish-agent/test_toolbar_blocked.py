@@ -133,6 +133,8 @@ class FakeFrame:
             return 0
         if 'indexOf' in script:         # CARET_AT
             return -1
+        if 'tail.length' in script:     # TAIL_LEN — 꼬리에 붙어 있다고 본다
+            return len(arg or '')
         self.reads += 1
         return [dict(self.style)] if self.reads >= self.visible_from else None
 
@@ -286,3 +288,34 @@ class SafeFixTests(unittest.IsolatedAsyncioTestCase):
                            [dict(frame.style)], False)
         self.assertEqual(pressed.count('ArrowLeft'), 21 * 2, '찾았으면 그 글자만 골라 고친다')
         self.assertIn('Control+i', pressed)
+
+
+class NoEmphasisRequestedTests(unittest.IsolatedAsyncioTestCase):
+    """강조를 하나도 요청하지 않았으면 서식을 고치려 들지 않는다.
+
+    2026-10-22 고객 확인: "워드 원고에 강조 문구 색상 다 빼고 닥터보이스 프로에도 설정할
+    강조 문구를 다 빼보았는데 그대로 똑같은 오류가 뜨네요." — 요청한 강조가 없어도 편집기에
+    남아 있던 기울임 때문에 '요청과 다르다'가 되어 **고치기가 돌았고**, 그 고치기가 글을
+    쪼갰다. 요청한 것이 없으면 본문을 건드릴 이유가 없다.
+    """
+
+    async def test_no_keys_are_pressed_to_repair_a_span_that_asked_for_nothing(self):
+        from rich_editor import styled_text
+
+        italic = {'quote': False, 'bold': False, 'italic': True, 'underline': False,
+                  'color': 'rgb(0, 0, 0)', 'background': 'rgb(255, 255, 255)'}
+        frame = FakeFrame(visible_from=1, style=italic)     # 편집기는 기울임으로 그렸고
+        editor = TypedTextEditor(frame)
+        await styled_text(editor, '일주일에  두세 번  두통약을 먹습니다', {})   # 요청은 없음
+        self.assertNotIn('ArrowLeft', editor.pressed, '본문을 고치려 들지 않는다')
+        self.assertTrue(getattr(editor, 'format_notes', []), '어긋난 자리는 적어 둔다')
+
+    async def test_a_span_that_did_ask_for_emphasis_is_still_repaired(self):
+        from rich_editor import styled_text
+
+        plain = {'quote': False, 'bold': False, 'italic': False, 'underline': False,
+                 'color': 'rgb(0, 0, 0)', 'background': 'rgb(255, 255, 255)'}
+        frame = FakeFrame(visible_from=1, style=plain)      # 기울임이 안 들어갔고
+        editor = TypedTextEditor(frame)
+        await styled_text(editor, '강조할 문구', {'i': True})          # 요청은 기울임
+        self.assertIn('ArrowLeft', editor.pressed, '요청한 서식은 그대로 고친다')

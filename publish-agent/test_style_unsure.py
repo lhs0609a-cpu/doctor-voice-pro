@@ -128,21 +128,34 @@ class UnsureToggleTest(unittest.IsolatedAsyncioTestCase):
             await rich_editor.styled_text(editor, text, attrs)
 
     async def test_a_toggle_that_does_not_show_is_fixed_on_the_typed_text(self):
-        # 기울임 단추가 켜져 있는데(남아 있던 상태) 끄라고 했다. 단축키는 눌러도 단추가 그대로고,
-        # 친 글자는 실제로 기울어져 들어갔다.
-        frame = Frame({'bold': Button(False), 'italic': Button(True), 'underline': Button(False)}, italic=True)
+        # 기울임을 **넣어 달라고** 했는데 단추가 꺼진 채이고, 친 글자도 안 기울어져 들어갔다.
+        # 요청한 서식이므로 친 글자를 골라 고친다.
+        frame = Frame({'bold': Button(False), 'italic': Button(False), 'underline': Button(False)}, italic=False)
         editor = Editor(frame)
         pasted = []
         text = '일주일에 두세 번 두통약을 먹습니다'
-        await self.run_styled(editor, frame, text, {}, pasted)
+        await self.run_styled(editor, frame, text, {'i': True}, pasted)
 
         pressed = editor.page.keyboard.pressed
         self.assertEqual(pasted, [])                              # 붙여 넣지 않는다
         self.assertEqual(editor.typed, [text])                    # 그대로 친다
         self.assertEqual(pressed.count('ArrowLeft'), len(text))   # 친 글자만, Shift 를 누른 채로 고른다
         self.assertLess(pressed.index('down Shift'), pressed.index('ArrowLeft'))
-        self.assertEqual(pressed.count('Control+i'), 2)           # 처음 한 번 + 고른 글자에 한 번
-        self.assertFalse(frame.italic)
+        self.assertTrue(frame.italic)
+
+    async def test_leftover_italic_is_not_chased_when_nothing_was_asked_for(self):
+        """2026-10-22 고객 요청: "강조 관련된 건 모두 빼 보면 어떨까요".
+
+        요청한 강조가 없으면 편집기에 남아 있던 기울임을 **본문을 건드려 가며 고치지 않는다**.
+        그 고치기가 글을 쪼개 놓았고, 블로그에서 손으로 고치는 편이 빠르다는 것이 고객 판단이다."""
+        frame = Frame({'bold': Button(False), 'italic': Button(True), 'underline': Button(False)}, italic=True)
+        editor = Editor(frame)
+        text = '일주일에 두세 번 두통약을 먹습니다'
+        await self.run_styled(editor, frame, text, {}, [])
+
+        self.assertEqual(editor.typed, [text])                    # 글자는 그대로 들어가고
+        self.assertNotIn('ArrowLeft', editor.page.keyboard.pressed)   # 본문은 건드리지 않는다
+        self.assertTrue(any('기울임' in note for note in getattr(editor, 'format_notes', [])))
 
     async def test_typed_text_that_came_out_right_is_left_alone(self):
         frame = Frame({'bold': Button(False), 'italic': Button(True), 'underline': Button(False)}, italic=False)
