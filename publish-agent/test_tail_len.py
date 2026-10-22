@@ -1,17 +1,20 @@
-"""고칠 글자를 고를 때 **보이는 글자 수**로 센다 — 실제 브라우저로 잰다.
+"""고칠 글자를 고를 때 몇 글자를 세는가 — **네이버 실물 기준**.
 
-2026-10-22 실측. 워드 원고에 흔한 연속 공백이 편집기에서 한 칸으로 합쳐지면, 보낸 글자
-수(len(text))만큼 뒤로 고를 때 그 차이만큼 **앞 문구까지** 골라진다:
+2026-10-22 실물 측정(글쓰기 화면, 로그인한 프로필). 네이버 편집기에서 ← 는 **원래 글자
+하나씩** 움직인다. 워드 원고의 연속 공백도 **각각 캐럿 자리를 차지한다** — 편집기가
+공백을 살려 두기 때문이다.
 
-    보낸 것   '일주일에  두세 번  두통약을 먹습니다'   (21자)
-    골라진 것 '문구일주일에 두세 번 두통약을 먹습니다'  ← 앞 문구의 '문구' 가 딸려 왔다
+    보낸 것        '앞문구' + '일주일에  두세 번  두통약을 먹습니다'(21자)
+    19번 ← 로 고침 ['앞문구일주'=기울임]['일에  두세 번  두통약을 먹습니다'=보통]
+                   ← '일주' 두 자를 놓쳐 앞쪽만 기울임이 남았다
+    21번 ← 로 고침 ['앞문구'=기울임]['일주일에 … 먹습니다'=보통]   ← 정확
 
-그 상태로 Ctrl+I 를 누르면 앞 문구의 기울임까지 함께 뒤집혀, 고치려던 문구가 되레 기울어
-나온다 — 위례·kibundang 의 "기울임을(를) 빼 달라고 했는데 편집기에는 그렇게 들어가지
-않았습니다" 가 이것이다.
+**합성 contenteditable 로 재면 반대 결론이 난다**(거기서는 연속 공백이 합쳐져 캐럿이
+건너뛴다). 한때 '보이는 글자 수'로 세게 고쳤다가 실물에서 되돌렸다(1.7.13 → 1.7.18).
+여기서는 TAIL_LEN 이 **화면에 찍힌 그대로의 글자 수**를 돌려주는지만 본다.
 
     python test_tail_len.py
-브라우저가 없으면 건너뛴다(계산이 아니라 실제 캐럿 움직임을 보는 테스트라서).
+브라우저가 없으면 건너뛴다.
 """
 from __future__ import annotations
 
@@ -74,17 +77,22 @@ class TailLengthTests(unittest.TestCase):
                          f'{text!r} 를 고르려다 {picked!r} 가 골라졌다(센 글자 {counted})')
         return counted
 
-    def test_a_plain_sentence_is_picked_as_it_is(self):
-        self.assertEqual(self.picks_exactly('보통 문장입니다'), 8)
+    def counted(self, text):
+        """TAIL_LEN 이 센 글자 수. 고르기 결과는 합성 화면 기준이라 보지 않는다."""
+        counted, _ = asyncio.run(select_back(text))
+        return counted
 
-    def test_collapsed_double_spaces_do_not_eat_into_the_previous_run(self):
-        """워드 원고의 연속 공백 — 고치지 않으면 앞 문구를 건드린다."""
+    def test_a_plain_sentence_counts_as_it_was_sent(self):
+        self.assertEqual(self.counted('보통 문장입니다'), len('보통 문장입니다'))
+
+    def test_double_spaces_still_count_one_each(self):
+        """네이버는 연속 공백을 살려 두고 ← 가 하나씩 지난다 — 합쳐 세면 앞 글자를 놓친다."""
         text = '일주일에  두세 번  두통약을 먹습니다'
-        self.assertEqual(self.picks_exactly(text), 19)      # 보낸 21자, 화면 19자
+        self.assertEqual(self.counted(text), 21)
         self.assertEqual(len(text), 21)
 
-    def test_a_trailing_space_becomes_one_caret_stop(self):
-        self.assertEqual(self.picks_exactly('줄 끝 공백 '), 7)   # nbsp 는 한 자리다
+    def test_a_trailing_space_is_counted_even_when_it_became_nbsp(self):
+        self.assertEqual(self.counted('줄 끝 공백 '), len('줄 끝 공백 '))
 
 
 if __name__ == '__main__':

@@ -225,14 +225,16 @@ TAIL_LEN = r'''(text) => {
       let p=near&&near.closest('.se-text-paragraph');
       if(!p||!body.includes(p)) p=[...body].reverse().find(q=>norm(q.textContent).endsWith(wanted));
       if(!p) return 0;
-      // ← 는 **보이는 자리** 단위로 움직인다. DOM 에는 공백 두 칸이 그대로 있어도 캐럿은
-      // 한 번에 지나간다 — 그래서 '세는 단위'도 보이는 글자여야 한다(nbsp 는 한 자리를
-      // 차지하므로 합치지 않는다).
-      const visual=s=>s.replace(/[^\S\u00a0]+/g, ' ').length;
+      // 네이버에서 ← 는 **원래 글자 하나씩** 움직인다. 연속 공백도 각각 캐럿 자리를
+      // 차지한다(편집기가 공백을 살려 두기 때문 — 2026-10-22 실물 측정).
+      //   보낸 21자 / 공백을 합쳐 19자로 세고 19번 ← → '일주' 두 자를 놓쳤다
+      //   그 결과 앞쪽 두 자만 기울임이 남아 '서식이 요청과 다릅니다' 가 그대로 났다
+      // 그래서 **화면에 찍힌 그대로의 글자 수**를 돌려준다. 보통은 보낸 글자 수와 같고,
+      // 편집기가 글자를 바꿔 넣었을 때만(끝 공백 → nbsp 등) 달라진다.
       const full=p.textContent;
       for(let n=1;n<=full.length;n++){
         const tail=full.slice(full.length-n);
-        if(norm(tail)===wanted) return visual(tail);
+        if(norm(tail)===wanted) return tail.length;
         if(norm(tail).length>wanted.length+6) break;    // 지나쳤다
       }
       return 0;
