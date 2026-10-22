@@ -283,6 +283,15 @@ def _wrong_toggles(attrs, actual, in_quote):
     return wrong
 
 
+async def _has_selection(frame):
+    """지금 고른 글자가 있나. 못 읽으면 '없다'로 친다(없는 쪽이 안전하다)."""
+    try:
+        return bool(await frame.evaluate(
+            "() => { const s = document.getSelection(); return !!(s && String(s).length); }"))
+    except Exception:       # noqa: BLE001
+        return False
+
+
 async def _fix_toggles(editor, frame, text, attrs, actual, in_quote):
     """방금 넣은 글자의 굵게·기울임·밑줄이 틀렸으면, 그 글자만 뒤로 골라 단축키로 고친다.
 
@@ -317,7 +326,11 @@ async def _fix_toggles(editor, frame, text, attrs, actual, in_quote):
             await asyncio.sleep(.05)
             await keyboard.press(shortcut)
             await asyncio.sleep(.1)
-            await keyboard.press('ArrowRight')      # 고른 것을 풀고 캐럿을 글 끝으로
+            # **고른 것이 있을 때만** 푼다. 빈 선택에서 ArrowRight 는 '푸는' 게 아니라
+            # 한 칸 앞으로 가고, 문단 끝이면 **다음 문단으로 넘어간다** — 그러면 뒤따르는
+            # 글이 엉뚱한 문단에 끼어든다(2026-10-22 실측, 고객 화면의 섞인 글이 이것이다).
+            if await _has_selection(frame):
+                await keyboard.press('ArrowRight')      # 고른 것을 풀고 캐럿을 글 끝으로
             actual = await _read_back(frame, text) or actual
             if not any(k == key for k, *_ in _wrong_toggles(attrs, actual, in_quote)):
                 break

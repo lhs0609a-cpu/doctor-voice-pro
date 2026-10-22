@@ -89,3 +89,52 @@ class TailLengthTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+@unittest.skipUnless(browser_available(), 'Chromium 이 없으면 건너뜀')
+class CaretDriftTests(unittest.TestCase):
+    """고른 것이 없을 때 ArrowRight 를 누르면 캐럿이 **다음 문단으로 넘어간다**.
+
+    2026-10-22 실측. 고객 화면에 올라간 글이 이렇게 섞여 있었다:
+        “일주일에 두세 번 두통약을 먹습니다. 먹으면 괜찮아지는데 계속
+        약을 자주 드시게 되면 … *이러는 게 맞나 싶어서요.* 신흥동한의원을 알아보고 있습니다.”
+    뒤 문구가 앞 문단이 아니라 **다음 문단**에 끼어들었다. 서식을 고친 뒤 고르기가 비어
+    있는데도 ArrowRight 를 눌러 캐럿이 밀려난 것이다.
+    """
+
+    ROOT = ("data:text/html,<meta charset=utf-8><div id=root contenteditable>"
+            "<div class='se-component se-text'><p class='se-text-paragraph' id=p1>첫 문단</p></div>"
+            "<div class='se-component se-text'><p class='se-text-paragraph' id=p2>둘째 문단</p></div>"
+            "</div>")
+
+    def where_text_lands(self, selected: bool):
+        from rich_editor import _has_selection
+
+        async def run():
+            from playwright.async_api import async_playwright
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(headless=True)
+                page = await browser.new_page()
+                await page.goto(self.ROOT)
+                await page.click('#p1')
+                await page.keyboard.press('End')
+                if selected:
+                    await page.keyboard.down('Shift')
+                    for _ in range(2):
+                        await page.keyboard.press('ArrowLeft')
+                    await page.keyboard.up('Shift')
+                if await _has_selection(page):          # ← 고친 규칙
+                    await page.keyboard.press('ArrowRight')
+                await page.keyboard.insert_text('이어지는 글')
+                landed = await page.evaluate(
+                    "() => document.getElementById('p1').textContent")
+                await browser.close()
+                return landed
+        return asyncio.run(run())
+
+    def test_text_keeps_going_in_the_same_paragraph_after_a_fix(self):
+        self.assertIn('이어지는 글', self.where_text_lands(selected=True))
+
+    def test_an_empty_selection_does_not_push_the_caret_into_the_next_paragraph(self):
+        """여기가 핵심 — 예전에는 이 경우에 글이 다음 문단으로 끼어들었다."""
+        self.assertIn('이어지는 글', self.where_text_lands(selected=False))
