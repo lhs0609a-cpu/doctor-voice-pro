@@ -85,6 +85,19 @@ BUTTON_NAMES = {
 }
 
 
+def with_format_notes(editor: Any, message: str) -> str:
+    """올라간 글에 손볼 자리가 있으면 결과 한 줄 뒤에 붙인다.
+
+    2026-10-22 요청: "오류 뜨는 부분은 넘어가면서 예약발행 / 임시저장 되게 … 오류 뜬 부분은
+    저희가 수기로 고쳐서 바로 발행 걸겠습니다". 글은 올라가되 **어디를 손봐야 하는지**는
+    남아야 한다 — 안 그러면 모양이 틀린 글이 조용히 나간다."""
+    notes = list(getattr(editor, "format_notes", None) or [])
+    if not notes:
+        return message
+    head = f"서식 {len(notes)}곳이 요청과 다릅니다(글은 올라갔습니다. 네이버에서 직접 고쳐 주세요)"
+    return " · ".join(filter(None, [message, head, " / ".join(notes[:5])]))[:900]
+
+
 def plain_reason(error: Exception) -> str:
     """브라우저가 내놓은 영어 오류를 사람이 읽을 한 줄로 바꾼다."""
     text = str(error).strip()
@@ -187,6 +200,11 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
 
     title = job.get("title") or ""
     clicked_publish = False
+    # 서식이 어긋난 자리를 모아 발행 결과에 적어 준다(글은 그대로 올린다 — 2026-10-22 요청).
+    try:
+        editor.format_notes = []
+    except Exception:  # noqa: BLE001
+        pass
     try:
         # 1) 예약 시각부터 검증 — 화면을 건드리기 전에 걸러낸다
         action = job.get("finalAction") or "schedule"
@@ -256,7 +274,7 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
                 return JobResult(ok=False, uncertain=True, message=(out.message if out else "임시저장 결과 없음"))
             # drafted: 네이버에 임시저장까지만 했다. 발행은 병원이 직접 한다 —
             # 서버가 공개 확인(RSS)을 태우지 않도록 예약 성공과 구분해서 알린다.
-            return JobResult(ok=True, drafted=True, message=out.message)
+            return JobResult(ok=True, drafted=True, message=with_format_notes(editor, out.message))
 
         # 5) 발행 레이어: 공개/검색/카테고리/태그
         await editor.open_publish_layer()
@@ -302,13 +320,14 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
                         f"(전 {reserved_before if reserved_before is not None else '?'}건 → 후 {after}건). "
                         f"네이버 예약 목록을 확인하세요"))
                 log.info("예약 확인: %s건 → %s건", reserved_before, after)
-                return JobResult(ok=True, message=out.message)
+                return JobResult(ok=True, message=with_format_notes(editor, out.message))
             from urllib.parse import urlparse
             parsed = urlparse(out.url or '')
             import re
             match = re.fullmatch(rf"/{re.escape(expected)}/([0-9]+)/?", parsed.path)
             receipt_id = match.group(1) if parsed.scheme == 'https' and parsed.hostname == 'blog.naver.com' and match else None
-            return JobResult(ok=True, url=out.url, message=out.message, receipt_id=receipt_id)
+            return JobResult(ok=True, url=out.url, message=with_format_notes(editor, out.message),
+                             receipt_id=receipt_id)
         return JobResult(ok=False, uncertain=bool(out.uncertain), message=out.message)
 
     except ScheduleError as e:

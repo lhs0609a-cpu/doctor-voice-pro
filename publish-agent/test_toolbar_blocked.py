@@ -7,6 +7,7 @@
 색은 모양일 뿐인데 그것 때문에 원고가 통째로 떨어지면 안 된다.
 """
 import unittest
+from types import SimpleNamespace
 
 from rich_editor import blocked, press_toolbar, unblock
 
@@ -102,3 +103,133 @@ class PlainReasonTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class FakeToolbarItem:
+    """꺼져 있는 서식 단추 / 없는 색 표시칸."""
+
+    async def count(self):
+        return 0
+
+    async def get_attribute(self, name, timeout=None):
+        return ''
+
+
+class FakeFrame:
+    """편집기에서 읽어 오는 것만 흉내 낸다 — 본문 길이와 읽어 본 서식."""
+
+    def __init__(self, visible_from=99, style=None):
+        self.reads = 0
+        self.visible_from = visible_from
+        self.style = style or {'quote': False, 'bold': False, 'italic': False,
+                               'underline': False, 'color': 'rgb(0, 0, 0)',
+                               'background': 'rgb(255, 255, 255)'}
+
+    def locator(self, selector):
+        return FakeToolbarItem()
+
+    async def evaluate(self, script, arg=None):
+        if 'reduce' in script:          # BODY_LEN
+            return 0
+        if 'indexOf' in script:         # CARET_AT
+            return -1
+        self.reads += 1
+        return [dict(self.style)] if self.reads >= self.visible_from else None
+
+
+class TypedTextEditor(FakeEditor):
+    """글자를 받아 두는 가짜 편집기."""
+
+    def __init__(self, frame, layers=()):
+        super().__init__(layers)
+        self._frame = frame
+        self.typed = []
+        self.pressed = []
+        self.timeline = []          # 친 글자와 누른 키를 **순서대로**
+        self.page = SimpleNamespace(keyboard=SimpleNamespace(
+            press=self._press, down=self._noop, up=self._noop))
+
+    async def _noop(self, *a, **k):
+        return None
+
+    async def _press(self, key):
+        self.pressed.append(key)
+        self.timeline.append(('key', key))
+
+    async def frame(self):
+        return self._frame
+
+    async def _insert(self, text):
+        self.typed.append(text)
+        self.timeline.append(('text', text))
+
+    async def _refocus_body_end(self):
+        return None
+
+
+class KeepGoingTests(unittest.IsolatedAsyncioTestCase):
+    """서식이 어긋나도 글은 올린다 — 2026-10-22 요청.
+
+    "오류 뜨는 부분은 넘어가면서 예약발행 / 임시저장 되게 해주실 수 있을까요?? 오류 뜬 부분은
+    저희가 수기로 고쳐서 바로 발행 걸겠습니다! (지금은 오류가 뜨면 이제까지 작업한 것들이
+    아예 삭제되어버리네요..!)"
+    """
+
+    async def test_a_wrong_italic_is_written_down_instead_of_throwing_the_post_away(self):
+        from rich_editor import styled_text
+
+        italic = {'quote': False, 'bold': False, 'italic': True, 'underline': False,
+                  'color': 'rgb(0, 0, 0)', 'background': 'rgb(255, 255, 255)'}
+        frame = FakeFrame(visible_from=1, style=italic)       # 편집기는 기울임으로 그렸는데
+        editor = TypedTextEditor(frame)
+        await styled_text(editor, '일주일에 두세 번 두통약을 먹습니다', {})   # 요청은 기울임 없음
+        notes = getattr(editor, 'format_notes', [])
+        self.assertTrue(notes, '글은 올리되 손볼 자리는 남겨야 한다')
+        self.assertIn('기울임', notes[0])
+
+    async def test_the_published_result_says_what_to_fix_by_hand(self):
+        from agent import with_format_notes
+
+        editor = SimpleNamespace(format_notes=['"두통약" — 기울임을(를) 빼 달라고 했는데'])
+        message = with_format_notes(editor, '예약 등록됨')
+        self.assertIn('예약 등록됨', message)
+        self.assertIn('서식 1곳', message)
+        self.assertIn('직접 고쳐', message)
+
+    async def test_a_clean_post_says_nothing_extra(self):
+        from agent import with_format_notes
+
+        self.assertEqual(with_format_notes(SimpleNamespace(), '예약 등록됨'), '예약 등록됨')
+
+
+class UnreadableToolbarTests(unittest.IsolatedAsyncioTestCase):
+    """단추를 못 읽는다고 원고를 버리지 않는다 (2026-10-22 위례:
+    "네이버 편집기에서 '굵게' 단추를 제때 누르지 못했습니다")."""
+
+    async def test_an_unreadable_button_reads_as_unknown_not_an_error(self):
+        from rich_editor import toggled
+
+        class Gone:
+            async def get_attribute(self, name, timeout=None):
+                raise RuntimeError(f'Timeout {timeout}ms exceeded. waiting for locator("button")')
+
+        self.assertIsNone(await toggled(Gone()))
+
+    async def test_an_unknown_button_is_not_pressed_blindly(self):
+        from rich_editor import styled_text
+
+        class UnreadableFrame(FakeFrame):
+            def locator(self, selector):
+                if 'data-name="bold"' in selector:
+                    class Gone:
+                        async def get_attribute(self, name, timeout=None):
+                            raise RuntimeError('Timeout')
+                    return Gone()
+                return FakeToolbarItem()
+
+        frame = UnreadableFrame(visible_from=1)
+        editor = TypedTextEditor(frame)
+        await styled_text(editor, '여름에도 손발이 시리다면', {'b': True})
+        # 글자부터 친다 — 상태를 모르는 채 단축키를 먼저 누르면 서식이 거꾸로 들어간다.
+        self.assertEqual(editor.timeline[0], ('text', '여름에도 손발이 시리다면'))
+        self.assertTrue(getattr(editor, 'format_notes', []), '못 고치면 적어 두고 글은 올린다')

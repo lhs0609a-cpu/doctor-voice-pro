@@ -21,7 +21,8 @@ class Button:
     def __init__(self, on):
         self.on = on
 
-    async def get_attribute(self, name):
+    async def get_attribute(self, name, timeout=None):
+        # 진짜 locator 는 timeout 을 받는다. 못 읽을 때를 '모른다'로 넘기려고 짧게 준다.
         return 'se-is-selected' if self.on else ''
 
 
@@ -159,9 +160,10 @@ class UnsureToggleTest(unittest.IsolatedAsyncioTestCase):
         frame = Frame({'bold': Button(False), 'italic': Button(False), 'underline': Button(False)}, landed=True)
         editor = Editor(frame)
         pasted = []
-        with self.assertRaises(Exception):      # 가짜 편집기는 색을 안 입히므로 색 확인에서 걸린다
-            await self.run_styled(editor, frame, '빨간 문구', {'color': '#ff0000'}, pasted)
-        self.assertEqual(editor.typed, [])
+        await self.run_styled(editor, frame, '빨간 문구', {'color': '#ff0000'}, pasted)
+        self.assertEqual(editor.typed, [])      # 들어갔으면 또 치지 않는다
+        # 색이 요청과 달라도 글은 막지 않는다 — 적어 두고 올린다(2026-10-22 요청).
+        self.assertTrue(any('color' in note for note in getattr(editor, 'format_notes', [])))
 
 
 class LostCaretTest(unittest.IsolatedAsyncioTestCase):

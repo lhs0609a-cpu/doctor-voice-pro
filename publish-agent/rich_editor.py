@@ -56,18 +56,52 @@ async def press_toolbar(editor, button, where):
         return False
 
 
+TOGGLE_READ_MS = 1500   # 단추 상태는 금방 읽혀야 한다. 못 읽으면 '모른다'로 넘어간다.
+
+
 async def toggled(button):
-    """툴바 단추가 켜져 있나(굵게·기울임·밑줄)."""
-    return 'se-is-selected' in (await button.get_attribute('class') or '')
+    """툴바 단추가 켜져 있나(굵게·기울임·밑줄). **못 읽으면 None — 모른다는 뜻.**
+
+    예전에는 여기서 브라우저 기본 대기(15초)를 다 쓰고 터졌다. 단추가 덮였거나 네이버가
+    화면을 바꾼 날, 그 한 줄 때문에 원고가 통째로 '손봐야 할 글'로 떨어졌다
+    (2026-10-22 위례: "'굵게' 단추를 제때 누르지 못했습니다").
+    모를 때는 **누르지 않는다** — 넣은 뒤 읽어 보고 고치는 길(_fix_toggles)이 따로 있다."""
+    try:
+        klass = await button.get_attribute('class', timeout=TOGGLE_READ_MS)
+    except Exception:       # noqa: BLE001
+        return None
+    return 'se-is-selected' in (klass or '')
 
 
 async def toggle_changed(button, before):
     """방금 누른 것이 먹혔나. 편집기가 단추 모양을 바꾸는 데 한 박자 걸린다."""
     for _ in range(4):
         await asyncio.sleep(.06)
-        if await toggled(button) != before:
+        now = await toggled(button)
+        if now is None:
+            return False        # 모르면 '안 바뀜'으로 쳐서 뒤에서 고치게 한다
+        if now != before:
             return True
     return False
+
+
+def note_problem(editor, what: str) -> None:
+    """글은 올리되, 사람이 손봐야 할 자리를 적어 둔다.
+
+    2026-10-22 요청: "오류 뜨는 부분은 넘어가면서 예약발행 / 임시저장 되게 해주실 수
+    있을까요?? 오류 뜬 부분은 저희가 수기로 고쳐서 바로 발행 걸겠습니다
+    (지금은 오류가 뜨면 이제까지 작업한 것들이 아예 삭제되어버리네요)."
+    서식 하나가 어긋났다고 다 쓴 원고를 버리면, 그때까지의 작업이 통째로 사라진다."""
+    notes = getattr(editor, 'format_notes', None)
+    if notes is None:
+        notes = []
+        try:
+            editor.format_notes = notes
+        except Exception:       # noqa: BLE001  가짜 편집기 등 못 붙이는 경우
+            return
+    log.warning('서식 확인 필요(글은 그대로 올립니다): %s', what)
+    if what not in notes:
+        notes.append(what)
 
 
 def rgb(hex_color):
@@ -272,6 +306,11 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
         button = frame.locator(f'button[data-name="{name}"]')
         selected = await toggled(button)
         wanted = bool(attrs.get(key))
+        if selected is None:
+            # 단추를 아예 못 읽었다(덮였거나 네이버가 화면을 바꿨다). 찍어 누르면 서식이
+            # 거꾸로 들어간다 — 그냥 치고 나서 읽어 보고 고친다.
+            unsure.append(label)
+            continue
         if wanted == selected:
             continue
         await editor.page.keyboard.press(shortcut)
@@ -351,17 +390,22 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
         raise EditorError('입력한 강조 문구가 본문에 표시되지 않았습니다')
     # 어디가 틀렸는지 못 적으면, 받는 사람은 원고 어디를 고쳐야 하는지 알 수 없다 —
     # 화면에는 이 문장이 그대로 '손봐야 할 글'의 이유로 뜬다(2026-10-02).
+    # **여기서 글을 막지 않는다.** 글자는 다 들어갔고 모양만 다른 것이다. 막으면 다 쓴 원고를
+    # 통째로 버리고 다음 차례에 처음부터 다시 쓴다 — 사람 눈에는 작업이 삭제되는 것으로 보인다.
+    # 2026-10-22 요청: "오류 뜨는 부분은 넘어가면서 예약발행 / 임시저장 되게 … 오류 뜬 부분은
+    # 저희가 수기로 고쳐서 바로 발행 걸겠습니다". 그래서 적어만 두고 올린다
+    # (발행 결과에 '서식 N곳 확인 필요'로 따라붙는다).
     where = text.strip()[:30]
     for style in actual:
         if style.get('quote') != in_quote:
-            raise EditorError(f'일반 본문과 인용구 위치가 요청한 구조와 다릅니다 — "{where}"')
+            note_problem(editor, f'"{where}" — 인용구 위치가 요청과 다릅니다')
         for key, prop, name in [('b','bold','굵게'),('i','italic','기울임'),('u','underline','밑줄')]:
             if bool(attrs.get(key)) != style[prop] and not (style.get('quote') and not attrs.get(key)):
                 asked = '넣어 달라고' if attrs.get(key) else '빼 달라고'
-                raise EditorError(f'"{where}" 에 {name}을(를) {asked} 했는데 편집기에는 그렇게 들어가지 않았습니다')
+                note_problem(editor, f'"{where}" — {name}을(를) {asked} 했는데 그대로 들어가지 않았습니다')
         for key in ('color','background'):
             if attrs.get(key) and style[key] != rgb(attrs[key]) and not colorless:
-                raise EditorError(f'"{where}" 의 {key} 적용 값이 요청한 색상과 다릅니다')
+                note_problem(editor, f'"{where}" — {key} 색이 요청과 다릅니다')
 
 
 async def insert_rich_blocks(editor, blocks):
