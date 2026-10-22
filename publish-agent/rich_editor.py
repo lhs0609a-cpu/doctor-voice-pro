@@ -283,15 +283,6 @@ def _wrong_toggles(attrs, actual, in_quote):
     return wrong
 
 
-async def _has_selection(frame):
-    """지금 고른 글자가 있나. 못 읽으면 '없다'로 친다(없는 쪽이 안전하다)."""
-    try:
-        return bool(await frame.evaluate(
-            "() => { const s = document.getSelection(); return !!(s && String(s).length); }"))
-    except Exception:       # noqa: BLE001
-        return False
-
-
 async def _fix_toggles(editor, frame, text, attrs, actual, in_quote):
     """방금 넣은 글자의 굵게·기울임·밑줄이 틀렸으면, 그 글자만 뒤로 골라 단축키로 고친다.
 
@@ -326,11 +317,13 @@ async def _fix_toggles(editor, frame, text, attrs, actual, in_quote):
             await asyncio.sleep(.05)
             await keyboard.press(shortcut)
             await asyncio.sleep(.1)
-            # **고른 것이 있을 때만** 푼다. 빈 선택에서 ArrowRight 는 '푸는' 게 아니라
-            # 한 칸 앞으로 가고, 문단 끝이면 **다음 문단으로 넘어간다** — 그러면 뒤따르는
-            # 글이 엉뚱한 문단에 끼어든다(2026-10-22 실측, 고객 화면의 섞인 글이 이것이다).
-            if await _has_selection(frame):
-                await keyboard.press('ArrowRight')      # 고른 것을 풀고 캐럿을 글 끝으로
+            # 고른 것을 풀고 캐럿을 글 끝으로.
+            # **여기에 '고른 것이 있을 때만' 같은 조건을 달지 말 것.** 네이버 편집기는 글자를
+            # 숨은 iframe(input_buffer)으로 받고 **자기 선택 모델**을 쓴다 — 실제로 글자가
+            # 골라져 있어도 document.getSelection() 은 언제나 비어 있다(2026-10-22 실물 측정).
+            # 그 조건을 달면 실물에서는 영영 풀지 않게 되고, 골라진 채로 다음 글자를 쳐서
+            # 그 글자가 **지워진다**. 네이버에서는 ArrowRight 가 문단을 넘지도 않는다(측정됨).
+            await keyboard.press('ArrowRight')
             actual = await _read_back(frame, text) or actual
             if not any(k == key for k, *_ in _wrong_toggles(attrs, actual, in_quote)):
                 break
