@@ -443,6 +443,17 @@ async def styled_text(editor, text, attrs=None, *, in_quote=False):
         # 글자로 친다 — 색은 못 입혀도 글은 올린다. 글자가 **어딘가 들어갔으면** 또 치지 않는다
         # (두 번 들어간다) — 그때는 아래 확인이 막는다.
         log.warning('글자가 본문에 들어가지 않았습니다 — 쓰던 자리를 다시 눌러 칩니다: "%s"', text.strip()[:20])
+        # **다시 치기 전에 창부터 치운다.** 2026-10-23 실물 측정(platonmarketing): 링크 카드
+        # 뒤에서 네이버 글감 검색창이 글자를 가로챘다 — 본문에는 아무것도 없고 그 검색칸에
+        # 한 문단이 통째로 들어가 있었다. 창을 둔 채 다시 치면 **그 창으로 또 들어가서**
+        # 'EditorError: 입력한 강조 문구가 본문에 표시되지 않았습니다' 로 원고가 떨어진다.
+        # 고객이 "항상 같은 곳에서 멈춘다"고 한 자리가 이 모양이었다(2026-10-22).
+        # 창을 닫는 것만으로는 안 돌아온다 — **본문을 눌러야** 캐럿이 돌아온다(2026-10-23 실측).
+        settle = getattr(editor, 'ensure_body_focus', None)
+        if settle is not None:
+            await settle('글자가 본문에 안 들어감')
+        else:
+            await unblock(editor, '글자가 본문에 안 들어감')
         await _refocus(editor, frame, caret)
         await editor._insert(text)
         actual = await _read_back(frame, text)
@@ -507,7 +518,13 @@ async def insert_rich_blocks(editor, blocks):
         url = (block.get('content') or '').strip()
         if kind == 'text' and is_bare_url(url):
             carded = await editor.insert_url_card(url)
-            if not carded:
+            if carded:
+                # 카드 뒤에 뜨는 글감 검색 막대를 먼저 치운다 — 두면 다음 문단이 본문이
+                # 아니라 그 검색칸으로 들어간다(2026-10-23 실측).
+                settle = getattr(editor, 'ensure_body_focus', None)
+                if settle is not None:
+                    await settle('링크 카드 뒤')
+            else:
                 await editor._insert(url)
             continue
         if kind == 'quote':

@@ -292,6 +292,55 @@ JS_LAYER_HIDE = r"""
 }
 """
 
+# 네이버 '글감' 검색창은 **글자를 가로챈다**. 2026-10-23 실물 측정(platonmarketing):
+# 링크 카드를 넣은 직후 아래쪽 글감 검색 막대로 포커스가 넘어가, 뒤이어 친 본문 한 문단이
+# 통째로 그 검색칸에 들어갔다 — 화면에는 추천 글감 창이 떠 있고 본문에는 아무것도 없다.
+#   보낸 글자 : '일주일에  두세 번  두통약을 먹습니다. …'
+#   들어간 곳 : 글감 검색칸(se-flayer-unified-result 검색 막대)
+# 그러면 읽어도 없으니 "입력한 강조 문구가 본문에 표시되지 않았습니다"로 떨어지고,
+# 재시도해도 창이 그대로라 **같은 원고의 같은 자리에서 늘 멈춘다**(2026-10-22 고객 신고).
+# 이 창은 본문 첫 줄을 가리지 않아 일반 감시('가려졌나')에 안 걸린다 — 그래서 따로 본다.
+# 지금 친 글자가 **본문으로 갈 자리인가**. 2026-10-23 실물 측정에서 확인한 신호:
+#   본문에 캐럿이 있을 때 : activeElement = IFRAME#input_buffer...  → 친 글자가 본문에 들어간다
+#   글감 검색칸을 눌렀을 때: activeElement = INPUT.se-flayer-unified-search-input → 글자가 거기로 간다
+#   창을 닫고 blur 만 했을 때: activeElement = BODY → **글자가 그래도 검색칸으로 간다**(실측)
+# 즉 '닫기'만으로는 못 돌아온다. 본문 문단을 눌러야 돌아온다.
+JS_FOCUS_ZONE = r"""
+() => {
+  const a = document.activeElement;
+  if (!a) return 'NONE';
+  if (a.id && a.id.indexOf('input_buffer') === 0) return 'INPUT_BUFFER';
+  if (a.closest && a.closest('[class*="se-flayer"], [class*="__se-pop-layer"]')) return 'FLAYER';
+  if (a.closest && a.closest('.se-content, .se-components-wrap')) return 'BODY';
+  return 'OTHER';
+}
+"""
+
+JS_MATERIAL_SEARCH_CLOSE = r"""
+() => {
+  const vis = (e) => {
+    const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+    return r.width > 1 && r.height > 1 && s.visibility !== 'hidden' && s.display !== 'none';
+  };
+  const hint = (e) => ((e.getAttribute('aria-label') || '') + ' ' + String(e.className || ''));
+  let did = '';
+  for (const box of [...document.querySelectorAll('[class*="se-flayer"]')].filter(vis)) {
+    const close = [...box.querySelectorAll('button, [role="button"]')].filter(vis)
+      .find((e) => /닫기|close/i.test(hint(e)));
+    if (close) { try { close.click(); did = 'close'; } catch (e) {} }
+  }
+  // 검색칸이 글자를 받고 있었으면 비우고 포커스를 뺀다 — 안 그러면 다음 글자도 거기로 간다.
+  const active = document.activeElement;
+  if (active && active.closest
+      && active.closest('[class*="se-flayer"], [class*="__se-pop-layer"]')) {
+    try { active.value = ''; } catch (e) {}
+    try { active.blur(); } catch (e) {}
+    did = did || 'blur';
+  }
+  return did;
+}
+"""
+
 # 단추를 누르기 **전에** 떠 있던 창에 표시를 해 둔다. 누른 뒤 표시 없는 창이 '우리가 연 창'이다.
 JS_LAYER_TAG_OLD = r"""
 ({sel, ignore, bodySel}) => {
@@ -863,6 +912,9 @@ class NaverEditor:
         안 받는 창이 뜨면 그 뒤의 글자·사진·발행 클릭이 전부 막히는데 로그는 멀쩡해 보였다.
         닫을 때는 **그 창 안의 닫기 단추**만 누른다 — 밖에서 아무 '취소'나 누르면 엉뚱한
         창이 닫히고 진짜 창은 남는다."""
+        # 글감 검색창은 본문을 가리지 않으면서 **글자를 가로챈다** — 크기·가림 기준에
+        # 안 걸리므로 먼저 따로 닫는다(2026-10-23 실측).
+        await self.dismiss_material_search(where)
         state = await self._scan_layers()
         if not state["layers"]:
             return True
@@ -905,6 +957,59 @@ class NaverEditor:
                         "네이버가 창 모양을 바꿨을 수 있습니다 — 로그의 이름을 알려 주세요.", tail, hidden)
             return True
         log.error("선택창이 본문을 가린 채 닫히지 않습니다%s: %s", tail, names(state["layers"]))
+        return False
+
+    async def dismiss_material_search(self, where: str = "") -> bool:
+        """네이버 '글감' 검색창을 닫는다. 떠 있으면 친 글자가 본문 대신 그 칸으로 들어간다.
+
+        2026-10-23 실물 측정: 링크 카드 바로 뒤에서 포커스가 글감 검색 막대로 넘어가,
+        본문 한 문단이 통째로 검색칸에 들어갔다. 본문 첫 줄을 가리지는 않아
+        `clear_blocking_layers` 의 '가려졌나' 확인에는 걸리지 않는다."""
+        try:
+            frame = await self.frame()
+            did = await frame.evaluate(JS_MATERIAL_SEARCH_CLOSE)
+        except Exception as e:  # noqa: BLE001  확인에 실패했다고 글을 막을 이유는 없다
+            log.debug("글감 검색창 확인 실패(무시): %s", e)
+            return False
+        if not did:
+            return False
+        tail = f"({where})" if where else ""
+        log.warning("네이버 글감 검색창이 떠 있어 닫았습니다%s — 그대로 두면 친 글자가 "
+                    "본문 대신 그 검색칸으로 들어갑니다", tail)
+        await asyncio.sleep(0.3)
+        return True
+
+    async def focus_zone(self) -> str:
+        """지금 포커스가 어디 있나 — 'INPUT_BUFFER'(본문) / 'BODY' / 'FLAYER'(글감 검색칸) / 'OTHER'."""
+        try:
+            frame = await self.frame()
+            return str(await frame.evaluate(JS_FOCUS_ZONE) or "OTHER")
+        except Exception as e:  # noqa: BLE001
+            log.debug("포커스 확인 실패(무시): %s", e)
+            return "UNKNOWN"
+
+    async def ensure_body_focus(self, where: str = "", *, tries: int = 3) -> bool:
+        """친 글자가 본문으로 가도록 캐럿을 본문에 돌려놓는다.
+
+        2026-10-23 실물 측정에서 **처방이 갈렸다**:
+            글감 검색칸에 포커스 → 친 글자가 본문에 안 들어간다
+            창을 닫고 blur      → activeElement=BODY 인데 **글자는 여전히 검색칸으로 간다**
+            본문 문단을 클릭    → activeElement=input_buffer, 글자가 본문에 들어간다 ✅
+        그래서 '닫기'로 끝내지 않고 **본문을 눌러** 캐럿을 되돌린 뒤 확인한다."""
+        for attempt in range(1, tries + 1):
+            zone = await self.focus_zone()
+            if zone in ("INPUT_BUFFER", "BODY", "UNKNOWN"):
+                return True
+            log.warning("캐럿이 본문에 없습니다(%s)%s — 창을 닫고 본문을 눌러 되돌립니다 (%d/%d)",
+                        zone, f"({where})" if where else "", attempt, tries)
+            await self.dismiss_material_search(where)
+            await self._refocus_body_end()
+            await asyncio.sleep(0.2)
+        zone = await self.focus_zone()
+        if zone in ("INPUT_BUFFER", "BODY", "UNKNOWN"):
+            return True
+        log.error("캐럿을 본문으로 되돌리지 못했습니다(%s)%s — 친 글자가 네이버 글감 검색칸으로 "
+                  "들어갈 수 있습니다", zone, f"({where})" if where else "")
         return False
 
     async def require_clear_screen(self, where: str) -> None:
@@ -1086,6 +1191,9 @@ class NaverEditor:
                 await self.insert_quote(op.payload)
             elif op.kind == "link":
                 if await self.insert_url_card(op.payload):
+                    # 네이버는 카드를 넣고 나면 글감 검색 막대를 띄운다 — 그대로 두면 뒤이어
+                    # 치는 문단이 본문이 아니라 그 검색칸으로 들어간다(2026-10-23 실측).
+                    await self.ensure_body_focus("링크 카드 뒤")
                     # 카드는 자기 뒤에 빈 문단을 하나 만들어 둔다 — 뒤따르는 줄바꿈 하나를 삼킨다.
                     # 안 삼키면 카드 뒤에만 빈 줄이 하나 더 생겨 간격이 들쭉날쭉해진다.
                     carded = True

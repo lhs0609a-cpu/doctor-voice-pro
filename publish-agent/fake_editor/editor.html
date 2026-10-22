@@ -20,6 +20,10 @@
   #glgam{display:none;position:fixed;left:40px;top:40px;width:420px;height:320px;overflow:auto;
          background:#fff;border:1px solid #333;padding:10px;z-index:901}
   #glgamdim.open,#glgam.open{display:block}
+  /* 글감 '검색 막대' — 화면 아래에 붙어 본문을 가리지 않는다. 그런데 포커스를 가져가서
+     뒤이어 치는 글자를 전부 받아 먹는다(2026-10-23 실물에서 잰 모양). */
+  #matsearch{display:none;position:fixed;left:620px;bottom:0;width:420px;height:44px;
+             background:#fff;border:1px solid #333;z-index:902}
 </style>
 </head>
 <body>
@@ -68,6 +72,15 @@
 <!-- 글감(선택창). 실제 네이버는 책·음악·영화를 고르면 그 카드가 본문에 박힌다.
      ?glgam=1      글쓰기 화면을 열자마자 떠 있는 판(지난 글이 남겨 둔 창)
      ?linkglgam=1  [링크] 를 눌렀는데 링크 창 대신 이 창이 뜨는 판(2026-10-14 고객 신고) -->
+<!-- ?matsearch=1 → 링크 카드를 넣은 직후 아래쪽에 글감 검색 막대가 떠 포커스를 가져간다.
+     본문 첫 줄을 가리지도, 크지도 않아서 '가려졌나' 감시에는 걸리지 않는다. -->
+<div class="se-popup-container __se-pop-layer" id="matsearch">
+  <div class="se-flayer-unified-result-container">
+    <button type="button" class="se-flayer-unified-result-close" aria-label="닫기">
+      <span class="se-flayer-unified-result-close-icon"></span></button>
+    <input type="text" class="se-flayer-unified-result-search" id="matq" placeholder="글감 검색">
+  </div>
+</div>
 <div id="glgamdim"></div>
 <div class="se-popup" id="glgam" aria-label="글감">
   <button id="glgamclose" aria-label="닫기">✕</button>
@@ -216,6 +229,28 @@
     return {open, close};
   })();
 
+  // 글감 검색 막대 — 열리면 **포커스를 가져간다**.
+  // 2026-10-23 실물 측정 그대로 흉내 낸다: [닫기] 를 눌러 추천 판을 닫아도 **막대는 남아
+  // 포커스를 도로 가져간다**(activeElement 가 body 가 돼도 글자는 검색칸으로 갔다).
+  // 본문 문단을 **눌러야** 비로소 놓아준다 — 그것이 유일하게 들은 처방이었다.
+  const matsearch = (function () {
+    const box = document.getElementById('matsearch'), input = document.getElementById('matq');
+    let armed = false;
+    const open = () => { box.style.display = 'block'; state.matOpen = true; armed = true; input.focus(); };
+    const close = () => { state.matOpen = false; input.blur(); };   // 막대는 그대로 남는다
+    box.querySelector('.se-flayer-unified-result-close').onclick = close;
+    input.addEventListener('input', () => { state.matTyped = input.value; });
+    input.addEventListener('blur', () => {
+      if (armed) setTimeout(() => { if (armed) input.focus(); }, 30);
+    });
+    document.addEventListener('mousedown', (e) => {
+      if (e.target.closest && e.target.closest('.se-component.se-text')) {
+        armed = false; box.style.display = 'none'; input.blur();
+      }
+    }, true);
+    return {open, close, enabled: q.get('matsearch') === '1'};
+  })();
+
   // 링크 카드 — 실제 SE ONE: [링크] → 주소 칸 → Enter/확인 → se-oglink 컴포넌트.
   //   ?nolinkbtn=1   링크 단추 자체가 없는 판(주소를 글자로 넣는 길로 되돌아가야 한다)
   //   ?linkfails=1   주소를 넣어도 카드가 안 붙는 경우(네이버가 주소를 못 읽는 상황)
@@ -241,6 +276,8 @@
       card.innerHTML = '<a class="se-oglink-thumbnail" href="' + url + '">' + url + '</a>';
       wrap.appendChild(card);
       layer.style.display = 'none';
+      // 네이버는 카드를 넣고 나면 글감 검색 막대를 띄운다(2026-10-23 실물).
+      if (matsearch.enabled) setTimeout(matsearch.open, 60);
       // 인용구와 같은 구조: 카드 뒤 본문은 '본문으로' 단추로 만든다.
       const bottom = document.createElement('button');
       bottom.className = 'se-canvas-bottom-button';
