@@ -183,8 +183,12 @@ class UpdateNoticeTests(unittest.TestCase):
             app.worker = SimpleNamespace(is_alive=lambda: True)   # 자동 발행이 돌고 있고
             app.busy_event.set()                                  # 지금 글을 올리는 중이다
             app.offer_update('9.9.9', 'setup.exe')
-            self.assertEqual([w for w in self.root.winfo_children() if isinstance(w, tk.Toplevel)], [],
-                             '올리는 중에는 알림도 띄우지 않는다')
+            # 미루는 것도 팝업으로 알린다 — 말이 없으면 '업데이트 왜 안 되나'가 된다.
+            waiting = [w for w in self.root.winfo_children() if isinstance(w, tk.Toplevel)]
+            self.assertEqual(len(waiting), 1)
+            said = ' '.join(w.cget('text') for w in waiting[0].winfo_children() if 'text' in w.keys())
+            self.assertIn('받아 두었습니다', said)
+            self.assertNotIn('설치합니다', said.split('받아 두었습니다')[0])
             install.assert_not_called()
             self.assertFalse(app.stop_event.is_set(), '발행을 끊지 않는다')
             self.assertIn('끝낸 뒤', app.status.get())
@@ -192,8 +196,14 @@ class UpdateNoticeTests(unittest.TestCase):
             install.assert_not_called()                           # 아직은 설치하지 않는다
 
             app.busy_event.clear()                                # 그 글이 끝났다
+            for w in self.root.winfo_children():
+                if isinstance(w, tk.Toplevel):
+                    w.destroy()                                   # 기다림 알림은 치우고 센다
             app.offer_update('9.9.9', 'setup.exe')
-            self.assertEqual(len([w for w in self.root.winfo_children() if isinstance(w, tk.Toplevel)]), 1)
+            installing = [w for w in self.root.winfo_children() if isinstance(w, tk.Toplevel)]
+            self.assertEqual(len(installing), 1)
+            self.assertIn('설치합니다', ' '.join(
+                w.cget('text') for w in installing[0].winfo_children() if 'text' in w.keys()))
             app.install_update('9.9.9', 'setup.exe')
             install.assert_called_once_with('setup.exe')
 
@@ -235,6 +245,45 @@ class UpdateNoticeTests(unittest.TestCase):
             with patch.object(Desktop, '_poll_once', side_effect=RuntimeError('화면 갱신 실패')):
                 app.poll()                                        # 터져도 조용히 넘어가고
             self.assertTrue(self.root.tk.call('after', 'info'), '다음 바퀴가 예약돼 있어야 한다')
+
+    def test_the_launcher_says_so_itself_once_the_update_is_done(self):
+        """2026-10-22 문의: "닥터보이스 어플 업데이트 완료되면 말씀 한 번 부탁드립니다".
+
+        설치가 끝나면 창이 저절로 닫혔다 열린다 — 사람은 그게 끝난 것인지 알 수 없어
+        사람에게 물어볼 수밖에 없다. 프로그램이 먼저 말하게 한다."""
+        from desktop import VERSION
+
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.dict('os.environ', {'LOCALAPPDATA': folder}),
+            patch('desktop.LocalBridge.start'),
+            patch('desktop.threading.Thread.start'),
+            patch('desktop.updater.installed_build', return_value=False),
+        ):
+            app = Desktop(self.root)
+            app.updated_popup('1.7.12', VERSION)
+            tops = [w for w in self.root.winfo_children() if isinstance(w, tk.Toplevel)]
+            said = ' '.join(w.cget('text') for w in tops[-1].winfo_children() if 'text' in w.keys())
+            self.assertIn('업데이트가 끝났습니다', said)
+            self.assertIn('1.7.12', said)
+            self.assertIn(VERSION, said)
+            self.assertIn('업데이트 완료', app.status.get())
+
+    def test_the_version_it_started_with_is_remembered_for_next_time(self):
+        """다음에 켤 때 '전에 쓰던 버전'과 달라야 완료를 알릴 수 있다."""
+        import json
+        from desktop import VERSION
+
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.dict('os.environ', {'LOCALAPPDATA': folder}),
+            patch('desktop.LocalBridge.start'),
+            patch('desktop.threading.Thread.start'),
+            patch('desktop.updater.installed_build', return_value=False),
+        ):
+            app = Desktop(self.root)
+            saved = json.loads(app.settings_file.read_text(encoding='utf-8'))
+            self.assertEqual(saved.get('last_version'), VERSION)
 
     def test_a_failed_install_leaves_the_launcher_running_on_the_old_version(self):
         """설치가 막혀도(서명 없는 파일 차단 등) 실행기를 죽이지 않는다."""

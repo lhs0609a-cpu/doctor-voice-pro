@@ -291,6 +291,8 @@ class Desktop:
         # 홈페이지 자동 연결로 받은 이 기기 전용 키(이 PC에서만 풀린다)와 연결된 계정
         self.device_secret = credential_store.load(self.folder, credential_store.DEVICE_FILE)
         self.paired_email = str(saved.get('paired_email') or '') or (account or '')
+        # 지난번에 켰을 때의 버전. 지금 것과 다르면 '업데이트가 끝났다'는 뜻이다.
+        self.last_version = str(saved.get('last_version') or '')
         # 홈페이지가 '이 계정으로 열어라'며 함께 건넨 1회용 코드(창이 뜨는 대로 연결한다)
         self.pair_code = pair_code
         # tkinter 변수는 다른 스레드에서 읽으면 안 된다 → 연결 창구가 읽을 사본
@@ -470,6 +472,11 @@ class Desktop:
         threading.Thread(target=self.beat_loop, daemon=True).start()
         if updater.installed_build():
             threading.Thread(target=self.check_update, daemon=True).start()
+        # 설치가 끝나고 다시 열린 창이면 그 사실을 알린다. 말없이 닫혔다 열리면 사람은
+        # 프로그램이 꺼진 줄 알고 "업데이트 됐나요?"를 물을 수밖에 없다(2026-10-22 문의).
+        if self.last_version and self.last_version != VERSION:
+            root.after(900, self.updated_popup, self.last_version, VERSION)
+        self.save_settings()        # 이번에 켠 버전을 적어 둔다
         if self.pair_code:
             # 홈페이지가 건넨 코드를 들고 태어난 창이다(다른 계정 창이 넘겨 줬다).
             # 그 코드로 스스로 연결한다 — 사람이 브라우저에서 다시 승인할 일이 없다.
@@ -494,6 +501,7 @@ class Desktop:
                 'server': self.server_url, 'email': self.email.get().strip(),
                 'auto_login': bool(self.auto_login.get()), 'auto_start': bool(self.auto_start.get()),
                 'device_id': self.device_id, 'paired_email': self.paired_email,
+                'last_version': VERSION,
             }), encoding='utf-8')
         except OSError:
             pass
@@ -914,25 +922,44 @@ class Desktop:
         # 사람이 팝업을 읽을 시간을 준 뒤 설치한다. 답을 기다리지는 않는다.
         self.root.after(3000, self.install_update, version, installer)
 
-    def update_popup(self, version) -> None:
-        """'새 버전을 설치합니다' 알림. 답을 기다리지 않는 창이라 자동 설치를 막지 않는다."""
+    def notice_popup(self, title, detail, close_after_ms=0) -> None:
+        """답을 기다리지 않는 알림 창. 기다리면 아무도 안 눌러서 업데이트가 영영 안 간다."""
         try:
             top = tk.Toplevel(self.root)
             top.title('닥터보이스 프로 업데이트')
             top.configure(bg=BG)
             top.resizable(False, False)
             top.attributes('-topmost', True)
-            tk.Label(top, text=f'새 버전 {version} 을 설치합니다', bg=BG, fg=INK,
-                     font=(FONT, 12, 'bold')).pack(padx=24, pady=(20, 6))
-            tk.Label(top, text=('설치가 끝나면 실행기가 자동으로 다시 열립니다.'
-                                ' 그대로 두셔도 됩니다.'),
-                     bg=BG, fg=MUTED, font=(FONT, 10), justify='center').pack(padx=24, pady=(0, 18))
+            tk.Label(top, text=title, bg=BG, fg=INK, font=(FONT, 12, 'bold')).pack(padx=24, pady=(20, 6))
+            tk.Label(top, text=detail, bg=BG, fg=MUTED, font=(FONT, 10), justify='center').pack(padx=24, pady=(0, 14))
+            tk.Button(top, text='확인', bg=BLUE, fg='white', relief='flat', padx=18, pady=4,
+                      font=(FONT, 10), command=top.destroy).pack(pady=(0, 16))
             top.update_idletasks()
             x = self.root.winfo_rootx() + (self.root.winfo_width() - top.winfo_width()) // 2
             y = self.root.winfo_rooty() + 120
             top.geometry(f'+{max(0, x)}+{max(0, y)}')
+            if close_after_ms:
+                top.after(close_after_ms, lambda: top.winfo_exists() and top.destroy())
         except Exception as error:  # noqa: BLE001  알림을 못 띄웠다고 업데이트를 멈출 이유는 없다
             logging.getLogger().info('업데이트 알림 창을 띄우지 못했습니다: %s', error)
+
+    def update_popup(self, version) -> None:
+        """'새 버전을 설치합니다' 알림. 답을 기다리지 않는 창이라 자동 설치를 막지 않는다."""
+        self.notice_popup(f'새 버전 {version} 을 설치합니다',
+                          '창이 잠깐 닫혔다가 자동으로 다시 열립니다. 그대로 두셔도 됩니다.')
+
+    def waiting_popup(self, version) -> None:
+        """발행 중이라 미룰 때도 알린다 — 안 그러면 '업데이트 왜 안 되나'가 된다."""
+        self.notice_popup(f'새 버전 {version} 을 받아 두었습니다',
+                          '지금 올리는 글을 끝내고 설치합니다. 그대로 두셔도 됩니다.')
+
+    def updated_popup(self, before, now) -> None:
+        """설치가 끝나고 다시 열렸다. 사람이 묻기 전에 프로그램이 먼저 말한다."""
+        logging.getLogger().info('업데이트 완료: %s → %s', before, now)
+        self.status.set(f'업데이트 완료 — 새 버전 {now} 으로 실행 중입니다')
+        self.notice_popup(f'업데이트가 끝났습니다 (v{now})',
+                          f'{before} → {now} 으로 바뀌었습니다. 그대로 쓰시면 됩니다.',
+                          close_after_ms=12000)
 
     def wait_for_idle_update(self, version, installer) -> None:
         """올리던 글이 끝날 때까지 설치를 미룬다. 미루는 동안 무엇을 기다리는지 적어 둔다."""
@@ -941,6 +968,7 @@ class Desktop:
             self.status.set(f'새 버전 {version} 을 받아 두었습니다 — 지금 올리는 글을 끝낸 뒤 '
                             f'설치합니다. 그대로 두셔도 됩니다.')
             logging.getLogger().info('업데이트 %s: 발행이 끝나기를 기다립니다', version)
+            self.waiting_popup(version)     # 미루는 것도 알린다 — 안 그러면 '왜 안 되나'가 된다
         self.root.after(UPDATE_WAIT_MS, self.offer_update, version, installer)
 
     def install_update(self, version, installer) -> None:
