@@ -285,6 +285,30 @@ class UpdateNoticeTests(unittest.TestCase):
             saved = json.loads(app.settings_file.read_text(encoding='utf-8'))
             self.assertEqual(saved.get('last_version'), VERSION)
 
+    def test_it_books_its_own_restart_so_nobody_has_to_press_the_icon(self):
+        """2026-10-22 요청: "자동업데이트되어서 자동으로 껐다 켜지게끔 하면 안돼?"
+
+        설치 프로그램도 끝나고 한 번 띄우지만, 조용한 설치에서 그쪽이 막히면 창이 영영
+        안 돌아온다. 실행기가 스스로도 예약해 둔다 — 둘 다 떠도 자리 이름표가 막아 준다."""
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.dict('os.environ', {'LOCALAPPDATA': folder}),
+            patch('desktop.LocalBridge.start'),
+            patch('desktop.threading.Thread.start'),
+            patch('desktop.updater.installed_build', return_value=False),
+            patch('desktop.updater.install'),
+            patch('desktop.updater.installed_exe', return_value=Path(r'C:pp\DoctorVoiceAutopilot.exe')),
+            patch('desktop.updater.relaunch_after') as relaunch,
+            patch.object(self.root, 'destroy'),
+        ):
+            app = Desktop(self.root)
+            app.paired_email = 'a@naver.com'
+            app.install_update('9.9.9', 'setup.exe')
+            relaunch.assert_called_once()
+            args = relaunch.call_args[0]
+            self.assertEqual(str(args[0]), r'C:pp\DoctorVoiceAutopilot.exe')
+            self.assertEqual(args[2], 'a@naver.com', '맡던 계정 자리로 돌아와야 한다')
+
     def test_a_failed_install_leaves_the_launcher_running_on_the_old_version(self):
         """설치가 막혀도(서명 없는 파일 차단 등) 실행기를 죽이지 않는다."""
         with (

@@ -116,6 +116,28 @@ def install(path: Path):
     return subprocess.Popen([str(path), *INSTALL_FLAGS], close_fds=True)
 
 
+def relaunch_after(exe: Path, seconds: int = 45, account: str = ''):
+    """설치가 끝날 즈음 실행기를 **스스로** 다시 띄운다.
+
+    설치 프로그램도 끝나고 한 번 띄우지만(installer.iss 의 [Run]), 조용한 설치에서 그것이
+    건너뛰어지거나 막히면 창이 영영 안 돌아온다 — 사람이 아이콘을 다시 눌러야 한다
+    (2026-10-22 요청: "자동업데이트되어서 자동으로 껐다 켜지게끔 하면 안돼?").
+    둘 다 띄워도 괜찮다: 자리(slot)마다 이름표를 잡으므로, 늦게 뜬 쪽은 이미 열린 창을
+    앞으로 꺼내 주고 조용히 끝난다.
+
+    맡고 있던 계정을 함께 넘겨 **같은 자리로** 돌아오게 한다.
+    """
+    if sys.platform != 'win32':
+        return None
+    target = str(exe)
+    if account:
+        target += f' --account {account}'
+    # ping 을 시계 대신 쓴다(timeout 명령은 콘솔이 있어야 한다). 창 없이, 이 창이 닫혀도 살아남게.
+    command = f'ping -n {max(2, int(seconds))} 127.0.0.1 >nul & start "" {target}'
+    DETACHED_NO_WINDOW = 0x00000008 | 0x08000000
+    return subprocess.Popen(['cmd', '/c', command], creationflags=DETACHED_NO_WINDOW, close_fds=True)
+
+
 def installed_build() -> bool:
     """설치본으로 실행 중일 때만 업데이트합니다(개발 중 실행은 건드리지 않음)."""
     return sys.platform == 'win32' and bool(getattr(sys, 'frozen', False))

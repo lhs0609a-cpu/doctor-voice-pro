@@ -39,8 +39,10 @@ CONNECT_PAGE = SITE + '/launcher/connect'   # 실행기가 열면 로그인된 �
 BEAT_SECONDS = 60          # 서버가 150초 침묵을 '꺼짐'으로 본다 → 그보다 짧게
 CONNECT_POLL_SECONDS = 2   # 승인됐는지 묻는 간격
 CONNECT_WAIT_SECONDS = 600 # 요청이 살아 있는 동안만 기다린다(서버와 같은 값)
-UPDATE_EVERY_BEATS = 60    # 하트비트 60번 = 1시간마다 새 버전을 다시 본다
+UPDATE_EVERY_BEATS = 10    # 하트비트 10번 = 10분마다 새 버전을 다시 본다
+                           # (예전엔 1시간이라 '껐다 켜 주세요'를 말할 수밖에 없었다)
 UPDATE_WAIT_MS = 20000     # 발행 중이면 이만큼 뒤에 다시 본다(끝나면 그때 설치)
+RELAUNCH_AFTER_SECONDS = 45   # 설치가 끝날 즈음 스스로 다시 뜬다
 FORCE_QUIT_AFTER_MS = 90000  # [X] 를 누른 뒤 마무리를 이만큼까지만 기다린다(그 뒤엔 그냥 닫는다)
 
 
@@ -988,6 +990,14 @@ class Desktop:
             self.status.set(f'업데이트를 설치하지 못했습니다({error}). 옛 버전으로 계속 실행합니다.')
             return
         self.status.set('업데이트를 설치합니다. 설치가 끝나면 실행기가 다시 열립니다.')
+        # 설치가 끝날 즈음 **스스로** 다시 뜨게 예약해 둔다. 설치 프로그램도 한 번 띄우지만,
+        # 그쪽이 막히면 창이 영영 안 돌아와 사람이 아이콘을 눌러야 한다. 둘 다 떠도 괜찮다 —
+        # 늦게 뜬 쪽은 이미 열린 창을 앞으로 꺼내 주고 조용히 끝난다(claim_slot).
+        try:
+            exe = updater.installed_exe() or Path(sys.executable)
+            updater.relaunch_after(exe, RELAUNCH_AFTER_SECONDS, self.paired_email or '')
+        except Exception as error:  # noqa: BLE001  못 예약했어도 설치 프로그램 쪽이 남아 있다
+            logging.getLogger().info('재시작을 예약하지 못했습니다: %s', error)
         self.stop_event.set()
         # 오래 붙잡고 있을수록 설치 프로그램이 파일을 못 덮어쓴다 — 바로 비켜 준다.
         self.root.after(200, self.root.destroy)
