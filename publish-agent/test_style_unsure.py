@@ -53,6 +53,9 @@ class Frame:
             return 0
         if script is rich_editor.END_POINT:
             return {'x': 10, 'y': 10}
+        if script is rich_editor.TAIL_LEN:
+            # 그 문단 꼬리에 붙어 있으면 찍힌 글자 수, 아니면 0(= 못 찾음 → 손대지 않는다)
+            return len(text) if self.text == text else 0
         if self.text != text:
             return None
         return [{'quote': False, 'bold': False, 'italic': self.italic, 'underline': False,

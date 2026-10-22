@@ -302,8 +302,19 @@ async def _fix_toggles(editor, frame, text, attrs, actual, in_quote):
     except Exception:       # noqa: BLE001
         picked = 0
     if not picked:
-        picked = len(text)
-    elif picked != len(text):
+        # **이 문구가 한 문단의 꼬리로 붙어 있지 않다**(문단이 나뉘었거나 못 찾았다).
+        # 그래도 len(text) 만큼 ← 를 누르면 앞 문단·사진·링크 카드까지 골라지고, 거기에
+        # Ctrl+I 를 누르면 네이버가 글을 **재배치한다** — 글자가 쪼개져 섞인다.
+        # 2026-10-22 고객 화면이 정확히 그 모양이었다. 링크 카드 바로 아래에서
+        #   “일주일에 두                                    ← 여기까지만 남고
+        #   약을 자주 … 겁니다|세 번 두통약을 먹습니다. …     ← 나머지가 다음 문단 속으로
+        # 그리고 쪼개졌으니 다시 읽어도 못 찾아 "입력한 강조 문구가 본문에 표시되지
+        # 않았습니다"로 떨어지고, 같은 원고에서 **항상 같은 자리**에 멈춘다.
+        # 모르면 손대지 않는다 — 서식은 못 고쳐도 글은 그대로 나간다.
+        log.warning('"%s" 를 한 문단에서 찾지 못했습니다 — 서식 고치기를 건너뜁니다'
+                    '(글은 그대로 둡니다)', text.strip()[:20])
+        return actual
+    if picked != len(text):
         log.info('고를 글자 수를 화면 기준으로 맞춥니다: 보낸 %d자 → 화면 %d자', len(text), picked)
     for key, prop, shortcut, label in wrong:
         for _ in range(2):          # 섞여 있으면 첫 번째 누름에 '전부 켜짐'이 될 수 있다

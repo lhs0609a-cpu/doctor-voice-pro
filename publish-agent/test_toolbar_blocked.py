@@ -233,3 +233,56 @@ class UnreadableToolbarTests(unittest.IsolatedAsyncioTestCase):
         # 글자부터 친다 — 상태를 모르는 채 단축키를 먼저 누르면 서식이 거꾸로 들어간다.
         self.assertEqual(editor.timeline[0], ('text', '여름에도 손발이 시리다면'))
         self.assertTrue(getattr(editor, 'format_notes', []), '못 고치면 적어 두고 글은 올린다')
+
+
+class SafeFixTests(unittest.IsolatedAsyncioTestCase):
+    """고칠 글자를 한 문단에서 못 찾으면 **손대지 않는다**.
+
+    2026-10-22 고객 화면. 링크 카드 바로 아래에서 글이 쪼개져 섞였다.
+        “일주일에 두                                   ← 여기까지만 남고
+        약을 자주 … 겁니다|세 번 두통약을 먹습니다. …    ← 나머지가 다음 문단 속으로
+    문구를 못 찾았는데도 보낸 글자 수만큼 ← 를 눌러 **앞 문단·링크 카드까지** 골랐고,
+    거기에 Ctrl+I 를 누르자 네이버가 글을 재배치했다. 쪼개졌으니 다시 읽어도 못 찾아
+    "입력한 강조 문구가 본문에 표시되지 않았습니다" 로 **항상 같은 자리**에서 멈췄다.
+    """
+
+    class Frame:
+        def __init__(self, tail_len):
+            self.tail_len = tail_len
+            self.style = {'quote': False, 'bold': False, 'italic': True,
+                          'underline': False, 'color': 'rgb(0, 0, 0)',
+                          'background': 'rgb(255, 255, 255)'}
+
+        async def evaluate(self, script, arg=None):
+            if 'const norm' in script and 'tail.length' in script:      # TAIL_LEN
+                return self.tail_len
+            return [dict(self.style)]                                   # READ_BACK
+
+    def editor(self):
+        pressed = []
+
+        class Keyboard:
+            async def press(self, key): pressed.append(key)
+            async def down(self, key): pressed.append('down ' + key)
+            async def up(self, key): pressed.append('up ' + key)
+
+        return SimpleNamespace(page=SimpleNamespace(keyboard=Keyboard())), pressed
+
+    async def test_it_does_not_select_blindly_when_the_run_is_not_found(self):
+        from rich_editor import _fix_toggles
+
+        editor, pressed = self.editor()
+        frame = self.Frame(tail_len=0)          # 한 문단에서 못 찾았다
+        await _fix_toggles(editor, frame, '일주일에  두세 번  두통약을 먹습니다', {}, 
+                           [dict(frame.style)], False)
+        self.assertEqual(pressed, [], '못 찾으면 키를 하나도 누르지 않는다')
+
+    async def test_it_still_fixes_when_the_run_is_found(self):
+        from rich_editor import _fix_toggles
+
+        editor, pressed = self.editor()
+        frame = self.Frame(tail_len=21)         # 찾았다
+        await _fix_toggles(editor, frame, '일주일에  두세 번  두통약을 먹습니다', {},
+                           [dict(frame.style)], False)
+        self.assertEqual(pressed.count('ArrowLeft'), 21 * 2, '찾았으면 그 글자만 골라 고친다')
+        self.assertIn('Control+i', pressed)
