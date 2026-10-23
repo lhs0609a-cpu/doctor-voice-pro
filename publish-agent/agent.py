@@ -98,6 +98,19 @@ def with_format_notes(editor: Any, message: str) -> str:
     return " · ".join(filter(None, [message, head, " / ".join(notes[:5])]))[:900]
 
 
+def with_upload_note(editor: Any, message: str) -> str:
+    """사진이 아직 올라가는 중이었으면 그 사실을 결과에 붙인다.
+
+    2026-10-23 실측(P139): 사진 한 장이 90초가 지나도 '전송중'인 채로 글을 쓰다 실패했는데,
+    사람 화면에는 "입력한 강조 문구가 본문에 표시되지 않았습니다"로만 떴다. 받는 사람은
+    원고를 뒤지게 되지만 원고에는 아무 잘못이 없다 — PC나 인터넷이 느린 것이다."""
+    stall = (getattr(editor, "upload_stalled", "") or "").strip()
+    if not stall:
+        return message
+    return (f"{message} (그 직전에 {stall} — 사진이 다 올라가기 전에는 편집기가 글자를 받지 "
+            f"못합니다. PC가 바쁘거나 인터넷이 느릴 때 그렇습니다)")
+
+
 def plain_reason(error: Exception) -> str:
     """브라우저가 내놓은 영어 오류를 사람이 읽을 한 줄로 바꾼다."""
     text = str(error).strip()
@@ -203,6 +216,7 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
     # 서식이 어긋난 자리를 모아 발행 결과에 적어 준다(글은 그대로 올린다 — 2026-10-22 요청).
     try:
         editor.format_notes = []
+        editor.upload_stalled = ""
     except Exception:  # noqa: BLE001
         pass
     try:
@@ -341,7 +355,7 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
             return JobResult(ok=False, uncertain=True, captcha=True, message=f"발행 클릭 후 캡차: {e}. 네이버 예약 목록에서 확인하세요")
         return JobResult(ok=False, captcha=True, message=f"네이버가 캡차를 요구했습니다: {e}")
     except EditorError as e:
-        return JobResult(ok=False, uncertain=clicked_publish, message=str(e))
+        return JobResult(ok=False, uncertain=clicked_publish, message=with_upload_note(editor, str(e)))
     except Exception as e:  # noqa: BLE001
         log.error("예상 못한 오류: %s\n%s", e, traceback.format_exc())
         return JobResult(ok=False, uncertain=clicked_publish, message=plain_reason(e))
@@ -428,7 +442,9 @@ class BrowserPool:
         ctx = self._ctx.get(naver_blog_id)
         if ctx is not None:
             try:
-                pages = ctx.pages
+                # 닫힌 탭은 세지 않는다 — 사람이 창을 닫으면 ctx.pages 에 **닫힌 탭이
+                # 그대로** 남아 있어, 그걸 돌려주면 그 뒤 모든 동작이 죽은 창으로 간다.
+                pages = [p for p in ctx.pages if not p.is_closed()]
                 if pages:
                     await self._tidy_tabs(ctx, pages[0])
                     return pages[0]
@@ -515,7 +531,15 @@ async def ensure_login(editor: Any, client: ServerClient, blog: Dict[str, Any]) 
     # 사람이 이 창에서 로그인하는 중이면(네이버 로그인 페이지 + 아직 로그인 쿠키 없음) 페이지를 다시 열지 않는다.
     # 주기마다 글쓰기 페이지로 다시 이동하면 네이버가 로그인 페이지를 새로 띄워, 입력 중인 아이디·보안문자·
     # 기기 인증이 1분마다 지워져 로그인을 끝낼 수 없다(2026-09-11 실제 네이버 실측).
+    # **창이 닫혔으면 기다리지 않는다.** 사람이 그 크롬 창을 닫아 버리면 page.url 은 마지막
+    # 주소("nid.naver.com…")를 그대로 들고 있어서, 실행기가 '아직 로그인하는 중'으로 보고
+    # 영영 기다린다 — 창은 없는데 로그만 멀쩡해 보인다(2026-10-23 실측: 89건을 올린 뒤
+    # 창이 닫혔는데 25분 동안 "로그인을 기다리는 중"만 찍혔다). 그때는 다시 연다.
     page = getattr(editor, "page", None)
+    closed = getattr(page, "is_closed", None)
+    if page is not None and callable(closed) and closed():
+        log.info("브라우저 창이 닫혀 있습니다 — 다시 엽니다")
+        page = None
     if page is not None and "nid.naver.com" in (getattr(page, "url", "") or ""):
         try:
             cookies = await page.context.cookies("https://nid.naver.com")

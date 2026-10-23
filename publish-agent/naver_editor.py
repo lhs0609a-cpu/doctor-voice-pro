@@ -2010,6 +2010,13 @@ class NaverEditor:
                 log.debug("업로드 상태 확인 실패(계속 진행): %s", e)
                 return True
             await asyncio.sleep(0.5)
+        # 왜 멈췄는지 **결과에 남긴다.** 사진이 아직 '전송중'인 채로 글자를 치면 편집기가
+        # 그 글자를 받지 않아, 사람 화면에는 엉뚱하게 "입력한 강조 문구가 본문에 표시되지
+        # 않았습니다"로만 뜬다(2026-10-23 P139 실측: pending 1장, busy True). 진짜 이유는
+        # 사진이 아직 올라가는 중이라는 것이고, 그건 PC나 인터넷이 느릴 때 생긴다.
+        pending = (state or {}).get("pending")
+        self.upload_stalled = (f"사진 {pending}장이 {int(timeout_sec)}초가 지나도 '전송중'이었습니다"
+                               if pending else f"사진 업로드가 {int(timeout_sec)}초 안에 끝나지 않았습니다")
         log.warning("사진 업로드가 %d초 안에 끝나지 않았습니다(%s) — 그대로 진행합니다", int(timeout_sec), state)
         return False
 
