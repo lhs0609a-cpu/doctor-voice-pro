@@ -236,7 +236,14 @@
   const matsearch = (function () {
     const box = document.getElementById('matsearch'), input = document.getElementById('matq');
     let armed = false;
-    const open = () => { box.style.display = 'block'; state.matOpen = true; armed = true; input.focus(); };
+    const open = () => {
+      // 실행기가 막대를 치워 뒀으면(display:none) 네이버도 이 칸에 포커스를 줄 수 없다 —
+      // 그러면 막대는 뜨지도, 글자를 가로채지도 못한다(2026-10-23 설계).
+      box.style.display = 'block';
+      input.focus();
+      if (document.activeElement !== input) { box.style.display = 'none'; return; }
+      state.matOpen = true; armed = true;
+    };
     const close = () => { state.matOpen = false; input.blur(); };   // 막대는 그대로 남는다
     box.querySelector('.se-flayer-unified-result-close').onclick = close;
     input.addEventListener('input', () => { state.matTyped = input.value; });
@@ -383,12 +390,15 @@
   }
 
   // 태그: Enter 로 확정
+  //   ?deadtags=1 — Enter 를 눌러도 태그가 붙지 않는 판(2026-10-23 고객: "태그가 들어가지 않습니다").
+  //                 예전 실행기는 이때도 '태그 N개 입력' 이라고만 적고 넘어갔다.
   document.getElementById('tag-input').addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
     e.preventDefault();
     const v = e.target.value.trim();
-    if (v) { state.tags.push(v); const li = document.createElement('li'); li.textContent = v; document.getElementById('tags').appendChild(li); }
     e.target.value = '';
+    if (q.get('deadtags') === '1') return;
+    if (v) { state.tags.push(v); const li = document.createElement('li'); li.textContent = v; document.getElementById('tags').appendChild(li); }
   });
 
   // 예약 발행 칩 — 누르면 목록 레이어가 열린다(실제 네이버와 같은 구조).

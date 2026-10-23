@@ -815,3 +815,40 @@ class TestMyTemplate(unittest.TestCase):
         loaded, body = self._run("리베리 기본", "?notemplate=1")
         self.assertFalse(loaded)
         self.assertTrue(any("여드름은 피지" in line for line in body))
+
+
+class TagsThatDoNotStickTests(TestEditorOnFakePage):
+    """태그를 쳤는데 안 붙으면 **그렇게 말해 준다**.
+
+    2026-10-23 고객: "태그가 들어가지 않습니다". 예전 실행기는 치기만 하고 확인하지 않아,
+    한 개도 안 붙어도 로그에는 '태그 2개 입력'이라고만 남았다 — 사람은 글이 올라간 뒤에야
+    알게 되고, 어느 글의 태그가 빠졌는지도 알 수 없었다. 발행은 계속하되(태그 때문에 원고를
+    버리지 않는다) 빠진 태그를 결과에 적는다.
+    """
+
+    def test_tags_that_do_not_stick_are_reported(self):
+        async def body(ed, page):
+            ed.format_notes = []
+            await ed.open_write_page()
+            await ed.dismiss_draft_popup()
+            await ed.open_publish_layer()
+            stuck = await ed.set_tags(["임플란트", "치과 상담"])
+            return {"stuck": stuck, "notes": list(ed.format_notes)}
+
+        got = self._run(self._with_editor("?deadtags=1", body))
+        self.assertEqual(got["stuck"], 0, "한 개도 안 붙었다")
+        self.assertTrue(got["notes"], "빠진 태그를 적어 둬야 한다")
+        self.assertIn("임플란트", got["notes"][0])
+
+    def test_tags_that_do_stick_are_not_complained_about(self):
+        async def body(ed, page):
+            ed.format_notes = []
+            await ed.open_write_page()
+            await ed.dismiss_draft_popup()
+            await ed.open_publish_layer()
+            stuck = await ed.set_tags(["임플란트", "치과 상담"])
+            return {"stuck": stuck, "notes": list(ed.format_notes)}
+
+        got = self._run(self._with_editor("", body))
+        self.assertEqual(got["stuck"], 2)
+        self.assertEqual(got["notes"], [], "멀쩡할 때는 아무 말도 하지 않는다")

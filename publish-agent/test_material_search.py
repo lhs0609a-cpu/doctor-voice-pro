@@ -98,6 +98,41 @@ class TestMaterialSearchStealsTyping(unittest.TestCase):
         """화면은 연속 공백을 한 칸으로 합쳐 보여 준다 — 글자가 남았는지만 본다."""
         return re.sub(r'\s+', ' ', ' '.join(rows))
 
+    def test_the_material_bar_is_cleared_the_moment_the_write_page_opens(self):
+        """막대는 **뜨고 나서 닫는 것이 아니라 열리기 전에 치운다.**
+
+        2026-10-23 실물 측정: 이 막대는 우리가 여는 창이 아니라 글쓰기 화면 아래에
+        처음부터 붙어 있는 것이다(412x44, 화면 맨 아래). 누르면 '전체 글감/책/음악…'
+        판으로 펼쳐져 본문을 덮고, 사람이 손으로 닫을 때까지 발행이 거기서 멈춘다
+        (고객: "클릭을 해줘야만 정상적으로 예약이 됩니다").
+        """
+        from playwright.async_api import async_playwright
+
+        async def go():
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page(viewport={"width": 1280, "height": 900})
+                try:
+                    ed = NaverEditor(page, write_url=f"{self.base}/write.html?matsearch=1")
+                    await ed.open_write_page()          # 제목도 본문도 아직 건드리지 않았다
+                    frame = await ed.frame()
+                    return await frame.evaluate(
+                        """() => {
+                             const all = [...document.querySelectorAll('[class*="se-flayer-unified"]')];
+                             return {
+                               found: all.length,
+                               cleared: all.filter(e => e.getAttribute('data-dv-matbar') === 'hidden').length,
+                               reachable: all.filter(e => e.offsetParent !== null).length,
+                             };
+                           }""")
+                finally:
+                    await browser.close()
+
+        got = asyncio.run(go())
+        self.assertTrue(got["found"], "가짜 편집기에 글감 막대가 없다 — 테스트가 무의미해진다")
+        self.assertTrue(got["cleared"], f"글쓰기 화면을 열자마자 글감 막대를 치워야 한다: {got}")
+        self.assertEqual(got["reachable"], 0, f"치운 막대가 아직 화면에 남아 있다: {got}")
+
     def test_plain_manuscript_keeps_the_paragraph_after_a_card(self):
         """평문 원고: 카드 뒤 문단이 본문에 남아야 한다(검색칸으로 새면 안 된다)."""
         got = self._run([{"type": "text", "content": f"오시는 길입니다.\n\n{URL}\n\n{AFTER}"}])

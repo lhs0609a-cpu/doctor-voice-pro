@@ -352,6 +352,70 @@ JS_MATERIAL_SEARCH_CLOSE = r"""
 
 # 글감 막대·추천 판을 화면에서 치운다. **마지막 수단**이지만 꼭 필요하다 —
 # 막대가 화면 아래(y≈835)에 떠 있으면 본문 문단을 눌러도 그 막대가 클릭을 먹는다.
+# 화면 **맨 아래에 늘 떠 있는** 네이버 '전체 글감' 막대. 우리가 여는 창이 아니다 —
+# 글쓰기 화면을 열면 처음부터 거기 있다(2026-10-23 실측: 412x44, y≈화면 아래).
+#   · 그 자리를 누르면 '전체 글감 / 책 / 음악 / 증권 / 부동산 …' 판으로 **펼쳐져** 본문을 덮는다.
+#   · 포커스가 그 검색칸으로 넘어가면 뒤이어 친 글자가 통째로 거기 들어간다.
+# 긴 원고일수록 본문 끝 문단이 이 막대 밑에 깔려, 캐럿을 되돌리는 클릭이 막대로 들어간다 —
+# "어떤 원고는 초반, 어떤 원고는 마지막에 멈춘다"(2026-10-23 고객)가 이 모양이다.
+# 글감은 발행에 필요 없는 **편집기 장식**이므로, 글을 쓰는 동안에는 아예 치워 둔다.
+# 펼쳐진 판의 항목들은 막대 바깥(최상위)에 그려지므로 뿌리를 모두 훑는다.
+# BMP(기본 다국어 평면) 밖 문자 = 이모지. 네이버 편집기는 이 글자가 섞인 입력을 한 번에
+# 받으면 그 문단을 **이모지 하나로 덮어쓴다**(2026-10-23 실측). 그래서 따로 떼어 보낸다.
+_NON_BMP = re.compile(r'[𐀀-􏿿]+')
+
+
+def _emoji_split(text: str) -> List[str]:
+    """'📞 상담 09시' → ['📞', ' 상담 09시']. 이모지가 없으면 통째로 한 토막."""
+    if not text:
+        return []
+    if not _NON_BMP.search(text):
+        return [text]
+    parts, last = [], 0
+    for m in _NON_BMP.finditer(text):
+        if m.start() > last:
+            parts.append(text[last:m.start()])
+        parts.append(m.group())
+        last = m.end()
+    if last < len(text):
+        parts.append(text[last:])
+    return parts
+
+
+# 발행 레이어에 **실제로 붙은** 태그 글자들. 네이버는 입력한 태그를 칸 옆에 조각(칩)으로
+# 세운다. 모양 이름이 배포마다 바뀌므로 입력칸 둘레를 훑어 글자만 모은다.
+JS_READ_TAGS = r"""
+(sel) => {
+  const input = document.querySelector(sel);
+  if (!input) return null;
+  const box = input.closest('div, section, li') || input.parentElement;
+  if (!box) return null;
+  const out = [];
+  for (const e of box.querySelectorAll('*')) {
+    if (e === input || e.contains(input)) continue;
+    const t = (e.textContent || '').trim();
+    if (t && t.length < 60 && !e.children.length) out.push(t);
+  }
+  return out;
+}
+"""
+
+JS_MATERIAL_BAR_HIDE = r"""
+() => {
+  let n = 0;
+  for (const e of document.querySelectorAll('[class*="se-flayer-unified"]')) {
+    const up = e.parentElement && e.parentElement.className
+               && e.parentElement.className.toString().includes('se-flayer-unified');
+    if (up) continue;                       // 뿌리만 치운다(자식은 따라 사라진다)
+    if (e.getAttribute('data-dv-matbar') === 'hidden') continue;
+    e.style.setProperty('display', 'none', 'important');
+    e.setAttribute('data-dv-matbar', 'hidden');
+    n += 1;
+  }
+  return n;
+}
+"""
+
 JS_FLAYER_HIDE = r"""
 () => {
   let n = 0;
@@ -914,6 +978,8 @@ class NaverEditor:
                     if await f.locator(S["body_para"]).count() > 0:
                         self._frame = f
                         log.info("에디터 준비됨 (%s)", url[:80])
+                        # 글감 막대는 뜨고 나서 닫는 것이 아니라 **열리기 전에** 치운다.
+                        await self.hide_material_bar("글쓰기 화면 진입")
                         return
                 except Exception:  # noqa: BLE001
                     pass
@@ -1059,6 +1125,24 @@ class NaverEditor:
         log.error("선택창이 본문을 가린 채 닫히지 않습니다%s: %s", tail, names(state["layers"]))
         return False
 
+    async def hide_material_bar(self, where: str = "") -> int:
+        """화면 아래 '전체 글감' 막대를 글 쓰는 동안 치워 둔다.
+
+        닫는 것이 아니라 **처음부터 못 누르게** 한다 — 이 막대는 우리가 연 창이 아니라
+        글쓰기 화면에 늘 붙어 있는 것이고, 한 번 펼쳐지면 사람이 손으로 닫을 때까지
+        발행이 그 자리에서 멈춘다(2026-10-23 고객: "클릭을 해줘야만 정상적으로 예약이 됩니다").
+        글감은 발행에 쓰지 않으므로 치워도 글 내용에는 아무 영향이 없다."""
+        try:
+            frame = await self.frame()
+            gone = int(await frame.evaluate(JS_MATERIAL_BAR_HIDE) or 0)
+        except Exception as e:  # noqa: BLE001  장식을 못 치웠다고 글을 막지 않는다
+            log.debug("글감 막대 치우기 실패(무시): %s", e)
+            return 0
+        if gone:
+            log.info("네이버 글감 막대를 글 쓰는 동안 치웠습니다(%d개)%s",
+                     gone, f" — {where}" if where else "")
+        return gone
+
     async def dismiss_material_search(self, where: str = "") -> bool:
         """네이버 '글감' 검색창을 닫는다. 떠 있으면 친 글자가 본문 대신 그 칸으로 들어간다.
 
@@ -1071,6 +1155,9 @@ class NaverEditor:
         except Exception as e:  # noqa: BLE001  확인에 실패했다고 글을 막을 이유는 없다
             log.debug("글감 검색창 확인 실패(무시): %s", e)
             return False
+        # 네이버의 닫기 단추로 **먼저 제대로 닫고**, 그 다음 막대째 치운다 — 순서가 바뀌면
+        # 감춰진 창을 닫지 못해 편집기 쪽 상태가 '열림'으로 남는다.
+        await self.hide_material_bar(where)
         if not did:
             return False
         tail = f"({where})" if where else ""
@@ -1251,8 +1338,21 @@ class NaverEditor:
         await asyncio.sleep(0.03)
 
     async def _insert(self, text: str) -> None:
-        if text:
-            await self.page.keyboard.insert_text(text)
+        """글자를 친다. **이모지는 따로 떼어** 친다.
+
+        2026-10-23 실측(platonmarketing, 실제 네이버): 이모지가 섞인 줄을 한 번에 보내면
+        **그 줄이 이모지 하나로 바뀐다** — 나머지 글자가 전부 사라진다.
+            보낸 것 : '📞 상담 0507-1434-3226 (평일 09~18시) · 사전 상담은 신용조회 없음'
+            들어간 것: '📞'
+            보낸 것 : '상담 0507 📞 1434-3226 입니다'   → 들어간 것: '📞'  (앞글자까지 날아간다)
+        그래서 글이 "입력한 강조 문구가 본문에 표시되지 않았습니다"로 통째로 떨어졌다.
+        '※'·'#' 같은 보통 기호는 멀쩡하다 — 문제가 되는 것은 **BMP 밖 문자**(이모지)뿐이다.
+        이모지만 따로 보내면 제대로 들어가고, 그 뒤 글자도 이어서 들어간다(실측 확인).
+        """
+        for part in _emoji_split(text):
+            await self.page.keyboard.insert_text(part)
+            if len(part) <= 2 and _NON_BMP.fullmatch(part):
+                await asyncio.sleep(0.12)   # 편집기가 이모지를 앉힐 틈을 준다
 
     async def _bold(self, text: str) -> None:
         await self.page.keyboard.press("Control+b")
@@ -2166,8 +2266,33 @@ class NaverEditor:
             await self._insert(t)
             await self.page.keyboard.press("Enter")
             await asyncio.sleep(0.15)
-        log.info("태그 %d개 입력: %s", len(clean), ", ".join(clean))
-        return len(clean)
+        # **넣었다고 믿지 않고 읽어 본다.** 지금까지는 치기만 하고 끝이라, 태그가 하나도
+        # 등록되지 않아도 로그에는 '태그 N개 입력'이라고만 남았다(2026-10-23 고객:
+        # "태그가 들어가지 않습니다"). 태그는 발행을 막을 일은 아니지만, 안 들어갔으면
+        # 적어도 그렇게 말해 줘야 사람이 손으로 채울 수 있다.
+        missing = await self._tags_missing(f, clean)
+        if missing:
+            log.warning("태그가 등록되지 않았습니다(%d/%d): %s — 발행은 계속합니다",
+                        len(missing), len(clean), ", ".join(missing))
+            note = getattr(self, "format_notes", None)
+            if isinstance(note, list):
+                note.append(f"태그 {', '.join(missing)} 이(가) 들어가지 않았습니다")
+        else:
+            log.info("태그 %d개 확인: %s", len(clean), ", ".join(clean))
+        return len(clean) - len(missing)
+
+    async def _tags_missing(self, frame: Frame, tags: Sequence[str]) -> List[str]:
+        """발행 레이어에서 태그 글자가 실제로 보이는지 본다. 못 읽으면 '다 들어갔다'로 친다
+        (확인에 실패한 것을 '빠졌다'로 외치면 멀쩡한 글마다 거짓 경고가 붙는다)."""
+        try:
+            shown = await frame.evaluate(JS_READ_TAGS, S["tag_input"])
+        except Exception as e:  # noqa: BLE001
+            log.debug("태그 확인 실패(무시): %s", e)
+            return []
+        if shown is None:
+            return []
+        joined = " ".join(str(x) for x in shown)
+        return [t for t in tags if t not in joined]
 
     async def set_schedule(self, dt: datetime) -> None:
         """예약발행 라디오 → 날짜(datepicker) → 시/분(select). 어느 단계든 실패하면 ScheduleError.
