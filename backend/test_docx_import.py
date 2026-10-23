@@ -202,3 +202,35 @@ class RejectTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AlignmentTests(unittest.TestCase):
+    """워드에서 가운데로 맞춘 줄은 네이버에서도 가운데여야 한다.
+
+    2026-10-23 지적: "가운데정렬도 해야 하고". 그때까지 문단 정렬을 **읽지도 않아**,
+    실제 고객 원고('23 신흥동한의원, 신흥동내과')의 가운데 두 줄이 전부 왼쪽으로 들어갔다.
+    """
+
+    def test_centered_paragraph_carries_its_alignment(self):
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        document = Document()
+        document.add_paragraph('두통약을 자꾸 먹게 된다면')     # 첫 줄은 제목이 된다
+        middle = document.add_paragraph('〈 오늘 처음 오신 분이라면 〉')
+        middle.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        document.add_paragraph('본문은 왼쪽 그대로입니다.')
+        right = document.add_paragraph('오른쪽 줄입니다.')
+        right.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+        blocks = parse_docx(_save(document), name='정렬.docx').blocks
+        got = [(block_text(b), b.get('align', '')) for b in blocks]
+        self.assertIn(('본문은 왼쪽 그대로입니다.', ''), got, got)
+        self.assertIn(('〈 오늘 처음 오신 분이라면 〉', 'center'), got, got)
+        self.assertIn(('오른쪽 줄입니다.', 'right'), got, got)
+
+    def test_plain_paragraphs_carry_no_alignment(self):
+        """왼쪽 문단에는 정렬을 적지 않는다 — 적으면 문단마다 툴바를 누르게 된다."""
+        document = Document()
+        document.add_paragraph('제목 줄입니다')          # 첫 줄은 제목으로 떼어 간다
+        document.add_paragraph('그냥 본문입니다.')
+        blocks = parse_docx(_save(document), name='평문.docx').blocks
+        self.assertEqual([b.get('align', '') for b in blocks], [''], blocks)

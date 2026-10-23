@@ -1337,6 +1337,15 @@ async def upload_drafts(campaign_id: str, files: List[UploadFile] = File(...), c
             if k.keyword.replace(" ", "") in hay:
                 matched = k
                 break
+        # 제목에 키워드가 없으면 **앞에 붙인다**. 2026-10-23 요청: "워드 제목에 키워드가
+        # 있는데 블로그 제목에도 키워드가 들어가야 한다". 원고 제목은 글쓴이가 쓴 그대로 두고
+        # 앞에만 붙여, 검색에서 찾히게 한다(예: '서초구한의원 건선한의원을 찾기 전에…').
+        # 이미 들어 있으면 손대지 않는다 — 같은 말이 두 번 들어가면 더 나쁘다.
+        if matched and matched.keyword:
+            flat = title.replace(" ", "")
+            key = matched.keyword.strip()
+            if key and key.replace(" ", "") not in flat and len(key) + 1 + len(title) <= 100:
+                title = f"{key} {title}"
         # 의료광고법 표현은 막지 않고 고친다 — 대안이 있으면 바꾸고, 없으면 그 문장을 덜어낸다.
         title, body, blocks, fixes = writer.sanitize_blocks(blocks, title, body)
         checks = writer.run_static_checks(title, body, client.forbidden_words if client else [])

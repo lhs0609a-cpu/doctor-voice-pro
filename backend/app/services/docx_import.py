@@ -187,6 +187,21 @@ def _images_in(run, part, warnings: List[str], taken: List[int]) -> List[Dict[st
     return out
 
 
+def _align_of(paragraph) -> str:
+    """문단 정렬(가운데·오른쪽). 워드가 가운데로 맞춰 둔 소제목을 네이버에서도 가운데로 넣는다.
+
+    2026-10-23 지적: "가운데정렬도 해야 하고". 지금까지는 글 문단의 정렬을 아예 읽지
+    않아, 워드에서 가운데로 맞춘 줄이 전부 왼쪽으로 들어갔다. 문단에 값이 없으면 스타일에
+    적힌 값을 본다(워드는 제목 스타일 쪽에 적어 두는 일이 흔하다)."""
+    try:
+        value = paragraph.alignment
+        if value is None and paragraph.style is not None:
+            value = paragraph.style.paragraph_format.alignment
+    except Exception:       # noqa: BLE001
+        return ""
+    return {1: "center", 2: "right"}.get(int(value), "") if value is not None else ""
+
+
 def _paragraph_kind(paragraph) -> Tuple[str, int]:
     """문단 스타일 → (종류, 소제목 단계). 한국어 워드 스타일 이름도 본다."""
     style = paragraph.style
@@ -398,6 +413,9 @@ def parse_docx(data: bytes, *, name: str = "") -> ParsedDoc:
             block: Dict[str, Any] = {"type": kind if kind != "list" else "text", "spans": spans}
             if block["type"] == "heading":
                 block["level"] = level
+            align = _align_of(node)
+            if align:
+                block["align"] = align
             block["content"] = block_text(block)
             blocks.append(block)
             # 글자에 링크만 걸려 있고 주소가 화면에 안 보이면, 주소를 한 줄로 덧붙인다.

@@ -493,6 +493,7 @@ async def insert_rich_blocks(editor, blocks):
     else:
         await editor._ctrl_a()
     images = 0
+    aligned = ''            # 지금 문단에 걸려 있는 정렬(다음 문단이 물려받는다)
     carded = False          # 바로 앞이 링크 카드였나 — 카드는 자기 뒤에 빈 문단을 하나 남긴다
     for index, block in enumerate(blocks):
         kind = block.get('type')
@@ -550,6 +551,17 @@ async def insert_rich_blocks(editor, blocks):
                     if line_index:
                         await editor._enter()
                     await styled_text(editor,line,attrs,in_quote=kind == 'quote')
+        # 문단 정렬 — 워드가 가운데로 맞춰 둔 소제목은 네이버에서도 가운데로(2026-10-23).
+        # 네이버는 **캐럿이 있는 문단**에 거는 것이라 글자를 다 넣은 뒤에 누른다. 그리고
+        # 다음 문단이 그 정렬을 물려받으므로, 정렬이 없는 문단에서는 왼쪽으로 되돌린다.
+        wanted_align = (block.get('align') or '').strip().lower()
+        if kind != 'image' and hasattr(editor, 'set_text_align'):
+            if wanted_align in ('center', 'right'):
+                if await editor.set_text_align(wanted_align):
+                    aligned = wanted_align
+            elif aligned:
+                await editor.set_text_align('left')
+                aligned = ''
         if kind == 'quote':
             frame = await editor.frame()
             text = ''.join(s.get('t','') for s in (block.get('spans') or [])) or block.get('content','')

@@ -322,6 +322,94 @@ JS_MATERIAL_SEARCH_CLOSE = r"""
     const r = e.getBoundingClientRect(), s = getComputedStyle(e);
     return r.width > 1 && r.height > 1 && s.visibility !== 'hidden' && s.display !== 'none';
   };
+  const did = [];
+  // ① 펼쳐진 추천 판(se-flayer-unified-result-container): 여기에는 진짜 [닫기] 가 있다.
+  for (const box of [...document.querySelectorAll('[class*="se-flayer-unified-result"]')].filter(vis)) {
+    const close = [...box.querySelectorAll('button, [role="button"]')].filter(vis).find(
+      (b) => /se-flayer-unified-result-close/.test(String(b.className || ''))
+          || /닫기|close/i.test(b.getAttribute('aria-label') || ''));
+    if (close) { try { close.click(); did.push('close'); } catch (e) {} break; }
+  }
+  // ② 화면 아래에 붙은 글감 막대: **닫기 단추가 없다**(2026-10-23 실측). [접기] 로 접는다.
+  const bar = [...document.querySelectorAll('[class*="se-flayer-unified-toolbar"]')]
+    .filter(vis).find((e) => /--expanded/.test(String(e.className || '')));
+  const fold = [...document.querySelectorAll('[class*="se-flayer-unified-fold"]')].filter(vis)[0];
+  if (bar && fold) { try { fold.click(); did.push('fold'); } catch (e) {} }
+  // ③ 검색칸에 들어간 글자를 비우고 포커스를 뺀다.
+  for (const input of document.querySelectorAll('[class*="se-flayer"] input')) {
+    if (!input.value) continue;
+    input.value = '';
+    input.dispatchEvent(new Event('input', {bubbles: true}));
+    did.push('clear');
+  }
+  const a = document.activeElement;
+  if (a && a.closest && a.closest('[class*="se-flayer"], [class*="__se-pop-layer"]')) {
+    try { a.blur(); did.push('blur'); } catch (e) {}
+  }
+  return did.join(',');
+}
+"""
+
+# 글감 막대·추천 판을 화면에서 치운다. **마지막 수단**이지만 꼭 필요하다 —
+# 막대가 화면 아래(y≈835)에 떠 있으면 본문 문단을 눌러도 그 막대가 클릭을 먹는다.
+JS_FLAYER_HIDE = r"""
+() => {
+  let n = 0;
+  for (const e of document.querySelectorAll('[class*="se-flayer"], [class*="__se-pop-layer"]')) {
+    const r = e.getBoundingClientRect();
+    if (r.width > 1 && r.height > 1 && getComputedStyle(e).display !== 'none') {
+      e.style.setProperty('display', 'none', 'important'); n += 1;
+    }
+  }
+  return n;
+}
+"""
+
+# 본문 문단에서 **실제로 눌리는 자리**를 고른다. 2026-10-23 실측: 글감 막대가 화면 아래에
+# 떠 있어, 스크롤된 문단이 그 밑에 깔리면 클릭이 막대로 들어가 캐럿이 영영 안 돌아왔다
+# (고객 로그: '캐럿을 본문으로 되돌리지 못했습니다' 3/3). 그래서 누르기 전에 그 자리에
+# 무엇이 있는지 보고(elementFromPoint), 가려졌으면 알려 준다.
+JS_BODY_POINT = r"""
+({sel}) => {
+  const ps = [...document.querySelectorAll(sel)].filter((e) => {
+    const r = e.getBoundingClientRect();
+    return r.width > 2 && r.height > 2;
+  });
+  const p = ps[ps.length - 1];
+  if (!p) return null;
+  p.scrollIntoView({block: 'center'});
+  const r = p.getBoundingClientRect();
+  const x = r.x + Math.min(r.width / 2, 200);
+  const y = r.y + Math.min(r.height / 2, 12);
+  const top = document.elementFromPoint(x, y);
+  const covered = !!(top && top.closest
+                     && top.closest('[class*="se-flayer"], [class*="__se-pop-layer"]'));
+  return {x, y, covered, top: top ? String(top.className || top.tagName || '').slice(0, 50) : ''};
+}
+"""
+
+# 지금 친 글자가 **본문으로 갈 자리인가**. 2026-10-23 실물 측정에서 확인한 신호:
+#   본문에 캐럿이 있을 때 : activeElement = IFRAME#input_buffer...  → 친 글자가 본문에 들어간다
+#   글감 검색칸을 눌렀을 때: activeElement = INPUT.se-flayer-unified-search-input → 글자가 거기로 간다
+#   창을 닫고 blur 만 했을 때: activeElement = BODY → **글자가 그래도 검색칸으로 간다**(실측)
+# 즉 '닫기'만으로는 못 돌아온다. 본문 문단을 눌러야 돌아온다.
+JS_FOCUS_ZONE = r"""
+() => {
+  const a = document.activeElement;
+  if (!a) return 'NONE';
+  if (a.id && a.id.indexOf('input_buffer') === 0) return 'INPUT_BUFFER';
+  if (a.closest && a.closest('[class*="se-flayer"], [class*="__se-pop-layer"]')) return 'FLAYER';
+  if (a.closest && a.closest('.se-content, .se-components-wrap')) return 'BODY';
+  return 'OTHER';
+}
+"""
+
+JS_MATERIAL_SEARCH_CLOSE = r"""
+() => {
+  const vis = (e) => {
+    const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+    return r.width > 1 && r.height > 1 && s.visibility !== 'hidden' && s.display !== 'none';
+  };
   const hint = (e) => ((e.getAttribute('aria-label') || '') + ' ' + String(e.className || ''));
   let did = '';
   for (const box of [...document.querySelectorAll('[class*="se-flayer"]')].filter(vis)) {
@@ -754,9 +842,21 @@ class NaverEditor:
         self.dialogs: List[str] = []
         page.on("dialog", self._on_dialog)
 
+    # 지우는 확인창은 **절대 자동으로 누르지 않는다**. 2026-10-23 실측 중
+    # "선택된 1개의 예약발행 글을 삭제하시겠습니까? 삭제된 글은 복구되지 않습니다" 가 떴고,
+    # 그때까지 이 자리가 무엇이든 '확인'을 눌렀다 — 걸어 둔 예약이 지워질 수 있는 길이다.
+    DESTRUCTIVE = re.compile(r"삭제|지우|복구되지\s*않|remove|delete", re.I)
+
     async def _on_dialog(self, dialog) -> None:
         msg = dialog.message
         self.dialogs.append(msg)
+        if self.DESTRUCTIVE.search(msg or ""):
+            log.error("지우는 확인창이 떴습니다 — **누르지 않고 취소**합니다: %s", msg[:120])
+            try:
+                await dialog.dismiss()
+            except Exception:  # noqa: BLE001
+                pass
+            return
         log.info("브라우저 다이얼로그(%s): %s → 확인", dialog.type, msg[:120])
         try:
             await dialog.accept()
@@ -979,6 +1079,33 @@ class NaverEditor:
         await asyncio.sleep(0.3)
         return True
 
+    async def _click_body_point(self) -> bool:
+        """본문 문단에서 **진짜 눌리는 자리**를 찾아 누른다(글감 막대에 가려지지 않은 자리)."""
+        try:
+            frame = await self.frame()
+            point = await frame.evaluate(JS_BODY_POINT, {"sel": S["body_para"]})
+            if not point:
+                return False
+            if point.get("covered"):
+                hidden = await frame.evaluate(JS_FLAYER_HIDE)
+                log.warning("본문을 누를 자리를 네이버 글감 막대가 덮고 있습니다(%s) — "
+                            "화면에서 치우고 누릅니다(%d개)", point.get("top"), hidden)
+                point = await frame.evaluate(JS_BODY_POINT, {"sel": S["body_para"]}) or point
+            dx = dy = 0
+            if frame != self.page.main_frame:
+                holder = await frame.frame_element()
+                box = await holder.bounding_box()
+                if box:
+                    dx, dy = box["x"], box["y"]
+            await self.page.mouse.click(point["x"] + dx, point["y"] + dy)
+            await asyncio.sleep(0.25)
+            await self.page.keyboard.press("End")
+            await asyncio.sleep(0.1)
+            return True
+        except Exception as e:  # noqa: BLE001
+            log.warning("본문 누를 자리 찾기 실패(계속 진행): %s", e)
+            return False
+
     async def focus_zone(self) -> str:
         """지금 포커스가 어디 있나 — 'INPUT_BUFFER'(본문) / 'BODY' / 'FLAYER'(글감 검색칸) / 'OTHER'."""
         try:
@@ -1003,7 +1130,11 @@ class NaverEditor:
             log.warning("캐럿이 본문에 없습니다(%s)%s — 창을 닫고 본문을 눌러 되돌립니다 (%d/%d)",
                         zone, f"({where})" if where else "", attempt, tries)
             await self.dismiss_material_search(where)
-            await self._refocus_body_end()
+            # 2026-10-23 실측: 글감 막대가 화면 아래에 떠 있으면 `_refocus_body_end` 의
+            # 문단 클릭이 **그 막대로** 들어가 캐럿이 영영 안 돌아왔다(고객 로그 3/3 실패).
+            # 그래서 누를 자리를 먼저 보고, 가려졌으면 막대를 치운 뒤 누른다.
+            if not await self._click_body_point():
+                await self._refocus_body_end()
             await asyncio.sleep(0.2)
         zone = await self.focus_zone()
         if zone in ("INPUT_BUFFER", "BODY", "UNKNOWN"):
@@ -1646,6 +1777,74 @@ class NaverEditor:
         if await self._pick_toolbar_option("align", "center"):
             return True
         log.warning("가운데 정렬 단추를 찾지 못했습니다 — 사진은 네이버 기본 정렬로 들어갑니다")
+        return False
+
+    async def set_text_align(self, how: str = "center") -> bool:
+        """지금 캐럿이 있는 **글 문단**을 가운데/오른쪽/왼쪽으로 맞춘다.
+
+        지금까지 정렬은 사진에만 있었다(`center_last_image`). 워드 원고의 소제목은 가운데로
+        맞춰 오는데 그게 전부 왼쪽으로 들어갔다(2026-10-23 지적).
+        못 찾으면 경고만 남기고 지나간다 — 정렬 하나로 글을 막지 않는다."""
+        frame = await self.frame()
+        for selector in (f'button[data-name="align"][data-value="{how}"]',
+                         f'button[data-name="align-{how}"]',
+                         f'button[data-value="{how}"][class*="align" i]',
+                         f'.se-toolbar-item-align button[data-value="{how}"]'):
+            button = frame.locator(selector).first
+            try:
+                if await button.count() and await button.is_visible():
+                    await button.click(timeout=4000)
+                    await asyncio.sleep(0.15)
+                    return True
+            except Exception as e:  # noqa: BLE001
+                log.debug("글 정렬 단추 %s 실패: %s", selector, e)
+        # 2026-10-23 실측(platonmarketing 글쓰기 화면): 글 정렬은 낱개 단추가 아니라
+        # **드롭다운** 이다 — button[data-name="align-drop-down-with-justify"].
+        # 눌러서 목록을 펴고 그 안에서 고른다.
+        try:
+            opener = frame.locator('button[data-name="align-drop-down-with-justify"], '
+                                   'button[data-name^="align-drop-down"]').first
+            if await opener.count() and await opener.is_visible():
+                await opener.click(timeout=4000)
+                await asyncio.sleep(0.35)
+                picked = await frame.evaluate(r"""(how) => {
+                  const seen = (e) => { const r = e.getBoundingClientRect();
+                    return r.width > 4 && r.height > 4; };
+                  const hit = [...document.querySelectorAll('button, [role="menuitem"], [role="option"]')]
+                    .filter(seen)
+                    .find((e) => (e.getAttribute('data-value') === how
+                                  && /align/i.test(String(e.className || '') + (e.getAttribute('data-name') || '')))
+                               || e.getAttribute('data-name') === 'align-' + how
+                               || (e.getAttribute('data-name') === 'align' && e.getAttribute('data-value') === how));
+                  if (!hit) {
+                    return {ok: false, seen: [...document.querySelectorAll('button')].filter(seen)
+                      .filter(e => /align/i.test(String(e.className || '') + (e.getAttribute('data-name') || '')))
+                      .map(e => (e.getAttribute('data-name') || '') + ':' + (e.getAttribute('data-value') || ''))
+                      .slice(0, 10)};
+                  }
+                  hit.click();
+                  return {ok: true, picked: (hit.getAttribute('data-name') || '')
+                                            + ':' + (hit.getAttribute('data-value') || '')};
+                }""", how)
+                if picked and picked.get('ok'):
+                    await asyncio.sleep(0.15)
+                    return True
+                log.info("정렬 목록에 보인 것: %s", " | ".join((picked or {}).get('seen') or []))
+                await self.page.keyboard.press("Escape")
+        except Exception as e:  # noqa: BLE001
+            log.debug("정렬 드롭다운 실패: %s", e)
+        if await self._pick_toolbar_option("align", how):
+            return True
+        try:        # 다음에 바로 고칠 수 있게 **무엇이 보였는지** 적어 둔다
+            seen = await frame.evaluate(r"""() => [...document.querySelectorAll('button')]
+              .filter(e => { const r = e.getBoundingClientRect(); return r.width > 4 && r.height > 4; })
+              .filter(e => /align/i.test(String(e.className || '') + (e.getAttribute('data-name') || '')))
+              .map(e => (e.getAttribute('data-name') || '') + ':' + (e.getAttribute('data-value') || '')
+                        + ':' + String(e.className || '').slice(0, 40)).slice(0, 12)""")
+            log.info("정렬 단추로 보인 것: %s", " | ".join(seen) or "(없음)")
+        except Exception:  # noqa: BLE001
+            pass
+        log.warning("글 가운데 정렬 단추를 찾지 못했습니다 — 그 문단은 왼쪽 그대로 들어갑니다")
         return False
 
     async def image_count(self) -> int:
