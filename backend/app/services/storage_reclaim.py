@@ -73,6 +73,38 @@ def report() -> Dict[str, Any]:
     return out
 
 
+# 볼륨이 이만큼 차면 경고를 띄운다. 100% 가 되는 순간 쓰기가 전부 500 이 되므로
+# (로그인조차 last_used_at 을 적는다) 그 전에 눈에 띄어야 한다.
+WARN_USED_PCT = 85
+CRITICAL_USED_PCT = 95
+
+_last_warned_pct: Optional[int] = None
+
+
+def warn_if_tight() -> Dict[str, Any]:
+    """볼륨이 차오르면 로그에 띄운다. 차고 난 뒤에는 아무것도 할 수 없다.
+
+    2026-10-24: 3GB 볼륨이 100% 차서 '서버 로그인 실패: HTTP 500' 으로 멈췄다.
+    그때까지 로그에 남은 경고는 없었다 — 디스크가 꽉 찬 뒤의 예외뿐이었다."""
+    global _last_warned_pct
+    info = report()
+    pct = info.get("disk_used_pct")
+    if not isinstance(pct, int):
+        return info
+    if pct < WARN_USED_PCT:
+        _last_warned_pct = None
+        return info
+    # 같은 구간에서 1분마다 같은 줄을 쌓지 않는다 — 1%p 움직였을 때만 다시 적는다.
+    if _last_warned_pct is not None and abs(pct - _last_warned_pct) < 1:
+        return info
+    _last_warned_pct = pct
+    log = logger.critical if pct >= CRITICAL_USED_PCT else logger.warning
+    log("[저장공간] 볼륨 %d%% 사용 (여유 %sMB, DB %sMB). 100%% 가 되면 로그인·발행 등 "
+        "모든 쓰기가 500 이 된다 — fly volumes extend 로 볼륨을 늘려야 한다.",
+        pct, info.get("disk_free_mb"), info.get("db_mb"))
+    return info
+
+
 async def _prune(db: AsyncSession, model, pk, when, cutoff: datetime, extra=None) -> int:
     """오래된 행을 BATCH 개까지 지운다. 지운 개수."""
     q = select(pk).where(when < cutoff)

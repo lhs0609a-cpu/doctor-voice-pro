@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.services.ai_rewrite_engine import DEFAULT_MODEL
 from app.api import api_router
 from contextlib import asynccontextmanager
+from typing import Optional
 import traceback
 
 
@@ -449,6 +450,26 @@ app.add_middleware(
 app.include_router(api_router, prefix="/api/v1")
 
 
+_CORS_ON_ERROR = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT",
+    "Access-Control-Allow-Headers": "*",
+}
+
+
+def _is_disk_full(exc: Exception) -> bool:
+    """SQLite 가 '디스크가 찼다'고 한 것인지. 원인 예외까지 따라 내려간다."""
+    seen = 0
+    err: Optional[BaseException] = exc
+    while err is not None and seen < 5:
+        text = str(err).lower()
+        if "disk is full" in text or "database or disk is full" in text:
+            return True
+        err = err.__cause__ or err.__context__
+        seen += 1
+    return False
+
+
 # 전역 예외 핸들러 - 500 오류에도 CORS 헤더 포함
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -457,14 +478,32 @@ async def global_exception_handler(request: Request, exc: Exception):
     print(f"[ERROR] Unhandled exception: {error_detail}")
     print(f"[ERROR] Traceback: {traceback.format_exc()}")
 
+    # 볼륨이 꽉 차면 '읽기'는 되는데 '쓰기'만 전부 터진다 — 로그인조차 접속 시각을
+    # 적기 때문에 사용자에게는 "서버 로그인 실패: HTTP 500" 으로만 보였다(2026-10-24).
+    # 알아볼 수 있는 말로 돌려주어, 다음에는 로그를 뒤지지 않고도 원인을 알게 한다.
+    if _is_disk_full(exc):
+        from app.services.storage_reclaim import report as storage_report
+
+        try:
+            info = storage_report()
+        except Exception:  # noqa: BLE001 — 진단이 실패해도 응답은 나가야 한다
+            info = {}
+        print(f"[ERROR] 저장공간 부족: {info}")
+        return JSONResponse(
+            status_code=507,
+            content={
+                "detail": "서버 저장공간이 가득 찼습니다. 관리자에게 알려 주세요 "
+                          "(볼륨을 늘려야 글쓰기·발행·로그인이 다시 됩니다).",
+                "error": error_detail,
+                "storage": info,
+            },
+            headers=_CORS_ON_ERROR,
+        )
+
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal Server Error", "error": error_detail},
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT",
-            "Access-Control-Allow-Headers": "*",
-        }
+        headers=_CORS_ON_ERROR,
     )
 
 
@@ -492,9 +531,19 @@ async def health_check():
         "model": DEFAULT_MODEL if settings.GEMINI_API_KEY else None
     }
 
+    # 볼륨이 차면 쓰기가 전부 500 이 된다. 여기서 숫자를 같이 내보내 두면
+    # 터지기 전에 밖에서도 보인다(/health 자체는 꽉 차도 200 을 유지한다 —
+    # 여기서 실패를 내면 fly 가 멀쩡한 머신을 재시작해 버린다).
+    try:
+        from app.services.storage_reclaim import report as storage_report
+        storage = storage_report()
+    except Exception:  # noqa: BLE001
+        storage = {}
+
     return {
         "status": "healthy",
-        "ai": ai_status
+        "ai": ai_status,
+        "storage": storage,
     }
 
 

@@ -262,20 +262,32 @@ async def _run_jobs(poll_interval: float = POLL_INTERVAL) -> None:
 async def _maintenance():
     from app.services.autopilot import tick
     from app.services.publication_verifier import verify_due
-    from app.services.storage_reclaim import reclaim as reclaim_storage
+    from app.services.storage_reclaim import reclaim as reclaim_storage, warn_if_tight
+
     while True:
+        # 볼륨이 차면 예약만이 아니라 로그인·API 전체가 멈춘다. 그래서 공간 정리는
+        # 맨 앞에서, 제 손으로 예외를 받아 낸다 — 2026-10-24 에 이게 맨 뒤에 있던 탓에
+        # 디스크가 찬 순간 앞의 verify_due 가 먼저 터져 정작 공간을 비워 줄 이 코드에
+        # 영영 닿지 못했다(스스로 빠져나올 수 없는 상태가 됐다).
+        try:
+            warn_if_tight()
+            async with AsyncSessionLocal() as db:
+                await reclaim_storage(db)      # 안에서 1시간에 한 번만 실제로 일한다
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception('저장공간 정리 실패; 다음 주기에 재시도합니다')
+
         try:
             async with AsyncSessionLocal() as db:
                 await _reclaim_stale(db)
                 await tick(db)
                 await verify_due(db)
-                # 볼륨이 차면 예약만이 아니라 API 전체가 멈춘다. 다시 만들 수 있는 캐시는
-                # 스스로 덜어낸다(안에서 1시간에 한 번만 실제로 일한다).
-                await reclaim_storage(db)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception('자동 운영 유지보수 실패; 다음 주기에 재시도합니다')
+
         await asyncio.sleep(60)
 
 
