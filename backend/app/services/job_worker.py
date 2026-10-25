@@ -261,7 +261,7 @@ async def _run_jobs(poll_interval: float = POLL_INTERVAL) -> None:
 
 async def _maintenance():
     from app.services.autopilot import tick
-    from app.services.publication_verifier import verify_due
+    from app.services.publication_verifier import recheck_uncertain, verify_due
     from app.services.storage_reclaim import reclaim as reclaim_storage, warn_if_tight
 
     while True:
@@ -283,6 +283,9 @@ async def _maintenance():
                 await _reclaim_stale(db)
                 await tick(db)
                 await verify_due(db)
+                # '확인 필요'로 넘긴 글도 다시 본다 — 제목이 바뀌어 못 찾았을 뿐인 글이
+                # 많았다(2026-10-25). 되살아나면 원고 잠금도 같이 풀린다.
+                await recheck_uncertain(db)
         except asyncio.CancelledError:
             raise
         except Exception:
