@@ -568,6 +568,17 @@ async def add_blog(client_id: str, body: BlogIn, current_user: User = Depends(ge
                       "footer_link_label", "place_url", "place_label", "template_name", "default_category"):
             if not getattr(b, field):
                 setattr(b, field, getattr(old, field))
+    # 네이버 아이디/비밀번호가 없으면 **등록하는 그 자리에서** 말해 준다.
+    # 2026-10-25: 한 계정의 블로그 6개 중 4개가 비밀번호 없이 등록돼 있었다. 화면에는 '정상'으로
+    # 보였고, 예약은 그대로 쌓였고, 실행기만 "로그인하세요"에서 멈췄다 — 그래서 사람 눈에는
+    # "저 컴퓨터에서는 안 된다"로 보였다(같은 블로그가 비밀번호 있는 다른 계정에서는 잘 올라갔다).
+    # 막지는 않는다. PC 에서 직접 로그인해 쓰는 길도 실제로 쓰이기 때문이다(그러면 실행기가
+    # 로그인을 확인하고 스스로 '정상'으로 돌린다).
+    if not (b.login_id and b.login_pw_enc):
+        b.status = "login_required"
+        b.status_reason = ("네이버 아이디/비밀번호가 없습니다. 병원 관리에서 등록하거나, "
+                           "PC 실행기가 띄운 크롬 창에서 이 블로그에 직접 로그인해 주세요.")
+        b.status_changed_at = datetime.utcnow()
     db.add(b)
     await db.commit()
     return _blog_out(b)
