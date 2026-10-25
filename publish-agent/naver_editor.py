@@ -157,6 +157,32 @@ async () => {
 }
 """
 
+# 이어받은 글이 '끝까지 들어가 있다'고 볼 최소 비율. 네이버가 공백·빈 문단을 다듬어
+# 몇 글자 줄어드는 일이 있어 1.0 으로는 멀쩡한 글도 버린다. 모자라면 처음부터 다시 쓴다.
+RESUME_MIN_RATIO = 0.95
+
+JS_RESTORE_DRAFT = r"""
+async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await sleep(300);
+  // 지난 시도가 임시저장해 둔 '작성 중인 글'을 **불러온다**. 닫는 쪽(JS_DISMISS_DRAFT)과
+  // 짝이다 — 보이는 단추만 누르는 것도 같은 이유(닫힌 층에도 '확인'이 들어 있다).
+  const seen = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+  const candidates = [...document.querySelectorAll('button, a, .se-popup-button, [class*="popup"] button')].filter(seen);
+  for (const btn of candidates) {
+    const t = (btn.textContent || '').trim();
+    if (t === '확인' || t === '예' || t === '불러오기' || t === '이어쓰기') {
+      try { btn.click(); await sleep(600); return t; } catch (e) {}
+    }
+  }
+  return null;
+}
+"""
+
+# 본문에 들어 있는 글자 수(제목 제외). 이어받은 글이 끝까지 들어가 있는지 재는 데 쓴다.
+JS_BODY_CHARS = r"""() => [...document.querySelectorAll('.se-component:not(.se-documentTitle) .se-text-paragraph')]
+      .reduce((n, p) => n + p.textContent.length, 0)"""
+
 JS_IMAGE_COUNT = r"""
 () => Math.max(
   document.querySelectorAll('.se-component.se-image').length,
@@ -1284,6 +1310,43 @@ class NaverEditor:
             return True
         log.info("드래프트 팝업 없음")
         return False
+
+    async def restore_draft(self, expect_title: str, expect_chars: int) -> bool:
+        """지난 시도가 임시저장해 둔 글을 불러와 **이어쓸 수 있는지**까지 확인한다.
+
+        2026-10-25: 한 글에 평균 2.0회 시도가 들었다(400편 중 164편이 2회 이상). 지금은 매번
+        본문 3,000자와 사진 10장을 처음부터 다시 올린다 — 재시도 시간이 통째로 두 배다.
+
+        불러온 글이 **우리 글이 맞고 끝까지 들어가 있을 때만** True. 하나라도 어긋나면
+        False 를 주어 부르는 쪽이 평소처럼 처음부터 쓰게 한다. 반쯤 쓰인 글이나 남의 글이
+        그대로 발행되는 것이 제일 나쁘다."""
+        f = await self.frame()
+        try:
+            clicked = await f.evaluate(JS_RESTORE_DRAFT)
+        except Exception as e:  # noqa: BLE001
+            log.warning("이어쓰기 팝업 처리 중 오류: %s", e)
+            return False
+        if not clicked:
+            log.info("이어쓸 '작성 중인 글'이 없습니다 — 처음부터 씁니다")
+            return False
+        await asyncio.sleep(0.8)
+        f = await self.frame()
+        try:
+            got = (await f.evaluate(JS_READ_TEXT, S["title_para"]) or "").strip()
+            chars = int(await f.evaluate(JS_BODY_CHARS) or 0)
+        except Exception as e:  # noqa: BLE001
+            log.warning("이어쓴 글을 읽지 못했습니다: %s", e)
+            return False
+        want = (expect_title or "").strip()
+        if want and want[:12] not in got:
+            log.warning("이어쓰기 취소 — 제목이 다릅니다(기대 '%s' / 실제 '%s')", want[:24], got[:24])
+            return False
+        # 끝까지 들어가 있어야 한다. 모자라면 뒷부분이 빠진 채 발행될 수 있다.
+        if expect_chars and chars < int(expect_chars * RESUME_MIN_RATIO):
+            log.warning("이어쓰기 취소 — 본문이 모자랍니다(%d자 / 기대 %d자)", chars, expect_chars)
+            return False
+        log.info("이어쓰기: '%s' 본문 %d자 — 발행 단계부터 잇습니다", got[:30], chars)
+        return True
 
     async def read_blog_id(self) -> str:
         """현재 로그인된 블로그 ID(naver-poster readBlogId 포트). 못 읽으면 ''."""

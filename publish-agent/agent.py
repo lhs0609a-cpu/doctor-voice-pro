@@ -205,18 +205,55 @@ def select_blogs(summary: List[Dict[str, Any]], want: Optional[str], *,
                  or b.get("wants_scan") or b.get("scan_requested"))]
 
 
+def _mark(editor: Any, name: str, value: bool) -> None:
+    """run_job 의 진행 상태를 에디터에 남긴다(대역 객체도 있어 실패해도 무시한다)."""
+    try:
+        setattr(editor, name, value)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+async def keep_body_for_resume(editor: Any, *, dry_run: bool = False) -> bool:
+    """실패한 글을 버리지 않고 임시저장해 둔다 — 다음 시도가 이어받는다.
+
+    2026-10-25 실측: 10월 400편에 시도 811회(평균 2.0회)가 들었고, 재시도는 매번 본문
+    3,000자와 사진 10장을 처음부터 다시 올렸다. 대량 병원에서 시간이 두 배로 드는 이유다.
+
+    발행을 이미 눌렀으면 **손대지 않는다** — 이미 올라갔을 수 있고, 임시저장이 사본을 만든다.
+    본문을 끝까지 넣기 전이면 지킬 것도 없다(반쯤 쓰인 글을 남기면 다음 시도가 그걸 이어받는다)."""
+    if dry_run or not getattr(editor, "body_done", False) or getattr(editor, "clicked_publish", False):
+        return False
+    try:
+        out = await editor.save_draft()
+    except Exception as e:  # noqa: BLE001
+        log.warning("다 쓴 글을 임시저장하지 못했습니다(다음 시도는 처음부터 씁니다): %s", e)
+        return False
+    if not (out and out.ok):
+        log.warning("다 쓴 글을 임시저장하지 못했습니다 — 다음 시도는 처음부터 씁니다")
+        return False
+    log.info("다 쓴 글을 임시저장해 두었습니다 — 다음 시도는 발행 단계부터 잇습니다")
+    return True
+
+
 # ---------------------------------------------------------------- 잡 1건
-async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optional[datetime] = None, before_publish=None) -> JobResult:
+async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optional[datetime] = None,
+                  before_publish=None, on_body_saved=None) -> JobResult:
     """에디터(NaverEditor 또는 같은 인터페이스의 대역)로 잡 1건을 처리한다.
     예외 → JobResult 로 변환. 발행 클릭 이후의 예외만 uncertain 으로 올린다."""
     from naver_editor import BlogMismatch, CaptchaDetected, EditorError, LoginRequired, ScheduleError
 
     title = job.get("title") or ""
     clicked_publish = False
+    body_done = False       # 본문을 끝까지 넣었나 — 여기서부터는 실패해도 글을 버리지 않는다
+    resumed = False         # 지난 시도가 임시저장해 둔 글을 이어받았나
     # 서식이 어긋난 자리를 모아 발행 결과에 적어 준다(글은 그대로 올린다 — 2026-10-22 요청).
     try:
         editor.format_notes = []
         editor.upload_stalled = ""
+        # 실패한 뒤 '다 쓴 글을 지킬지'는 부르는 쪽이 판단한다 — run_job 의 탈출구가
+        # 예외 6가지와 return 여러 개라, 한 곳에서 묶으려면 상태를 밖에 남기는 편이 안전하다.
+        editor.body_done = False
+        editor.clicked_publish = False
     except Exception:  # noqa: BLE001
         pass
     try:
@@ -233,7 +270,15 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
 
         # 2) 글쓰기 페이지 + 계정 확인
         await editor.open_write_page()
-        await editor.dismiss_draft_popup()
+        # 지난 시도가 본문까지 넣고 임시저장해 두었으면 그 글을 이어받는다 — 본문·사진을
+        # 다시 올리지 않는다. 우리 글이 맞고 끝까지 들어가 있을 때만 True 이고, 아니면
+        # 평소처럼 처음부터 쓴다(restore_draft 안에서 가린다).
+        if job.get("resume") == "body_saved" and hasattr(editor, "restore_draft"):
+            want_chars = sum(len(b.get("content") or "") for b in (job.get("blocks") or [])
+                             if (b.get("type") or "text") == "text") or len(job.get("content") or "")
+            resumed = await editor.restore_draft(title, want_chars)
+        if not resumed:
+            await editor.dismiss_draft_popup()
         # 글감·링크·템플릿 같은 선택창이 떠 있으면 아래 모든 클릭이 거기에 막힌다.
         # 지난 글이 남겨 둔 창도 있다 — 쓰기 시작하기 전에 화면을 비운다.
         if hasattr(editor, "clear_blocking_layers"):
@@ -255,19 +300,27 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
         # 병원이 네이버에 저장해 둔 '내 템플릿'. 글꼴·강조색과 고정 문단(주소·진료시간·지도)이
         # 거기 들어 있다. 원고는 그 **위에** 쓴다. 못 불러오면 예전처럼 빈 글에 쓴다.
         templated = False
-        if settings.get("template") and hasattr(editor, "load_template"):
+        if not resumed and settings.get("template") and hasattr(editor, "load_template"):
+            # 이어받은 글에는 템플릿도 이미 들어 있다 — 다시 부르면 그 문단이 두 번 생긴다.
             templated = await editor.load_template(settings["template"])
-        await editor.set_title(title)
-        blocks = job.get("blocks") or [{"type": "text", "content": job.get("content") or ""}]
-        # 워드에서 올라온 원고는 서버가 reformat=False 로 내린다 — 글쓴이 줄바꿈을 다시 자르지 않는다.
-        reformat = settings.get("reformat", True)
-        await editor.insert_body_blocks(blocks, pick_emphasize(job.get("emphasize") or []),
-                                        reformat=bool(reformat), keep=templated)
+        if resumed:
+            # 이어받은 글에는 제목·본문·사진이 이미 들어 있다. 다시 쓰면 두 번 들어간다.
+            log.info("이어쓰기 — 제목·본문·사진 입력을 건너뜁니다")
+            body_done = True
+        else:
+            await editor.set_title(title)
+            blocks = job.get("blocks") or [{"type": "text", "content": job.get("content") or ""}]
+            # 워드에서 올라온 원고는 서버가 reformat=False 로 내린다 — 글쓴이 줄바꿈을 다시 자르지 않는다.
+            reformat = settings.get("reformat", True)
+            await editor.insert_body_blocks(blocks, pick_emphasize(job.get("emphasize") or []),
+                                            reformat=bool(reformat), keep=templated)
+            body_done = True
+        _mark(editor, "body_done", True)
         # 글꼴·크기는 본문을 다 넣은 뒤 **본문 전체를 골라** 바꾼다(사람이 하는 그대로).
         # 예전에는 제목 바로 뒤에 골랐는데 캐럿이 제목에 있어 네이버가 목록을 열지 않았다 —
         # "본문 font-family 를 '나눔명조' 로 바꾸지 못했습니다"(2026-10-21 위례).
         # 템플릿을 불러왔으면 템플릿의 글꼴을 그대로 둔다(병원이 정해 둔 것이 이긴다).
-        if not templated and (settings.get("font") or settings.get("size")) and hasattr(editor, "set_body_typography"):
+        if not resumed and not templated and (settings.get("font") or settings.get("size")) and hasattr(editor, "set_body_typography"):
             await editor.set_body_typography(settings.get("font") or "", int(settings.get("size") or 0))
 
         # 4) 임시저장은 발행 레이어를 열지 않는다 — 글만 저장하고 끝낸다.
@@ -283,6 +336,7 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
             if before_publish:
                 await before_publish()
             clicked_publish = True
+            _mark(editor, "clicked_publish", True)
             out = await editor.save_draft()
             if out is None or not out.ok:
                 return JobResult(ok=False, uncertain=True, message=(out.message if out else "임시저장 결과 없음"))
@@ -319,6 +373,7 @@ async def run_job(editor: Any, job: Dict[str, Any], *, dry_run: bool, now: Optio
         if before_publish:
             await before_publish()
         clicked_publish = True
+        _mark(editor, "clicked_publish", True)
         out = await editor.publish()
         if out is None:
             return JobResult(ok=False, uncertain=True, message="발행 결과 없음 — 네이버 예약 목록 확인 필요")
@@ -844,6 +899,14 @@ async def process_blog(client: ServerClient, pool: BrowserPool, blog: Dict[str, 
             result = await run_job(editor, job, dry_run=args.dry_run, before_publish=before_publish)
             if result.ok and not args.dry_run:
                 await capture_keyword_evidence(editor, client, job, result)
+            # 다 쓰고 뒤에서 깨진 글은 임시저장해 두고, 서버에 '여기까지 왔다'를 적는다.
+            # 결과 보고(save_result)보다 **먼저** 적어야 한다 — 보고가 상태를 바꾸고 나면
+            # checkpoint 가 'assigned' 가 아니라며 거절한다.
+            if not result.ok and await keep_body_for_resume(editor, dry_run=args.dry_run):
+                try:
+                    await asyncio.to_thread(client.checkpoint, job["id"], token, "body_saved")
+                except Exception as e:  # noqa: BLE001
+                    log.warning("재개 지점을 서버에 적지 못했습니다(다음 시도는 처음부터): %s", e)
             journal.save_result(token, result.as_report())
         finally:
             heartbeat.cancel()

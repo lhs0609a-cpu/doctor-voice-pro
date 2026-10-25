@@ -51,7 +51,7 @@ async def claim(db, job_id, user_id, blog_id, mode="live", now=None, device_id=N
 
 async def checkpoint(db, job_id, user_id, token, stage, now=None):
     now = now or datetime.utcnow()
-    if not token or stage not in ("heartbeat", "editing", "finalizing"):
+    if not token or stage not in ("heartbeat", "editing", "body_saved", "finalizing"):
         raise Conflict("유효한 잠금과 실행 단계가 필요합니다")
     attempt = await db.get(PublishAttempt, token)
     if not attempt or attempt.job_id != job_id or attempt.user_id != user_id or attempt.result:
@@ -64,7 +64,10 @@ async def checkpoint(db, job_id, user_id, token, stage, now=None):
         PublishJob.lock_token == token, PublishJob.status.in_(states),
         PublishJob.lock_expires_at > now,
     ).values(lock_expires_at=now + timedelta(seconds=LEASE_SECONDS),
-             **({"status": "publishing"} if stage == "finalizing" else {})))
+             **({"status": "publishing"} if stage == "finalizing" else {}),
+             # 본문을 다 넣고 임시저장해 두었다 — 이 시도가 뒤에서 깨져도 다음 시도는
+             # 네이버의 '작성 중인 글'을 불러와 발행 단계부터 잇는다.
+             **({"resume_stage": "body_saved"} if stage == "body_saved" else {})))
     if changed.rowcount != 1:
         await db.rollback()
         raise Conflict("잠금이 만료되었거나 작업이 변경되었습니다")
@@ -134,8 +137,12 @@ async def result(db, job_id, user_id, token, body, now=None):
     else:
         result_url = body.get("url")
         error = body.get("message") or ("네이버 예약 목록에서 등록 결과를 확인하세요" if status == "uncertain" else None)
+    # 재개 지점은 '다음에 또 할 때'만 남긴다. 다시 할 일이 없는데 남겨 두면, 한참 뒤
+    # 같은 글을 새로 예약했을 때 네이버에 남은 옛 '작성 중인 글'을 불러오려 들 수 있다.
+    keep_resume = (status == "failed" and retry_at is not None) or status == "queued"
     values = dict(status=status, attempts=attempts, next_retry_at=retry_at,
-                  lock_expires_at=None, result_url=result_url, error=error)
+                  lock_expires_at=None, result_url=result_url, error=error,
+                  **({} if keep_resume else {"resume_stage": None}))
     changed = await db.execute(update(PublishJob).where(
         PublishJob.id == job_id, PublishJob.user_id == user_id,
         PublishJob.lock_token == token, PublishJob.status.in_(["assigned", "publishing", "uncertain"]),

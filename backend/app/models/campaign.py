@@ -312,6 +312,11 @@ class PublishJob(Base):
     # 마이그레이션(20260918_job_verification)은 이 칸을 만들었는데 모델에만 빠져 있었다 —
     # 발행건 목록과 예약 취소가 모두 이 칸을 읽어서 AttributeError 로 죽었다.
     verification = Column(JSON, default=dict)
+    # 지난 시도가 어디까지 갔나. 'body_saved' = 본문을 다 넣고 임시저장까지 해 두었다 —
+    # 다음 시도는 처음부터 다시 쓰지 않고 네이버의 '작성 중인 글'을 불러와 발행 단계부터 잇는다.
+    # 본문 3,000자 + 사진 10장을 다시 올리는 데 드는 시간이 재시도마다 통째로 사라진다
+    # (2026-10월: 400편 중 164편이 2회 이상 시도됐다).
+    resume_stage = Column(String(20), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

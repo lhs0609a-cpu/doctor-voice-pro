@@ -2325,6 +2325,9 @@ class ClaimedJob(BaseModel):
     draft_id: str
     protocol_version: int = 2
     lease_seconds: int = protocol.LEASE_SECONDS
+    # 지난 시도가 본문까지 넣고 임시저장해 두었으면 'body_saved'. 실행기는 네이버의
+    # '작성 중인 글'을 불러와 발행 단계부터 잇는다(본문·사진을 다시 올리지 않는다).
+    resume: Optional[str] = None
 
 
 async def _unique_doc_image(db: AsyncSession, image: PoolImage,
@@ -2612,6 +2615,7 @@ async def agent_claim(body: ClaimIn, current_user: User = Depends(get_current_us
                          "reformat": not draft.blocks,
                          "requiredLinks": [draft.checks['landing']['url']] if (draft.checks or {}).get('landing') else []},
                 expectedBlogId=j.naver_blog_id, blog_ref_id=j.blog_ref_id, draft_id=j.draft_id,
+                resume=j.resume_stage or None,
             )
             attempt = await db.get(PublishAttempt, token)
             attempt.payload = payload.model_dump()
