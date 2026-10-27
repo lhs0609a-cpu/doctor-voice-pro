@@ -34,9 +34,11 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-# 이만큼 넘게 쓰고 있으면 한 번 돌려주기를 시도한다. 낮게 잡을 이유가 없다 —
-# trim 은 '놓은 공간'만 내려보내므로 쓰고 있는 메모리는 건드리지 않는다.
-TRIM_USED_PCT = 60
+# 돌려주기는 **매 주기 그냥 한다**(1분에 한 번). 문턱을 두면 그 선까지는 톱니가
+# 자라도록 내버려 두는 셈이고, 그러면 한도를 올려 번 여유를 다시 톱니로 메운다.
+# trim 은 '놓은 공간'만 내려보내므로 쓰고 있는 메모리는 건드리지 않고, 1분에 한 번은
+# 비용이 없다. 되돌린 양이 작으면 로그에도 남기지 않는다.
+
 # 한도에 이만큼 닿으면 로그에 띄운다. 100% 가 되면 커널이 말없이 죽인다.
 WARN_USED_PCT = 85
 CRITICAL_USED_PCT = 95
@@ -133,13 +135,13 @@ def watch() -> Dict[str, Any]:
     pct = info.get("used_pct")
     if not isinstance(pct, int):
         return info
-    if pct >= TRIM_USED_PCT:
-        freed = trim()
-        if freed and freed >= TRIM_LOG_MB:
-            info = report()
-            logger.info("[메모리] %sMB 를 운영체제에 돌려주었습니다 (%d%% → %s%%)",
-                        freed, pct, info.get("used_pct"))
-            pct = info.get("used_pct") if isinstance(info.get("used_pct"), int) else pct
+    freed = trim()
+    if freed and freed >= TRIM_LOG_MB:
+        info = report()
+        logger.info("[메모리] %sMB 를 운영체제에 돌려주었습니다 (%d%% → %s%%)",
+                    freed, pct, info.get("used_pct"))
+        if isinstance(info.get("used_pct"), int):
+            pct = info["used_pct"]
     if pct < WARN_USED_PCT:
         _last_warned_pct = None
         return info
