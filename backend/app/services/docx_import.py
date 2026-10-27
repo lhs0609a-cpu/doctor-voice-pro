@@ -430,9 +430,56 @@ def parse_docx(data: bytes, *, name: str = "") -> ParsedDoc:
     if not blocks:
         raise ValueError("워드 파일에서 읽을 내용이 없습니다")
     title, blocks = _split_title(blocks, name)
+    # 제목을 떼어 낸 뒤에 합친다 — 먼저 합치면 '05 치료'가 제목으로 올라갈 수 있다.
+    blocks = _merge_number_headings(blocks)
     if not any(b["type"] != "image" for b in blocks):
         raise ValueError("사진만 있고 글이 없습니다")
     return ParsedDoc(title=title, blocks=blocks, warnings=warnings, links=links)
+
+
+# 소제목 번호를 따로 한 줄에 적어 온 원고. 고객 원고에 이렇게 들어온다.
+#
+#     05
+#     (빈 줄)
+#     치료
+#
+# 그대로 올리면 숫자 하나만 떠 있는 줄과 번호를 잃은 소제목 줄로 갈라진다
+# (2026-10-27 고객 요청: "05 / 치료 이렇게 띄어쓰기로 작성된게 있는데, 05 치료 >
+# 소제목으로 들어가도록"). 번호만 있는 줄은 바로 다음 줄과 한 소제목으로 합친다.
+_NUMBER_ONLY_RE = re.compile(r"^(\d{1,2})\s*[.)]?$")
+# 합칠 상대가 이보다 길면 소제목이 아니라 본문이다 — 번호 매긴 목록의 첫 항목이나
+# 마침표 없이 끝난 본문 한 줄을 소제목으로 올려 버리지 않으려고 둔다.
+_HEADING_MERGE_MAX = 30
+
+
+def _merge_number_headings(blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """'05' + '치료' → 소제목 '05 치료'. 합칠 자리가 없으면 그대로 둔다."""
+    out: List[Dict[str, Any]] = []
+    i = 0
+    while i < len(blocks):
+        block = blocks[i]
+        following = blocks[i + 1] if i + 1 < len(blocks) else None
+        number = (_NUMBER_ONLY_RE.match(block_text(block).strip())
+                  if block.get("type") in ("text", "heading") else None)
+        if number and following and following.get("type") in ("text", "heading"):
+            text = block_text(following).strip()
+            # 문장으로 끝나면 소제목이 아니다(번호 뒤에 본문이 바로 붙은 경우).
+            if text and len(text) <= _HEADING_MERGE_MAX and not re.search(r"[.!?]$", text):
+                merged = dict(following)
+                merged["type"] = "heading"
+                merged.setdefault("level", 2)
+                spans = [dict(sp) for sp in (following.get("spans") or [_span(text)])]
+                # 번호는 적어 온 그대로 쓴다 — '05' 는 '05', '3.' 은 '3.' 으로 남는다.
+                label = block_text(block).strip()
+                spans[0] = {**spans[0], "t": f"{label} {spans[0].get('t') or ''}"}
+                merged["spans"] = spans
+                merged["content"] = block_text(merged)
+                out.append(merged)
+                i += 2
+                continue
+        out.append(block)
+        i += 1
+    return out
 
 
 def _split_title(blocks: List[Dict[str, Any]], name: str) -> Tuple[str, List[Dict[str, Any]]]:

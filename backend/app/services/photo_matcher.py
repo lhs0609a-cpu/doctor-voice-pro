@@ -78,6 +78,28 @@ def is_before_after(photo: "Photo") -> bool:
 
 MIN_MATCH_CHARS = 2      # 한 글자 키워드는 아무 태그에나 걸린다("기" → 기기·대기실·장기)
 
+# 병원이 제 손으로 찍은 사진. 외관·대기실·진료실·치료 장면·장비·한약재·의료진은 글 주제가
+# 무엇이든 그 병원 글에 어울린다. 그 밖의 사진(일러스트·도표·제품·환자 사진, 움직이는 짤)은
+# **그 사진 자체가 '무엇에 대한' 사진**이라 글과 주제가 맞아야 한다.
+#
+# 2026-10-27 고객 지적: "생리통 원고에 다이어트 GIF 가 들어가는 등". 원인은 점수식이었다 —
+# 단계가 맞기만 하면(W_STAGE 2.0) 그것만으로 MIN_SCORE(1.0)를 넘어서, 주제가 전혀 다른
+# 사진도 '도입' 자리에 들어갔다. 단계·장면은 **글의 어느 자리냐**일 뿐 무엇에 대한
+# 사진이냐가 아니다. 그래서 주제를 담은 사진은 태그가 실제로 맞을 때만 쓴다.
+CLINIC_SCENES: Set[str] = {"exterior", "reception", "consult", "treatment",
+                           "equipment", "herbal", "staff"}
+
+
+def fits_subject(slot: Slot, photo: Photo) -> bool:
+    """이 사진을 이 자리에 놓아도 글과 겉돌지 않는가.
+
+    병원 자체 사진은 늘 참. 그 밖의 사진은 슬롯이 적어 둔 키워드와 태그가 하나라도
+    맞아야 한다. 맞는 사진이 없으면 그 자리는 비운다 — 무관한 사진을 넣느니 없는 편이
+    낫다(MIN_SCORE 와 같은 이유)."""
+    if (photo.scene or "") in CLINIC_SCENES:
+        return True
+    return bool(_keyword_hits(slot.keywords, photo.tags))
+
 
 def _keyword_hits(keywords: List[str], tags: List[str]) -> List[str]:
     """키워드와 태그의 양방향 부분 문자열 일치. 일치한 태그를 순서대로 돌려준다(중복 제거).
@@ -177,7 +199,9 @@ def assign(
         for photo in photos:
             sc = score(slot, photo, recent)
             scores[(si, photo.id)] = sc
-            pairs.append((sc, si, photo.id))
+            # 주제가 겉도는 사진은 후보에 올리지 않는다(점수가 높아도). fits_subject 참고.
+            if fits_subject(slot, photo):
+                pairs.append((sc, si, photo.id))
     # 점수 높은 순, 같으면 앞 슬롯, 같으면 id
     pairs.sort(key=lambda p: (-p[0], p[1], p[2]))
 
@@ -207,6 +231,8 @@ def assign(
                 continue
             best_pid, best_val = None, None
             for photo in photos:
+                if not fits_subject(slots[si], photo):
+                    continue        # 돌려 쓸 때도 주제는 지킨다
                 val = scores[(si, photo.id)] - 1.0 * times.get(photo.id, 0)
                 if best_val is None or val > best_val:
                     best_pid, best_val = photo.id, val

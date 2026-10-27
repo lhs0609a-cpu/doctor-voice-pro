@@ -15,9 +15,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 # 문단 하나의 길이(공백 제외). 문장을 이 범위가 될 때까지 이어 붙이고 마침표에서 끊는다.
-# 2026-09-29 고객(키네스·소잠) 확정 규격.
-PARA_MIN_CHARS = 35
-PARA_MAX_CHARS = 50
+# backend/app/services/post_formatter.py 의 _PARA_MIN_CHARS/_PARA_MAX_CHARS 와 같은 값이어야 한다.
+# 2026-10-27 고객 요청으로 35~50 → 25~35("모바일 기준에서 보면 조금 깁니다").
+PARA_MIN_CHARS = 25
+PARA_MAX_CHARS = 35
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。？！])\s+")
 _BLANK_LINE_RE = re.compile(r"\n\s*\n+")
@@ -69,8 +70,8 @@ def group_sentences(sentences: Sequence[str]) -> List[str]:
     """문장들을 공백 제외 35~50자 문단으로 묶는다. 문장 중간은 절대 끊지 않는다.
 
     - 이어 붙였을 때 50자를 넘기면, 넘기기 전에 문단을 닫는다(넘치느니 조금 모자란 편이 낫다).
-    - 35자를 채우면 닫는다.
-    - 그래서 50자가 넘는 긴 문장 하나는 혼자 한 문단이 된다 — 마침표에서만 끊기 때문이다.
+    - 25자를 채우면 닫는다.
+    - 그래서 35자가 넘는 긴 문장 하나는 혼자 한 문단이 된다 — 마침표에서만 끊기 때문이다.
     """
     out: List[str] = []
     buf: List[str] = []

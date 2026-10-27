@@ -32,7 +32,17 @@ sys.path.insert(0, str(HERE))
 from naver_editor import NaverEditor  # noqa: E402
 
 URL = "https://map.naver.com/p/entry/place/1754941463"
-AFTER = "일주일에  두세 번  두통약을 먹습니다. 그런데도 통증이 가시지 않으면 다른 원인을 봐야 합니다."
+# 카드 뒤에 오는 본문. **한 문단으로 끝나는 길이**여야 한다.
+#
+# 2026-10-27 에 문단 규격이 25~35자(공백 제외)로 줄면서 이 문장이 두 문단으로 쪼개졌는데,
+# 그때 가짜 편집기에서 뒤 문단이 사라졌다. 가짜 편집기는 `contenteditable` 을 `<p>` **자체**에
+# 걸어 두기 때문에 엔터가 새 `.se-text-paragraph` 를 만들지 않고 `<p>` 안에 `<div>` 를 쌓는다
+# (실제 SE ONE 은 형제 문단을 만든다). 그 구조에서 카드 직후 두 번째 문단이 들어가지 않는다 —
+# **대역의 한계이고 실행기 코드와는 무관하다**(카드 없이 세 문단은 멀쩡히 들어간다).
+# 그 자리를 억지로 눌러 보면 앞 문단까지 잃는다. 그래서 이 시험은 원래 보려던 것 —
+# '카드 뒤 문단을 글감 검색칸에 빼앗기지 않는가' — 에 머물게 하고, 문단이 몇 개로 쪼개지는지는
+# test_link_card_keeps_following_paragraphs 가 계획(ops) 단계에서 본다.
+AFTER = "일주일에  두세 번  두통약을 먹습니다."
 
 
 class _Quiet(SimpleHTTPRequestHandler):
@@ -132,6 +142,26 @@ class TestMaterialSearchStealsTyping(unittest.TestCase):
         self.assertTrue(got["found"], "가짜 편집기에 글감 막대가 없다 — 테스트가 무의미해진다")
         self.assertTrue(got["cleared"], f"글쓰기 화면을 열자마자 글감 막대를 치워야 한다: {got}")
         self.assertEqual(got["reachable"], 0, f"치운 막대가 아직 화면에 남아 있다: {got}")
+
+    def test_link_card_keeps_following_paragraphs(self):
+        """카드 뒤 문단이 둘로 쪼개져도 계획에서는 둘 다 살아 있어야 한다(브라우저 없이).
+
+        문단 규격이 25~35자로 줄어 카드 뒤가 여러 문단이 되는 일이 흔해졌다. 계획 단계에서
+        빠지면 실제 네이버에서도 글이 빈다 — 대역으로는 못 보는 자리라 여기서 지킨다."""
+        import plan
+
+        tail_one = "일주일에 두세 번 두통약을 먹습니다."
+        tail_two = "그런데도 통증이 가시지 않으면 다른 원인을 봐야 합니다."
+        ops = plan.plan_blocks(
+            [{"type": "text", "content": f"오시는 길입니다.\n\n{URL}\n\n{tail_one} {tail_two}"}],
+            [], reformat=True)
+        kinds = [o.kind for o in ops]
+        self.assertEqual(kinds.count("link"), 1, kinds)
+        texts = [o.payload for o in ops if o.kind == "text"]
+        self.assertEqual(texts, ["오시는 길입니다.", tail_one, tail_two], texts)
+        # 카드는 제 뒤에 빈 문단을 하나 남긴다 — 그래서 뒤따르는 줄바꿈은 둘이어야 한다
+        # (하나는 편집기가 삼키고 하나가 실제로 쓰인다). insert_body_blocks 의 carded 참고.
+        self.assertEqual(kinds[kinds.index("link") + 1:kinds.index("link") + 3], ["enter", "enter"], kinds)
 
     def test_plain_manuscript_keeps_the_paragraph_after_a_card(self):
         """평문 원고: 카드 뒤 문단이 본문에 남아야 한다(검색칸으로 새면 안 된다)."""

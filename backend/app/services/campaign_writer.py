@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 
 MOBILE_RULES = """모바일 가독성 규칙(독자의 대부분이 휴대폰):
 - 문단과 문단 사이는 빈 줄 하나로 띄운다. 문단 안에서는 줄을 바꾸지 않는다.
-- 한 문단은 공백 제외 35~50자다. 짧은 문장은 이어 붙여 한 문단으로 만들고, 그 길이가 차면 문단을 바꾼다.
-- 한 문장은 45자 안팎, 60자를 넘기지 않는다. 길면 두 문장으로 나눈다.
+- 한 문단은 공백 제외 25~35자다. 짧은 문장은 이어 붙여 한 문단으로 만들고, 그 길이가 차면 문단을 바꾼다.
+- 한 문장은 35자 안팎, 45자를 넘기지 않는다. 길면 두 문장으로 나눈다.
 - 마크다운 기호(#, *, -, >)와 이모지는 쓰지 않는다.
 - 소제목은 큰따옴표로 감싼 한 줄로 쓴다. 예: "무엇을 보고 판단하는가"
   본문 문장 안의 인용에는 큰따옴표를 쓰지 않는다(소제목으로 잘못 읽힌다). 작은따옴표를 쓴다.
@@ -44,8 +44,10 @@ UNIVERSAL_EDITORIAL_RULES = """모든 원고에 적용하는 편집 규칙:
 - 독자의 불안을 키우지 말고, 현실적으로 할 수 있는 방법과 선택 기준을 함께 제시한다. 가상의 감동 사례나 권위 과시는 금지한다.
 - 설득은 결론을 강요하지 않고 문제와 근거와 선택지를 논리적으로 연결한다.
 - 본문 전체의 어투를 하나로 통일한다. 기본은 합니다·했습니다·입니다체이며 해요체·반말을 중간에 섞지 않는다.
-- 한 문장에는 핵심 내용 하나만 담고 45자 안팎으로 쓴다. 60자를 넘는 문장은 반드시 나눈다.
-- 문단 사이는 빈 줄 하나로만 띄우고, 한 문단은 공백 제외 35~50자로 맞춘다.
+- 한 문장에는 핵심 내용 하나만 담고 35자 안팎으로 쓴다. 45자를 넘는 문장은 반드시 나눈다.
+- 문단 사이는 빈 줄 하나로만 띄우고, 한 문단은 공백 제외 25~35자로 맞춘다.
+- 우리 병원이 하지 않는 검사·시술을 독자에게 받으라고 권하지 않는다. 혈액검사·내시경·CT·MRI·조직검사·수술처럼 다른 과에서 하는 것은 '필요하면 해당 과에서 확인할 수 있다' 정도로만 쓰고, 먼저 받아 보라고 권하거나 절차·순서를 설명하지 않는다.
+- 키워드에 다른 과 이름(산부인과·내과·정형외과 등)이 들어 있어도 글은 **우리 병원 진료 관점으로만** 쓴다. 그 과의 진료 절차를 안내하는 글이 되어서는 안 된다.
 - 사진은 바로 앞 문단의 내용을 설명하는 경우에만 배치한다. 그래프·체력·근력 자료도 해당 지표를 설명한 문단에만 연결한다."
 """
 
@@ -61,7 +63,7 @@ KINES_RULES = """키네스 지점 원고 편집 규칙:
 - 키네스가 뼈나이 확인, 골연령 검사, 성장판 검사를 직접 시행한다고 읽히는 표현을 쓰지 않는다. 해당 내용이 근거에 없으면 언급하지 않는다.
 - 지점명은 '키네스 송도점', '키네스 분당점'처럼 쓴다. '키네스 센터 송도점' 표기는 쓰지 않는다.
 - 어투는 본문 전체를 합니다·했습니다·입니다체로 통일한다. 해요·거든요·하시죠·반말을 섞지 않는다.
-- 한 문장에 핵심 내용 하나만 담고 45자 안팎으로 쓴다. 60자를 넘는 문장은 반드시 나눈다.
+- 한 문장에 핵심 내용 하나만 담고 35자 안팎으로 쓴다. 45자를 넘는 문장은 반드시 나눈다.
 - 그래프·체력·근력 자료는 그 지표를 설명한 문단 직후에만 연결한다. 본문과 관계없는 이미지를 넣기 위해 내용을 바꾸지 않는다."""
 
 
@@ -124,6 +126,32 @@ def reflow(body: str) -> str:
             sents.extend(_sentences(ln))
         out.append(_mobile_paragraph(sents))
     return "\n\n".join(o for o in out if o)
+
+
+# 다른 과에서 하는 검사를 "먼저 받아 보라"고 권하는 문장. 2026-10-27 고객 지적:
+# "산부인과, 내과 키워드가 들어간 경우 혈액검사를 먼저 받아라, 내시경 검사를 먼저
+# 받아라 라는 등 한의원과 어울리지 않는 문구가 들어가 있어서". 프롬프트로도 막지만
+# (UNIVERSAL_EDITORIAL_RULES) 생성 모델은 키워드가 과 이름이면 그 과의 안내문을 쓰려는
+# 버릇이 있어서, 생성된 본문에서 그 문장만 덜어낸다.
+#
+# **'언급'은 남기고 '권유'만 지운다.** 환자가 가져온 검사 결과를 참고한다거나, 다른 과에서
+# 확인할 수 있다는 문장까지 지우면 글이 이상해진다. 그래서 검사 이름과 권유 어미가 한
+# 문장 안에 같이 있을 때만 건다.
+_FOREIGN_TEST = (r"(?:혈액\s*검사|피\s*검사|위\s*내시경|대장\s*내시경|내시경|"
+                 r"CT|MRI|조직\s*검사|호르몬\s*검사)")
+_RECOMMEND = (r"(?:받아\s*보|받으시|받아야|받는\s*것이\s*(?:좋|나|필요)|"
+              r"권(?:합니다|해\s*드리|장)|해\s*보시|하셔야|확인하셔야|먼저\s*하)")
+_FOREIGN_ADVICE_RE = re.compile(_FOREIGN_TEST + r"[^.!?\n]{0,40}?" + _RECOMMEND)
+
+
+def drop_foreign_test_advice(body: str) -> str:
+    """다른 과 검사를 권하는 문장을 덜어낸다. 반쪽 문장은 남기지 않는다."""
+    if not body or not _FOREIGN_ADVICE_RE.search(body):
+        return body
+    kept = [sentence for sentence in _SENTENCE.findall(body)
+            if not (sentence.strip() and _FOREIGN_ADVICE_RE.search(sentence))]
+    # 문장을 빼낸 자리에 남는 겹공백과 줄 앞 공백은 지운다(_fix_one 과 같은 마무리).
+    return re.sub(r"(?m)^[ \t]+", "", re.sub(r"[ \t]{2,}", " ", "".join(kept))).strip()
 
 
 def count_chars(body: str) -> int:
@@ -201,7 +229,7 @@ JSON 으로만 답한다. body 는 위 규칙대로 줄바꿈이 들어간 완�
     data = await cc.complete_json(WRITER_SYSTEM, user, max_tokens=16000)
     if not isinstance(data, dict):
         raise ValueError("원고 응답 형식 오류")
-    body = reflow(str(data.get("body") or ""))
+    body = reflow(drop_foreign_test_advice(str(data.get("body") or "")))
     title = str(data.get("title") or "").strip()[:200]
     tags = [str(t).lstrip("#").strip() for t in (data.get("tags") or []) if str(t).strip()][:10]
     if keyword and keyword not in tags:
@@ -266,7 +294,7 @@ async def make_variant(source: str, axis: Dict[str, str], facts: List[Dict[str, 
 
 JSON 으로만 답한다."""
     data = await cc.complete_json(VARIANT_SYSTEM, user, max_tokens=12000)
-    body = reflow(str(data.get("body") or ""))
+    body = reflow(drop_foreign_test_advice(str(data.get("body") or "")))
     return {"title": str(data.get("title") or "").strip()[:200], "body": body, "char_count": count_chars(body), "axis": axis}
 
 
