@@ -263,8 +263,19 @@ async def _maintenance():
     from app.services.autopilot import tick
     from app.services.publication_verifier import recheck_uncertain, verify_due
     from app.services.storage_reclaim import reclaim as reclaim_storage, warn_if_tight
+    from app.services.memory_guard import watch as watch_memory
 
     while True:
+        # 메모리는 디스크보다 먼저, 그리고 가장 싸게 끝난다(파일도 DB도 건드리지 않는다).
+        # 사진을 실어 보낸 뒤 놓은 공간이 프로세스에 그대로 남아 톱니처럼 쌓이다가
+        # 한도에 부딪히면 커널이 말없이 죽인다(2026-10-27 exit 137). 그 전에 돌려준다.
+        try:
+            watch_memory()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception('메모리 되돌리기 실패; 다음 주기에 재시도합니다')
+
         # 볼륨이 차면 예약만이 아니라 로그인·API 전체가 멈춘다. 그래서 공간 정리는
         # 맨 앞에서, 제 손으로 예외를 받아 낸다 — 2026-10-24 에 이게 맨 뒤에 있던 탓에
         # 디스크가 찬 순간 앞의 verify_due 가 먼저 터져 정작 공간을 비워 줄 이 코드에

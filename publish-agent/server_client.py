@@ -30,6 +30,15 @@ DEFAULT_TOKEN_SECONDS = 1800
 TRANSIENT_STATUS = (502, 503, 504)
 RETRY_WAITS = (3, 10, 20)
 
+# 이 응답은 '토큰을 새로 받아 한 번 더 보내 보라'는 뜻으로 본다.
+# 403 을 함께 보는 이유: 서버는 Authorization 머리글이 아예 없을 때 401 이 아니라
+# 403 을 돌려준다(FastAPI HTTPBearer). 토큰을 갈아끼우는 찰나나 서버가 OOM 으로
+# 죽었다 뜨는 사이에 이것이 스쳐 지나가는데, 예전에는 403 을 그대로 터뜨려
+# 실행기가 "서버 인증이 끊어졌습니다"로 발행 루프를 접었다 — 2026-10-27 로그에
+# heartbeat 가 403 을 받고 2초 뒤 200 으로 돌아온 것이 찍혀 있다.
+# 한 번만 다시 보낸다(_retry=False). 진짜 끊긴 것이면 그때 그대로 올라간다.
+REAUTH_STATUS = (401, 403)
+
 
 class ServerClient:
     """토큰은 login() 에서 받아 Authorization: Bearer 로 보낸다.
@@ -106,9 +115,9 @@ class ServerClient:
         if _retry:
             self._renew_if_stale()
         r = self._send(method, url, json)
-        if r.status_code == 401 and _retry and self._reauth:
+        if r.status_code in REAUTH_STATUS and _retry and self._reauth:
             # 미리 갱신하므로 여기까지 오는 일은 드물다(서버 재시작·시계 차이 등).
-            log.debug("토큰이 거절되어 다시 로그인합니다")
+            log.debug("토큰이 거절되어(HTTP %d) 다시 로그인합니다", r.status_code)
             self._reauth()
             return self._request(method, path, json=json, _retry=False)
         if r.status_code >= 400:

@@ -4,6 +4,11 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
+# 스레드마다 힙을 따로 늘리지 않게 묶는다. 사진 처리를 run_in_threadpool 로 돌리기
+# 때문에, 이것이 없으면 쓰고 버린 공간이 스레드별 arena 에 흩어져 남아 RSS 가
+# 톱니처럼 올라가기만 한다(2026-10-27 OOM, exit 137). app/services/memory_guard.py 참고.
+ENV MALLOC_ARENA_MAX=2
+
 WORKDIR /app
 
 # Install system dependencies
@@ -31,4 +36,5 @@ RUN mkdir -p /data && chmod 777 /data
 EXPOSE 8080
 
 # Initialize database and run the application
-CMD ["sh", "-c", "python init_db.py && alembic upgrade head && python -m uvicorn app.main:app --host 0.0.0.0 --port 8080"]
+# 부팅은 boot.sh 가 맡는다 — 같은 버전으로 다시 뜰 때는 스키마 맞추기를 건너뛴다.
+CMD ["sh", "/app/boot.sh"]

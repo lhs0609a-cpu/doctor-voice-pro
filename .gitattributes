@@ -4,3 +4,7 @@
 # tarball 처럼 gitattributes 의 eol 변환이 적용되지 않는 경로도 있어서
 # text 처리 자체를 끈다(-text) — 저장된 바이트가 그대로 배포된다.
 *.bat -text
+
+# 거꾸로, 리눅스 컨테이너가 실행하는 .sh 는 반드시 LF 여야 한다. CRLF 로 체크아웃되면
+# sh 가 '\r' 까지 명령으로 읽어 부팅이 통째로 실패한다(backend/boot.sh → CMD).
+*.sh text eol=lf

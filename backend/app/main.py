@@ -540,10 +540,20 @@ async def health_check():
     except Exception:  # noqa: BLE001
         storage = {}
 
+    # 메모리도 같은 이유로 내보낸다. 한도에 닿으면 커널이 프로세스를 죽이고(exit 137)
+    # 다시 뜨는 동안 로그인·발행이 전부 매달려 '무한 로딩'으로 보인다. 죽은 뒤에는
+    # 아무 숫자도 남지 않으므로, 밖에서 미리 들여다볼 수 있어야 한다(2026-10-27).
+    try:
+        from app.services.memory_guard import report as memory_report
+        memory = memory_report()
+    except Exception:  # noqa: BLE001
+        memory = {}
+
     return {
         "status": "healthy",
         "ai": ai_status,
         "storage": storage,
+        "memory": memory,
     }
 
 
